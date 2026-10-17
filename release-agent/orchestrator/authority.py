@@ -88,6 +88,7 @@ class WriteOperation(str, Enum):
     FILL_AUTH_UI_RESULTS = "fill_auth_ui_results"
     FILL_UI_AUTOMATION_RESULTS = "fill_ui_automation_results"
     SET_ASSIGNED_TO = "set_assigned_to"
+    SET_POINT_TESTERS = "set_point_testers"
     SUBMIT_PIPELINE_APPROVAL = "submit_pipeline_approval"
 
 

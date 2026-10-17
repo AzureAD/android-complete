@@ -241,11 +241,9 @@ def test_real_catalog_compiles_models_without_binding_any_provider(monkeypatch):
     monkeypatch.setattr(adapters, "production_services", no_io)
     monkeypatch.setattr(adapters, "production_effects", no_io)
     config = Path(__file__).resolve().parents[1] / "config" / "phases.yaml"
-    catalog = HandlerCatalog.compile(
-        WorkflowDefinition.compile(yaml.safe_load(config.read_text(encoding="utf-8"))),
-        steps.get_step,
-    )
-    assert len(catalog.handler_by_key) == 68
+    workflow = WorkflowDefinition.compile(yaml.safe_load(config.read_text(encoding="utf-8")))
+    catalog = HandlerCatalog.compile(workflow, steps.get_step)
+    assert set(catalog.handler_by_key) == set(workflow.step_by_key)
     assert sum(handler.definition.implementation.value == "dummy"
                for handler in catalog.handler_by_key.values()) == 14
     assert catalog.get("preflight", "notice").parse_parameters(values={"variant": "update"}).variant == "update"

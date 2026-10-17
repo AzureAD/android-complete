@@ -12,7 +12,7 @@ meeting start. It is sent through the normal approved delivery flow; only confir
 delivery/completion provisions the poller. The working-window gate applies to its ticks,
 not this first post. If all work is already complete, no first post/poller is needed.
 
-Each update is grouped by the test's owner (System.AssignedTo, set by distribute_tests):
+Each update is grouped by the release test-point Tester (set by distribute_tests):
 owners with remaining tests (not-run, failed, or blocked — failed/blocked surfaced, not
 hidden) are @mentioned. Always list every workload case, including completed cases, with
 its source-plan product ([Broker] / [Authenticator]), link and live state. Unresolved
@@ -44,6 +44,11 @@ configurations outside this triage set do not affect totals or resolution.
 Depends on: clone_plans_broker (Broker plan id), clone_plans_auth (Auth suite id),
 ui_test_status (completed automation classification), activate_chat (meeting chat id).
 Blocks if the chat hasn't been activated or the completed fill is missing/stale.
+Missing member evidence requests a read-only Teams ListChatMembers call before preparing
+any notification. members_file must contain its fresh owner-bound M365 observation envelope
+(or the native workiq_get_chat envelope for this exact meeting), never bare legacy JSON.
+If assigned UPNs differ from member emails, append fresh exact-user workiq.fetch envelopes
+as directory_observations on that member envelope; bind their GUIDs to actual members.
 
 Mock knobs (mocks.local.yaml / tests):
   progress : inject the gathered progress dict (skip the live ADO reads); include every
@@ -64,6 +69,7 @@ from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked, Done
 from steps.lib.mockctx import MISSING
 from tools import bugbash as BB
+from tools.distribution import ConnectorObservationRequired
 from tools import testplans as T
 from tools.coordinates import coords
 from tools.pipelines.auth_app import auth_build_url
@@ -113,7 +119,7 @@ def gather(context):
     return context.services.testplans.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite,
                               auto_failed_ids=result["auth"]["failed_case_ids"],
                               auth_automated_ids=result["auth"]["automated_case_ids"],
-                              broker_ui_result=result["broker"])
+                              broker_ui_result=result["broker"], auth_ui_result=result["auth"])
 
 
 def plan_links(context):
@@ -151,7 +157,7 @@ def prepare_update(context, progress, members_file=None):
     chat_id = stored_chat_id(context)
     if not chat_id:
         return False, None, "Missing/stale meeting binding"
-    people = context.input("people", MISSING)
+    people = context.input("people", MISSING) if members_file is None else MISSING
     if people is MISSING:
         observation = None
         if members_file is not None:
@@ -160,7 +166,8 @@ def prepare_update(context, progress, members_file=None):
             except (OSError, ValueError) as exc:
                 return False, None, f"Cannot read meeting-member observation: {exc}"
         ok, people, detail = context.services.identities.resolve_mention_people(
-            chat_id, progress.get("owners") or {}, member_observation=observation)
+            chat_id, progress.get("owners") or {}, member_observation=observation,
+            owner=context.release.owner_email)
         if not ok:
             return False, None, detail
     try:
@@ -199,8 +206,27 @@ def build(context: StepContext[BuildParameters]):
         return Done(f"All {progress['total']} bug-bash tests are already complete — "
                     f"nothing to poll; ready for {month_year} bug bash sign-off.")
 
-    ok, payload, detail = prepare_update(context, progress, members_file)
+    try:
+        ok, payload, detail = prepare_update(context, progress, members_file)
+    except ConnectorObservationRequired as exc:
+        return NeedsSkill(
+            tool=exc.tool,
+            payload={**exc.arguments, "_connector_reads": exc.requests,
+                     "_followup": "Append the requested fresh owner-bound directory envelopes "
+                                  "as directory_observations on the members-file envelope; rerun "
+                                  "step-action with --param members_file=<path>. Do not record completion."},
+            summary="Resolve exact pending tester UPNs to verified meeting-member user IDs",
+            note=str(exc))
     if not ok:
+        if members_file is None and context.input("people", MISSING) is MISSING:
+            request = BB.mention_read_request(chat_id, context.release.owner_email)
+            return NeedsSkill(
+                tool="microsoft_teams-ListChatMembers",
+                payload={"chatId": chat_id, "_connector_reads": [request],
+                         "_followup": "Save the fresh owner-bound observation envelope; rerun "
+                                      "step-action with --param members_file=<path>. Do not record completion."},
+                summary="Gather complete meeting-member identities before preparing the first update",
+                note=detail)
         return Blocked(f"bugbash_updates: {detail}")
     return NeedsSkill(
         tool="workiq_send_chat_message",
@@ -232,9 +258,14 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"delivery of the final summary records poll_complete; known failed sends remain "
         f"retryable. Initial trigger-step completion does not end this phase-owned poller.\n"
         f"  • no_chat / error / stopped → nothing to send; always perform cleanup.\n"
-        f"If member resolution lacks Graph access, use workiq_get_chat on the returned "
-        f"chatId, save its fresh id/chatType/complete members fields as JSON, then rerun "
-        f"with --members-file <path>. "
+        f"If member evidence is needed, execute the printed connector_reads request through "
+        f"microsoft_teams-ListChatMembers (or workiq_get_chat with chatId). Save the actual "
+        f"complete response in a version:1 observation envelope with the exact tool/arguments, "
+        f"account equal to the release owner, and an offset observed_at timestamp; rerun "
+        f"with --members-file <path> within 15 minutes. Bare legacy member JSON is not fresh evidence. "
+        f"If an assigned UPN differs from the member email (or email is missing), use the printed "
+        f"exact workiq.fetch directory requests and append their envelopes as directory_observations "
+        f"on that same member envelope. Hosted fetch must actually be available; otherwise hold. "
         f"Never invent member identities or omit mentions to bypass a resolution failure.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
         f"--text \"bugbash-poller: <decision>\"`.")

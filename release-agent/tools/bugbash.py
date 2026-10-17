@@ -8,8 +8,8 @@ Two concerns:
   * progress — gather_progress(...): read the live test-point outcomes from BOTH the Broker
     manual subtree plus applied Broker UI failure points and the Authenticator bug-bash suite, excluding
     automation-only Auth cases using the completed fill's classification. Grouped
-    by the case's live System.AssignedTo (the point's own `tester`
-    field is NOT reliably synced with AssignedTo). render_update(...) turns that into the
+    by each release point's live Tester, never the shared case AssignedTo.
+    render_update(...) turns that into the
     Teams message HTML + the @mention list (mention owners with remaining tests; name-only
     for owners who finished all).
 
@@ -19,9 +19,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from html import escape
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 from uuid import UUID
 
+from orchestrator import m365
 from tools import pipelines as P
 from tools import testplans as T
 from tools import distribution as D
@@ -131,13 +132,32 @@ def _points_of_suite(plan_id, suite_id, timeout=90):
     ok, items, d = P._ado_rest_get_all(url, timeout)
     if not ok:
         return (False, None, d)
+    if not isinstance(items, list):
+        return False, None, "Malformed release test-point response"
+    seen = set()
     out = []
     for pt in items:
+        if not isinstance(pt, dict):
+            return False, None, "Malformed release test point"
+        if any(pt.get(key) is not None and not isinstance(pt[key], dict)
+               for key in ("testCaseReference", "results", "configuration")):
+            return False, None, "Malformed release test-point fields"
         tc = pt.get("testCaseReference") or {}
         res = pt.get("results") or {}
+        ids = (pt.get("id"), tc.get("id"), (pt.get("configuration") or {}).get("id"))
+        if any(not str(v).isascii() or not str(v).isdigit() or int(v) <= 0 for v in ids):
+            return False, None, "Invalid release test-point identity"
+        if str(pt["id"]) in seen:
+            return False, None, "Duplicate release test-point identity"
+        seen.add(str(pt["id"]))
+        try:
+            tester = D.point_tester(pt.get("tester"))
+        except ValueError as exc:
+            return False, None, str(exc)
         out.append({"point_id": str(pt.get("id")), "case_id": str(tc.get("id")),
                     "config_id": str((pt.get("configuration") or {}).get("id")), "name": tc.get("name"),
-                    "outcome": res.get("outcome") or pt.get("outcome") or "unspecified"})
+                    "outcome": res.get("outcome") or pt.get("outcome") or "unspecified",
+                    "tester_upn": tester["upn"], "tester_id": tester["id"]})
     return (True, out, "")
 
 
@@ -198,9 +218,10 @@ def _broker_ui_triage_points(broker_plan_id, result, timeout):
 
 
 def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_id,
-                    timeout=90, auto_failed_ids=None, *, auth_automated_ids, broker_ui_result):
+                    timeout=90, auto_failed_ids=None, *, auth_automated_ids, broker_ui_result,
+                    auth_ui_result=None):
     """(ok, progress, detail). Reads live test points from the Broker manual subtree +
-    the Auth bug-bash suite, groups the CASES by their System.AssignedTo, and computes a
+    the Auth bug-bash suite, groups cases by their release-point Tester, and computes a
     per-owner + overall breakdown of manual work and retained failure triage for BOTH apps.
 
     `auth_automated_ids` is the completed fill's automated-case classification, also
@@ -223,7 +244,7 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
       auth_excluded_automated,
       owners: { upn: {name, total, done, remaining,
                       tests: [{id, name, url, state, products, auto_failed}]} },
-      unassigned: <count of cases with no AssignedTo> }
+      unassigned: <count of cases with unassigned release points> }
     """
     if auth_automated_ids is None:
         return False, None, "Missing completed-fill automated-case classification; no progress prepared"
@@ -231,6 +252,20 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     auto_failed = {str(i) for i in (auto_failed_ids or [])}
     if not auto_failed <= automated:
         return False, None, "Applied Auth failures are missing from the automated-case classification"
+    auth_expected = {}
+    if auto_failed:
+        if (not isinstance(auth_ui_result, dict)
+                or auth_ui_result.get("target") != {"plan_id": int(auth_plan_id), "suite_id": int(auth_suite_id)}
+                or not isinstance(auth_ui_result.get("applied_points"), list)):
+            return False, None, "Missing/mismatched completed Auth failure-point evidence"
+        for point in auth_ui_result["applied_points"]:
+            if point.get("outcome") == "Failed":
+                pid, cid = str(point.get("point_id")), str(point.get("case_id"))
+                if pid in auth_expected or not pid.isascii() or not pid.isdigit() or int(pid) <= 0:
+                    return False, None, "Invalid/duplicate applied Auth failure point"
+                auth_expected[pid] = cid
+        if set(auth_expected.values()) != auto_failed:
+            return False, None, "Auth failed cases have no matching applied failure points"
     ok_ui, ui_points, detail = _broker_ui_triage_points(broker_plan_id, broker_ui_result, timeout)
     if not ok_ui:
         return False, None, f"broker UI triage: {detail}"
@@ -241,24 +276,41 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     if not oka:
         return (False, None, f"auth: {da}")
 
-    automation_only = automated - auto_failed
-    excluded = {pt["case_id"] for pt in apts if pt["case_id"] in automation_only}
-    apts = [pt for pt in apts if pt["case_id"] not in excluded]
+    found = {}
+    for pt in apts:
+        pid = str(pt.get("point_id"))
+        if pid in auth_expected:
+            if pid in found or str(pt["case_id"]) != auth_expected[pid]:
+                return False, None, "Auth failure point case identity changed; refresh the owning fill"
+            found[pid] = pt
+    if set(found) != set(auth_expected):
+        return False, None, "Applied Auth failure points missing from the release suite; refresh the owning fill"
+    excluded = {pt["case_id"] for pt in apts if pt["case_id"] in automated - auto_failed}
+    apts = [pt for pt in apts if pt["case_id"] not in automated
+            or str(pt.get("point_id")) in auth_expected]
     auth_triage = {pt["case_id"] for pt in apts if pt["case_id"] in auto_failed}
+    if auth_triage != auto_failed:
+        return False, None, "Applied Auth failure cases missing from the release suite; refresh the owning fill"
     broker_triage = {pt["case_id"] for pt in ui_points}
     # Product comes from the source plan, not the case title or automation classification.
-    cases = {}
-    for product, points in (("Broker", bpts), ("Authenticator", apts), ("Broker", ui_points)):
+    cases, owner_cases, triage_outcomes = {}, {}, {}
+    for product, points, failure_ids in (("Broker", bpts, set()), ("Authenticator", apts, auth_triage),
+                                        ("Broker", ui_points, broker_triage)):
         for pt in points:
             cid = pt["case_id"]
             c = cases.setdefault(cid, {"name": pt.get("name"), "outcomes": [], "products": set()})
             c["outcomes"].append(pt.get("outcome"))
             c["products"].add(product)
-
-    # owner (AssignedTo) per case
-    oka2, amap, da2 = D._cases_assignedto(list(cases.keys()), timeout)
-    if not oka2:
-        return (False, None, f"assignedTo: {da2}")
+            if "tester_upn" not in pt:
+                return False, None, "Release-point Tester observation missing; no case-owner fallback"
+            upn = D._identity(pt["tester_upn"]) or None
+            owned = owner_cases.setdefault((upn, cid), {
+                "name": pt.get("name"), "outcomes": [], "products": set(), "auto_products": set()})
+            owned["outcomes"].append(pt.get("outcome"))
+            owned["products"].add(product)
+            if cid in failure_ids:
+                owned["auto_products"].add(product)
+                triage_outcomes.setdefault((product, cid), []).append(pt.get("outcome"))
 
     owners, unassigned = {}, 0
     total = done = auto_failed_remaining = 0
@@ -269,14 +321,17 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
         is_done = state in ("passed", "na")     # only clean-pass / N-A count as done;
         if is_done:                              # failed + blocked + notrun are "remaining"
             done += 1
-        products = [product for product, ids in (("Broker", broker_triage), ("Authenticator", auth_triage))
-                    if cid in ids]
-        af = bool(products)
-        if af and not is_done:
+        pending_products = [product for (product, case), outcomes in triage_outcomes.items()
+                            if case == cid and _case_state(outcomes) not in ("passed", "na")]
+        if pending_products:
             auto_failed_remaining += 1
-            for product in products:
+            for product in pending_products:
                 remaining_by_product[product] += 1
-        upn = amap.get(cid)
+    for (upn, cid), c in owner_cases.items():
+        state = _case_state(c["outcomes"])
+        is_done = state in ("passed", "na")
+        products = sorted(c["auto_products"])
+        af = bool(products)
         if not upn:
             unassigned += 1
             continue
@@ -304,42 +359,139 @@ def all_complete(progress) -> bool:
             and progress.get("remaining") == 0)
 
 
-def resolve_mention_people(chat_id, owners, timeout=90, *, member_observation=None):
-    """Resolve pending owners to real AAD users in the target meeting, not UPN mentions."""
-    url = f"{D._GRAPH}/chats/{quote(chat_id, safe='')}/members"
-    members, seen = [], set()
-    if member_observation is not None:
-        if (not isinstance(member_observation, dict) or member_observation.get("id") != chat_id
-                or member_observation.get("chatType") != "meeting"
-                or not isinstance(member_observation.get("members"), list)
-                or member_observation.get("@odata.nextLink")
-                or member_observation.get("members@odata.nextLink")):
-            return False, None, "Member observation must be the complete workiq_get_chat response for this meeting"
-        members, url = member_observation["members"], None
-    if not owners:
-        return True, {}, ""
-    while url:
-        if (not isinstance(url, str) or url in seen or len(seen) >= 25 or urlparse(url).scheme != "https"
-                or urlparse(url).netloc != "graph.microsoft.com"):
-            return False, None, "Incomplete/invalid meeting-member pagination"
-        seen.add(url)
-        ok, page, detail = D._graph_get(url, timeout)
-        if not ok:
-            return False, None, (
-                f"Cannot resolve meeting members: {detail}. Fetch chat {chat_id} with "
-                "workiq_get_chat and supply its fresh response via members_file/--members-file.")
-        if not isinstance(page, dict) or not isinstance(page.get("value"), list):
-            return False, None, "Malformed meeting-member response"
-        members.extend(page["value"])
-        url = page.get("@odata.nextLink")
-    people = {}
-    member_ids = {m.get("userId") for m in members if isinstance(m, dict) and m.get("userId")}
+def mention_read_request(chat_id, owner):
+    return m365.observation_request("microsoft_teams-ListChatMembers", {"chatId": chat_id}, owner)
+
+
+def _mention_members(chat_id, observation, owner):
+    if not isinstance(observation, dict):
+        raise ValueError("Member observation requires an owner-bound M365 envelope; raw legacy JSON is not fresh evidence")
+    tool = observation.get("tool")
+    if tool not in {"workiq_get_chat", "microsoft_teams-ListChatMembers"}:
+        raise ValueError("Member observation must use workiq_get_chat or microsoft_teams-ListChatMembers")
+    result = m365.validate_observation(
+        observation, tool=tool, arguments={"chatId": chat_id}, owner=owner)
+    if isinstance(result, dict):
+        if (any(result.get(key) for key in (
+                "@odata.nextLink", "members@odata.nextLink", "nextLink",
+                "nextSkipToken", "hasMoreResults", "isPartial", "truncated"))
+                or result.get("complete") is False):
+            raise ValueError("Member observation must contain complete, unpaginated members for this meeting")
+        if tool == "workiq_get_chat":
+            if result.get("id") != chat_id or result.get("chatType") != "meeting":
+                raise ValueError("Member observation must describe this meeting")
+        elif result.get("chatId", chat_id) != chat_id:
+            raise ValueError("Member observation belongs to another chat")
+        members = (result.get("members") if tool == "workiq_get_chat" else
+                   result.get("members", result.get("value")))
+        if "@odata.count" in result and (
+                not isinstance(members, list) or type(result["@odata.count"]) is not int
+                or result["@odata.count"] != len(members)):
+            raise ValueError("Incomplete meeting member count")
+    else:
+        members = result if tool == "microsoft_teams-ListChatMembers" else None
+    if not isinstance(members, list):
+        raise ValueError("Member observation must contain actual complete structured members")
+    ids, emails = set(), set()
+    for member in members:
+        if not isinstance(member, dict):
+            raise ValueError("Malformed meeting-member identity")
+        try:
+            identity = str(UUID(member["userId"]))
+        except (KeyError, ValueError, TypeError, AttributeError):
+            raise ValueError("Meeting members require real userId values, not membership IDs") from None
+        email = member.get("email")
+        if email == "":
+            email = None
+        if (email is not None and not D._mail_identity(email)
+                or not isinstance(member.get("displayName"), str)
+                or not member["displayName"].strip() or "@" in member["displayName"]):
+            raise ValueError("Missing meeting-member displayName/email; obtain explicit directory evidence")
+        if identity in ids or email is not None and email.casefold() in emails:
+            raise ValueError("Ambiguous/duplicate meeting identity")
+        ids.add(identity)
+        if email is not None:
+            emails.add(email.casefold())
+    return members
+
+
+def mention_directory_path(upn):
+    if not D._mail_identity(upn):
+        raise ValueError("Pending tester requires an exact directory UPN")
+    return f"/users/{quote(upn, safe='')}?$select=id,displayName,userPrincipalName,mail"
+
+
+def _mention_directory(owners, members, observation, owner):
+    supplied = observation.get("directory_observations", [])
+    if not isinstance(supplied, list):
+        raise ValueError("directory_observations must be a list of fresh owner-bound envelopes")
+    requested = {mention_directory_path(upn): upn for upn in owners}
+    member_ids = {str(UUID(member["userId"])) for member in members}
+    found = {}
+    for envelope in supplied:
+        if not isinstance(envelope, dict):
+            raise ValueError("Directory evidence requires an owner-bound M365 envelope")
+        args = envelope.get("arguments")
+        paths = args.get("entityUrls") if isinstance(args, dict) else None
+        if (not isinstance(paths, list) or len(paths) != 1
+                or not isinstance(paths[0], str) or paths[0] not in requested):
+            raise ValueError("Directory evidence must match an exact pending tester UPN request")
+        path = paths[0]
+        upn = requested[path]
+        if upn in found:
+            raise ValueError("Duplicate directory evidence for pending tester")
+        user = m365.validate_observation(
+            envelope, tool="workiq.fetch", arguments={"entityUrls": [path]}, owner=owner)
+        if (not isinstance(user, dict) or not D._mail_identity(user.get("userPrincipalName"))
+                or D._identity(user["userPrincipalName"]) != D._identity(upn)
+                or not isinstance(user.get("displayName"), str) or not user["displayName"].strip()
+                or user.get("mail") is not None and not D._mail_identity(user["mail"])
+                or any(user.get(key) for key in (
+                    "@odata.nextLink", "nextLink", "hasMoreResults", "isPartial", "truncated"))
+                or user.get("complete") is False):
+            raise ValueError("Directory evidence returned an incomplete/different pending tester")
+        try:
+            identity = str(UUID(user["id"]))
+        except (KeyError, ValueError, TypeError, AttributeError):
+            raise ValueError("Directory evidence requires the real directory user GUID") from None
+        if identity not in member_ids:
+            raise ValueError("Directory user is not a verified member of this meeting")
+        member = next(row for row in members if str(UUID(row["userId"])) == identity)
+        if (member.get("email") and user.get("mail")
+                and D._identity(member["email"]) not in {
+                    D._identity(user["mail"]), D._identity(user["userPrincipalName"])}):
+            raise ValueError("Conflicting directory mail and meeting-member identity")
+        found[upn] = identity
+    return found
+
+
+def resolve_mention_people(chat_id, owners, timeout=90, *, member_observation=None, owner=None):
+    """Use exact-chat connector evidence only; no Graph token/directory fallback."""
+    if member_observation is None:
+        if not any(row["remaining"] for row in owners.values()):
+            return True, {upn: {"name": row["name"]} for upn, row in owners.items()}, ""
+        return False, None, (
+            f"Gather complete members of this meeting ({chat_id}) using "
+            "microsoft_teams-ListChatMembers or workiq_get_chat. Save a fresh owner-bound M365 "
+            "observation envelope and supply --members-file <path> "
+            "(step-action: --param members_file=<path>). No notification is prepared.")
+    try:
+        members = _mention_members(chat_id, member_observation, owner)
+        directory = _mention_directory(owners, members, member_observation, owner)
+    except ValueError as exc:
+        return False, None, str(exc)
+    people, missing = {}, []
     for upn in sorted(owners):
         matches = [m for m in members if isinstance(m, dict)
                    and str(m.get("email") or "").casefold() == upn.casefold()]
         if len(matches) > 1:
             return False, None, f"Ambiguous meeting identity for {upn}"
         person = matches[0] if matches else None
+        identity = directory.get(upn)
+        if identity and person and identity != str(UUID(person["userId"])):
+            return False, None, f"Conflicting member/directory evidence for {upn}; no notification prepared"
+        if identity and person is None:
+            person = next(member for member in members if str(UUID(member["userId"])) == identity)
         if person and person.get("displayName") and person.get("userId"):
             people[upn] = {"id": person["userId"], "name": person["displayName"]}
             continue
@@ -347,15 +499,17 @@ def resolve_mention_people(chat_id, owners, timeout=90, *, member_observation=No
             # Completed former owners aren't tagged; never invent a mention for them.
             people[upn] = {"name": owners[upn]["name"]}
             continue
-        ok, user, detail = D._graph_get(
-            f"{D._GRAPH}/users/{quote(upn, safe='')}?$select=id,displayName,userPrincipalName,mail", timeout)
-        if not ok:
-            return False, None, f"Cannot resolve pending owner {upn}: {detail}"
-        if (not isinstance(user, dict) or user.get("id") not in member_ids
-                or upn.casefold() not in {str(user.get(k) or "").casefold() for k in ("userPrincipalName", "mail")}
-                or not user.get("displayName")):
-            return False, None, f"Pending owner {upn} is not a verified user in this meeting; fix membership/assignment"
-        people[upn] = {"id": user["id"], "name": user["displayName"]}
+        missing.append({"entityUrls": [mention_directory_path(upn)]})
+    if missing:
+        raise D.ConnectorObservationRequired(
+            "Missing explicit directory evidence linking pending tester UPNs to this meeting's "
+            "member userId values. If the required workiq.fetch entity tool is not loaded, configure "
+            "the installed M365 entity connector; collect the exact requested reads. Append "
+            "fresh owner-bound envelopes as directory_observations on the members-file envelope, "
+            "then rerun with --members-file <path>. Never guess mappings or omit mentions.",
+            tool="workiq.fetch", arguments=missing[0], owner=owner,
+            additional_requests=[m365.observation_request("workiq.fetch", args, owner)
+                                 for args in missing[1:]])
     return True, people, ""
 
 

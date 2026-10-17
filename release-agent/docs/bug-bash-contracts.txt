@@ -1,0 +1,554 @@
+PHASE 3: STEP-BY-STEP DATA CONTRACTS AND CORRECTIONS
+===================================================
+Updated: 2026-10-16. Baseline: local Phase2 checkpoint a00dabfcc.
+Branch: feature/release-agent-phase3-audit (not pushed).
+Current owner request: finish all eleven Phase3 steps, in workflow order, with
+contract/correction/focused proof for each. No real test plan, meeting or message
+is created/modified by this audit. Broker first-step corrections are preserved.
+All eleven step contracts and local integration are now complete. This is offline
+proof, not live-provider certification. The existing default-suite case-budget
+failure is a separate OPEN blocker; see the final section and release-audit.txt.
+
+1. bug_bash.clone_plans_broker
+-------------------------------
+PURPOSE / ENTRY:
+  Build or safely reuse this release's Broker test plan with exactly three flat
+  suites, referencing existing test cases rather than cloning work items.
+  Automatic transactional effect; recovery=frozen. Normal workflow requires
+  readiness and prior phases, including the human Phase2 RC report gate.
+  Never use the completed isolated Phase2 test as approval to mutate shared ADO.
+
+INPUT STATE:
+  release_id -> default name "Android Monthly Release - <Mon YYYY>".
+    This currently uses release_id, not target_month; naming policy is unchanged.
+  pipeline_runs.rcs[-1] -> latest verified ECS/Local source snapshots. State loader
+    verifies/hydrates separate Phase2 evidence files before constructing context.
+    Projection validates complete attributed source tests before preparing points.
+  resources.broker_test_plan -> release-owned identity/lifecycle/source/receipt,
+    when present. An explicitly malformed/null record is a hold, not "absent".
+  steps["bug_bash.clone_plans_broker"].data.plan_id -> historical bound plan, if
+    present. Must agree with resource registry; cannot replace a bound plan.
+  steps[...].execution.effect_input -> exact frozen operation during recovery.
+
+INPUT CONFIG:
+  tools.testplans / coordinates.testplans.broker:
+    organization/project, master plan/root/manual/native/UI subtree IDs,
+    destination area/iteration, manual flight configurations, baseline UI configs.
+  Configurations include exact ECS/Local and PROD/RC component combinations;
+    tools.ui_mapping provides verified names and routing.
+  Test-only inputs name/plan_id/clone_id/fail remain explicit offline overrides.
+    Production plan creation uses real source reads and a durable effect permit.
+    Name override must be nonblank text without surrounding whitespace.
+
+INPUT PROVIDER / PREPARATION:
+  Read master root's explicit configurations; resolve its Native Auth WIQL.
+  Flatten manual/UI master subtree memberships into unique referenced case IDs.
+  Project frozen Phase2 UI scenarios into target configuration combinations.
+  Verify actual ADO configuration identities, names/state/flight metadata.
+  Freeze source = {
+    root_configs, broker_configs, ui_configs: nonempty unique positive int lists,
+    broker_cases, ui_cases: nonempty unique positive int lists,
+    native_query: nonblank WIQL,
+    ui_case_configs: string case ID -> allowed unique configuration IDs,
+    ui_projection_provenance: RC/provider/build/count-policy/mapping attribution
+  }.
+  Missing/malformed source is blocked BEFORE the engine reserves an external
+  effect. Explicit invalid saved source is not silently replaced from the master.
+  Recovery uses the frozen source, not newly changed template membership.
+
+GENERATED TRANSIENT VALUES:
+  Validated source projections, candidate plan list, validation diagnostics.
+  No copied test cases, changed results, test assignments, tester identities,
+  invites/messages, human quality decisions or Authenticator suite are produced.
+
+ENGINE-OWNED PERSISTED OPERATION:
+  steps["bug_bash.clone_plans_broker"].execution:
+    id, owner, started_at, effect_mode=transactional, effect_recovery=frozen,
+    operation_key=<full SHA256>, effect_input={
+      release, plan_name, identity, rc, ecs_run, local_run,
+      evidence_sha256:<16-char source diagnostic>, source
+    }.
+  The short evidence_sha256 is NOT the authority: the engine's full operation_key
+  hashes the complete frozen input/source. Existing frozen execution is checked
+  by the engine, not redefined by a fresh handler invocation.
+  Normal CLI release lock/checkpoint persists permission before a provider POST.
+
+BUSINESS/RECOVERY PERSISTENCE:
+  resources.broker_test_plan:
+    identity={release_id,name,org,project,area,iteration,marker}
+    status: creating -> created -> ready (or explicitly retry_authorized)
+    source: frozen membership/query/configuration/projection snapshot
+    started_at: pre-create UTC timestamp
+    plan_id: positive provider ID, checkpointed immediately on receipt
+    ui_suite_id: verified target UI Automation suite
+    area_path: actual accepted area identity
+    verified_at: final validation UTC timestamp
+    selection?={plan_id,reason,source,at,by?}: explicit owner binding
+    attempt_history?: retained unresolved attempts
+    retry_review?={reason,source,at,by?}: explicit reviewed absence authorization.
+  This resource survives reopening/completion; it is not a second step status.
+  During initial creation source is also in effect_input for safe recovery;
+  terminal engine lifecycle clears execution, not the resource.
+
+TERMINAL STEP OUTPUT:
+  steps["bug_bash.clone_plans_broker"]:
+    common status=done/completed_at/note/by/links after complete target validation,
+    data={plan_id,plan_name,ui_suite_id}, preserving other owned/protected data.
+  Resource producer commits through BrokerResource; handler returns StepData.
+  IDs are deliberate compact references for consumers, not full plan duplication.
+
+EXTERNAL OUTPUT:
+  New plan plus exactly three top-level suites under the root:
+    Manual Tests (Android Broker): static, manual flight configurations.
+    Manual Tests (Native Auth): dynamic, preserved WIQL, inherits root configs.
+    UI Automation (Android Broker): static, baseline plus selective represented
+      RC/RC configurations from frozen source.
+  Cases are REFERENCES to existing work items; Native Auth query stays dynamic.
+  The dynamic suite's membership may change as shared tags change; this step
+  freezes its query, not an independent snapshot of every future query result.
+  Resource marker and verified-build completion marker in plan description.
+  ADO does not provide a create idempotency key. No blind retry or auto-deletion.
+
+SUCCESS / REUSE:
+  Validate exact plan name/area/iteration/ownership marker, explicit root configs,
+  exactly three flat suite names/types/parents, Native Auth query and exact unique
+  static case/configuration points against saved source.
+  Existing unique complete plan is reused without recreating suites or resetting
+  test results. Multiple candidates require explicit owner selection.
+  Configuration drift, unreadable lookup or missing bound plan BLOCKS; never
+  fall back to creating a replacement that loses existing results.
+
+FAILURE / RECONCILIATION:
+  Corrupt discovery/source/root/suite/point data is an explicit hold, not an
+  exception or proof of absence. No broad catch or empty-success fallback.
+  status=creating is checkpointed before POST. A successful receipt with valid
+  plan ID checkpoints status=created BEFORE inspecting rootSuite. Malformed/missing
+  root then blocks with that ID retained; no downstream suite writes occur.
+  Missing/unreadable plan ID leaves creating unresolved. Later discovery or
+  explicit owner-reviewed verified absence is required; no automatic second POST.
+  Partial plans are retained. Recovery verifies them, never silently rebuilds
+  suites/deletes points/duplicates plans. Complete target with missing completion
+  marker can retry only that marker PATCH.
+  broker-plan command inspects/selects existing resources or records explicit
+  reviewed absence; it never creates a plan or marks the workflow step done.
+  Invalid recorded identity is not treated as missing and replaced by defaults.
+
+CONSUMERS / RETENTION:
+  clone_plans_auth eligibility; ui_test_status reads plan_id/ui_suite_id to fill
+  frozen RC results; ui_results binds publication to exact target identities.
+  distribute_tests, progress, invite and Native Auth notice consume release plan
+  references, never silently fall back to the shared master.
+  Preserve resource/source/IDs/selection/retry receipts for the release lifetime
+  and reopen/recovery. No automatic garbage collection, shared-case AssignedTo
+  changes, or replacement/deletion is introduced here.
+
+CORRECTIONS / PROOF:
+  A036: reject malformed record/name/source before effect reservation; normalize
+    shape/ID read errors to explicit holds; recovery command rejects invalid
+    recorded identity instead of treating falsey corrupt data as absent.
+  A037: preserve valid created plan ID before validating a bad rootSuite receipt;
+    malformed/unknown create receipts remain unresolved, never authorize repost.
+  Existing pytest, synthetic ADO and isolated locked state only:
+    231 passed26.47s across Broker recovery/mapping/effects/authority.
+    7 additional targeted cases passed2.34s: actual CLI interruption/reload/resume,
+      old flat-suite/reference creation, failures/mocks and hydrated Phase2 source.
+    Total28.81s within the existing15-minute validation budget.
+  Actual CLI test proves malformed root receipt retains resource plan ID and
+  execution ID across retry, exactly one create and no DELETE/Auth step execution.
+  Existing concurrency, lost acknowledgements, selection, partial writes, frozen
+  mapping, coordinate drift and no-outcome-reset cases remain covered.
+  Live ADO creation/permissions/read-back are NOT claimed proven by offline tests.
+
+SUBSEQUENT WORK:
+  The remaining ten contracts are recorded below. Completion of this audit does
+  not dispatch any of these steps against a real release.
+
+2. bug_bash.clone_plans_auth
+----------------------------
+PURPOSE / ENTRY:
+  Transactional/frozen automatic effect after Broker plan creation. Create/reuse
+  a dynamic suite in the configured standing Authenticator plan/root; no copied
+  work items, Tester assignment or test outcomes here.
+INPUT:
+  release_id and canonical valid ccd YYYY-MM-DD. Default suite name is
+  Android release/MM/DD/YYYY; explicit nonblank test name may override it.
+  Config supplies org/project/plan_id/parent_suite_id and Android ReleaseBugBash
+  WIQL. Saved step.data.suite_id and creation receipt, or frozen execution input,
+  are authoritative recovery identities; a falsey corrupt ID is not "absent".
+GENERATED / FROZEN OPERATION:
+  effect_input={release,org,project,plan_id,parent_suite_id,name,query}, full
+  operation_key/execution ownership from the existing engine. Resolve before
+  reserving; recovery uses the same target/query, never current mutated defaults.
+PROVIDER CONTRACT:
+  Exhaustive suite discovery requires a valid collection and a unique matching
+  direct child. Read-back validates exact positive ID/name/type/parent/query.
+  Query layout normalization preserves whitespace inside quoted literals.
+PERSISTED OUTPUT:
+  steps["bug_bash.clone_plans_auth"].data:
+    suite_id, suite_name
+    creation={operation_key,status:creating|created|ready|retry_authorized,
+              suite_id?,last_failure?,retry_reason?,attempt_history?}
+  Status creating is checkpointed before POST. A valid acknowledged ID is saved
+  as suite_id/status=created BEFORE identity read-back; failed read-back therefore
+  retains a directly recoverable target. Successful validation marks ready.
+  Preserve attempt history/retry evidence rather than replacing it on success.
+  Engine alone owns step status/completed_at/execution; successful Done has suite link.
+FAILURE / RECOVERY / LIFETIME:
+  Invalid CCD/name/source identity or malformed discovery blocks, no create.
+  Unknown create receipt stays creating unresolved; no blind second POST.
+  Known ID always validates directly: never fall through to name discovery or
+  create because ID is unreadable/zero/null. Wrong/moved suite needs owner repair.
+  Explicit retry needs a nonblank owner reason and verified absence for a frozen
+  request with no recorded suite ID. Existing ID cannot be reauthorized as absent.
+  Retain suite identity, query binding and attempt evidence across reopen/resume.
+CONSUMERS:
+  ui_test_status target, distribution's release points, invite/report links;
+  do not substitute another release's same-named/nearby suite or the plan root.
+CORRECTIONS / PROOF:
+  Canonical date/name validation, malformed provider holds, positive bound IDs,
+  early created-ID checkpoint, no-ID retry protection, retained attempt history,
+  and quoted-WIQL identity correction. New auth contract cases passed together
+  with human/kernel/capability/lifecycle selectors (188passed4.93s); earlier
+  selected legacy Auth fixtures also pass after required capability wiring.
+
+3. bug_bash.ui_test_status
+---------------------------
+INPUT:
+  pipeline_runs.rcs[-1] hydrated Phase2 ECS/Local/Auth snapshots; complete current
+  RC/build identities; clone_plans_broker.data.plan_id/ui_suite_id and
+  clone_plans_auth.data.suite_id; release/CCD/owner; configured provider coordinates.
+  Both product projections must validate BEFORE reserving an effect. Real target
+  name/marker/area/iteration/suite parent/query must identify this release, never
+  the shared Broker template. Explicit clone-owned test names remain supported.
+GENERATED / FROZEN:
+  effect_input={binding,destination_names,broker_plan_id,evidence_sha256,
+    broker_projection,auth_projection,rc,owner_email,coordinates}.
+  binding={release,rc,ecs_build,local_build,auth_apk_build,auth_test_build,
+    broker:{plan_id,suite_id},auth:{plan_id,suite_id}} uses positive normalized IDs.
+  Projections retain mapped verdicts/provenance/failure diagnostics, not full raw
+  Unit/Instrumented result arrays. rc carries only IDs needed by generated links.
+  The full operation_key owns recovery; the short evidence_sha256 is diagnostic.
+  Applied-point recovery receipts are read separately and do not change that key.
+PERSISTED OUTPUT:
+  steps["bug_bash.ui_test_status"].data, through StepData checkpoints:
+    plan_id, provenance, summary, fill_status:incomplete|complete
+    broker={failed_case_ids,failed_assigned_to_owner,assignment_errors}
+    auth={suite_id,passed,failed,failed_case_ids,failed_case_titles,failures,
+          provenance,mapping,assignment_errors,failed_assigned_to_owner}
+    result={id,status,stage,binding,broker,auth,investigations,error?}
+  summary and auth.mapping are per-product write receipts/diagnostics:
+    target={plan_id,suite_id}, applied_points[], reused_points[], points_total,
+    set_passed/set_failed[/set_not_applicable], untouched_points[],
+    unmatched_verdicts[], incomplete_outcome?/uncertain_points?.
+  Each applied point has point_id,case_id,outcome and Broker config_id. result
+  product records compact these into target,automated_case_ids,failed_case_ids,
+  applied_points. investigations={broker,auth,unmapped_broker,
+    report_only_or_unmapped_auth}. The result UUID is observation identity, not
+  the semantic identity of the failures a human reviewed.
+EXTERNAL OUTPUT / RECOVERY:
+  Outcome PATCHes affect only mapped automated release points. All point shapes
+  and prior results validate before writes; each native PATCH batch rechecks
+  point/case/configuration/outcome against its observation. Only pending results
+  or unchanged acknowledged automation-owned results may be written.
+  Matching prior receipts are reused without PATCH. Manual changes, unknown
+  outcomes and missing/corrupt receipts HOLD, never overwrite or infer ownership.
+  Failed outcome batches remain uncertain and cannot authorize replay. Earlier
+  acknowledged product/batch receipts remain in existing receipt slots, including
+  interruption before either writer returns. No new root ledger is introduced.
+  Only acknowledged Failed points may receive release-specific owner Tester
+  updates; assignment errors are separate and do not fabricate successful triage.
+  No shared test-case System.AssignedTo write is permitted.
+PUBLICATION / CONSUMERS / RETENTION:
+  Invalidate result to incomplete durably BEFORE provider work. Publish complete
+  only after both products validate and return acknowledged receipts. Consumers
+  completed_result() reject incomplete/stale/bad bindings and malformed points.
+  Distribution consumes automation/failure classification; progress consumes
+  exact original failure points; ui_failures consumes generated investigations.
+  Retain receipts across retry/reopen for this release/destination. Source/target
+  changes need producer refresh, not another product's receipt or raw Phase2
+  inference. UIFailureReminder changes only generated downstream contribution.
+
+4. bug_bash.distribute_tests
+-----------------------------
+INPUT:
+  Current completed_result from ui_test_status; clone-owned Broker/Auth targets;
+  distribution.yaml roster/exclusions/suite/triage tags; verified primary OCE UPN;
+  owner-confirmed OOF selection; live manual case memberships/tags and release
+  point IDs/case IDs/config IDs/Tester identity IDs and exact resolved UPNs.
+  Live directory input is --roster-file / BuildParameters.roster_file, containing
+  {observations:[fresh owner-bound hosted WorkIQ entity lookup/member pages]}.
+  Exact group mail/GUID, typed user identities, complete pagination/counts and
+  source/eligible members enter the transient review hash. Missing pages emit the
+  exact next read request; no Azure CLI Graph or people-search fallback.
+  Missing current UI receipts/destinations/identities HOLD. Auth failures use only
+  acknowledged failed points, not every configuration of a shared case.
+TRANSIENT OUTPUT / AUTHORITY:
+  Candidates, eligible roster, observed/proposed workloads, manual totals,
+  owner_triage, case_changes, point_changes, _current/_targets/_point_sets and
+  _review are generated from live ADO. No persistent assignment list owns truth.
+  "case_changes" describes grouped point-Tester corrections, not case-field PATCH.
+  Preview makes a checked WritePlan for align_point_testers, exact point identities,
+  current Tester IDs, resolved new identities and availability/source conditions.
+  Owner reviews its hash; authorization durably reserves the existing command
+  execution before writes. Generic reservation/old review cannot authorize edits.
+PERSISTED OUTPUT:
+  steps["bug_bash.distribute_tests"].data:
+    oce: verified on-call exclusion UPN
+    oof={upns,confirmed_by,source:"release-owner",confirmed_at,release_id,ccd}
+  Existing engine-owned execution/closed write-review receipts retain command
+  ownership. Do not add an allocation/preview/replay ledger to domain state.
+  Normal preview applies no StepData and saves no availability selection.
+  Authoritative final inspection applies availability and step completion.
+EXTERNAL OUTPUT / FAILURE:
+  PATCH only reviewed release point Testers; preserve outcome, tags and shared
+  case owner. Recheck release destination/source and point/case/config/Tester
+  identity before each batch and validate read-back. Partial failure preserves
+  active ownership and requires fresh live inspection, not rollback/blind replay.
+LIFETIME / CONSUMERS:
+  OOF confirmation binds owner/release/CCD; changes require an explicit new answer.
+  Re-resolve current OCE/roster on inspection. Preserve valid manual point ownership;
+  balance only required corrections. Progress later reads live Testers, never this
+  step's generated preview or a shared case AssignedTo field.
+
+5. bug_bash.send_invite
+------------------------
+INPUT:
+  Completed clone_plans_broker.data.plan_id and clone_plans_auth.data.suite_id
+  (plus explicit plan_id when present), current RC number/ECS/Local/Auth build IDs,
+  release/target_month/owner metadata, clock, recipient config and local flags.
+  Missing/malformed/incomplete plan sources or mismatched RC identities HOLD.
+WORK / TRANSIENT OUTPUT:
+  Existing invite template produces exact HTML and workiq_create_event payload:
+    subject,start,end,timeZone,body,bodyContentType,attendees,isOnlineMeeting.
+  Pacific-time scheduling rounds UP (never truncates notice lead time) and applies
+  the existing weekday/15:00 rule. Flags are HTML-escaped, not interpreted markup.
+  Availability/OOF is explicitly UNKNOWN: Scout must check calendars/OOF and obtain
+  owner recipient/time approval before sending. Proposed time is not free/busy proof.
+PERSISTED / AUTHORITY:
+  Notification descriptor freezes exact calendar target/payload, release owner/CCD,
+  minimal scalar plan/current-RC/build/target-month/owner-name source matches.
+  Prepare is not permission to send. Claim is durable before direct calendar tool;
+  only confirmed provider receipt plus finalization completes send_invite.
+  Step.data notification_id/notification_execution_id links to that exact sent
+  ledger entry. Completion also stores stable gate_preconditions for final review.
+  Event ID, optional receipted join URL and actual required/optional/resource
+  recipient lists are recovered from the descriptor/receipt, not a topic search.
+RETENTION / CONSUMERS:
+  delivered_invite validates terminal sent/applied/hash/source/target evidence.
+  Keep event/recipient/receipt identity through chat activation and final gate;
+  wrong owner/source/time/subject/target/missing receipt blocks, never fabricate
+  an invitation from a raw event ID. No repeated calendar create on stale evidence.
+  activate_chat consumes that exact invitation, progress consumes its bound chat.
+
+6. bug_bash.activate_chat
+--------------------------
+INPUT / RESOLUTION:
+  Exact acknowledged invitation identity from delivered_invite, current owner
+  account, event ID, expected subject/start/end/timezone/recipient roles and
+  optional receipted join URL. Primary resolution uses fresh native WorkIQ profile
+  and exact event observation plus Agency Teams GetChat for the thread encoded in
+  that validated event's meetup-join URL. No Azure CLI Graph or assumed hosted
+  onlineMeeting endpoint. Opaque joins immediately request owner-link recovery.
+  Pasted --chat-id is an assertion only.
+  No topic/name search or generic chat fallback. HTTP403 stops Graph retries and
+  immediately offers explicit owner-confirmed link recovery/manual posting/hold.
+  Manual recovery consumes the same acknowledged invitation plus a copied HTTPS
+  Teams chat/message/meetup link and explicit owner activation/link confirmation.
+  Preview is read-only and does not call Graph; a bare chat ID is not approval.
+PROVIDER VALIDATION:
+  Required/optional/resource recipient role and multiplicity must match actual
+  Native event attendees[].emailAddress.address/type (case/order insensitive).
+  Missing, extra, removed, malformed or partial attendees HOLD. Event/join URL/
+  onlineMeeting/thread identities must agree. HTTPS Teams URL only, no credentials.
+PERSISTED OUTPUT:
+  steps["bug_bash.activate_chat"].data =
+    {chat_id,invite:<exact sent invitation>,meeting:<verified event/meeting/chat>,
+     verified_at:<native/legacy proof> OR confirmed_at:<owner attestation>,gate_preconditions}
+  Existing checked record-bugbash-chat recorder writes only after successful
+  resolution OR exact-hash owner-confirmed recovery; failed checks leave state unchanged.
+  Native mode meeting.verification="native_connectors" stores only relevant
+  profile identity/event contract/typed attendees/chat fields, invite_hash and
+  thread_source. No unrelated profile fields/body or fabricated online meeting ID.
+  Each input initially requires exact tool/arguments/owner/offset time and complete
+  successful result, at most15minutes old and never future-dated. Completed binding
+  keeps durable identity proof without expiring it solely on a cosmetic clock.
+  Owner mode meeting fields: verification="owner_attested", event_id, subject,
+  chat_id, chat_link, invite_hash, review_hash, optional receipted join_url,
+  approved_by, reason, activated=true. No fabricated online_meeting_id. Its
+  hash binds the exact current invite/receipt/link; changed inputs require new review.
+  An encoded receipted thread contradiction rejects even with owner confirmation.
+  Without a thread-bearing receipted join URL, linkage is expressly attested by the
+  owner. Confirmer identity, current provider event/attendees and chat access are not
+  independently verified; never label this as Graph proof or a successful send.
+  Gate preconditions bind exact invitation notification/execution/descriptor and
+  sent/applied/receipted event identities, not cosmetic notes or verification times.
+LIFETIME / CONSUMERS:
+  stored_chat_id returns only a terminal still-current invite-to-chat binding.
+  Downstream progress senders validate it and freeze identities in their offers.
+  Owner mode freezes the full attested meeting/provenance, not an invented Graph ID.
+  Missing permission to send still uses ordinary notification holds and manual progress.
+  Terminal stale/different binding requires explicit reopen, never silent replacement.
+
+7. bug_bash.notify_native_auth
+-------------------------------
+INPUT:
+  Completed valid Broker plan ID, release/CCD/ship-month/owner metadata and verified
+  Native Auth release-engineer UPN + engineer_source provenance. Inline schedule
+  alias is a hint only; resolve live schedule/directory or ask owner, never guess.
+WORK / OUTBOUND:
+  Exact HTML message asks the verified engineer to run Native Auth tests in this
+  release plan and report back. Owner display text is escaped. Recipient approval
+  precedes normal notification prepare/claim/direct send/result/finalize.
+PERSISTED OUTPUT:
+  Step.data engineer,engineer_source,notification_id,notification_execution_id,
+  gate_preconditions; full exact notification/target/acknowledgement in ledger.
+  Source matches freeze stable plan/target-month/owner identity, not mutable notes.
+SUCCESS / CONSUMERS / RETENTION:
+  notified_engineer validates exact acknowledged terminal direct-user delivery,
+  current sources, message body, UPN, descriptor/attempt identity and completion.
+  Engineer text alone is NOT success; legacy raw-recorder cannot attest delivery.
+  native_auth_signoff consumes that verified recipient and exact receipt identities.
+  Keep the sent proof through sign-off/final gate; changed or partial proof HOLDs.
+
+8. bug_bash.bugbash_updates
+----------------------------
+INPUT:
+  Current completed_result and exact acknowledged Broker/Auth failure points;
+  clone-owned plan/suite IDs; stored_chat_id from verified current invitation;
+  live point outcomes and Testers; current RC run links; verified meeting-member
+  identities for mentions; configured polling interval/working-hours clock.
+  Member identities come from fresh exact-chat Teams ListChatMembers/native
+  workiq_get_chat observation envelopes through --members-file; raw legacy
+  member snapshots are not account/time-bound proof. Optional directory_observations
+  in that envelope use exact hosted WorkIQ user reads to link assigned UPNs to actual
+  meeting-member GUIDs when SMTP aliases differ. Missing directory/member evidence
+  emits actionable read requests; malformed/stale/wrong identities hold.
+  No raw Phase2 classification, case-owner fallback or cached assignment list.
+TRANSIENT OUTPUT:
+  gather_progress returns total,done,remaining,auto_failed_remaining,
+  auto_failed_remaining_by_product,auth_excluded_automated,owners,unassigned.
+  owners[upn]={name,total,done,remaining,tests[]}; each test carries
+  id,name,url,state,products,auto_failed,auto_products.
+  Overall totals are distinct case IDs across both products; owner workloads
+  aggregate only that owner's points. Shared cases with different Testers do
+  not transfer another owner's triage flag. Product triage totals stay separate.
+  Only live Passed/N/A count as done. All originally failed configurations must
+  resolve; missing/rebound failure points HOLD rather than disappear from totals.
+OUTBOUND / PERSISTENCE:
+  First unresolved-work update returns NeedsSkill(workiq_send_chat_message), exact
+  chat/content/mentions and normal notification source binding. Ledger retains
+  approved descriptor/claim/acknowledgement; applied completion marks the trigger
+  done and requests configured bug-bash-update-poller provisioning. Provisioning
+  registry is separate _automations.json, not a new release-state root field.
+  A confirmed periodic final summary writes only
+    steps["bug_bash.bugbash_updates"].data.poll_complete=true.
+  Full live workloads/rendered previews are not new persistent domain facts.
+  Working-hour ticks stage expiring interval notifications; first post is immediate
+  after eligibility, not delayed until the next interval. If live work is already
+  complete, the trigger may finish without sending/provisioning; no owner review
+  or final human gate is thereby approved.
+LIFETIME / FAILURE / CONSUMERS:
+  Keep delivery ownership/receipts and configured automation cleanup semantics.
+  No summary send failure may mark polling complete. Missing chat/member access
+  is an explicit hold, not another chat or guessed mention. Stopped phase/owner
+  completion ends polling; it does not infer ui_failures or Native Auth sign-off.
+  No actual notification or automation was created in this audit.
+
+9. bug_bash.ui_failures
+------------------------
+INPUT / OWNERSHIP:
+  Human action, not automatic success. UI producer contributes generated failure
+  facts, source links/counts/IDs and minimal source gate_preconditions using its
+  declared UIFailureContribution; owner retains their own note/completion.
+  The producer may replace only its generated contribution, not claim an owner's
+  investigation is done. Shared case assignment is not the source of investigations.
+CONFIRMATION / PERSISTENCE:
+  Actual human done freezes current gate_preconditions as confirmation_preconditions
+  in the existing step.data, alongside the human note/by/completed_at.
+  A later producer refresh may update generated facts and current conditions, but
+  cannot rewrite the evidence that the owner previously confirmed. Source mismatch
+  blocks later human completion/final approval until an explicit fresh review.
+  Reopened/pending review ignores the historical confirmation for eligibility and
+  replaces it only on a new actual owner confirmation. Historical notes survive.
+  The engine's source guard covers own and sequential/explicit prerequisite facts.
+  Exact producer conditions bind release/CCD/owner, raw current RC/build IDs and
+  completion flags, clone destinations, result binding/status/stage and represented
+  Broker/Auth failure lists. Receipt UUID, poll/verification timestamps and whole
+  mutable records are excluded: identical reruns do not invalidate human work.
+  Changed failures with the SAME run IDs still block the old confirmation.
+  Generated fields are broker_failed_tests,auth_failed_cases,auth_failed_tests and
+  ui_test_status_generated={note_length,note_sha256,links}; the latter identifies
+  only the replaceable generated note prefix/links. Human note/by/completed_at
+  and confirmation_preconditions are retained. Empty failures clear generated
+  counts/text, not the human attestation or its source evidence.
+
+10. bug_bash.native_auth_signoff
+---------------------------------
+INPUT:
+  Completed exact acknowledged Native Auth notification, verified recipient from
+  notified_engineer, Broker plan ID, release/CCD/owner. Bare engineer text, missing
+  receipt or malformed target cannot produce a usable sign-off confirmation.
+WORK / OUTPUT:
+  Pure NeedsHuman(attest=True), no send or automatic attestation. Human-focused
+  prompt names actual notified engineer/plan, not raw engine commands.
+  Step.data attestation_binding + gate_preconditions binds owner/release/date/
+  engineer/plan plus exact notification/execution/descriptor/provenance and
+  sent/applied receipt state. OwnStepData cannot mutate human lifecycle.
+  complete_step rechecks the current handler before any actual done; stale request
+  needs explicit reopen/fresh confirmation. Successful done retains source binding,
+  human note and frozen confirmation_preconditions for final gate.
+  attestation_binding hashes the exact notification ID/execution/descriptor hash/
+  engineer provenance as well as release/date/owner/engineer/plan. A replacement
+  acknowledged attempt for the SAME engineer/plan cannot silently replace a
+  pending request. A source-bound pending human action may be explicitly reopened;
+  an untouched pending step still rejects a meaningless reopen. This adds no
+  provider action or automatic human confirmation. Cosmetic timestamps do not bind.
+RETENTION:
+  Preserve the actual owner confirmation and historical binding; never carry it
+  forward silently to another engineer, plan or notification.
+
+11. bug_bash.bugbash_complete
+------------------------------
+INPUT / DECISION:
+  Explicit human approval gate after all Phase3 prerequisites. No automatic
+  threshold/result can approve it. User may deny/hold or approve with comment.
+  Own and transitive explicit dependencies, plus every earlier step in a
+  sequential phase, have their stable source/receipt/confirmation conditions checked.
+  Missing/changed/malformed source conditions reject BEFORE a gate decision is added.
+PERSISTED OUTPUT:
+  Only explicit approval creates the standard human GateDecision and terminal
+  step status/note/by/completed_at. Denial remains a recorded hold. No production
+  pipeline approval, release tags, publication or next-phase provider work is
+  implied by inspecting this prompt during an audit.
+PRESENTATION:
+  Future steps lacking prerequisites are pending, never labeled automatic Scout
+  work/ready approval. Only the eligible current owner decision is actionable.
+
+OFFLINE PROOF AND REMAINING SCOPE
+---------------------------------
+Communication selectors:133passed15.27s; live event recipient negative/positive
+selectors27passed0.56s (synthetic Graph only). Parent Auth/human/capability/lifecycle
+selection188passed4.93s; manual-result and human-source selection28passed3.76s.
+Final recovery session:
+  629 Phase3/Broker/UI/distribution/authority regressions passed57.12s.
+  349 shared lifecycle/notification/publication/evidence regressions passed54.98s.
+  Replacement-delivery regression first reproduced an unsafe completion. Its
+  correction also exposed a blocked pending-prompt reopen; the generic eligibility
+  correction now permits only a prepared human confirmation to reopen.
+  Final five Phase3 modules plus transitions/lifecycle/notification/BugBash:
+  421passed31.04s. Same-run changed-failure, unchanged rerun, exact-notice change,
+  explicit reopen/fresh done, cosmetic changes and pending-step guards included.
+  These overlapping selections are not a summed unique-case/full-suite claim.
+  Expanded handler/effect/parameter coverage passed226 cases; two follow-through
+  assertions then passed in1.12s: explicit fresh review replaces its human note,
+  and catalog completeness matches all configured keys rather than stale count68.
+  All validation commands including reproductions/collection took about3.4minutes
+  cumulatively, below15minutes; no timeout/budget increase/new tooling.
+OPEN DEFAULT-SUITE BLOCKER:
+  Existing case-budget guard FAILS: current daily core1466 > cap1086. An isolated
+  archive of saved HEAD a00dabfcc already collects1182 >1086; Phase3 adds284.
+  Full collection partitions2771 cases into1466core +1305extended. No tests were
+  removed, silently deferred or reclassified to manufacture a passing budget.
+  Owner-reviewed coverage consolidation/classification is required separately;
+  this audit does NOT claim a green default suite or live Phase3 operation.
+  No live ADO/calendar/Teams operation, state adoption, commit or push was run.

@@ -24,12 +24,17 @@ with an engineer it reports done without re-sending.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from html import escape
+import re
 
 from orchestrator.step_context import StepContext, thaw
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked, Done
 from tools import testplans as T
+from orchestrator import delivery
+from steps.build_verify._common import valid_id
+from steps.bug_bash.send_invite import sent_notification, source_matches, gate_preconditions
 
 ID = "notify_native_auth"
 KIND = "scout"
@@ -61,12 +66,39 @@ NATIVE_AUTH_RE = {
 
 
 def notified_engineer(context):
-    """The alias/UPN the step recorded as notified, or None."""
-    return (context.evidence.step("bug_bash", ID).data or {}).get("engineer")
+    """Return a verified recipient only from this step's acknowledged exact delivery."""
+    try:
+        step, item, attempt = sent_notification(context, ID, "microsoft_teams-SendMessageToUser")
+        engineer = step.data.get("engineer")
+        source = step.data.get("engineer_source")
+        payload = item.get("payload") or {}
+        completion = item["completion"].get("data") or {}
+        broker_plan = context.evidence.step("bug_bash", "clone_plans_broker").data.get("plan_id")
+        expected = _message_html(schedule.target_month_label(context.release),
+                                 context.release.owner_name, T.plan_web_url(broker_plan))
+        if (not _verified_recipient(engineer, source)
+                or item.get("channel") != "teams"
+                or item.get("target") != {"userIdOrUpn": engineer}
+                or payload != {"userIdOrUpn": engineer, "content": expected, "contentType": "html"}
+                or completion.get("engineer") != engineer
+                or completion.get("engineer_source") != source):
+            return None
+        delivery.require_receipt({"attempts": [attempt]})
+        return engineer
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError):
+        return None
+
+
+def _verified_recipient(engineer, source):
+    return (isinstance(engineer, str)
+            and re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", engineer)
+            is not None
+            and isinstance(source, str) and bool(source.strip()))
 
 
 def _message_html(month_year, owner_name, plan_url):
-    who = owner_name or "the release owner"
+    who = escape(owner_name or "the release owner")
+    month_year, plan_url = escape(month_year), escape(plan_url, quote=True)
     return (
         f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'
         f'<p>Hi \u2014 the <b>{month_year} Android release Bug Bash</b> is ready to go.</p>'
@@ -84,15 +116,17 @@ def build(context: StepContext[BuildParameters]):
     engineer_source = context.parameters.engineer_source
     if not context.release.ccd:
         return Blocked("notify_native_auth: no CCD set — can't identify the release month.")
-    broker_plan = (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
-    if not broker_plan:
+    broker = context.evidence.step("bug_bash", "clone_plans_broker")
+    broker_plan = broker.data.get("plan_id")
+    if broker.status != "done" or not valid_id(broker_plan):
         return Blocked("notify_native_auth: the Broker test plan isn't built yet "
                        "(clone_plans_broker) — run that first.")
 
     # Idempotent: already recorded as notified → done, no re-send.
-    already = notified_engineer(context)
-    if already:
-        if not context.evidence.completed("bug_bash", ID):
+    previous = context.evidence.step("bug_bash", ID)
+    if previous.data.get("engineer") or previous.status in ("done", "skipped"):
+        already = notified_engineer(context)
+        if not already:
             return Blocked("Native Auth engineer data lacks terminal delivery evidence; owner recovery required.")
         return Done(f"Native Auth RE ({already}) already notified the {ID} for "
                     f"{context.release.release_id}.")
@@ -101,18 +135,23 @@ def build(context: StepContext[BuildParameters]):
     re_hint = NATIVE_AUTH_RE.get(month_year, "")
     plan_url = T.plan_web_url(broker_plan)
     html = _message_html(month_year, context.release.owner_name, plan_url)
-    if engineer:
-        if "@" not in engineer or not engineer_source:
+    if engineer is not None or engineer_source is not None:
+        if not _verified_recipient(engineer, engineer_source):
             return Blocked("Provide the verified Native Auth RE UPN and engineer_source evidence; never guess.")
+        sources = source_matches(context, "clone_plans_broker")
         return NeedsSkill(
             tool="microsoft_teams-SendMessageToUser",
             payload={"userIdOrUpn": engineer, "content": html, "contentType": "html"},
-            record_as=ID, summary=f"Notify verified Native Auth RE {engineer}",
+            record_as=ID, summary=f"Notify verified Native Auth RE {engineer}; obtain explicit "
+                                  "recipient approval before claiming this exact payload.",
             outbound=True,
-            notification={"completion": {"data": {"engineer": engineer,
-                                                  "engineer_source": engineer_source}}})
+            notification={"state_matches": sources,
+                          "completion": {"data": {"engineer": engineer,
+                                                  "engineer_source": engineer_source,
+                                                  "gate_preconditions": gate_preconditions(
+                                                      context, sources)}}})
 
-    hint_txt = (f"The schedule lists '{re_hint}' as the Native Auth RE for {month_year} "
+    hint_txt = (f"The unverified inline hint is '{re_hint}' for {month_year} "
                 f"(confirm against the doc)." if re_hint
                 else f"The inline hint has no entry for {month_year} — read it from the doc.")
     instructions = (

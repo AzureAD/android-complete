@@ -19,13 +19,14 @@ class DistributionReviewError(ValueError):
 def _inspect(args, orch, *, parameters=None):
     parameters = parameters or {
         "oof": [] if args.no_oof else args.oof, "oce": args.oce,
+        "roster_file": getattr(args, "roster_file", None),
     }
     context = orch.context(
         "bug_bash", S.ID, parameters=parameters,
         inputs=mocks_mod.load_mocks().get("bug_bash.distribute_tests", {}))
     return S.inspect_distribution(
         context, oof=(list(context.parameters.oof) if context.parameters.oof is not None else None),
-        oce=context.parameters.oce)
+        oce=context.parameters.oce, roster_file=context.parameters.roster_file)
 
 
 def plan_distribution(args, orch):
@@ -33,9 +34,6 @@ def plan_distribution(args, orch):
     _, report = _inspect(args, orch)
     if "error" in report:
         raise DistributionReviewError(report)
-    if any(type(row.get("revision")) is not int or row["revision"] < 1
-           for row in report["_current"].values()):
-        raise ValueError("Missing ADO work-item revisions; no assignments written.")
     provider = report["_review"]["provider"]
     identities = {}
     for change in report["point_changes"]:
@@ -49,12 +47,6 @@ def plan_distribution(args, orch):
         identities[upn] = (next(iter(observed)) if observed else
                            D.resolve_tester_identity(upn, org=provider["org"]))
     operations = []
-    for change in report["case_changes"]:
-        operations.append(W.WriteOperation(
-            "assign_test_case", {**provider, "case_id": change["case"][2:]},
-            {"assignee": change["to"]},
-            {"revision": report["_current"][change["case"]]["revision"],
-             "assignee": change["from"]}))
     for group in report["_point_sets"]:
         if not any(c["plan_id"] == group["plan_id"] and c["suite_id"] == group["suite_id"]
                    for c in report["point_changes"]):
@@ -76,28 +68,53 @@ def plan_distribution(args, orch):
             {"assignments": assignments, "identities": case_identities,
              "updates": [{"tester_id": key, "point_ids": sorted(value)}
                          for key, value in sorted(updates.items())]},
-            {"testers": {str(p["id"]): p["tester_id"] for p in group["points"]}}))
+            {"testers": {str(p["id"]): p["tester_id"] for p in group["points"]},
+             "points": {str(p["id"]): {"case_id": str(p["case_id"]), "config_id": str(p["config_id"])}
+                        for p in group["points"]}}))
     return W.WritePlan(
         S.WRITE_COMMAND,
-        {"oof": [m["upn"] for m in report["oof_excluded"]], "oce": report["oce_excluded"]},
+        {"oof": [m["upn"] for m in report["oof_excluded"]], "oce": report["oce_excluded"],
+         "roster_file": getattr(args, "roster_file", None)},
         tuple(operations), report["_review"])
 
 
+def _validate_roster(plan):
+    path = plan.parameters.get("roster_file")
+    if path:
+        try:
+            with open(path, encoding="utf-8-sig") as stream:
+                observation = json.load(stream)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Cannot revalidate roster observation: {exc}") from None
+        expected = thaw(plan.preconditions["inputs"]["roster_source"])
+        members, _ = D.roster_observed(expected["group_mail"], observation,
+                                       plan.preconditions["inputs"]["owner"])
+        current = {"group_mail": expected["group_mail"],
+                   "observations": observation["observations"], "members": members}
+        if current != expected:
+            raise ValueError("Roster source/membership changed after review; no further writes")
+
+
 def _apply(authorization):
-    for operation in authorization.plan.operations:
+    def validate():
         authorization.validate()
+        _validate_roster(authorization.plan)
+        review = authorization.plan.preconditions
+        if review["fill"].get("binding"):
+            D.validate_release_targets(
+                review["fill"]["binding"]["release"], review["ccd"], thaw(review["fill"]["binding"]),
+                org=review["provider"]["org"], project=review["provider"]["project"],
+                expected_names=thaw(review.get("destination_names")))
+    for operation in authorization.plan.operations:
+        validate()
         target, content, before = (operation.target, operation.content, operation.preconditions)
-        if operation.kind == "assign_test_case":
-            ok, detail = D.set_assigned_to(
-                target["case_id"], content["assignee"], expected_revision=before["revision"],
-                org=target["org"], project=target["project"])
-        elif operation.kind == "align_point_testers":
+        if operation.kind == "align_point_testers":
             ok, detail = D.sync_point_testers(
                 target["plan_id"], target["suite_id"], thaw(content["assignments"]),
                 expected_testers={int(k): v for k, v in before["testers"].items()},
-                org=target["org"], project=target["project"], validate=authorization.validate,
+                org=target["org"], project=target["project"], validate=validate,
                 expected_identities=thaw(content["identities"]),
-                reviewed_updates=thaw(content["updates"]))
+                reviewed_updates=thaw(content["updates"]), expected_points=thaw(before["points"]))
         else:
             raise ValueError(f"Unknown distribution operation: {operation.kind}")
         if not ok:
@@ -128,12 +145,13 @@ def cmd_distribute_tests(args):
     try:
         _apply(authorization)
         authorization.validate()
+        _validate_roster(authorization.plan)
         outcome, report = _inspect(args, orch, parameters=thaw(authorization.plan.parameters))
         current_review = report.get("_review", {})
         before = thaw(authorization.plan.preconditions)
         if any(current_review.get(key) != before[key] for key in (
                 "provider", "inputs", "configuration", "broker_plan", "auth_plan",
-                "auth_suite", "fill", "targets")):
+                "auth_suite", "fill", "targets", "ccd", "destination_names")):
             raise ValueError("Distribution inputs/targets changed before final validation.")
         if not isinstance(outcome, Done):
             raise ValueError(outcome.reason)
@@ -157,6 +175,7 @@ def register(sub):
     p = sub.add_parser("distribute-tests", help="Preview/apply checked live ADO assignment corrections")
     p.add_argument("--release", required=True)
     p.add_argument("--oce", default=None, help="Verified primary on-call UPN")
+    p.add_argument("--roster-file", help="Fresh owner-bound workiq.fetch exact group/member observation bundle")
     choice = p.add_mutually_exclusive_group()
     choice.add_argument("--oof", action="append", metavar="UPN", help="Owner-confirmed OOF tester")
     choice.add_argument("--no-oof", action="store_true", help="Confirm nobody is OOF")

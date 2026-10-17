@@ -70,6 +70,14 @@ items:
     verify: auto
     verifier: mcp_servers
 
+  - id: m365_access
+    label: "M365 connector capabilities"
+    text: "Loaded connectors can read the owner's calendar, exact release roster, Teams membership and report library"
+    detail: "Scout runs m365-capabilities and records fresh, account/target-bound structured read observations. Registration or az login alone is not proof. Missing hosted WorkIQ entity tools or denied paths are identified before Phase 0. Future meeting/chat access and actual sends/uploads are checked again at their owning steps."
+    verify: auto
+    source: scout
+    verifier: m365_capabilities
+
   - id: silent_perms
     label: "Silent-run permissions"
     text: "Permissions allow fully unattended runs — shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are auto-approved so scheduled work and the on-call/telemetry checks never stall on a prompt"
@@ -104,6 +112,12 @@ items:
   # ---- ATTEST: the engineer confirms (Scout cannot fully prove these) ----
   # `detail` is the table-cell text and MAY contain inline markdown links
   # (they render fine inside Scout table cells).
+  - id: m365_write_access
+    label: "M365 send/upload authorization"
+    text: "You are authorized to send the release emails, calendar invitations and Teams posts, and upload reports to the configured SharePoint library"
+    detail: "Read probes do not establish write permissions. Confirm the required send/upload grants and the planned destinations. Scout will not send test messages or upload test files without separately previewed approval. New immutable report files use the checked SharePoint browser upload because hosted WorkIQ does not currently provide new-file upload; every actual write still needs its own authorization and receipt."
+    verify: attest
+
   - id: adx_access
     label: "ADX release dashboard"
     text: "You can query the ADX release-telemetry cluster (Scout verifies via Kusto)"

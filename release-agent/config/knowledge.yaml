@@ -92,7 +92,8 @@ readiness.mcp_servers:
     your Scout config — ICM (on-call / incident lookups), Kusto/ADX (telemetry + the
     adx_access check), and Teams (comms gaps WorkIQ can't fill: group chats, channel
     posts). Auto-verified read-only against config/requirements.yaml; passes only if
-    ALL are present.
+    ALL are enabled with their required tool allowlists. This checks configuration,
+    not live account/access; m365_access performs actual structured connector probes.
   who: >
     Scout verifies it automatically (a Python verifier). Fixing a missing server is a
     one-time bootstrap step (register + restart Scout), not something the release does.
@@ -109,9 +110,53 @@ readiness.mcp_servers:
     - q: "What happens if a server is missing?"
       a: "infra registers it (backing up your config first) and tells you to restart Scout. It refuses to register a server whose launcher isn't installed."
     - q: "Why is the Teams MCP required now?"
-      a: "To cover Teams gaps WorkIQ can't (group-chat creation, adding members, rich channel messaging) — WorkIQ is 1:1-only."
+      a: "The release uses Agency Teams for exact chat/member reads, direct-user notices and channel posts. Native WorkIQ also supports existing-chat sends; neither connector's presence alone proves access."
     - q: "What's the empty-tools gotcha?"
       a: "Command servers must ship a populated `tools` allowlist; an empty one makes Scout silently drop the server. Our requirements.yaml ships icm/kusto/teams with populated lists."
+
+readiness.m365_access:
+  summary: "Verify the actual M365 connectors and read capabilities before Phase 0."
+  what: >
+    Confirms the current loaded tool inventory and fresh structured reads for the
+    release owner's profile/calendar, exact configured distribution group and its
+    complete members, representative Teams chat/membership, and report site/library.
+    Azure CLI login and MCP registration alone do not prove these capabilities.
+  who: >
+    Scout runs the read-only tools from m365-capabilities and records their exact
+    responses. Only validated account/argument/time/target-bound evidence can pass.
+  how: >
+    Run m365-capabilities --release <id>; resolve workiq.fetch to the actual loaded
+    hosted WorkIQ fetch tool, not WorkIQ Ask. Execute the exact reads, including the
+    returned group/site IDs for member/library reads. Save the listed envelope and
+    actual available_tools mapping in a temporary evidence file, then record-check
+    --item m365_access --status pass --evidence-file <file>. Missing/disabled tools,
+    denied paths, partial results, wrong accounts or stale observations hold before
+    the release starts. Never invent an absent tool or use another identity/path to
+    evade a policy denial. Correct host authentication/connector setup and rerun.
+    Future Bug Bash event/chat access must still be verified when those resources
+    exist; initial read probes do not grant send/upload permission.
+  faqs:
+    - q: "Does a successful read prove I can send or upload?"
+      a: "No. Write grants need explicit owner confirmation and every actual checked write needs its own authorization and provider receipt."
+    - q: "Hosted WorkIQ fetch is missing but native workiq tools exist?"
+      a: "Those are different capabilities. The release requires the hosted structured entity tool for group reads. Configure the supported hosted WorkIQ connector and reload Scout; do not replace group membership with a people search or raw Azure CLI Graph token."
+
+readiness.m365_write_access:
+  summary: "Confirm M365 send/upload authorization separately from read access."
+  what: >
+    The owner explicitly confirms permission to send the reviewed release emails,
+    calendar invitations and Teams posts, and create reports in the configured
+    SharePoint library. A read probe cannot prove those permissions. The attestation
+    is bound to this release owner, CCD and current capability/target configuration.
+  who: "The release owner confirms the grants; Scout never infers or signs this item."
+  how: >
+    Show the configured destinations and limitations before the readiness
+    attestation. No test send/upload is authorized merely by running readiness.
+    Hosted WorkIQ new-file upload is not available; new immutable report creation
+    uses a checked SharePoint browser upload, with its owning execution and receipt.
+    The native file tool may replace only a proven existing target, never create
+    an invented item. Actual write denials still hold the owning step and require
+    explicit recovery; never switch transports after an unknown outcome.
 
 readiness.silent_perms:
   summary: "Scout's permissions allow fully unattended (silent) runs."
@@ -889,9 +934,8 @@ bug_bash.distribute_tests:
     in the manual workload. Eligible = the roster DL
     'androididentity@microsoft.com' MINUS the always-excluded people (jialh, moghosh,
     veenasoman), the release owner, the current on-call engineer (OCE), and anybody the owner
-    says is OOF for this Bug Bash. Default assignee +
-    the written field are both System.AssignedTo. Apply also aligns the selected test-point
-    tester fields, so the Execute view matches the intended manual/triage owner.
+    says is OOF for this Bug Bash. Ownership and corrections use this release's
+    plan/suite test-point Tester. Shared test-case System.AssignedTo is not changed.
   who: >
     The release owner supplies availability (never calendar/presence/automatic OOF lookup).
     Scout asks "Is anyone OOF for this Bug Bash?" before the first preview; without an
@@ -901,14 +945,15 @@ bug_bash.distribute_tests:
     exposing candidates; Scout must resolve it, not ask the user to exclude it as OOF. After that,
     Scout validates live ADO during `next` (an agent step), holding on mismatches and
     completing only when ADO is correct. Applying reviewed corrections is
-    a separate, explicit action — it writes System.AssignedTo, which mutates
-    the shared test-case work items (so this release's assignment becomes next release's
-    default preference), and the corresponding testers in the two release suites. Outcomes,
+    a separate, explicit action that changes only Testers in the two release suites. Outcomes,
     completed results and shared tags are not changed by assignment alignment.
   how: >
     First resolve the current primary OCE using the ICM team configured in readiness.yaml,
     then run `distribute-tests --release <id> --oce <verified-upn> --json` to expose filtered
-    candidates. Never guess the on-call UPN or silently omit that exclusion. Ask the owner
+    candidates. Missing directory evidence prints exact hosted WorkIQ entity requests;
+    supply complete fresh owner-bound group/member pages with --roster-file <path>.
+    No Azure CLI Graph or people-search substitution. Never guess the on-call UPN
+    or silently omit that exclusion. Ask the owner
     with m_ask_user: "Is anyone OOF for this Bug Bash?" with "Nobody is OOF" or "Exclude people";
     stop and wait. For "Exclude people", show the candidate list and ask for actual names
     or verified UPNs (free-text), then stop and wait again. Resolve exact names uniquely
@@ -922,11 +967,12 @@ bug_bash.distribute_tests:
     writing assignments. The default command also provides transient proposed corrections.
     Show the exact corrections and obtain approval, then use
     `distribute-tests --release <id> --apply --review-hash <approved-preview-hash>`.
-    Do not combine selection/OCE flags with --apply. The command rereads live inputs and
+    Repeat the same OOF/OCE selections and roster file with --apply --approved-by <reviewer>.
+    The command rereads live inputs and
     checks the digest before writing; it never loads a saved assignment plan. The digest
-    is not stored either. Native work-item revision checks protect concurrent case edits.
-    Only mismatches are corrected, then live ADO is read again to verify both assignment
-    surfaces. Outcomes/tags are preserved. Partial failures remain visible; review the live
+    is recorded as authorization, not a reusable assignment map. Match-before-write
+    point/Tester/source checks protect concurrent release changes. Only mismatches
+    are corrected, then live ADO is read again. Outcomes/tags are preserved. Partial failures remain visible; review the live
     remaining corrections instead of replaying or rolling back. If ADO is already valid,
     no redistribution is needed, including after an interrupted local completion.
     Only availability decisions and workflow status are retained internally; legacy
@@ -938,11 +984,11 @@ bug_bash.distribute_tests:
       url: "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-"
   faqs:
     - q: "What happens when someone changes assignments directly in ADO?"
-      a: "ADO is authoritative. Read and validate the current values against eligibility, balance, triage and matching-tester rules. Valid manual changes remain untouched. Mismatches are reported for approval, never silently reverted to an internal list. The temporary review hash prevents applying different corrections from those reviewed; no hash or assignment map is saved."
+      a: "ADO is authoritative. Validate current release-point Testers against eligibility, balance and triage. Valid manual changes remain untouched. Mismatches need exact approval, never an internal assignment replay. Keep the authorization digest, not an assignment map."
     - q: "How is 'even' decided when counts don't divide evenly?"
       a: "target = total ÷ eligible; the remainder people (those with the most default tests) get one extra, so heavy-default folks keep their preference."
     - q: "Does applying it change the master plan?"
-      a: "Yes — System.AssignedTo lives on the shared test-case work items, so the new assignee shows in the master and every plan referencing them. That's intentional: it carries the preference into the next release's clone."
+      a: "No. Corrections change the release plan/suite test-point Tester, not shared test-case System.AssignedTo or another release's assignments."
     - q: "Who is excluded?"
       a: "Always: jialh (Jia Le He), moghosh (Moumita Ghosh), veenasoman (Veena Soman). The release owner and resolved primary OCE are also removed before showing availability choices. Missing OCE means no candidate list until Scout resolves it. Owner-confirmed OOF removes additional eligible people per release; Shahzaib is not a permanent exclusion. Nobody is OOF must be explicitly confirmed too."
     - q: "How do we know which Authenticator cases are automated vs manual?"
@@ -965,7 +1011,7 @@ bug_bash.ui_test_status:
     and fills the Authenticator bug-bash suite (from clone_plans_auth) for the automated cases
     only — Passed->Passed, Failed->Failed — leaving the manual cases untouched for testers.
     Only cases actually written Failed are submitted for release-owner assignment
-    (System.AssignedTo). Assignment errors are nonblocking, explicitly recorded, and never
+    through this release's point Tester, never shared System.AssignedTo. Assignment errors are nonblocking, explicitly recorded, and never
     claimed as successful reassignment. Both source projections are validated before any external write; no alternate
     Phase-3 Authenticator refetch or best-effort evidence skip is allowed.
   who: "Scout runs it automatically during `next` (an agent step) — before distribute_tests."
@@ -1087,44 +1133,59 @@ bug_bash.notify_native_auth:
       a: "No — it just asks them to reply to the release owner when they finish. It's a one-shot notification, not a poller."
 
 bug_bash.activate_chat:
-  summary: "Verify and bind the exact sent invitation's meeting chat for periodic updates."
+  summary: "Bind the exact sent invitation's chat through native connectors or an owner-confirmed link."
   what: >
     Resolves the current send_invite calendar receipt's event id, reads that exact event's
-    Teams join URL, resolves the onlineMeeting for that URL and uses chatInfo.threadId.
+    Teams join URL and derives its encoded meeting thread. Native WorkIQ reads the
+    profile/event; Agency Teams GetChat verifies the exact thread. Opaque numeric
+    links request owner recovery, not an assumed onlineMeeting API.
     Calendar subject, organizer, times, cancellation state and chat type/topic are verified.
     Stores chat_id plus meeting identity and the originating invitation binding.
     A previous month's chat, a topic-only match or a pasted thread id is not proof.
+    An explicit owner-confirmed Teams link is a separate supported recovery mode:
+    it records owner-attested identity, not independent provider verification.
   who: >
-    Scout runs the read-only Graph resolution as the invitation's organizer. If Teams
+    Scout gathers exact read-only native connector observations as the organizer. If Teams
     has not exposed the thread, open that exact calendar event's Chat pane with Playwright
-    or ask the owner to do so, then retry. Auth/permission failures remain blocked;
-    never choose a different chat or manufacture a thread id.
+    or ask the owner to do so, then retry. On the FIRST auth/access failure, stop
+    unchanged retries and offer owner-confirmed chat-link recovery, manual posting,
+    or keeping this held. Never choose another chat or manufacture a thread id.
   how: >
     Run record-bugbash-chat --release <id>. The command enforces phase prerequisites,
     requires a completed invite with an applied sent receipt and resolves the thread itself.
     Optional --chat-id must equal the verified thread; it never authorizes an unverified chat.
-    Graph resolution needs delegated access to the organizer's event, online meeting and chat.
+    Use --profile-observation, --event-observation and --chat-observation with fresh
+    owner/tool/argument-bound envelopes. Missing inputs print exact connector reads,
+    not completion. The engine never obtains a Graph token through Azure CLI.
     No calendar or Teams message is sent. An identical completed binding is a no-op;
     changing a completed binding requires owner-reviewed reopen of activate_chat first.
     Missing historical event receipts require explicit owner recovery, not creating a
     replacement invitation or hand-editing state. Progress only consumes a current binding;
     prepared messages bind the invite receipt and chat so changed sources cannot authorize
     delivery or completion. Previously prepared legacy messages require owner review at deployment.
-    HTTP 403 requires correcting access, not waiting for a thread. If the owner explicitly
+    HTTP 403 is not repaired by waiting for a thread. For manual link recovery, preview
+    record-bugbash-chat --release <id> --chat-link <link> without Graph or state changes.
+    Show the exact event/recipients/link and owner-attestation limitations; ask the owner
+    to confirm they activated THIS invitation's chat and copied THIS link. Then record
+    with --confirm-activated --review-hash <hash> --approved-by <owner_email> --reason
+    "<owner confirmation>". Stale reviews or a contradictory receipted thread reject.
+    Do not reject this path solely because Graph access is forbidden. It proves neither
+    current event/attendee state nor posting access; delivery still needs normal receipts.
+    If the owner explicitly
     chooses manual posting, preserve the reviewed skips and use bugbash-progress --release <id>
     for a private read-only report. Do not reopen chat or resend notifications just to read progress.
   faqs:
     - q: "Why can't it just post to the meeting chat directly?"
-      a: "A topic is not unique and can identify an older release. The destination must be the thread returned for the exact calendar event that send_invite created. If the thread is unavailable, activate that event's Chat pane and retry."
+      a: "A topic is not unique and can identify an older release. Use native verification of the exact sent event/thread, or explicit owner confirmation of the link copied from that event's Chat pane. Link confirmation is owner-attested, not provider-verified."
     - q: "What if Playwright can't open the chat?"
-      a: "Ask the organizer to open the exact event and its Chat pane, then rerun verification. A supplied chat link is only a candidate to validate, never a bypass."
+      a: "Ask the owner to activate the exact invitation's Chat pane and copy its Teams link. Preview that link and obtain explicit owner confirmation before recording the reviewed hash. Graph permission failure does not prevent this recovery. Manual posting remains available if automated sending is unavailable."
 
 bug_bash.bugbash_updates:
   summary: "Post the first bug-bash progress update to the meeting chat and start the 3h update poller."
   what: >
     Reaching this step posts an initial progress update to the Bug Bash meeting chat and
     provisions the on-demand `bug-bash-update-poller` automation. Each update is grouped by
-    each test's owner (System.AssignedTo, set by distribute_tests, read live from BOTH the
+    each test's release-point Tester (read live from BOTH the
     Broker 'Manual Tests (Android Broker)' subtree, Broker UI failure-triage points, and
     the Authenticator bug-bash suite).
     The code-generated header includes Broker test plan, Authenticator suite, MRWP · ECS
@@ -1167,8 +1228,11 @@ bug_bash.bugbash_updates:
     mention user IDs. Unknown/nonmember owners or lookup failures block preparation instead
     of silently sending plain email addresses. Both initial and periodic paths send matching
     HTML at-tags and canonical mentions metadata unchanged through notification claim.
-    If the CLI Graph token cannot read chat members, Scout can supply a fresh complete
-    workiq_get_chat response for that exact chat: first-post notification prepare uses
+    Scout supplies a fresh account/argument-bound Teams ListChatMembers or native
+    workiq_get_chat observation envelope for the exact chat; raw legacy member JSON
+    is not proof. Optional directory_observations link actual assigned UPNs to member
+    GUIDs when SMTP differs. Missing input prints exact read requests and never
+    authorizes delivery. First-post notification prepare uses
     --param members_file=<path>, and the periodic command uses --members-file <path>.
     The chat identity is validated; never synthesize user IDs or use an unrelated chat.
     It is fire-and-continue — the step completes after the first post so the
@@ -1206,12 +1270,12 @@ bug_bash.bugbash_updates:
       a: "After every test completes, the final wrap-up must be claimed and successfully acknowledged before poll_complete is recorded. Known failed sends retry while the phase remains open. Owner sign-off/phase completion stops stale sends. Cleanup deletes first, then deregisters."
     - q: "Why are resolved tests still listed?"
       a: "The list should show the full denominator: 1/7 done means seven visible cases, one checked as passed. Passed and N/A have distinct icons explained once in the legend; rows do not repeat status text. Finished owners retain all their rows without being mentioned. Every case is labeled Broker or Authenticator from the source plan."
-    - q: "Why group by AssignedTo instead of the test point's tester?"
-      a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
+    - q: "Why group by the release point's Tester instead of AssignedTo?"
+      a: "The release plan/suite point owns this release's manual/triage work. Shared test-case System.AssignedTo can belong to another release or template and is never the ownership fallback."
     - q: "Why doesn't progress count every test assigned to someone in the full ADO suite?"
       a: "The suite also contains automated results whose shared case owner may be a manual tester. Those automation-only cases are not that person's Bug Bash workload: exclude them from both completed and total counts. Real manual completions still count; applied automation failures remain explicit owner-triage work."
     - q: "Why are some of the owner's tests marked 'Automation triage'?"
-      a: "Those are Broker or Authenticator cases recorded as actually written Failed by ui_test_status. Current ownership comes from live System.AssignedTo, not an assumed successful reassignment. They are investigations rather than new manual assignments, and remain outstanding until resolved. Broker cases with multiple originally failing configurations count once and require every tracked failure to resolve."
+      a: "Those are Broker or Authenticator points recorded as actually written Failed by ui_test_status. Current ownership comes from the live release-point Tester, not an assumed successful reassignment. They remain outstanding until resolved. Broker cases with multiple originally failing configurations count once and require every tracked failure to resolve."
 
 bug_bash.native_auth_signoff:
   summary: "The release owner attests they received the Native Auth team's sign-off."

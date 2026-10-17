@@ -1,5 +1,6 @@
 """Creation/recovery regressions: fake ADO, real locked checkpoints in temporary runs."""
-from tests._context import invoke as _invoke, invoke_effect as _invoke_effect
+from tests._context import context as _context, invoke as _invoke, invoke_effect as _invoke_effect
+from dataclasses import replace
 import copy
 import json
 import re
@@ -531,3 +532,212 @@ def test_malformed_plan_listing_cannot_authorize_create(fixture, monkeypatch, en
     with locked(fixture) as st:
         assert _invoke(step.build, st).kind == "blocked"
     assert not fixture[2].writes
+
+
+@pytest.mark.parametrize("record", [None, [], "corrupt", 0])
+def test_invalid_resource_is_a_preparation_hold_without_discovery_or_reservation(fixture, record):
+    with locked(fixture) as st:
+        st.resources[B.RESOURCE] = record
+        before = copy.deepcopy(st.resources)
+        outcome = step.prepare_effect(_context(st))
+        assert outcome.kind == "blocked" and "resource record" in outcome.reason
+        assert st.resources == before
+        assert st.get_step("bug_bash", step.ID).execution is None
+    assert not fixture[2].writes
+
+
+@pytest.mark.parametrize("source", [None, [], {}, {"native_query": "SELECT x"}])
+@pytest.mark.parametrize("saved", [False, True])
+def test_source_is_validated_before_effect_reservation(fixture, source, saved):
+    with locked(fixture) as st:
+        if saved:
+            st.resources[B.RESOURCE] = {"source": source}
+        ctx = _context(st)
+        calls = []
+        ctx = replace(ctx, services=replace(ctx.services, testplans=replace(
+            ctx.services.testplans, prepare_broker_source=lambda **kwargs:
+            (calls.append(kwargs) is None, source, ""))))
+        outcome = step.prepare_effect(ctx)
+        assert outcome.kind == "blocked" and "source snapshot" in outcome.reason
+        assert bool(calls) is not saved
+        assert st.get_step("bug_bash", step.ID).execution is None
+    assert not fixture[2].writes
+
+
+@pytest.mark.parametrize("name", [None, "", "  ", 123, [], " TEST plan "])
+def test_invalid_destination_holds_before_source_reads(fixture, name):
+    with locked(fixture) as st:
+        outcome = step.prepare_effect(_context(st, inputs={"name": name}))
+        assert outcome.kind == "blocked" and "plan name" in outcome.reason
+        assert st.get_step("bug_bash", step.ID).execution is None
+        assert not st.resources
+    assert not fixture[2].writes
+
+
+@pytest.mark.parametrize("root", [None, [], "malformed", {"defaultConfigurations": None},
+                                  {"defaultConfigurations": ["malformed"]},
+                                  {"defaultConfigurations": [{"id": True}]}])
+def test_malformed_master_root_yields_source_error_without_a_write(monkeypatch, root):
+    monkeypatch.setattr(T, "_suite_full", lambda *a: (True, root, ""))
+    ok, source, detail = B.prepare_source()
+    assert not ok and source is None and detail
+
+
+@pytest.mark.parametrize("cases", [None, {}, [None], [{}], [{"id": False}]])
+def test_malformed_master_cases_yield_source_error(monkeypatch, cases):
+    from tools import distribution
+    monkeypatch.setattr(T, "_suite_full", lambda *a:
+                        (True, {"defaultConfigurations": [{"id": 293}]}, ""))
+    monkeypatch.setattr(T, "_native_auth_query", lambda *a: (True, "SELECT [System.Id]", ""))
+    monkeypatch.setattr(distribution, "broker_manual_cases", lambda *a: (True, cases, ""))
+    ok, source, detail = B.prepare_source()
+    assert not ok and source is None and detail
+
+
+@pytest.mark.parametrize("plans", [None, {}, "malformed"])
+def test_malformed_discovery_collection_cannot_authorize_create(fixture, monkeypatch, plans):
+    monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a, **k: (True, plans, ""))
+    with locked(fixture) as st:
+        outcome = _invoke(step.build, st)
+        assert outcome.kind == "blocked" and "Malformed plan collection" in outcome.reason
+        assert not st.resources
+    assert not fixture[2].writes
+
+
+@pytest.mark.parametrize("root", [None, [], "malformed", {}, {"id": 0}, {"id": True}])
+def test_create_saves_returned_plan_id_before_rejecting_bad_root_receipt(fixture, monkeypatch, root):
+    ado = fixture[2]
+    send = ado.send
+
+    def malformed_root(url, method, body, timeout):
+        ok, receipt, detail = send(url, method, body, timeout)
+        if method == "POST" and "/testplan/plans?" in url:
+            receipt["rootSuite"] = root
+        return ok, receipt, detail
+
+    monkeypatch.setattr(P, "_ado_rest_send", malformed_root)
+    with locked(fixture) as st:
+        outcome = _invoke(step.build, st)
+        assert outcome.kind == "blocked" and "rootSuite" in outcome.reason
+        resource = st.resources[B.RESOURCE]
+        assert resource["status"] == "created" and resource["plan_id"] == 900
+    saved = ReleaseState.load(fixture[1])
+    assert saved.resources[B.RESOURCE]["plan_id"] == 900
+    assert len(ado.writes) == len(ado.creates) == 1
+    with locked(fixture) as st:
+        assert _invoke(step.build, st).kind == "blocked"
+    assert len(ado.creates) == 1
+
+
+@pytest.mark.parametrize("receipt", [None, [], "malformed", {}, {"id": True}, {"id": 0}])
+def test_unknown_plan_create_receipt_remains_reserved_and_never_reposts(
+        fixture, monkeypatch, receipt):
+    ado = fixture[2]
+
+    def unknown_receipt(url, method, body, timeout):
+        assert method == "POST" and "/testplan/plans?" in url
+        ado.writes.append((url, method, copy.deepcopy(body)))
+        return True, receipt, ""
+
+    monkeypatch.setattr(P, "_ado_rest_send", unknown_receipt)
+    with locked(fixture) as st:
+        assert _invoke(step.build, st).kind == "blocked"
+        assert st.resources[B.RESOURCE]["status"] == "creating"
+        assert "plan_id" not in st.resources[B.RESOURCE]
+    with locked(fixture) as st:
+        outcome = _invoke(step.build, st)
+        assert outcome.kind == "blocked" and "unresolved" in outcome.reason
+    assert len(ado.creates) == 1
+
+
+@pytest.mark.parametrize("root", ["malformed", [], 123, {"id": None}])
+def test_invalid_existing_plan_root_is_a_hold_not_an_exception(fixture, root):
+    ado = fixture[2]
+    ado.add()
+    ado.plans[900]["rootSuite"] = root
+    with locked(fixture) as st:
+        st.set_step("bug_bash", step.ID, StepState(data={"plan_id": 900}))
+        assert _invoke(step.build, st).kind == "blocked"
+    assert not ado.writes
+
+
+@pytest.mark.parametrize("damage", ["description", "root", "root_configs", "suite_list",
+                                   "suite_name", "parent", "native", "points", "point_case"])
+def test_malformed_existing_structure_is_a_hold_without_repairs(fixture, monkeypatch, damage):
+    ado = fixture[2]
+    ado.add()
+    if damage == "description":
+        ado.plans[900]["description"] = []
+    elif damage == "root_configs":
+        ado.suites[900][0]["defaultConfigurations"] = [None]
+    elif damage == "suite_name":
+        ado.suites[900][1]["name"] = []
+    elif damage == "parent":
+        ado.suites[900][1]["parentSuite"] = "bad"
+    elif damage == "point_case":
+        ado.points[(900, 9001)][0]["testCase"] = "bad"
+    get, get_all = ado.get, ado.get_all
+
+    def malformed_get(url, timeout):
+        if damage == "root" and "/suites/9000?" in url:
+            return True, [], ""
+        if damage == "native" and "/suites/9002?" in url:
+            return True, [], ""
+        return get(url, timeout)
+
+    def malformed_get_all(url, timeout, **kwargs):
+        if damage == "suite_list" and "/Plans/900/suites?" in url:
+            return True, None, ""
+        if damage == "points" and "/Suites/9001/points?" in url:
+            return True, None, ""
+        return get_all(url, timeout, **kwargs)
+
+    monkeypatch.setattr(P, "_ado_rest_get", malformed_get)
+    monkeypatch.setattr(P, "_ado_rest_get_all", malformed_get_all)
+    with locked(fixture) as st:
+        st.set_step("bug_bash", step.ID, StepState(data={"plan_id": 900}))
+        assert _invoke(step.build, st).kind == "blocked"
+    assert not ado.writes
+
+
+@pytest.mark.parametrize("identity", [[], "bad", {"name": "only"}])
+def test_recovery_command_rejects_invalid_identity_without_state_or_provider_writes(
+        fixture, identity, capsys):
+    with locked(fixture) as st:
+        st.resources[B.RESOURCE] = {"identity": identity}
+    before = fixture[1].read_bytes()
+    assert cli.main(["--runs-root", str(fixture[0]), "broker-plan", "--release", RID]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "identity" in result["error"]
+    assert fixture[1].read_bytes() == before
+    assert not fixture[2].writes
+
+
+def test_cli_bad_create_root_preserves_owned_execution_and_plan_id_across_resume(
+        fixture, monkeypatch, capsys):
+    ado = fixture[2]
+    send = ado.send
+
+    def malformed_root(url, method, body, timeout):
+        ok, receipt, detail = send(url, method, body, timeout)
+        if method == "POST" and "/testplan/plans?" in url:
+            receipt["rootSuite"] = "unreadable root receipt"
+        return ok, receipt, detail
+
+    monkeypatch.setattr(P, "_ado_rest_send", malformed_root)
+    args = ["--runs-root", str(fixture[0]), "next", "--release", RID, "--json"]
+    assert cli.main(args) == 0
+    capsys.readouterr()
+    first = ReleaseState.load(fixture[1])
+    record = first.get_step("bug_bash", step.ID)
+    assert record.status == "blocked" and record.execution
+    assert first.resources[B.RESOURCE]["plan_id"] == 900
+    assert first.resources[B.RESOURCE]["status"] == "created"
+    assert not first.is_done("bug_bash", "clone_plans_auth")
+    assert cli.main(args) == 0
+    capsys.readouterr()
+    second = ReleaseState.load(fixture[1])
+    assert second.resources[B.RESOURCE]["plan_id"] == 900
+    assert second.get_step("bug_bash", step.ID).execution["id"] == record.execution["id"]
+    assert len(ado.creates) == 1
+    assert not any(method == "DELETE" for _, method, _ in ado.writes)

@@ -35,10 +35,13 @@ def offline(monkeypatch):
         monkeypatch.setattr(P, name, forbidden)
     monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     monkeypatch.setattr(D, "set_assigned_to", forbidden)
+    monkeypatch.setattr(D, "set_point_testers", forbidden)
+    monkeypatch.setattr(D, "validate_release_targets", lambda *a, **kw: None)
 
 
 def point(cid, config=292, point_id=1):
-    return {"id": point_id, "testCase": {"id": cid}, "configuration": {"id": config}}
+    return {"id": point_id, "testCase": {"id": cid}, "configuration": {"id": config},
+            "outcome": "Unspecified"}
 
 
 def plan_stub(monkeypatch, points):
@@ -46,9 +49,13 @@ def plan_stub(monkeypatch, points):
     monkeypatch.setattr(
         T, "_find_suite_by_name", lambda *a, **k: (True, 901, ""))
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a, **k: (True, points, ""))
-    monkeypatch.setattr(T, "_set_points_outcome",
-                        lambda plan, suite, ids, verdict, *a, **k:
-                        (calls.append((list(ids), verdict)) or True, ""))
+    def write(plan, suite, ids, verdict, *args, **kwargs):
+        calls.append((list(ids), verdict))
+        for row in points:
+            if row["id"] in ids:
+                row["outcome"] = verdict
+        return True, ""
+    monkeypatch.setattr(T, "_set_points_outcome", write)
     return calls
 
 
@@ -108,8 +115,9 @@ def test_distinct_parameters_and_api_failures_cannot_be_hidden_by_a_sibling_pass
     assignments = []
     monkeypatch.setattr(
         D,
-        "set_assigned_to",
-        lambda cid, owner, **_coordinates: (assignments.append(cid) or True, ""),
+        "set_point_testers",
+        lambda plan, suite, ids, owner, **kwargs:
+        (assignments.extend(int(row["case_id"]) for row in kwargs["expected_points"].values()) or True, ""),
     )
     with mockctx.active({}):
         assert _invoke(U.build, st).kind == "done"
@@ -209,7 +217,7 @@ def test_duplicate_normalized_ids_and_cross_provider_build_reuse_block(offline):
 def test_rerun_clears_generated_failures_but_preserves_human_work(offline, monkeypatch):
     st = state_for(current_rc(ecs={PROD: [("test_100_X", "Failed")]}))
     plan_stub(monkeypatch, [point(100)])
-    monkeypatch.setattr(D, "set_assigned_to", lambda *a, **kw: (True, ""))
+    monkeypatch.setattr(D, "set_point_testers", lambda *a, **kw: (True, ""))
     human_link = {"name": "Investigation", "url": "https://example.com/investigation"}
     st.set_step("bug_bash", "ui_failures",
                 StepState(status="done", note="Human sign-off", links=[human_link], data={"ticket": 12}))
@@ -220,12 +228,14 @@ def test_rerun_clears_generated_failures_but_preserves_human_work(offline, monke
     assert step.note.count("UI failures to investigate") == 1
     assert step.note.endswith("Human sign-off") and step.status == "done"
     st.pipeline_runs["rcs"].append(current_rc(rc=3))
-    monkeypatch.setattr(D, "set_assigned_to", forbidden)
+    monkeypatch.setattr(D, "set_point_testers", forbidden)
     with mockctx.active({}):
         _invoke(U.build, st)
     step = st.get_step("bug_bash", "ui_failures")
     assert step.status == "done" and step.note == "Human sign-off"
-    assert step.links == [human_link] and step.data == {"ticket": 12}
+    assert step.links == [human_link] and step.data["ticket"] == 12
+    assert step.data["gate_preconditions"]
+    assert "broker_failed_tests" not in step.data and "auth_failed_cases" not in step.data
 
 
 def test_unmarked_note_is_not_guessed_to_be_generated(offline, monkeypatch):
@@ -242,7 +252,8 @@ def test_unmarked_note_is_not_guessed_to_be_generated(offline, monkeypatch):
         assert _invoke(U.build, st).kind == "done"
     step = st.get_step("bug_bash", "ui_failures")
     assert step.note == before.note and step.status == "done"
-    assert step.data == {"keep": True}
+    assert step.data["keep"] is True and step.data["gate_preconditions"]
+    assert "broker_failed_tests" not in step.data and "auth_failed_cases" not in step.data
     assert step.links == before.links
 
 
@@ -258,24 +269,30 @@ def test_current_auth_snapshot_replaces_earlier_auth_failure(offline, monkeypatc
 
 def test_partial_fill_and_assignment_errors_are_explicit(offline, monkeypatch):
     st = state_for(current_rc(ecs={PROD: [("test_100_Pass", "Passed"), ("test_200_Fail", "Failed")]}))
-    plan_stub(monkeypatch, [point(100), point(200, point_id=2)])
-    monkeypatch.setattr(T, "_set_points_outcome",
-                        lambda plan, suite, ids, outcome, *a, **k:
-                        (outcome == "Passed", "write failed"))
+    points = [point(100), point(200, point_id=2)]
+    plan_stub(monkeypatch, points)
+    def partial(plan, suite, ids, outcome, *args, **kwargs):
+        if outcome == "Passed":
+            for row in points:
+                if row["id"] in ids:
+                    row["outcome"] = outcome
+            return True, ""
+        return False, "write failed"
+    monkeypatch.setattr(T, "_set_points_outcome", partial)
     with mockctx.active({}):
         result = _invoke(U.build, st)
     assert result.kind == "blocked" and "may already have changed" in result.reason
     data = st.get_step("bug_bash", U.ID).data
     assert data["fill_status"] == "incomplete" and data["summary"]["set_passed"] == 1
     assert data["summary"]["incomplete_outcome"] == "Failed" and data["provenance"]["rc"] == 2
-    plan_stub(monkeypatch, [point(100), point(200, point_id=2)])
+    plan_stub(monkeypatch, points)
     monkeypatch.setattr(
-        D, "set_assigned_to", lambda *a, **kw: (False, "assignment rejected"))
+        D, "set_point_testers", lambda *a, **kw: (False, "assignment rejected"))
     with mockctx.active({}):
         result = _invoke(U.build, st)
     assert "reassignment incomplete" in result.note
     assert st.get_step("bug_bash", U.ID).data["broker"]["assignment_errors"] == [
-        {"case_id": 200, "detail": "assignment rejected"}]
+        {"case_id": 200, "point_ids": [2], "detail": "assignment rejected"}]
     assert "all assigned" not in st.get_step("bug_bash", "ui_failures").note
 
 

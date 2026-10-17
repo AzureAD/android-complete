@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from orchestrator import cli_common as C
 from orchestrator import schedule, delivery as D
 from tools import bugbash as BB
+from tools.distribution import ConnectorObservationRequired
 from steps.bug_bash.activate_chat import stored_chat_id, chat_state_matches
 from steps.bug_bash import bugbash_updates as BU
 from steps.bug_bash.ui_results import completed_result
@@ -108,9 +109,25 @@ def cmd_post_bugbash_update(args):
         return 0
 
     month_year = schedule.target_month_label(st) or "Bug Bash"
-    ok, payload, detail = BU.prepare_update(context, progress, context.parameters.members_file)
+    try:
+        ok, payload, detail = BU.prepare_update(context, progress, context.parameters.members_file)
+    except ConnectorObservationRequired as exc:
+        print(_json.dumps({
+            "decision": "error", "chatId": chat_id, "detail": str(exc), "notifications": [],
+            "permission_to_send": False, "connector_reads": exc.requests,
+            "followup": "Append the exact fresh owner-bound directory envelopes as "
+                        "directory_observations on the members-file envelope; rerun "
+                        "with --members-file <path>. Do not send or record completion.",
+        }))
+        return 0
     if not ok:
-        print(_json.dumps({"decision": "error", "chatId": chat_id, "detail": detail, "notifications": []}))
+        print(_json.dumps({
+            "decision": "error", "chatId": chat_id, "detail": detail, "notifications": [],
+            "permission_to_send": False,
+            "connector_reads": [BB.mention_read_request(chat_id, context.release.owner_email)],
+            "followup": "Save the complete raw response in the requested fresh owner-bound "
+                        "M365 observation envelope; rerun with --members-file <path>.",
+        }))
         return 0
 
     if BB.all_complete(progress):
@@ -157,5 +174,5 @@ def register(sub):
     p.add_argument("--release", required=True)
     p.add_argument("--now", default=None, help="Override 'now' (ISO 8601) for the window math")
     p.add_argument("--force", action="store_true", help="Skip the working-window gate")
-    p.add_argument("--members-file", help="Fresh complete workiq_get_chat JSON response for the verified meeting")
+    p.add_argument("--members-file", help="Fresh owner-bound ListChatMembers/workiq_get_chat observation envelope")
     p.set_defaults(func=cmd_post_bugbash_update)

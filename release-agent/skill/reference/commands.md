@@ -80,7 +80,7 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | Localization: deliver staged follow-up | `notification prepare --release <YYYY-MM> --source pending` then claim/result for the initial PR, deadline warning or timeout email. A PR ID alone is not delivery evidence. |
 | **Phase 2 — signal a re-triggered RC** | `python -m orchestrator.cli rc-retriggered --release <YYYY-MM> [--reason "..."]` — after the owner re-runs RC (flaky) or the orchestrator triggers a fresh RC (broker cherry-pick), reopens `mrwp_ecs`/`mrwp_local`/`rc_report` so Scout re-evaluates the **newest** RC. Holds `in_flight` (no action) while the run executes; the poller re-applies the gate on completion |
 | **Phase 2 — one RC poll** | `python -m orchestrator.cli poll-rc --release <YYYY-MM>` — `waiting` / `nudge` / `ready` / `resolved` / `blocked` / `idle`. `ready` lists eligible Scout work: execute it and its follow-up, then re-poll. `resolved` requires all Phase-2 steps settled as done/skipped; distinguish `status: overridden` from `status: passed`. The worker lives until its owning phase completes, not merely an old RC report. |
-| **Phase 3 — bind the invitation's meeting chat** | `python -m orchestrator.cli record-bugbash-chat --release <id> [--chat-id <expected-thread>]` — resolves the exact sent event's join URL/thread; enforces prerequisites; never chooses by title |
+| **Phase 3 — bind the invitation's meeting chat** | `python -m orchestrator.cli record-bugbash-chat --release <id> [--chat-id <expected-thread>]` requests exact native connector observations. `--chat-link <link>` previews owner-confirmed recovery; confirmation requires the exact hash, owner and reason below. |
 | **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. Missing/stale invite-chat bindings return no_chat, including with force. The final message's successful claim/result records `poll_complete`; central claimed cleanup retires the on-demand poller. |
 | **Phase 3 — private/manual progress** | `python -m orchestrator.cli bugbash-progress --release <id>` — read-only JSON report, live ADO progress and current fill investigation evidence; no chat/Graph identity lookup, mentions, delivery permission, state save or completion. Works with owner-skipped chat/progress steps and during patch diagnosis. |
 | **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-primary-upn> [--json]` — owner/OCE/configured exclusions removed before listing candidates; missing OCE blocks without candidates; subsequent runs reuse the recorded OCE and availability |
@@ -341,14 +341,50 @@ using `notification result ... --receipt-file <response.json>`. Never invent an 
 If sending succeeded but recording failed, retry acknowledgement, not calendar creation.
 
 `activate_chat` consumes the completed send_invite's acknowledged receipt. Run
-`record-bugbash-chat --release <id>` as the organizer. It reads that exact event, validates
-organizer/subject/times and resolves its join URL to `onlineMeeting.chatInfo.threadId`,
-then verifies that thread. Do not use `workiq_search_chats` or a matching title as identity.
+`record-bugbash-chat --release <id>` as the organizer. It prints exact read-only
+`workiq_get_my_profile` and `workiq_get_event` requests; gather their timestamped,
+owner-bound observation envelopes and supply `--profile-observation <file>` and
+`--event-observation <file>`. It validates organizer/subject/times/complete typed
+attendees, derives the exact thread encoded in that event's meetup-join URL, and
+requests `microsoft_teams-GetChat` for that thread. Supply its envelope through
+`--chat-observation <file>`. Missing evidence is a read handoff, not completion.
+The engine performs no Azure CLI/Graph call. An opaque numeric join link has no
+assumed onlineMeeting resolver; immediately offer owner-confirmed link recovery.
+Do not use `workiq_search_chats` or a matching title as identity.
 `--chat-id` only asserts that a user-provided candidate equals the resolved thread.
-If the thread is unavailable, open the exact event's Chat pane and retry; API permission
-failures remain blocked, not a reason to accept an unverified chat.
-In particular, HTTP 403 is an access failure, not an uninitialized chat; repeatedly
-opening the event or waiting does not establish permission.
+If the thread is unavailable, open the exact event's Chat pane and retry. HTTP 403
+is an access failure, not an uninitialized chat; repeatedly opening the event or
+waiting does not establish permission. On the FIRST access failure, immediately
+offer owner-confirmed link recovery, manual posting, or keeping this held. Do not
+require a successful Graph call before allowing the owner-confirmed path.
+
+For owner-confirmed recovery, the owner opens the exact acknowledged invitation's
+Chat pane, activates its chat, and copies a Teams chat/message link. Run
+`record-bugbash-chat --release <id> --chat-link <link>` to preview without any Graph
+request or state write. HTTPS Teams `/l/chat/`, `/l/message/`, and `/l/meetup-join/`
+links containing a meeting thread are supported, including URL-encoded IDs and
+`teams.cloud.microsoft`. Bare IDs, nonmeeting chats and arbitrary destinations reject.
+If the saved invitation join URL encodes a different thread, recovery rejects it.
+
+Show the fresh status plus exact invitation event/subject/times/recipients/link and
+the preview warning, then ask for explicit confirmation that the owner activated
+THIS invitation's chat and copied THIS link. On confirmation, run the same command
+with `--confirm-activated --review-hash <hash> --approved-by <owner_email>
+--reason "<owner confirmation>"`. Never infer this from merely pasting a link.
+Changed invitation/receipt/link means a changed hash and requires fresh approval.
+The command records `meeting.verification: owner_attested`, the review hash,
+invitation digest, owner and reason; it never fabricates an onlineMeeting ID.
+The confirmer's identity is asserted through Scout, not independently authenticated.
+Current event/attendee state and posting access are not independently verified.
+Without a thread-bearing join URL in the old receipt, linkage relies explicitly on
+the owner's attestation, not an invented API observation.
+
+This binding permits normal progress preparation; it does NOT send a message,
+prove delivery, start a poller, or satisfy a release gate. Keep member verification
+(including the WorkIQ members-file path below), approval, claims and delivery receipts.
+If posting remains unavailable, immediately offer private manual progress rather
+than silently looping. Missing/uncertain invitation receipts and existing terminal
+skips still require their normal owner recovery; no forced completion or recreation.
 
 If the owner explicitly keeps chat/progress skipped and posts manually, leave those
 decisions intact. `bugbash-progress --release <id>` returns the complete progress HTML
@@ -401,11 +437,15 @@ Count each case once, requiring all originally failing configurations to resolve
 unexecuted configurations and successful automation do not inflate triage.
 Preserve real manual Passed/N/A completions. Do not infer automation
 from a Passed outcome, a shared tag, or a saved assignment list.
-If the CLI Graph token lacks chat-member access, fetch the exact verified chat with
-`workiq_get_chat` and save its fresh `id`, `chatType`, and complete `members` fields as
-JSON (do not copy message history). Re-prepare the first post with `--param members_file=<path>`, or rerun
-`post-bugbash-update` with `--members-file <path>`. The response must match the bound chat;
-do not reuse another meeting's member list or hand-author identities.
+Use `microsoft_teams-ListChatMembers` for the exact bound chat, or
+`workiq_get_chat` when its complete exact-chat member response is available.
+Wrap the actual structured response in the shared M365 observation envelope
+(version/tool/exact arguments/account/actual observed_at/result); raw legacy
+member JSON is not fresh account-bound evidence. Do not copy message history.
+Re-prepare with `--param members_file=<path>` or rerun the poller with
+`--members-file <path>`. Missing evidence returns a read-only connector request;
+it never authorizes a send or step completion. UPN/SMTP differences require
+explicit structured directory identity evidence, never a guessed mention.
 
 ## Checked finalization and rollout writes
 
@@ -443,8 +483,14 @@ evidence, not a provider-success receipt or permission to execute again.
 
 Before `distribute_tests` computes the first manual-test preview, the **release owner**
 must supply availability for **this release's Bug Bash**. Do not query calendars,
-Teams presence, O365 automatic replies/OOF, or infer dates. Graph is used only to resolve
-the configured roster and its names/verified UPNs, not to determine availability.
+Teams presence, O365 automatic replies/OOF, or infer dates. Structured hosted WorkIQ
+entity reads resolve the exact configured group and verified directory members,
+not availability. `distribute-tests` prints the exact next group/member request
+until `--roster-file <path>` supplies `{observations:[<fresh owner-bound envelopes>]}`.
+Follow only actual returned pagination for that same group. Missing entity tools
+or policy-denied paths hold setup; no people-search or Azure CLI Graph fallback.
+Repeat the same roster file in preview/apply; source and membership participate
+in the reviewed hash and are revalidated before each ADO Tester write.
 
 1. Resolve the **current primary** on-call engineer using ICM
    `get_on_call_schedule_by_team_id` for the team in `readiness.yaml`'s `oncall_now`
@@ -479,7 +525,8 @@ and **owner triage** for Blocked-tagged cases and applied automated failures. Sh
 triage case and reason; do not silently leave those cases with excluded/former owners.
 The cross-platform `Automated` tag is not an Android automation exclusion; only the
 completed fill's automated-case set proves that. The owner remains excluded from manual
-work but receives triage. Apply writes both case assignees and selected plan-point testers;
+work but receives triage. Apply writes only the release plan/suite point Testers,
+never shared test-case System.AssignedTo;
 neither outcomes nor Blocked tags are changed. A failed tester update is an incomplete
 apply, not success. Review again if the triage set changes.
 

@@ -13,6 +13,16 @@ from tools.coordinates import coords
 ID = "rc_report_publish"
 KIND = "scout"
 WRITE_COMMAND = "publish-rc-report"
+PUBLICATION_CAPABILITY = (
+    "workiq_upload_file replaces an existing item only: require fresh exact target "
+    "resolution and downloaded matching SHA-256 before one authorized action. "
+    "No native new-file uploader is released. New content-addressed filenames use "
+    "one checked SharePoint browser handoff with an exact local HTML path and fresh "
+    "folder observation or explicit owner-confirmed library context. Inspect the "
+    "real snapshot for Upload/Files, never overwrite, cancel replacement prompts, "
+    "and return an execution-bound native resolve/download receipt. Missing context "
+    "requires owner-assisted recovery. No Graph fallback, sharing change, or replay."
+)
 
 
 def target_config() -> dict:
@@ -65,10 +75,12 @@ def build(context: StepContext):
             "html": html,
             "source_digest": lineage["source_digest"],
             "content_sha256": lineage["content_sha256"],
+            "publication_capability": PUBLICATION_CAPABILITY,
             "_plain_body": plain,
             "followup_command": (
                 f"{WRITE_COMMAND} --release {context.release.release_id} "
-                "--execute --auto-approve --executor rc-report-publish-automation"
+                "--execute --auto-approve --executor rc-report-publish-automation "
+                "--upload-request-file <checked-upload-request.json>"
             ),
         },
         record_as=ID,

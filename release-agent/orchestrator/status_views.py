@@ -53,6 +53,8 @@ class StatusViewMixin:
                     status = "running"
                 elif s_inflight:
                     status = "in_flight"       # pipeline run still executing — Scout polling
+                elif not selection.step(phase["id"], sid).prerequisites_met:
+                    status = "pending"
                 elif is_gate:
                     status = "approval"
                 elif is_attest:
@@ -66,7 +68,8 @@ class StatusViewMixin:
                 # needs_owner = a genuine USER task. A pending scout step is Scout's
                 # automatic work (not the user's) until it BLOCKS (s_blocked), so it is
                 # NOT flagged — only gates, reminders, attests, and blocks are.
-                needs = bool((is_gate or is_rem or is_attest or s_blocked) and not s_done)
+                needs = bool((is_gate or is_rem or is_attest or s_blocked) and not s_done
+                             and selection.step(phase["id"], sid).prerequisites_met)
                 steps_view.append({
                     "id": sid, "name": s["name"], "status": status,
                     "needs_owner": needs,
@@ -174,6 +177,8 @@ class StatusViewMixin:
                 # "Not open yet" (this check precedes gate/scout/auto so scout steps don't
                 # mislabel as "automatic" in an unopened phase — that mix is confusing).
                 s_state = "scheduled"
+            elif not step_readiness.prerequisites_met:
+                s_state = "pending"
             elif (hold and s["id"] == hold.step_id
                   and current_phase_obj["id"] == hold.phase_id
                   and hold.kind in ("gate", "denied")):

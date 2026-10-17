@@ -132,7 +132,8 @@ def get_plan(plan_id, timeout=60):
     ok, j, d = P._ado_rest_get(_plan_url(plan_id), timeout)
     if not ok:
         return (False, None, d)
-    if not isinstance(j, dict) or not j.get("id") or not j.get("rootSuite"):
+    if (not isinstance(j, dict) or not j.get("id")
+            or not isinstance(j.get("rootSuite"), dict) or not j["rootSuite"].get("id")):
         return (False, None, "plan lookup returned no id/rootSuite")
     root = (j or {}).get("rootSuite") or {}
     return (True, {"id": j.get("id"), "name": j.get("name"),
@@ -146,6 +147,8 @@ def get_suite(plan_id, suite_id, timeout=60, *, org=ORG, project=PROJECT):
     ok, j, d = P._ado_rest_get(url, timeout)
     if not ok:
         return (False, None, d)
+    if not isinstance(j, dict):
+        return False, None, "Malformed test-suite response"
     return (
         True,
         {
@@ -177,7 +180,19 @@ def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
 
 
 def _normalized_query(value):
-    return " ".join(str(value or "").split())
+    import re
+    # Normalize layout only; whitespace inside quoted WIQL literals is significant.
+    return " ".join(re.findall(r"""'(?:''|[^'])*'|"(?:\"\"|[^"])*"|[^'"\s]+""", value or ""))
+
+
+def _auth_suite_input_error(name, query, plan_id, parent_suite_id, suite_id=None):
+    from tools.pipelines.tests_results import _positive_test_id
+    if (not isinstance(name, str) or not name.strip()
+            or not isinstance(query, str) or not query.strip()
+            or not _positive_test_id(plan_id) or not _positive_test_id(parent_suite_id)
+            or suite_id is not None and not _positive_test_id(suite_id)):
+        return "Invalid Authenticator suite name/query/identity"
+    return ""
 
 
 def validate_auth_query_suite(
@@ -192,11 +207,19 @@ def validate_auth_query_suite(
     parent_suite_id=AUTH_ROOT_SUITE,
 ):
     """Verify the exact Authenticator query-suite identity before adoption."""
+    if error := _auth_suite_input_error(name, query, plan_id, parent_suite_id, suite_id):
+        return False, None, error
+    if suite_id is None:
+        return False, None, "Missing Authenticator suite identity"
     ok, info, detail = get_suite(
         plan_id, suite_id, timeout, org=org, project=project
     )
     if not ok:
         return False, None, detail
+    if (not isinstance(info, dict) or not isinstance(info.get("name"), str)
+            or not isinstance(info.get("parentSuite"), dict)
+            or not isinstance(info.get("queryString"), str)):
+        return False, None, "Malformed Authenticator suite identity"
     parent = (info or {}).get("parentSuite") or {}
     problems = []
     if str(info.get("id")) != str(suite_id):
@@ -229,11 +252,18 @@ def find_auth_query_suite(
     parent_suite_id=AUTH_ROOT_SUITE,
 ):
     """Find exactly one valid direct child by name; duplicates fail closed."""
+    if error := _auth_suite_input_error(name, query, plan_id, parent_suite_id):
+        return False, None, error
     want = (name or "").strip().lower()
     url = f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites?{_API}"
     ok, suites, detail = P._ado_rest_get_all(url, timeout)
     if not ok:
         return False, None, detail
+    if (not isinstance(suites, list)
+            or any(not isinstance(suite, dict) or not isinstance(suite.get("name"), str)
+                   or suite.get("parentSuite") is not None
+                   and not isinstance(suite["parentSuite"], dict) for suite in suites)):
+        return False, None, "Malformed suite collection; cannot establish absence"
     matches = [
         suite
         for suite in suites
@@ -383,6 +413,8 @@ def _native_auth_query(timeout=120):
         okf, s, _ds = _suite_full(sid, timeout)
         if not okf:
             return (False, None, _ds)
+        if not isinstance(s, dict):
+            return False, None, "Malformed Native Auth source suite"
         if s and s.get("suiteType") == "dynamicTestSuite" and s.get("queryString"):
             return (True, s["queryString"], "")
         stack.extend(children.get(sid, []))
@@ -411,7 +443,7 @@ def build_broker_plan(dest_name, timeout=120, *, source, description, on_created
     via on_created immediately after the POST. Partial plans are retained for reconciliation,
     never silently deleted/replaced. Source is the caller's persisted pre-create snapshot.
     """
-    from tools.broker_plans import _validate_source
+    from tools.broker_plans import _validate_source, positive_id
     try:
         _validate_source(source)
         if not callable(on_created):
@@ -426,15 +458,22 @@ def build_broker_plan(dest_name, timeout=120, *, source, description, on_created
         timeout)
     if not ok:
         return (False, None, d)
-    pid = (j or {}).get("id")
-    root = ((j or {}).get("rootSuite") or {}).get("id")
-    if pid:
-        on_created(pid)
-    if not pid or not root:
-        return (False, pid, "plan create returned no id/rootSuite")
+    if not isinstance(j, dict):
+        return False, None, "Plan create returned a malformed receipt; owner recovery required"
+    try:
+        pid = positive_id(j.get("id"))
+    except ValueError:
+        return False, None, "Plan create returned no valid id; owner recovery required"
+    on_created(pid)
 
     def _incomplete(reason):
         return (False, pid, f"Plan {pid} retained for recovery: {reason}")
+
+    root = j.get("rootSuite")
+    try:
+        root = positive_id(root.get("id") if isinstance(root, dict) else None)
+    except ValueError:
+        return _incomplete("plan create returned no valid rootSuite")
 
     okrc, drc = _set_suite_configs(pid, root, source["root_configs"], timeout)
     if not okrc:
@@ -508,6 +547,7 @@ def _set_points_outcome(
     *,
     org=ORG,
     project=PROJECT,
+    expected_points=None,
 ):
     """Set the manual outcome ('Passed' | 'Failed' | 'NotApplicable') on many test points at
     once. The classic points PATCH accepts a comma-separated id list (one shared outcome), so we
@@ -516,6 +556,23 @@ def _set_points_outcome(
     ids = [str(i) for i in point_ids]
     for i in range(0, len(ids), chunk):
         batch = ",".join(ids[i:i + chunk])
+        if expected_points is not None:
+            ok, current, detail = P._ado_rest_get_all(
+                f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points?api-version=5.0",
+                timeout)
+            if not ok:
+                return False, f"Cannot revalidate outcome batch before PATCH: {detail}"
+            if error := _point_validation_error(current, require_config=False):
+                return False, error
+            before = {str(point["id"]): point for point in expected_points}
+            after = {str(point["id"]): point for point in current}
+            for point_id in ids[i:i + chunk]:
+                previous, observed = before.get(point_id), after.get(point_id)
+                if (not previous or not observed
+                        or previous.get("testCase") != observed.get("testCase")
+                        or previous.get("configuration") != observed.get("configuration")
+                        or previous.get("outcome") != observed.get("outcome")):
+                    return False, f"Point {point_id} changed before PATCH; preserve manual results"
         url = (f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{suite_id}"
                f"/points/{batch}?api-version=5.0")
         ok, _j, d = P._ado_rest_send(url, "PATCH", {"outcome": outcome}, timeout)
@@ -546,6 +603,41 @@ def _point_validation_error(points, *, require_config):
     return ""
 
 
+def _preserved_result_check(points, desired, prior_points):
+    """Only pending points or unchanged acknowledged automation results may be written."""
+    from tools.pipelines.tests_results import _positive_test_id
+    if prior_points is None:
+        prior_points = []
+    if not isinstance(prior_points, list):
+        return [], "Malformed prior applied-point receipt; owner review required"
+    previous = {}
+    for row in prior_points:
+        if (not isinstance(row, dict) or not _positive_test_id(row.get("point_id"))
+                or not _positive_test_id(row.get("case_id"))
+                or row.get("outcome") not in ("Passed", "Failed", "NotApplicable")
+                or int(row["point_id"]) in previous):
+            return [], "Malformed prior applied-point receipt; owner review required"
+        previous[int(row["point_id"])] = row
+    current = {int(point["id"]): point for point in points}
+    reused = []
+    for row in desired:
+        point = current[row["point_id"]]
+        old = previous.get(row["point_id"])
+        outcome = point.get("outcome")
+        normalized = outcome.casefold() if isinstance(outcome, str) else None
+        if old:
+            if (old["case_id"] != row["case_id"]
+                    or old.get("config_id") != row.get("config_id")
+                    or normalized != old["outcome"].casefold()):
+                return [], f"Point {row['point_id']} changed since its applied receipt; preserve manual results"
+            if old["outcome"] == row["outcome"]:
+                reused.append(row)
+        elif normalized not in ("unspecified", "notrun", "active"):
+            return [], (f"Point {row['point_id']} has an existing/unreadable result without "
+                        "an applied receipt; preserve manual results and obtain owner review")
+    return reused, ""
+
+
 def fill_ui_automation_results(
     plan_id,
     verdicts,
@@ -554,6 +646,7 @@ def fill_ui_automation_results(
     suite_id=None,
     org=ORG,
     project=PROJECT,
+    prior_points=None,
 ):
     """Fill the plan's flat "UI Automation (Android Broker)" suite from per-config verdicts
     ({case_id: {(flight, variant): 'Passed'|'Failed'|'NotApplicable'}} — from
@@ -613,8 +706,19 @@ def fill_ui_automation_results(
         return False, summary, ("Missing full-combination RC MSAL/RC Broker points. "
                                 "Run broker-plan --preview-ui-repair and obtain owner-approved repair; "
                                 "no outcomes were written and historical points remain untouched")
+    desired = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]),
+                "config_id": int(p["configuration"]["id"]), "outcome": outcome}
+               for outcome, ids in buckets.items() for p in pts if p["id"] in ids]
+    reused, error = _preserved_result_check(pts, desired, prior_points)
+    if error:
+        return False, summary, error
+    reused_ids = {row["point_id"] for row in reused}
+    summary["applied_points"] = reused
+    summary["reused_points"] = sorted(reused_ids)
     count_key = {"Passed": "set_passed", "Failed": "set_failed", "NotApplicable": "set_not_applicable"}
     for outcome, point_ids in buckets.items():
+        summary[count_key[outcome]] = sum(row["outcome"] == outcome for row in reused)
+        point_ids = [pid for pid in point_ids if int(pid) not in reused_ids]
         if point_ids:
             batch = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]),
                       "config_id": int(p["configuration"]["id"]), "outcome": outcome}
@@ -627,13 +731,14 @@ def fill_ui_automation_results(
                 timeout,
                 org=org,
                 project=project,
+                expected_points=pts,
             )
             if not oko:
                 summary["incomplete_outcome"] = outcome
                 summary["uncertain_points"] = batch
                 return (False, summary, f"setting {len(point_ids)} points -> {outcome} failed: {do}; "
                         "earlier outcome batches remain applied; this batch may be partially applied")
-            summary[count_key[outcome]] = len(point_ids)
+            summary[count_key[outcome]] += len(point_ids)
             summary["applied_points"].extend(batch)
 
     return (True, summary, "")
@@ -647,6 +752,7 @@ def fill_auth_ui_results(
     *,
     org=ORG,
     project=PROJECT,
+    prior_points=None,
 ):
     """Fill the Authenticator bug-bash suite's points from per-case AUTOMATED outcomes
     ({case_id: 'Passed'|'Failed'} — supplied by the ui_test_status mapping owner).
@@ -684,7 +790,19 @@ def fill_auth_ui_results(
                "unmatched_verdicts": [{"case_id": cid, "verdict": outcomes[cid]}
                                       for cid in sorted(outcomes) if cid not in matched],
                "failed_case_ids": []}
+    desired = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]), "outcome": outcome}
+               for outcome, ids in buckets.items() for p in pts if p["id"] in ids]
+    reused, error = _preserved_result_check(pts, desired, prior_points)
+    if error:
+        return False, summary, error
+    reused_ids = {row["point_id"] for row in reused}
+    summary["applied_points"] = reused
+    summary["reused_points"] = sorted(reused_ids)
+    summary["failed_case_ids"] = sorted({row["case_id"] for row in reused if row["outcome"] == "Failed"})
     for outcome, point_ids in buckets.items():
+        count = "set_passed" if outcome == "Passed" else "set_failed"
+        summary[count] = sum(row["outcome"] == outcome for row in reused)
+        point_ids = [pid for pid in point_ids if int(pid) not in reused_ids]
         if point_ids:
             batch = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]), "outcome": outcome}
                      for p in pts if p["id"] in point_ids]
@@ -696,11 +814,12 @@ def fill_auth_ui_results(
                 timeout,
                 org=org,
                 project=project,
+                expected_points=pts,
             )
             if not oko:
                 summary.update(incomplete_outcome=outcome, uncertain_points=batch)
                 return False, summary, f"setting {len(point_ids)} auth points -> {outcome} failed: {do}"
-            summary["set_passed" if outcome == "Passed" else "set_failed"] = len(point_ids)
+            summary[count] += len(point_ids)
             summary["applied_points"].extend(batch)
             if outcome == "Failed":
                 summary["failed_case_ids"] = sorted(failed_cases)
@@ -719,6 +838,8 @@ def create_auth_query_suite(
 ):
     """CREATE a query-based (dynamic) test suite `name` under the Authenticator plan's
     root suite, selecting the given WIQL. Returns (ok, new_suite_id, detail)."""
+    if error := _auth_suite_input_error(name, query, plan_id, parent_suite_id):
+        return False, None, error
     url = (
         f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites?"
         "api-version=7.1-preview.1"
@@ -728,8 +849,9 @@ def create_auth_query_suite(
     ok, j, d = P._ado_rest_send(url, "POST", body, timeout)
     if not ok:
         return (False, None, d)
-    sid = (j or {}).get("id")
-    if not sid:
+    from tools.pipelines.tests_results import _positive_test_id
+    sid = j.get("id") if isinstance(j, dict) else None
+    if not _positive_test_id(sid):
         return (False, None, "suite create returned no id")
     return (True, sid, "")
 

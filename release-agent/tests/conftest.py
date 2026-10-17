@@ -120,11 +120,7 @@ def _no_real_network(monkeypatch):
         return popen(args, *positional, **kwargs)
 
     monkeypatch.setattr(subprocess, "Popen", offline_popen)
-    # tools.distribution has its own Graph + WIQL + write primitives — block those too.
-    try:
-        from tools import distribution as Dm
-        for fn in ("_graph_get", "_graph_token", "_ado_wiql", "set_assigned_to"):
-            monkeypatch.setattr(Dm, fn, _blocked)
-    except Exception:
-        pass
+    from tools import distribution as Dm
+    for fn in ("_ado_wiql", "set_assigned_to"):
+        monkeypatch.setattr(Dm, fn, _blocked)
     yield

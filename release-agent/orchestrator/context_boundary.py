@@ -65,6 +65,8 @@ def _reminder(record, update):
                 "links": added,
             },
         )
+    if update.gate_preconditions:
+        data["gate_preconditions"] = thaw(update.gate_preconditions)
     record.data = data
 
 

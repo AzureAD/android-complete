@@ -56,6 +56,47 @@ steps run inside `next`. Each records the ADO run it evaluated as a Details 🔗
 
 ## Reading and previewing the RC report
 
+### Checked SharePoint publication
+
+`publish-rc-report` now authorizes a Scout upload handoff; the Python engine never
+obtains a Graph token or uploads through Azure CLI. First preview the current report
+and materialize its exact UTF-8 HTML at an absolute local path whose filename equals
+the content-addressed filename in that preview.
+
+For a NEW immutable file, supply `--upload-request-file <request.json>` with
+`{version:1,route:"browser_new_file",local_path,library_context:{site_url,library,
+folder,folder_url,resolve:<fresh exact-folder native observation>}}`. The context
+must match the preview. If folder resolution is unavailable, only actual explicit
+owner confirmation may substitute via `owner_confirmed:true`, `confirmed_by` and
+fresh offset-aware `confirmed_at`; never default those fields.
+
+Preview again with that same request file, review the exact source/target/action,
+then use the checked `--execute` authorization. Execute only the ONE returned
+browser handoff: navigate to the frozen folder, verify account/context from a real
+snapshot, select observed Upload/Files controls, recheck local bytes/hash and upload
+only that single path. Cancel any Replace/Overwrite prompt. If the immutable file
+already exists, do not rewrite it: collect its exact provider bytes and recover
+the existing execution only if every byte matches. Do not rename or widen sharing.
+
+Native `workiq_upload_file` can replace only a proven existing exact item;
+`route:"existing_item"` requires fresh native resolve/download observations proving
+the same immutable bytes. Hosted WorkIQ new-file upload is not released. Do not
+invent an uploader or use the existing-item API to create a filename.
+
+After acknowledgement, collect `workiq_resolve_m365_link` and
+`workiq_download_file` observations with exact arguments/account/time and complete
+provider metadata/bytes. Canonical link resolution may return only drive/item IDs:
+the result action then requests an exact ID-bound hosted WorkIQ DriveItem metadata
+read; place its envelope in `metadata`. Native download text/base64 output is
+accepted only when its bytes match the frozen SHA/size. Save
+`{receipt_binding:<returned unchanged>,item_url,resolve:<envelope>,
+metadata:<requested envelope when needed>,download:<envelope>}` and run
+`publish-rc-report --release <id> --execution-id <owning id> --receipt-file <file>`.
+This is result-only and never issues another upload. Unknown outcomes retain the
+original execution; inspect/read the exact target rather than repeating execute.
+Receipts are saved before source/completion checks, but stale content never passes
+the current report gate. Permission/acknowledgement is not inferred from a preview.
+
 Use the existing HTML report renderer for local review; do not replace it with a
 handwritten summary. Clearly label previews and provisional/incomplete data. A preview
 never authorizes delivery, completion or extra copies; report sends use the shared protocol.

@@ -54,9 +54,10 @@ class UIFailureReminder:
     broker_count: int
     failed_ids: tuple
     auth_failures: tuple = ()
+    gate_preconditions: tuple = ()
 
     def __post_init__(self):
-        for name in ("links", "failed_ids", "auth_failures"):
+        for name in ("links", "failed_ids", "auth_failures", "gate_preconditions"):
             object.__setattr__(self, name, freeze(getattr(self, name)))
 
 

@@ -174,6 +174,33 @@ the recorder revalidates it. This never acknowledges a send.
 
 Discover → (if no gate cleared, run the entry gate) → `next --json` to advance → drain every eligible `scout_pending` item (including beside independent blocks) → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
 
+## Provider routing and capability readiness
+
+Use structured native WorkIQ for calendar/mail/supported file operations and
+Agency Teams MCP for exact chat/member reads, direct-user notices and channel
+posts. Use hosted WorkIQ entity fetch for exact directory groups/users when the
+tool and paths are actually available. Resolve its real loaded tool name; never
+invent `workiq.fetch` as an exposed tool. WorkIQ Ask is for synthesis, not identities,
+assignments, approvals or delivery proof. Do not acquire M365 Graph tokens through
+Azure CLI. Azure DevOps/Git operations retain their existing provider adapters.
+
+Before entry, run `m365-capabilities --release <id>` and perform its actual
+owner/target-bound read probes with the loaded tool inventory. Record
+`m365_access` only with the validated structured evidence file, not a bare pass.
+Missing/disabled tools and denied paths hold setup early; read
+reference/readiness-gate.md. The owner separately confirms `m365_write_access`;
+reads/tool discovery do not prove send/upload permission, and no test write is
+authorized by readiness. Recheck actual future event/chat destinations when used.
+
+Read-only connector requests are NOT completed Scout steps or notification
+deliveries. Gather the exact native response in its timestamp/account/argument
+observation envelope and rerun the owning follow-up flags; never record a read as
+a successful send. Resolve UPN/SMTP differences with actual directory evidence.
+Missing access immediately offers supported human recovery rather than waiting.
+New immutable SharePoint reports cannot use the native existing-item uploader as
+if it created files; use the checked publication upload handoff and owning receipt.
+Never switch transports or repeat an upload/send after an unknown outcome.
+
 ## Behaviour dispatch
 - **"status" / "where are we":** discover. If the entry gate isn't cleared (`readiness_gate`/not signed, or `blocked`) → the useful answer IS the checklist: run `checklist --release <id> --verify` and show that table (don't ask permission). Otherwise show `status`. No release → say so, offer to start.
 - **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before anything.)* **Confirm which release in ONE prompt** — run `python -m orchestrator.cli preview-release --json` (returns candidates, each with `release_id`, `ship_label`, `ccd_pretty` — the release is NAMED for its **ship month** = code-complete month + 1). Lead with candidate[0] (the current month's release) and `m_ask_user`: recommended chip **"Yes — start the `<ship_label>` release (code-complete `<ccd_pretty>`)"**, plus a **"A different month"** chip. Show the ship name and the CCD date TOGETHER so there's no month-mismatch surprise (never make the user pick a bare month, then tell them it's a different one). If they pick "A different month" → a second `m_ask_user` offering candidates[1..3] as chips (each **"`<ship_label>` (CC `<ccd_pretty>`)"**) plus a free-text "another month" fallback. → `init --release <chosen release_id>` (this stores + prints the confirmed ship-name; do NOT re-ask it) → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
@@ -182,8 +209,23 @@ Discover → (if no gate cleared, run the entry gate) → `next --json` to advan
 - **Phase 3 Broker plan recovery:** follow **reference/commands.md → Broker plan recovery**. Never reopen creation or clear IDs to fix missing metadata. Present candidate IDs/areas/results and ask which existing plan to retain; bind only the owner's explicit choice. An uncertain create is not permission to retry. Partial plans are repaired in place, not automatically deleted/replaced.
 - **Two-plan ownership:** `auth_ecs` owns complete RC/APK/test-build-bound source capture; `rc_report` prepares source-only investigation facts and gates, and renderers only present them. Clone steps own target identity/structure. `ui_test_status` alone maps/writes both plans, durably invalidates prior results before retry, and publishes a completed result only after required writes succeed. Distribution reads its automated case IDs; progress reads its applied-failed IDs plus live assignments, never raw Phase-2 evidence or projections. Missing/partial/stale results require refreshing owning clone/verification steps then rerunning the fill, not migration/fallback. Preview/apply bind the receipt ID and current release/RC/build/plan/suite identities. Assignment failures remain visible and nonblocking.
 - **Distribution source of truth:** ADO owns assignments and plan testers; never store/replay an internal allocation map. `distribute-tests --json` reads live ADO and shows exact corrections, separately for manual work and owner triage. After explicit approval repeat the preview's OOF/OCE flags with `--apply --review-hash <hash> --approved-by <reviewer>`. Previews do not save availability. The command rereads ADO, rejects changed review inputs, corrects mismatches and reads back. Valid ADO needs no redistribution. Partial failures retain ownership: inspect live results and resolve explicitly before another review. Keep only availability decisions, authorization digest and workflow status internally; progress reads live ADO.
-- **Bug Bash chat identity:** preserve the actual created event response with `notification result --receipt-file`. `record-bugbash-chat` resolves that exact event's join URL to its Teams thread, as the organizer; topic search or a pasted chat ID is not proof. Missing receipts/permissions and stale bindings block. See reference/commands.md → Bug Bash invite and exact chat identity. Never create another invite to repair a chat association.
-- **Bug Bash mentions:** send the prepared display-name tags and canonical `mentions` unchanged; never substitute UPNs or ADO identity IDs. If CLI Graph cannot read members, use the exact chat's fresh `workiq_get_chat` response with `members_file` / `--members-file` as documented in reference/commands.md, then re-prepare. Unresolved pending owners block, not silently lose their tags.
+- **Bug Bash chat identity:** preserve the actual invitation receipt. `record-bugbash-chat`
+  requests exact native profile/event/chat observation envelopes through
+  `--profile-observation`, `--event-observation`, `--chat-observation`; it never calls
+  Azure CLI/Graph. Missing reads do not complete the step. On the FIRST access
+  failure or opaque join link, immediately offer **Confirm my chat link**,
+  **Post updates manually**, or **Keep held**. Preview `--chat-link <link>` copied
+  from THIS invitation's activated Chat pane. Show fresh status and exact
+  invitation/link/limitations, then obtain explicit owner confirmation before
+  recording its current `--confirm-activated --review-hash <hash> --approved-by
+  <owner_email> --reason "<owner confirmation>"`. This is owner-attested, not
+  native-provider verification. Missing receipts, contradictory threads, stale
+  review and changed terminal bindings still hold; no recreated invite or state edit.
+- **Bug Bash mentions:** use fresh exact-chat Teams `ListChatMembers` or native
+  `workiq_get_chat` observation envelopes via `members_file` / `--members-file`,
+  not raw legacy snapshots. Keep prepared display-name tags, real user GUIDs and
+  canonical mentions unchanged. Explicit directory evidence resolves UPN/SMTP
+  differences; never guess identities or omit unresolved pending owners.
 - **Bug Bash manual progress:** when the owner has explicitly chosen manual posting or
   asks for progress without a working chat binding, run `bugbash-progress --release <id>`.
   Show its full private/manual report and relevant frozen investigation evidence; it is

@@ -186,7 +186,7 @@ def cmd_done(args):
     """Mark a reminder (human, non-gate) step done, then advance to the next hold."""
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     act = orch.complete_step(getattr(args, "phase", None), getattr(args, "step", None), args.note or "")
-    if act.kind == "idle":
+    if act.kind != "ran":
         print(act.message)
         return 1
     el = C.elog(args.runs_root, args.release)

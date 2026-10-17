@@ -115,7 +115,11 @@ def prepare_step(args, st, orch):
             args.phase, args.step, permit=permit, parameters=params, inputs=spec))
     transition = None
     if built and isinstance(outcome, (Done, Blocked, InProgress)):
-        transition = orch.apply_outcome(permit, outcome)
+        if definition.is_human_action and isinstance(outcome, Blocked):
+            orch.validate_outcome_permit(permit)
+            orch.apply_evidence(permit, outcome)
+        else:
+            transition = orch.apply_outcome(permit, outcome)
     elif built:
         orch.validate_outcome_permit(permit)
         orch.apply_evidence(permit, outcome)

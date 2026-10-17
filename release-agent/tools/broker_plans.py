@@ -31,6 +31,10 @@ def identity(release_id, name):
 
 
 def _runtime_matches(expected):
+    if (not isinstance(expected, dict)
+            or any(not isinstance(expected.get(key), str) or not expected[key].strip()
+                   for key in ("release_id", "name", "org", "project", "area", "iteration", "marker"))):
+        return False
     current = identity(expected.get("release_id"), expected.get("name"))
     return all(
         current.get(key) == expected.get(key)
@@ -49,6 +53,8 @@ def find_candidates(expected, timeout=120):
         "&filterActivePlans=false&includePlanDetails=true", timeout)
     if not ok:
         return False, None, detail
+    if not isinstance(plans, list):
+        return False, None, "Malformed plan collection; discovery cannot establish absence"
     found = {}
     for plan in plans:
         if (not isinstance(plan, dict) or not isinstance(plan.get("name"), str)
@@ -92,6 +98,9 @@ def _snapshot(timeout, rc=None):
     ok, root, detail = T._suite_full(T.BROKER_MASTER_ROOT_SUITE, timeout)
     if not ok:
         return False, None, detail
+    if (not isinstance(root, dict) or not isinstance(root.get("defaultConfigurations"), list)
+            or any(not isinstance(config, dict) for config in root["defaultConfigurations"])):
+        return False, None, "Malformed master root configurations; cannot snapshot Broker source"
     root_configs = sorted({positive_id(c.get("id")) for c in root.get("defaultConfigurations", [])})
     if root.get("inheritDefaultConfigurations") or not root_configs:
         return False, None, "Master root needs explicit configurations before building the monthly plan"
@@ -105,6 +114,8 @@ def _snapshot(timeout, rc=None):
         ok, cases, detail = D.broker_manual_cases(T.BROKER_MASTER_PLAN, root_id, timeout)
         if not ok:
             return False, None, detail
+        if not isinstance(cases, list) or any(not isinstance(case, dict) or "id" not in case for case in cases):
+            return False, None, f"Malformed master {key}; cannot snapshot Broker source"
         source[key] = sorted({positive_id(c["id"]) for c in cases})
         if not source[key]:
             return False, None, f"Master {key} resolved to zero cases"
@@ -139,6 +150,9 @@ def validate_plan(
     ok, info, detail = T.get_plan(pid, timeout)
     if not ok:
         return False, None, f"Recorded/candidate plan {pid} cannot be read: {detail}"
+    if (not isinstance(info, dict)
+            or (info.get("description") is not None and not isinstance(info["description"], str))):
+        return False, None, f"Plan {pid}: malformed identity/description"
     if (positive_id(info["id"]) != pid or info.get("name") != expected["name"]
             or info.get("areaPath") != expected["area"]
             or info.get("iteration") != expected["iteration"]):
@@ -154,6 +168,10 @@ def validate_plan(
         f"{T.ORG}/{T.PROJECT}/_apis/test/Plans/{pid}/suites/{root}?api-version=5.0", timeout)
     if not ok:
         return False, None, detail
+    if (not isinstance(root_info, dict)
+            or not isinstance(root_info.get("defaultConfigurations"), list)
+            or any(not isinstance(config, dict) for config in root_info["defaultConfigurations"])):
+        return False, None, f"Plan {pid}: malformed root configurations"
     root_configs = {positive_id(c.get("id")) for c in root_info.get("defaultConfigurations", [])}
     if (root_info.get("inheritDefaultConfigurations") or not root_configs
             or (source and root_configs != set(source["root_configs"]))):
@@ -162,12 +180,17 @@ def validate_plan(
         f"{T.ORG}/{T.PROJECT}/_apis/testplan/Plans/{pid}/suites?{T._API}", timeout)
     if not ok:
         return False, None, detail
+    if (not isinstance(suites, list)
+            or any(not isinstance(suite, dict) or not isinstance(suite.get("name"), str)
+                   for suite in suites)):
+        return False, None, f"Plan {pid}: malformed suite collection"
     children = [s for s in suites if positive_id(s.get("id")) != root]
     specs = ((T.BROKER_MANUAL_SUITE_NAME, "staticTestSuite", "broker"),
              (T.BROKER_NATIVE_AUTH_SUITE_NAME, "dynamicTestSuite", "native"),
              (T.BROKER_UI_SUITE_NAME, "staticTestSuite", "ui"))
     if (len(children) != 3 or {s.get("name") for s in children} != {s[0] for s in specs}
-            or any(str((s.get("parentSuite") or {}).get("id")) != str(root) for s in children)):
+            or any(not isinstance(s.get("parentSuite"), dict)
+                   or str(s["parentSuite"].get("id")) != str(root) for s in children)):
         return False, None, f"Plan {pid} must contain exactly the three flat release suites; repair this plan, do not recreate it"
     by_name = {s["name"]: s for s in children}
     for name, suite_type, key in specs:
@@ -180,7 +203,10 @@ def validate_plan(
                 f"{T.ORG}/{T.PROJECT}/_apis/testplan/Plans/{pid}/suites/{sid}?{T._API}", timeout)
             if not ok:
                 return False, None, detail
-            if (not full.get("inheritDefaultConfigurations") or not full.get("queryString")
+            if not isinstance(full, dict):
+                return False, None, f"Plan {pid}: malformed Native Auth suite"
+            if (not full.get("inheritDefaultConfigurations")
+                    or not isinstance(full.get("queryString"), str) or not full["queryString"].strip()
                     or (source and full["queryString"] != source["native_query"])):
                 return False, None, f"Plan {pid}: Native Auth query is missing or differs from the saved source"
             continue
@@ -188,6 +214,11 @@ def validate_plan(
             f"{T.ORG}/{T.PROJECT}/_apis/test/Plans/{pid}/Suites/{sid}/points?api-version=5.0", timeout)
         if not ok:
             return False, None, detail
+        if (not isinstance(points, list)
+                or any(not isinstance(point, dict)
+                       or not isinstance(point.get("testCase"), dict)
+                       or not isinstance(point.get("configuration"), dict) for point in points)):
+            return False, None, f"Plan {pid}: malformed case/configuration points"
         actual = {(positive_id((p.get("testCase") or {}).get("id")),
                    positive_id((p.get("configuration") or {}).get("id"))) for p in points}
         cases = source[key + "_cases"] if source else sorted({cid for cid, _ in actual})
@@ -209,10 +240,10 @@ def validate_plan(
 
 def prepare_source(timeout=120, rc=None):
     """Resolve and validate every fallible source read before create reservation."""
-    ok, source, detail = _snapshot(timeout, rc)
-    if not ok:
-        return False, None, f"Cannot snapshot master: {detail}"
     try:
+        ok, source, detail = _snapshot(timeout, rc)
+        if not ok:
+            return False, None, f"Cannot snapshot master: {detail}"
         _validate_source(source)
     except ValueError as exc:
         return False, None, str(exc)

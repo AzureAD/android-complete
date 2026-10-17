@@ -53,18 +53,27 @@ def prepare_effect(context):
     dest = context.input("name", MISSING)
     if dest is MISSING:
         dest = T.broker_plan_name(context.release.release_id)
+    if not isinstance(dest, str) or not dest.strip() or dest != dest.strip():
+        return Blocked("clone_plans_broker: destination plan name must be nonblank text without surrounding whitespace")
     from steps.build_verify._common import latest_rc
     rc = latest_rc(context)
-    record = context.evidence.resources.get(B.RESOURCE) or {}
+    record = context.evidence.resources.get(B.RESOURCE, {})
+    if not isinstance(record, dict):
+        return Blocked("clone_plans_broker: invalid Broker resource record; owner recovery required")
     injected = (
         context.input("plan_id", MISSING) is not MISSING
         or context.input("clone_id", MISSING) is not MISSING
     )
     source = record.get("source")
-    if source is None and not injected:
-        ok, source, detail = context.services.testplans.prepare_broker_source(rc=rc)
-        if not ok:
-            return Blocked(f"clone_plans_broker: {detail}")
+    if not injected:
+        if "source" not in record:
+            ok, source, detail = context.services.testplans.prepare_broker_source(rc=rc)
+            if not ok:
+                return Blocked(f"clone_plans_broker: {detail}")
+        try:
+            B._validate_source(source)
+        except ValueError as exc:
+            return Blocked(f"clone_plans_broker: {exc}")
     evidence_sha256 = hashlib.sha256(
         json.dumps(rc, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:16]

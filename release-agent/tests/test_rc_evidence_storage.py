@@ -548,8 +548,10 @@ def test_status_remains_bounded_without_evidence_io_or_detail(monkeypatch):
     assert abs(sizes[1] - sizes[0]) < 200
 
 
-def test_phase3_projections_and_effect_source_hash_are_identical_after_hydration(saved):
+def test_phase3_projections_and_effect_source_hash_are_identical_after_hydration(saved, monkeypatch):
     from steps.bug_bash import clone_plans_broker, ui_results, ui_test_status
+    from tools import distribution
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
 
     state, path, _ = saved
     Orchestrator(CONFIG, state, mocks={}, now=NOW)

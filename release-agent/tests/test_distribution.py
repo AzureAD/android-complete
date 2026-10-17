@@ -37,7 +37,11 @@ def observe(inputs, *, automated=None, failed=None):
             if prefix == "A" and int(cid) in automated and int(cid) not in failed and not any(
                     tag.casefold() == "blocked" for tag in case.get("tags", [])):
                 continue
-            points.append({"id": int(cid), "case_id": cid, "tester_id": case["tester_id"]})
+            tester = case["tester_id"]
+            tester_upn = (tester[3:] if tester and tester.startswith("id-") else
+                          f"{tester}@example.com" if tester else None)
+            points.append({"id": int(cid), "case_id": cid, "config_id": "84",
+                           "tester_id": tester, "tester_upn": tester_upn})
         if points:
             groups.append({"prefix": prefix, "plan_id": pid, "suite_id": sid, "points": points})
     inputs.setdefault("case_snapshot", {}).clear()
@@ -114,15 +118,10 @@ def cli(monkeypatch, state, inputs, *flags):
 def fake_writes(monkeypatch, inputs):
     calls = []
     cases = {str(c["id"]): c for c in inputs["broker_cases"] + inputs["auth_cases"]}
-    def write(cid, upn, *, expected_revision, org, project):
-        assert expected_revision == cases[cid].get("revision", 1)
-        calls.append(("case", cid, upn))
-        cases[cid]["assignee"] = upn
-        cases[cid]["revision"] = expected_revision + 1
-        observe(inputs)
-        return True, ""
+    def write(*args, **kwargs):
+        pytest.fail("Release distribution must not write shared test-case AssignedTo")
     def sync(pid, sid, assignments, *, expected_testers, org, project, validate,
-             expected_identities, reviewed_updates):
+             expected_identities, reviewed_updates, expected_points):
         validate()
         assert {int(cid): cases[str(cid)]["tester_id"] for cid in assignments} == expected_testers
         for cid, upn in assignments.items():
@@ -141,8 +140,7 @@ def correct_ado(inputs, report):
     for case in inputs["broker_cases"] + inputs["auth_cases"]:
         key = ("B:" if case in inputs["broker_cases"] else "A:") + str(case["id"])
         if key in report["_targets"]:
-            case["assignee"] = report["_targets"][key]
-            case["tester_id"] = "id-" + case["assignee"]
+            case["tester_id"] = "id-" + report["_targets"][key]
     observe(inputs)
 
 
@@ -229,9 +227,8 @@ def test_valid_ado_requires_no_corrections_even_after_manual_changes(state, inpu
     correct_ado(inputs, proposal)
     assert isinstance(inspect(state, inputs)[0], Done)
     cases = inputs["broker_cases"] + inputs["auth_cases"]
-    a = next(c for c in cases if c["assignee"] == "alice@example.com")
-    b = next(c for c in cases if c["assignee"] == "bob@example.com")
-    a["assignee"], b["assignee"] = b["assignee"], a["assignee"]
+    a = next(c for c in cases if c["tester_id"] == "id-alice@example.com")
+    b = next(c for c in cases if c["tester_id"] == "id-bob@example.com")
     a["tester_id"], b["tester_id"] = b["tester_id"], a["tester_id"]
     out, report = inspect(state, inputs)
     assert isinstance(out, Done) and not report["case_changes"] and not report["point_changes"]
@@ -242,7 +239,7 @@ def test_point_only_mismatch_is_detected_and_corrected(state, inputs, monkeypatc
     correct_ado(inputs, proposal)
     inputs["broker_cases"][0]["tester_id"] = "former-tester"
     _, report = inspect(state, inputs)
-    assert not report["case_changes"] and len(report["point_changes"]) == 1
+    assert len(report["case_changes"]) == len(report["point_changes"]) == 1
     calls = fake_writes(monkeypatch, inputs)
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 0
     assert len(calls) == 1 and calls[0][0] == "point"
@@ -253,18 +250,18 @@ def test_live_corrections_apply_then_read_back_and_do_not_repeat(state, inputs, 
     _, report = inspect(state, inputs, oof=["Alice"])
     calls = fake_writes(monkeypatch, inputs)
     result, saved = cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
-    assert result == 0 and sum(c[0] == "case" for c in calls) == 9
+    assert result == 0 and sum(c[0] == "case" for c in calls) == 0
     assert sum(c[0] == "point" for c in calls) == 9
     assert all(set(data(s)) <= {"oof", "oce", "in_flight_since", "last_write_review"} for s in saved)
-    assert cli(monkeypatch, state, inputs, "--apply")[0] == 1 and len(calls) == 18
+    assert cli(monkeypatch, state, inputs, "--apply")[0] == 1 and len(calls) == 9
 
 
-@pytest.mark.parametrize("change", ["assignee", "point", "roster", "triage", "missing_hash"])
+@pytest.mark.parametrize("change", ["tester", "point", "roster", "triage", "missing_hash"])
 def test_changed_live_inputs_cannot_apply_unreviewed_corrections(state, inputs, monkeypatch, change):
     _, report = inspect(state, inputs, oof=[])
     token = report["review_hash"]
-    if change == "assignee":
-        inputs["broker_cases"][0]["assignee"] = "other@example.com"
+    if change == "tester":
+        inputs["broker_cases"][0]["tester_id"] = "id-other@example.com"
     elif change == "point":
         inputs["broker_cases"][0]["tester_id"] = "other-tester"
     elif change == "roster":
@@ -301,7 +298,7 @@ def test_stored_availability_is_still_validated_before_corrections(state, inputs
 
 def test_conflicting_identity_with_same_upn_prevents_review(state, inputs):
     inspect(state, inputs, oof=[])
-    inputs["case_snapshot"]["1"]["identity_id"] = "replacement-identity"
+    inputs["point_sets"][0]["points"][0]["tester_id"] = "replacement-identity"
     with pytest.raises(ValueError, match="Conflicting ADO identities"):
         _review_hash(state, inputs)
 

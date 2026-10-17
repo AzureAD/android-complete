@@ -29,6 +29,8 @@ from orchestrator.outcomes import Done, Blocked
 from orchestrator.evidence import RetryDecision, StepData
 from steps.lib.mockctx import MISSING
 from tools import testplans as T
+from orchestrator import schedule
+from steps.build_verify._common import valid_id
 
 from orchestrator.authority import OwnStepData, WriteOperation
 
@@ -53,7 +55,12 @@ def prepare_effect(context):
             return Blocked(
                 "clone_plans_auth: no Code Complete Date on record — can't name the suite "
                 "'Android release/MM/DD/YYYY'. Set the CCD first (`set-ccd`).")
-        name = T.auth_suite_name(context.release.ccd)
+        ccd = schedule.parse_date(context.release.ccd)
+        if ccd is None or context.release.ccd != ccd.isoformat():
+            return Blocked("clone_plans_auth: Code Complete Date must be a valid YYYY-MM-DD date.")
+        name = T.auth_suite_name(ccd.isoformat())
+    if not isinstance(name, str) or not name.strip() or name != name.strip():
+        return Blocked("clone_plans_auth: suite name must be nonblank text without surrounding whitespace.")
     return {
         "release": context.release.release_id,
         "org": T.ORG,
@@ -89,6 +96,11 @@ def authorize_retry(context: StepContext[RetryParameters]):
     """Authorize only after exhaustive discovery proves the frozen suite is absent."""
     execution = context.evidence.step("bug_bash", ID).execution
     reason = context.parameters.reason
+    step = context.evidence.step("bug_bash", ID)
+    if not execution or "suite_id" in step.data:
+        return RetryDecision(False, "A recorded suite must be reconciled, never recreated.")
+    if not isinstance(reason, str) or not reason.strip():
+        return RetryDecision(False, "Suite retry requires explicit owner-reviewed evidence.")
     frozen = execution.get("effect_input") or {}
     ok, existing, detail = context.services.testplans.find_auth_query_suite(
         frozen.get("name"),
@@ -100,9 +112,11 @@ def authorize_retry(context: StepContext[RetryParameters]):
     )
     if not ok:
         return RetryDecision(False, f"Could not verify suite absence: {detail}")
+    if existing is not None and (
+            not isinstance(existing, dict) or not valid_id(existing.get("id"))):
+        return RetryDecision(False, "Suite discovery was malformed; absence is not established.")
     if existing:
         return RetryDecision(False, f"Suite {existing.get('id')} exists and must be reconciled, not recreated")
-    step = context.evidence.step("bug_bash", ID)
     creation = dict((step.data or {}).get("creation") or {})
     history = list(creation.get("attempt_history") or [])
     history.append({
@@ -169,8 +183,14 @@ def _build(context, *, allow_create, frozen=None):
     if injected is not MISSING:
         return Done(f"Authenticator bug-bash suite already exists for {context.release.release_id}: "
                     f"'{name}' (suite {injected}).", links=_links(injected, frozen))
-    stored = (step.data or {}).get("suite_id")
-    if stored:
+    creation = data.get("creation", {})
+    if ("creation" in data and (not isinstance(creation, dict) or creation.get("status") not in
+            ("creating", "created", "ready", "retry_authorized"))):
+        return Blocked("clone_plans_auth: invalid creation receipt; owner recovery required.")
+    stored = data.get("suite_id")
+    if "suite_id" in data:
+        if not valid_id(stored):
+            return Blocked("clone_plans_auth: recorded suite id is invalid; owner recovery required.")
         ok, info, detail = context.services.testplans.validate_auth_query_suite(
             stored,
             name,
@@ -181,6 +201,12 @@ def _build(context, *, allow_create, frozen=None):
             parent_suite_id=parent_suite_id,
         )
         if ok:
+            if not isinstance(info, dict):
+                return Blocked("clone_plans_auth: malformed suite validation; owner recovery required.")
+            data.setdefault("suite_name", name)
+            data["creation"] = {**creation, "status": "ready", "suite_id": stored,
+                                "operation_key": (step.execution or {}).get("operation_key")}
+            context.effect.commit.commit(StepData(data))
             return Done(f"Authenticator bug-bash suite already exists for {context.release.release_id}: "
                         f"'{info.get('name') or name}' (suite {stored}).",
                         links=_links(stored, frozen))
@@ -204,12 +230,14 @@ def _build(context, *, allow_create, frozen=None):
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"clone_plans_auth: could not list suites under the "
                            f"MSAuthenticator plan (#{plan_id}) ({detail}){hint}.")
+        if info is not None and (not isinstance(info, dict) or not valid_id(info.get("id"))):
+            return Blocked("clone_plans_auth: malformed suite discovery; cannot establish absence.")
         existing = (info or {}).get("id")
     if existing:
         data.update(
             suite_id=existing,
             suite_name=name,
-            creation={
+            creation={**creation,
                 "operation_key": (step.execution or {}).get("operation_key"),
                 "status": "ready",
                 "suite_id": existing,
@@ -219,8 +247,7 @@ def _build(context, *, allow_create, frozen=None):
         return Done(f"Authenticator bug-bash suite already exists for {context.release.release_id}: "
                     f"'{name}' (suite {existing}).", links=_links(existing, frozen))
 
-    creation = (step.data or {}).get("creation") or {}
-    if creation and creation.get("status") == "creating":
+    if creation and creation.get("status") in ("creating", "created", "ready"):
         return Blocked(
             f"clone_plans_auth: creation of '{name}' may have started, but no "
             "same-named suite is visible. Do not create another suite; owner "
@@ -236,7 +263,7 @@ def _build(context, *, allow_create, frozen=None):
     live_create = create_id is MISSING
     if live_create:
         # Persist permission-to-create before the non-idempotent POST.
-        data["creation"] = {
+        data["creation"] = {**creation,
             "operation_key": (step.execution or {}).get("operation_key"),
             "status": "creating",
         }
@@ -260,6 +287,12 @@ def _build(context, *, allow_create, frozen=None):
             return Blocked(
                 f"clone_plans_auth: could not create the query-based suite '{name}' under "
                 f"the MSAuthenticator plan (#{plan_id}) ({detail}){hint}.")
+        if not valid_id(create_id):
+            return Blocked("clone_plans_auth: suite creation returned no valid id; owner recovery required.")
+        # Retain the acknowledged identity before a later read can fail or the suite can move.
+        data.update(suite_id=create_id, suite_name=name,
+                    creation={**data["creation"], "status": "created", "suite_id": create_id})
+        context.effect.commit.commit(StepData(data))
         valid, _, validation = context.services.testplans.validate_auth_query_suite(
             create_id,
             name,
@@ -277,7 +310,7 @@ def _build(context, *, allow_create, frozen=None):
 
     data["suite_id"] = create_id
     data["suite_name"] = name
-    data["creation"] = {
+    data["creation"] = {**data.get("creation", {}),
         "operation_key": (step.execution or {}).get("operation_key"),
         "status": "ready",
         "suite_id": create_id,

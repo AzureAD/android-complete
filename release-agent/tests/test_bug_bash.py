@@ -3,6 +3,14 @@ from tests._context import context as _context, invoke as _invoke, invoke_effect
 from tests._harness import *  # noqa: F401,F403
 from tests._mrwp_evidence import current_rc, PROD
 from tests._ui_results import broker_fill, auth_fill, publish
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_release_targets(monkeypatch):
+    from tools import distribution
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
+    monkeypatch.setattr(distribution, "set_point_testers", lambda *a, **kw: (True, ""))
 
 
 def _ui_state(plan_id="900"):
@@ -103,16 +111,20 @@ def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
 
     assigned = []
     o_bfill, o_afill, o_assign = (T.fill_ui_automation_results, T.fill_auth_ui_results,
-                                  D.set_assigned_to)
+                                  D.set_point_testers)
     T.fill_ui_automation_results = broker_fill
     T.fill_auth_ui_results = auth_fill
-    D.set_assigned_to = lambda cid, upn, timeout=60, **_coordinates: (
-        assigned.append((cid, upn)), (True, ""))[1]
+    def assign_points(plan, suite, point_ids, upn, **kwargs):
+        assert plan == T.AUTH_PLAN and suite == 714999
+        rows = st.get_step("bug_bash", "ui_test_status").data["auth"]["mapping"]["applied_points"]
+        assigned.extend((row["case_id"], upn) for row in rows if row["point_id"] in point_ids)
+        return True, ""
+    D.set_point_testers = assign_points
     try:
         with mockctx.active({}):
             out = as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     finally:
-        T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = (
+        T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_point_testers = (
             o_bfill, o_afill, o_assign)
     assert out["kind"] == "done"
     assert "Auth: 0 Passed, 5 Failed" in out["note"]
@@ -151,17 +163,23 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
             ("test_3261599_psiPushNotification_registerAfterEnablingNotifications", "Failed"),
             ("test_3741283_mfaDialogSurvivesProcessDeathRestore", "Failed")]})
     st.pipeline_runs = {"rcs": [rc]}
-    o_b, o_a, o_as = T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to
+    o_b, o_a, o_as = T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_point_testers
     T.fill_ui_automation_results = broker_fill
     T.fill_auth_ui_results = auth_fill
     assigned_calls = []
-    D.set_assigned_to = lambda cid, upn, timeout=60, **_coordinates: (
-        assigned_calls.append((str(cid), upn)), (True, ""))[1]
+    def assign_points(plan, suite, point_ids, upn, **kwargs):
+        product = "auth" if suite == 714999 else "broker"
+        data = st.get_step("bug_bash", "ui_test_status").data
+        rows = (data["auth"]["mapping"] if product == "auth" else data["summary"])["applied_points"]
+        assigned_calls.extend((str(row["case_id"]), upn) for row in rows
+                              if row["point_id"] in point_ids)
+        return True, ""
+    D.set_point_testers = assign_points
     try:
         with mockctx.active({}):
             as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     finally:
-        T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = o_b, o_a, o_as
+        T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_point_testers = o_b, o_a, o_as
     uf = st.get_step("bug_bash", "ui_failures")
     # step-8-style rich note: EVERY failing test listed individually, all 🔬 investigate for owner,
     # Broker grouped by provider (ECS/Local) then by bucket (suite name).
@@ -714,9 +732,7 @@ def test_send_invite_is_scout_step():
 # ---- Phase 3: activate_chat + record-bugbash-chat ----
 
 def test_activate_chat_composes_needs_skill():
-    """activate_chat is a scout step whose NeedsSkill describes the search → Playwright
-    activate → human fallback resolution, keyed to the meeting topic, with the recorder
-    follow-up command."""
+    """Chat activation offers exact-event resolution and explicit owner link recovery."""
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
@@ -727,6 +743,8 @@ def test_activate_chat_composes_needs_skill():
     g = out["payload"]["_gather"]
     assert g["meeting_topic"] == "September 2026 Release Bug Bash"
     assert "Playwright" in g["instructions"] and "m_ask_user" in g["instructions"]
+    assert "--chat-link" in g["instructions"] and "--confirm-activated" in g["instructions"]
+    assert "On the first access failure, stop retrying" in g["instructions"]
     assert "record-bugbash-chat --release 2026-08" in out["payload"]["followup_command"]
     assert _steps.get_step("bug_bash", "activate_chat").KIND == "scout"
 
@@ -761,10 +779,15 @@ def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
                 break
             st.set_step("bug_bash", s["id"], StepState(status="done"))
         seed_invite(st)
+        ready = Orchestrator(CONFIG, st, mocks={})
+        _pass_m365_check(ready)
+        ready.gate.sign(["m365_write_access"], note="synthetic owner authorization after fixture invite")
         _C.save_state(st, d, rid)
         cid = "19:meeting_ABC123@thread.v2"
-        monkeypatch.setattr(bugbash_meeting, "resolve", lambda inv: meeting(inv, cid))
-        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=cid)
+        monkeypatch.setattr(bugbash_meeting, "resolve", lambda inv, **kwargs: meeting(inv, cid))
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=cid,
+                                chat_link=None, confirm_activated=False, review_hash=None,
+                                approved_by=None, reason=None)
         assert BC.cmd_record_bugbash_chat(ns) == 0
         again = _C.load_state(d, rid)
         assert again.is_done("bug_bash", "activate_chat")
@@ -773,7 +796,8 @@ def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
         # Missing prerequisite state cannot record even a supplied syntactically valid ID.
         st2 = ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed")
         _C.save_state(st2, d, rid)
-        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=None)
+        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
+                                 chat_id=None, chat_link=None)
         assert BC.cmd_record_bugbash_chat(ns2) == 1
         after = _C.load_state(d, rid)
         assert not after.is_done("bug_bash", "activate_chat")
@@ -811,7 +835,7 @@ def test_notify_native_auth_blocks_without_broker_plan():
 
 
 
-def test_notify_native_auth_idempotent_after_recorded():
+def test_native_engineer_text_without_delivery_receipt_requires_recovery():
     import steps as _steps
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
@@ -819,7 +843,7 @@ def test_notify_native_auth_idempotent_after_recorded():
     st.set_step("bug_bash", "notify_native_auth",
                 StepState(status="done", data={"engineer": "silviu.petrescu"}))
     out = as_dict(_invoke(_steps.get_step("bug_bash", "notify_native_auth").build, st))
-    assert out["kind"] == "done" and "already notified" in out["note"]
+    assert out["kind"] == "blocked" and "terminal delivery evidence" in out["reason"]
 
 
 
@@ -836,19 +860,23 @@ def test_native_auth_signoff_is_owner_attestation():
     from orchestrator.state import StepState
     mod = _steps.get_step("bug_bash", "native_auth_signoff")
     assert mod.KIND == "attest"
-    # no notify yet → generic reference, still a valid attest
+    # Missing release-specific notification evidence cannot support sign-off.
     st = _na_state()
     out = as_dict(_invoke(mod.build, st))
-    assert out["kind"] == "needs_human" and out.get("attest") is True
-    assert "sign-off" in out["prompt"] and "let me know" in out["prompt"]
-    assert "`done --step" not in out["prompt"]              # user-facing — not a raw engine command
-    assert not out.get("outbound") and "tool" not in out       # nothing sent, no skill command
-    assert "notify_native_auth" in out["prompt"]
+    assert out["kind"] == "blocked"
     # engineer captured upstream → named in the prompt (reused, not re-collected)
     st.set_step("bug_bash", "notify_native_auth",
                 StepState(status="done", data={"engineer": "silviu.petrescu"}))
+    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": 900}))
+    assert _invoke(mod.build, st).kind == "blocked"  # Bare engineer text is not a sent notice.
+    from tests.test_phase3_human_contracts import _ready
+    st, _ = _ready()
     out2 = as_dict(_invoke(mod.build, st))
-    assert "silviu.petrescu" in out2["prompt"]
+    assert out2["kind"] == "needs_human" and out2.get("attest") is True
+    assert "sign-off" in out2["prompt"] and "let me know" in out2["prompt"]
+    assert "`done --step" not in out2["prompt"]
+    assert not out2.get("outbound") and "tool" not in out2
+    assert "engineer@example.test" in out2["prompt"]
 
 
 

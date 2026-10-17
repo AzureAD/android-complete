@@ -16,6 +16,12 @@ from tools import pipelines as P, testplans as T, broker_plans as B, distributio
 from tools.ui_mapping import route_suite, config_for, CONFIG_NAMES
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_release_destinations(monkeypatch):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
+    monkeypatch.setattr(distribution, "set_point_testers", lambda *a, **kw: (True, ""))
+
+
 LTW = "LTW, RC MSAL - RC Broker (API 32)"
 MONTHLY_FAILURES = [
     "present2Cards_selectBothCards_presentationCompletes",
@@ -101,9 +107,13 @@ def test_monthly_333_report_only_all_failures_shared_by_report_fill_and_distribu
         return auth_fill(plan, suite, outcomes)
 
     monkeypatch.setattr(T, "fill_auth_ui_results", fill)
-    monkeypatch.setattr(distribution, "set_assigned_to",
-                        lambda cid, owner, **_coordinates: (
-                            assignments.append(cid) is None, ""))
+    def assign_points(plan, suite, point_ids, owner, **kwargs):
+        product = "auth" if suite == 901 else "broker"
+        data = st.get_step("bug_bash", U.ID).data
+        rows = (data["auth"]["mapping"] if product == "auth" else data["summary"])["applied_points"]
+        assignments.extend(row["case_id"] for row in rows if row["point_id"] in point_ids)
+        return True, ""
+    monkeypatch.setattr(distribution, "set_point_testers", assign_points)
     assert _invoke(U.build, st).kind == "done"
     assert set(seen) == D._auth_automated_ids(_context(st))
     assert BU._auto_failed_ids(_context(st)) == assignments == list(range(120, 126))

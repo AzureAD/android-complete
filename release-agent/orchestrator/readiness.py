@@ -165,7 +165,7 @@ class ReadinessGate:
         self._refresh_signed()
         return self.checklist()
 
-    def record_check(self, item_id: str, status: str, message: str = "") -> dict:
+    def record_check(self, item_id: str, status: str, message: str = "", *, evidence=None) -> dict:
         """Record the result of a SCOUT-ASSISTED auto check (source: scout), which
         the skill performs via its MCP tools (e.g. the ICM on-call lookup). Only
         valid for auto items marked source: scout — a Python-verified auto item
@@ -184,8 +184,17 @@ class ReadinessGate:
         valid = ("pass", "fail") + (("degraded",) if it.get("opt_out") else ())
         if status not in valid:
             return {"error": f"status must be one of: {', '.join(valid)}"}
+        proof = {}
+        if item_id == "m365_access" and status == "pass":
+            from .m365_capabilities import validate
+            try:
+                proof = validate(self.state, evidence)
+            except (ValueError, TypeError, KeyError) as exc:
+                return {"error": str(exc)}
+        elif evidence is not None:
+            return {"error": "Structured M365 evidence is only accepted for a passing m365_access check"}
         self.state.readiness_items[item_id] = {
-            "status": status, "message": message, "at": _now(), "source": "scout"}
+            "status": status, "message": message, "at": _now(), "source": "scout", **proof}
         self._refresh_signed()
         return self.checklist()
 
@@ -203,6 +212,9 @@ class ReadinessGate:
         targets = attest_ids if item_ids is None else [i for i in item_ids if i in attest_ids]
         for iid in targets:
             rec = {"status": "attested", "at": _now()}
+            if iid == "m365_write_access":
+                from .m365_capabilities import binding
+                rec["capability_binding"] = binding(self.state)
             if note:
                 rec["note"] = note
             self.state.readiness_items[iid] = rec
@@ -229,7 +241,14 @@ class ReadinessGate:
 
     # ---- internals ----
     def _item_satisfied(self, item: dict) -> bool:
-        status = (self.state.readiness_items.get(item["id"], {}) or {}).get("status")
+        record = self.state.readiness_items.get(item["id"], {}) or {}
+        status = record.get("status")
+        if item["id"] in ("m365_access", "m365_write_access"):
+            from .m365_capabilities import binding
+            from . import mocks as mocks_mod
+            mocked = mocks_mod.readiness_result(self.mocks, item["id"])
+            if mocked is None and record.get("capability_binding") != binding(self.state):
+                return False
         if item.get("verify", "attest") == "auto":
             if item.get("opt_out"):
                 # soft item: fully verified (pass) OR user chose to proceed (degraded)

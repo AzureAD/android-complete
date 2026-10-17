@@ -1032,7 +1032,8 @@ def test_sim_fast_forwards_to_rc_gate_offline():
     # pipeline runs were stashed by the steps during the sim (nested RC schema)
     assert st.pipeline_runs["orchestrator"]["run_id"] == "1678611"
     assert st.pipeline_runs["rcs"][-1]["ecs"]["run_id"] == "1678863"
-    assert _O(CONFIG, st).gate.signed
+    assert not _O(CONFIG, st, mocks={}).gate.signed
+    assert _O(CONFIG, st, mocks={"readiness.m365_access": {"outcome": "pass"}}).gate.signed
 
 
 

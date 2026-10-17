@@ -54,7 +54,7 @@ def test_sign_records_evidence_note():
     """Attestations carry the engineer's confirmation as evidence (note)."""
     st, orch = _orch(signed=False)
     _pass_scout_checks(orch)
-    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"],
+    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey", "m365_write_access"],
                    note="engineer confirmed all four")
     assert orch.gate.signed
     assert st.readiness_items["yubikey"].get("note") == "engineer confirmed all four"
@@ -272,6 +272,7 @@ def test_record_check_pass_then_sign_clears_gate():
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
+    _pass_m365_check(orch)
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("silent_perms", "pass", "servers auto-approved")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
@@ -325,6 +326,7 @@ def test_silent_perms_is_required_scout_item():
     assert sp["verify"] == "auto" and sp["source"] == "scout"
     assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm"]
     # everything else satisfied but silent_perms → gate still closed
+    _pass_m365_check(orch)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
@@ -356,6 +358,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
+    _pass_m365_check(orch)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
@@ -457,6 +460,8 @@ def test_cli_done_and_skip_fail_without_mutating_gate(tmp_path, capsys):
     rid = "2026-08"
     st, orch = _orch()
     st.release_id = rid
+    _pass_m365_check(orch)
+    orch.gate.sign(["m365_write_access"], note="synthetic owner authorization for renamed fixture")
     _advance_to_first_gate(orch)
     C.save_state(st, str(tmp_path), rid)
     path = tmp_path / rid / "release-state.json"

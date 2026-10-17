@@ -117,6 +117,7 @@ class EligibilityEvaluator:
                 and not denied
                 and not execution
                 and not has_downstream_state
+                and not (step.is_human_action and record.data.get("gate_preconditions"))
             ):
                 return Eligibility(False, f"Step is already pending: {phase_id}/{step_id}")
             return Eligibility(True, phase=phase, step=step, execution=execution)
@@ -842,6 +843,8 @@ class TransitionKernel:
                 phase_id,
                 step_id,
             )
+        if problem := self._gate_precondition_problem(check.step, label="Completion"):
+            return self._reject(problem, phase_id, step_id)
         previous = self.state.get_step(phase_id, step_id)
         if rejected := self._outcome_invalidation_check(phase_id, step_id, status="done"):
             return rejected
@@ -851,6 +854,8 @@ class TransitionKernel:
             if result.kind != "invalidated":
                 return result
         completed_data = deepcopy(previous.data)
+        if "gate_preconditions" in previous.data:
+            completed_data["confirmation_preconditions"] = deepcopy(previous.data["gate_preconditions"])
         self._bind_notification_identity(completed_data, previous.execution)
         self._close_write_review(completed_data, previous.execution)
         self.state.set_step(
@@ -1459,12 +1464,15 @@ class TransitionKernel:
             step.id,
         )
 
-    def _gate_precondition_problem(self, gate: StepDefinition) -> str:
+    def _gate_precondition_problem(self, gate: StepDefinition, *, label="Gate") -> str:
         """Recheck source/receipt bindings supplied by prerequisite owners, not quality."""
         from orchestrator.delivery import fingerprint
         import re
 
-        pending, visited = list(gate.depends_on), set()
+        phase = self.workflow.phase(gate.phase_id)
+        pending = ([step.id for step in phase.steps[:phase.steps.index(gate) + 1]]
+                   if phase.execution == "sequential" else [gate.id])
+        visited = set()
         while pending:
             sid = pending.pop()
             if sid in visited:
@@ -1472,9 +1480,18 @@ class TransitionKernel:
             visited.add(sid)
             definition = self.workflow.step(gate.phase_id, sid)
             pending.extend(definition.depends_on)
-            conditions = self.state.get_step(gate.phase_id, sid).data.get("gate_preconditions", [])
+            record = self.state.get_step(gate.phase_id, sid)
+            conditions = record.data.get("gate_preconditions", [])
             if not isinstance(conditions, list):
-                return f"Gate preconditions for {definition.key} are malformed; recover prerequisite evidence."
+                return f"{label} preconditions for {definition.key} are malformed; recover prerequisite evidence."
+            if (record.status == "done" and definition.is_human_action and conditions
+                    and "confirmation_preconditions" not in record.data):
+                return f"{label} confirmation source missing for {definition.key}; obtain a fresh human review."
+            if record.status == "done" and "confirmation_preconditions" in record.data:
+                confirmed = record.data["confirmation_preconditions"]
+                if not isinstance(confirmed, list):
+                    return f"{label} confirmation preconditions for {definition.key} are malformed."
+                conditions = [*conditions, *confirmed]
             for condition in conditions:
                 if (not isinstance(condition, dict)
                         or not isinstance(condition.get("path"), list) or not condition["path"]
@@ -1483,16 +1500,16 @@ class TransitionKernel:
                             not isinstance(condition["hash"], str)
                             or not re.fullmatch(r"[0-9a-f]{64}", condition["hash"])))
                         or not ("value" in condition or "hash" in condition)):
-                    return f"Gate preconditions for {definition.key} are malformed; recover prerequisite evidence."
+                    return f"{label} preconditions for {definition.key} are malformed; recover prerequisite evidence."
                 value = vars(self.state)
                 try:
                     for key in condition["path"]:
                         value = value[key]
                 except (KeyError, IndexError, TypeError):
-                    return f"Gate precondition source missing for {definition.key}; refresh prerequisite evidence."
+                    return f"{label} precondition source missing for {definition.key}; refresh prerequisite evidence."
                 if (fingerprint(value) != condition["hash"] if "hash" in condition
                         else value != condition["value"]):
-                    return f"Gate precondition source changed for {definition.key}; refresh prerequisite evidence."
+                    return f"{label} precondition source changed for {definition.key}; refresh prerequisite evidence."
         return ""
 
     def deny_gate(self, comment: str = "") -> TransitionResult:

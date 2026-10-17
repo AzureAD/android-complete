@@ -25,6 +25,8 @@ def receipt(points):
 
 def stub(monkeypatch, broker_ui, auth=(), manual=(), owners=None):
     reads = []
+    for point in list(broker_ui) + list(auth) + list(manual):
+        point["tester_upn"] = (owners or {}).get(point["case_id"], OWNER)
     def get(plan, suite, timeout):
         reads.append((plan, suite))
         return True, deepcopy(broker_ui if suite == 4 else list(auth)), ""
@@ -37,7 +39,9 @@ def stub(monkeypatch, broker_ui, auth=(), manual=(), owners=None):
 
 def gather(evidence, automated=(), failed=()):
     return B.gather_progress(1, "Manual", 2, 3, auth_automated_ids=automated,
-                             auto_failed_ids=failed, broker_ui_result=evidence)
+                             auto_failed_ids=failed, broker_ui_result=evidence, auth_ui_result={
+                                 "target": {"plan_id": 2, "suite_id": 3}, "applied_points": [
+                                     {"point_id": cid, "case_id": cid, "outcome": "Failed"} for cid in failed]})
 
 
 def test_owner_has_seventeen_cases_from_both_plans_not_ten(monkeypatch):

@@ -23,7 +23,7 @@ from .context_boundary import EvidenceSession, evidence_view, release_view
 from .step_context import Clock, EffectContext, StepContext, freeze, thaw
 from .handler_contracts import HookRole
 from .evidence import RetryDecision
-from .outcomes import AutoOutcome, Done, Blocked, InProgress, NeedsSkill, require_auto_outcome
+from .outcomes import AutoOutcome, Done, Blocked, InProgress, NeedsHuman, NeedsSkill, require_auto_outcome
 from .invariants import validate_snapshot
 from . import effects
 from .effects import EffectMode, EffectRecovery
@@ -1069,9 +1069,21 @@ class Orchestrator(StatusViewMixin):
             hold = self._projection().current_hold()
             phase_id = hold.phase_id if hold else None
             step_id = hold.step_id if hold else None
-        return self._next_from_transition(
-            self._transition_kernel().complete(phase_id, step_id, note)
-        )
+        kernel = self._transition_kernel()
+        check = kernel.eligibility().evaluate(TransitionIntent.COMPLETE, phase_id, step_id)
+        definition = self._workflow_definition().step(phase_id, step_id)
+        if (check.allowed and definition and definition.is_human_action
+                and not self.state.is_done(phase_id, step_id)):
+            permit = self.authorize_outcome(TransitionIntent.PREPARE, phase_id, step_id)
+            outcome = self.handler(phase_id, step_id).build(
+                self.context(phase_id, step_id, permit=permit))
+            if isinstance(outcome, Blocked):
+                return NextAction(kind="blocked", phase=phase_id, step=step_id,
+                                  message=outcome.reason)
+            if not isinstance(outcome, NeedsHuman):
+                raise TypeError("Human completion requires a current confirmation prompt")
+            self.apply_evidence(permit, outcome)
+        return self._next_from_transition(kernel.complete(phase_id, step_id, note))
 
     @revision_checked
     def record_scout_step(self, phase_id: str, step_id: str, status: str,

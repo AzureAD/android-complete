@@ -62,7 +62,7 @@ def main(argv=None):
         diagnostics = {
             "status", "list", "workflow-adopt", "mock-spec",
             "step-info", "gate-info", "log", "journal", "paths", "preview-release",
-            "bugbash-progress",
+            "bugbash-progress", "m365-capabilities",
         }
         pending_deliveries = (
             args.cmd == "notification" and args.operation == "prepare" and args.source == "pending")

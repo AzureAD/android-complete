@@ -2,8 +2,9 @@ RELEASE STATE: DATA OWNERSHIP AND STEP BUILDING BLOCKS
 =====================================================
 Updated: 2026-10-16. Baseline: a1390093aa6ce1b84686906fa68197c651aa31be.
 Documentation only: this is not a replacement state schema or runtime input.
-Scope: central state structure, 11 readiness items, all nine preflight steps,
-all three CCD steps, and Phase 2's checker/orchestrator captures.
+Scope: central state structure, 13 readiness items, all nine preflight steps,
+all three CCD steps, Phase2 checker/orchestrator captures and RC storage, and
+all eleven Phase3 Bug Bash steps (local/offline integration).
 Complete Phase 0 register: docs\preflight-contracts.txt. This file keeps the
 shared data model and detailed notification/lockdown lifecycle references.
 Phase 1 register: docs\ccd-contracts.txt. The separate runner/proposal and its
@@ -15,8 +16,12 @@ on a catch-up run (A013). Offline delivery/recovery proof is recorded below.
 Lockdown corrections: reject malformed evidence; gather all covered years
 (A014-A015). No new persisted fields or automatic CCD changes.
 Remaining preflight corrections and offline phase proof: A016-A021 in the main
-audit record. Phase 1 corrections are A022-A026. The other 56 workflow-step
+audit record. Phase 1 corrections are A022-A026. The other 45 workflow-step
 data contracts are NOT YET AUDITED.
+Phase3 complete register: docs\bug-bash-contracts.txt; shared paths below.
+Earlier Phase2 robustness/remaining contract work is deferred at the owner's
+direction, not certified done. The default-suite case-budget failure is OPEN;
+targeted proof must not be described as full-suite or live-release certification.
 Progress/findings/next stage: docs\release-audit.txt.
 
 OWNER REQUIREMENT
@@ -524,3 +529,128 @@ be necessary for reproducible decisions even if some display data is derived.
 Current working method: apply this contract to one building block, correct it,
 prove its exact data changes/recovery behavior, record the result, then move on.
 Do not wait for all remaining phases to be audited before making corrections.
+
+9. PHASE3 SHARED FIELD OWNERSHIP / RETENTION
+---------------------------------------------
+Exact per-step shapes, failures and consumers: docs\bug-bash-contracts.txt.
+All paths below are inside the existing schema-v3 file unless stated otherwise.
+No new release-state root field, assignment ledger or replacement runner.
+
+resources.broker_test_plan:
+  Producer: clone_plans_broker through BrokerResource. Durable release-owned
+  identity/source/status/plan_id/ui_suite_id plus selection/retry history.
+  Why stored: non-idempotent creation ownership, reconciliation and exact target
+  binding for fill/distribution/invite/progress. Keep for the release lifetime;
+  invalidation/reopen never authorizes deletion or blind replacement.
+
+steps["bug_bash.clone_plans_auth"].data:
+  Producer: clone_plans_auth through OwnStepData. suite_id/suite_name/creation
+  retain acknowledged external identity, operation key/status and retry history.
+  Why stored: recovery without repeating an uncertain suite POST, and subsequent
+  release suite references. Preserve across read-back failure and reopen.
+
+steps["bug_bash.ui_test_status"].execution:
+  Engine-owned id/owner/mode/recovery/operation_key/effect_input. Compact frozen
+  projections and targets authorize this execution, not full raw Phase2 arrays.
+  Do not inject evolving recovery receipts into the frozen operation key.
+steps["bug_bash.ui_test_status"].data:
+  Producer owns plan_id/provenance/summary/auth mapping and triage diagnostics,
+  broker triage diagnostics, fill_status and result. summary/auth.mapping retain
+  acknowledged point IDs/cases/configurations/outcomes across partial retry.
+  result contains complete/incomplete stage, observation id, stable current
+  RC/build/destination binding, compact per-product receipts and investigations.
+  Why stored: prove what was actually applied, avoid overwriting manual outcomes,
+  classify automation/failure workload for distribution and progress, and supply
+  exact source facts to human review. Uncertain points are not replay authority.
+  Retain current receipts until deliberate producer refresh; changed targets
+  cannot borrow another destination's receipts. Keep human original bindings.
+
+steps["bug_bash.distribute_tests"].data:
+  Producer owns oce and oof={upns,confirmed_by,source,confirmed_at,release_id,ccd}.
+  Why stored: explicit owner availability answer and verified on-call exclusion,
+  not a stale allocation. Owner/release/CCD changes require new OOF confirmation.
+  Roster/current point Testers, corrections, review hash and rendered workload are
+  transient; normal checked-write execution/closed receipts remain engine-owned.
+  External ownership lives on THIS release's test-point Tester. Shared test-case
+  AssignedTo is neither an output nor the authority for other consumers.
+
+notification_deliveries and communicating step data:
+  Existing ledger owns exact approved transport/target/payload/source matches,
+  attempts and acknowledgement/completion. send_invite and notify_native_auth
+  data keep notification_id/notification_execution_id/gate_preconditions; Native
+  Auth also retains verified engineer/engineer_source.
+  Why stored: no duplicate delivery, exact invitation event or notified recipient
+  provenance, and downstream review. Generic terminal status is not a new send
+  permission or independent proof of receipt. Domain consumers validate exact
+  acknowledged identity; legacy raw recorders cannot fabricate it.
+
+steps["bug_bash.activate_chat"].data:
+  chat_id/invite/meeting/gate_preconditions are produced only by the checked
+  recorder after Graph verification OR explicit owner-confirmed link recovery.
+  Native mode keeps verified_at and meeting.verification="native_connectors",
+  compact profile/event/typed-attendee/chat proof, invite_hash and thread_source;
+  legacy Graph records retain their actual historical online_meeting_id.
+  Manual keeps confirmed_at
+  and meeting.verification="owner_attested", chat_link, invite_hash, review_hash,
+  approved_by, reason and activated=true (plus actual receipted join_url if present).
+  No online meeting ID is invented. Manual review is exact-invitation/hash bound;
+  source/link changes invalidate review and contradictory receipted threads reject.
+  Owner mode does not independently authenticate identity or verify provider
+  event/attendees/access; it does not prove any message delivery.
+  Why stored: subsequent posts target the exact invitation's meeting, not a
+  similarly named chat. Keep binding and receipt identity for phase lifetime.
+  Cosmetic verified_at/confirmed_at are not semantic identity; manual provenance
+  is frozen into downstream notification scopes. Stale binding requires reopen.
+
+readiness_items["m365_access"]:
+  Validated actual tool inventory and fresh owner/argument/target-bound read probes
+  produce status/message/at/source, capability_binding, compact checks/limitations,
+  observation_hash. Raw profile/member/calendar/site responses stay in temporary
+  evidence files and are not copied into the central readiness state.
+  The binding covers release/owner/CCD, required connector tools and configured
+  roster/representative chat/report target. Source/config changes invalidate it.
+  Bare record-check pass, absent tools, denied/partial/stale reads do not pass.
+readiness_items["m365_write_access"]:
+  Only explicit owner attestation produces attested/at/note/capability_binding.
+  Read success is not write permission. Initial readiness sends/uploads nothing;
+  actual per-destination writes retain their normal checked execution/receipt.
+  Future Bug Bash resources cannot be proven before creation and are checked then.
+
+steps["build_verify.rc_report_publish"].data.publication_handoff:
+  Existing checked execution owns a single reviewed connector/browser upload.
+  Frozen target, content SHA/size, review/workflow/executor identity and route
+  bind the returned receipt_binding. Native upload only targets a proven existing
+  exact item; new immutable files use the checked SharePoint browser route with
+  exact library context and no overwrite. No Azure CLI Graph token is acquired.
+  Receipt recovery uses fresh native resolution/download of exact provider bytes,
+  the owning execution and original binding, not another upload permission.
+  publication_receipt_execution/hash and real provider identity survive failed
+  current-source/completion checks. A retained receipt is not a current gate pass.
+
+steps["bug_bash.bugbash_updates"].data.poll_complete:
+  Existing notification completion writes true only after final summary receipt.
+  Live owners/outcomes/case totals/mentions are transient observations. Recurring
+  poller identity/cleanup is in separate _automations.json, not a new root fact.
+  Why stored: stop condition/receipt-backed cleanup, not human quality approval.
+
+steps["bug_bash.ui_failures"].data:
+  UIFailureContribution owns only generated broker_failed_tests/auth_failed_cases/
+  auth_failed_tests, generated prefix/link bookkeeping ui_test_status_generated,
+  and current gate_preconditions. Producer cannot modify human lifecycle.
+  Conditions use current release/CCD/owner/RC/build/completion/destination and
+  represented failure lists; no volatile result UUID or polling timestamps.
+steps["bug_bash.native_auth_signoff"].data:
+  Handler owns attestation_binding and current gate_preconditions, binding exact
+  notified engineer/provenance/plan and notification ID/execution/descriptor.
+Both human records:
+  Actual owner completion freezes confirmation_preconditions; engine alone owns
+  note attribution/status/completed_at. Producer refresh preserves this original
+  evidence. Identical source reruns keep review valid; changed represented facts
+  block final approval even if run IDs are unchanged. Explicit reopen and actual
+  new confirmation are required, including a prepared but still-pending prompt.
+  Historical notes/bindings survive until replaced by an actual new review.
+
+gate_decisions / steps["bug_bash.bugbash_complete"]:
+  Existing engine-owned explicit approval/denial after prerequisite/source checks.
+  These are human decisions, not outputs of UI fill/distribution/polling.
+  Approval does not by itself approve production Remove RC Tags or run Phase4.

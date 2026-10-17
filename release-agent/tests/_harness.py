@@ -229,6 +229,17 @@ def _pass_scout_checks(orch):
     orch.gate.record_check("silent_perms", "pass", "stubbed: all servers auto-approved")
     orch.gate.record_check("teams_notify", "pass", "stubbed: Scout Teams bot reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "stubbed: CCD reconciled with pipeline")
+    # Broad offline flows do not claim real connector capability observations.
+    _pass_m365_check(orch)
+
+
+def _pass_m365_check(orch):
+    from orchestrator.m365_capabilities import binding
+    from orchestrator.state import _now
+    orch.state.readiness_items["m365_access"] = {
+        "status": "pass", "message": "synthetic offline connector evidence",
+        "source": "fixture", "at": _now(), "capability_binding": binding(orch.state),
+    }
 
 
 def _ready_state(st):

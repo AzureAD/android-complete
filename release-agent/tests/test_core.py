@@ -52,6 +52,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
+    _pass_m365_check(orch)
     # table STILL has no confirmation block (shows once)
     assert "Your confirmation needed" not in render.readiness_table(orch.gate.checklist(), "t")
     # attest_prompt now lists each outstanding attest item
@@ -60,7 +61,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
     for label in ("Play Console access", "Free during release window", "SAW + AME", "YubiKey in hand"):
         assert label in ap
     # once signed, attest_prompt reports cleared
-    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"], note="ok")
+    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey", "m365_write_access"], note="ok")
     assert "entry gate cleared" in render.attest_prompt(orch.gate.checklist())
 
 
@@ -84,20 +85,25 @@ def test_attest_prompt_payload_is_deterministic_card():
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
+    _pass_m365_check(orch)
     p = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
     assert p["ready"] is True
     assert p["recommendedIndex"] == 0
     # first card is confirm_all; the rest are one decline per outstanding attest item
     assert p["answers"][0]["action"] == "confirm_all"
     decline_items = {a["item"] for a in p["answers"] if a["action"] == "decline"}
-    assert decline_items == {"play_console_access", "oncall_window", "saw_ame", "yubikey"}
-    assert set(p["confirm_items"]) == {"play_console_access", "oncall_window", "saw_ame", "yubikey"}
+    assert decline_items == set(p["confirm_items"])
+    assert len(p["confirm_items"]) == 4 and "m365_write_access" in p["confirm_items"]
+    assert p["remaining_items"] == ["yubikey"]
     # the on-call window dates are surfaced in the confirm_all description
     assert "2026-07-01" in p["answers"][0]["description"]
     # 2-5 cards (valid m_ask_user answer count)
     assert 2 <= len(p["answers"]) <= 5
-    # once signed, not ready (nothing outstanding)
-    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"], note="ok")
+    orch.gate.sign(p["confirm_items"], note="confirmed this batch only")
+    next_prompt = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
+    assert not orch.gate.signed and next_prompt["confirm_items"] == ["yubikey"]
+    assert len(next_prompt["answers"]) == 2
+    orch.gate.sign(next_prompt["confirm_items"], note="confirmed remaining item")
     assert render.attest_prompt_payload(orch.gate.checklist(), "2026-07")["ready"] is False
 
 

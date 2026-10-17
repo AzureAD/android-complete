@@ -13,11 +13,18 @@ EMPTY_BROKER = {"target": {"plan_id": 1, "suite_id": 4}, "failed_case_ids": [], 
 
 
 def point(cid, outcome="Unspecified"):
-    return {"case_id": str(cid), "name": f"Case {cid}", "outcome": outcome}
+    return {"point_id": str(cid), "case_id": str(cid), "name": f"Case {cid}", "outcome": outcome}
+
+
+def auth_receipt(*case_ids):
+    return {"target": {"plan_id": 2, "suite_id": 3}, "applied_points": [
+        {"point_id": cid, "case_id": cid, "outcome": "Failed"} for cid in case_ids]}
 
 
 def stub_points(monkeypatch, broker, auth, owners):
     requested = []
+    for point in broker + auth:
+        point["tester_upn"] = owners.get(point["case_id"])
     monkeypatch.setattr(B, "_broker_points", lambda *a: (True, broker, ""))
     monkeypatch.setattr(B, "_points_of_suite", lambda *a: (True, auth, ""))
     def assigned(ids, *args):
@@ -36,7 +43,7 @@ def test_seven_manual_plus_eight_automation_passes_is_zero_of_seven(monkeypatch)
     assert ok and not detail
     pedro = progress["owners"][PEDRO]
     assert (pedro["done"], pedro["total"], pedro["remaining"]) == (0, 7, 7)
-    assert set(requested) == {str(i) for i in range(1, 8)}
+    assert requested == []  # No shared work-item ownership lookup.
     assert progress["auth_excluded_automated"] == 8
     html, _ = B.render_update(progress, "October 2026", [], {
         PEDRO: {"id": "11111111-1111-1111-1111-111111111111", "name": "Pedro"}})
@@ -58,7 +65,8 @@ def test_applied_failure_triage_remains_visible_and_prevents_early_completion(mo
     stub_points(monkeypatch, [point(1, "Passed")], [point(100, "Passed"), point(200, "Failed")],
                 {"1": PEDRO, "100": PEDRO, "200": OWNER})
     ok, progress, _ = B.gather_progress(
-        1, "Manual", 2, 3, auth_automated_ids=[100, 200], auto_failed_ids=[200], broker_ui_result=EMPTY_BROKER)
+        1, "Manual", 2, 3, auth_automated_ids=[100, 200], auto_failed_ids=[200], broker_ui_result=EMPTY_BROKER,
+        auth_ui_result=auth_receipt(200))
     assert ok and (progress["done"], progress["total"], progress["remaining"]) == (1, 2, 1)
     assert progress["auto_failed_remaining"] == 1 and not B.all_complete(progress)
     assert progress["owners"][OWNER]["tests"][0]["auto_failed"]
@@ -69,7 +77,8 @@ def test_resolved_triage_counts_as_done_and_automated_only_owner_disappears(monk
     stub_points(monkeypatch, [], [point(100, "Passed"), point(200, "Passed")],
                 {"100": PEDRO, "200": OWNER})
     ok, progress, _ = B.gather_progress(
-        1, "Manual", 2, 3, auth_automated_ids=[100, 200], auto_failed_ids=[200], broker_ui_result=EMPTY_BROKER)
+        1, "Manual", 2, 3, auth_automated_ids=[100, 200], auto_failed_ids=[200], broker_ui_result=EMPTY_BROKER,
+        auth_ui_result=auth_receipt(200))
     assert ok and progress["done"] == progress["total"] == 1 and B.all_complete(progress)
     assert PEDRO not in progress["owners"] and progress["auto_failed_remaining"] == 0
 

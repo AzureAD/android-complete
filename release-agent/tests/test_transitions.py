@@ -80,6 +80,20 @@ def _kernel(state=None):
     )
 
 
+@pytest.mark.parametrize("step", ["human", "attest", "external"])
+def test_only_a_prepared_human_confirmation_can_reopen_while_still_pending(step):
+    state, _, _, kernel = _kernel()
+    assert not kernel.reopen("phase", step, "No prepared confirmation").changed
+    state.set_step("phase", step, StepState(data={
+        "gate_preconditions": [{"path": ["release_id"], "value": "r"}],
+    }))
+
+    result = kernel.reopen("phase", step, "Review the current confirmation sources")
+
+    assert result.changed is (step != "external")
+    assert bool(state.get_step("phase", step).invalidated_at) is (step != "external")
+
+
 @pytest.mark.parametrize(
     "intent,step,allowed",
     [

@@ -17,6 +17,49 @@ Immediately after `init`, the very first thing is the **readiness checklist** �
 
 If any item is unsatisfied the gate stays closed. If the engineer can't satisfy an attest item, they resolve it or hand the release to someone who can — same for every item. Never describe any item as "not a hard block" or "optional."
 
+## Microsoft 365 capabilities before release entry
+
+`m365_access` is an additional scout-assisted auto item; `m365_write_access` is
+an additional human attestation. They belong in the same full checklist and
+engine-generated attestation card as the other readiness items.
+The engine batches at most four attestations per prompt to keep its confirmation
+plus decline choices within the host's five-answer limit. Confirm only the
+returned `confirm_items`; if `remaining_items` is nonempty, render fresh readiness
+and obtain the next card's separate answer. Do not start Phase 0 until signed.
+
+Run `m365-capabilities --release <id>` and inspect the actual loaded tool
+inventory, not registered server names or `az login`. Execute its exact read-only
+requests for owner/profile, calendar, configured distribution group and complete
+membership, representative Teams chat/owner membership, and report site/library.
+Resolve logical `workiq.fetch` to a real loaded hosted WorkIQ entity fetch tool;
+native `workiq_*` wrappers and WorkIQ Ask are not substitutes for group reads.
+Use returned group/site IDs verbatim for the declared follow-up reads.
+
+For each call save `{version:1,tool:<canonical requested name>,arguments:<exact
+requested arguments>,account:<verified owner>,observed_at:<actual offset-aware
+observation time>,result:<complete structured response>}`. The final temporary
+evidence is `{binding:<plan binding>,available_tools:{<canonical>:<actual loaded
+tool name>},observations:{profile,calendar,roster:<ordered list of group/member page envelopes>,chat,members,
+sharepoint,report_library}}`. Run `record-check --release <id> --item m365_access
+--status pass --evidence-file <file> --detail "exact structured reads verified"`.
+The engine rejects bare passes, missing tools, wrong account/targets, partial or
+failed reads, and observations older than 15 minutes or future-dated. Keep only
+compact summaries/digests; remove temporary private responses after acknowledgement.
+
+Missing or denied capabilities record `fail` and hold entry until setup/consent is
+corrected. Never invent an endpoint, switch accounts or use raw Azure CLI Graph
+as a workaround. The host may need its supported hosted WorkIQ connection enabled
+(`https://workiq.svc.cloud.microsoft/mcp`); never put tokens in files.
+Future invitation/chat destinations are verified again when created.
+
+Reads do not prove write permission. Show that limitation and exact configured
+destinations in the normal `m365_write_access` owner attestation. Do not send a
+test message/invitation or upload a test file during readiness without separately
+previewing it and obtaining explicit approval. Native `workiq_upload_file` only
+replaces existing items; hosted WorkIQ new-file upload is not released.
+New immutable report creation uses the checked SharePoint browser upload and its
+exact owning receipt, never an invented uploader.
+
 ## Flow
 
 > **DISPLAY MODEL — read this.** The gate has ONE table render, and it comes **AFTER every automated check is evaluated** — so the user sees a **complete** picture (all `[auto]` items resolved to ✅/❌), never a half-evaluated table. All the auto checks in steps 1–3 run **silently** (no table, no partial renders). Then step 4 renders the full table once, immediately followed by the deterministic `m_ask_user` card. The **`m_ask_user` card is the guaranteed source of truth** (a Scout UI card, always rendered); the table is the rich view shown alongside it.

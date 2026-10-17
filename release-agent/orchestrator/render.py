@@ -196,6 +196,9 @@ def attest_prompt_payload(chk: dict, release_id: str) -> dict:
     if not outstanding:
         return {"ready": False, "release": release_id,
                 "reason": "no attestations outstanding"}
+    # Reserve one of the host's five answer slots for confirmation.
+    remaining = outstanding[4:]
+    outstanding = outstanding[:4]
 
     # "All confirmed" description: concise per-item summary (with the on-call dates).
     bits = []
@@ -219,10 +222,15 @@ def attest_prompt_payload(chk: dict, release_id: str) -> dict:
     return {
         "ready": True,
         "release": release_id,
-        "question": (f"Automated readiness checks passed — confirm all "
-                     f"{len(outstanding)} remaining item(s) to start release {release_id}?"),
+        "question": (
+            f"Automated readiness checks passed - confirm these {len(outstanding)} "
+            f"item(s) for release {release_id}? {len(remaining)} more will follow."
+            if remaining else
+            f"Automated readiness checks passed - confirm all "
+            f"{len(outstanding)} remaining item(s) to start release {release_id}?"),
         "answers": answers,
         "confirm_items": [it["id"] for it in outstanding],
+        "remaining_items": [it["id"] for it in remaining],
         "recommendedIndex": 0,
     }
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+from html import escape
 
 from tools import pipelines as P
 
@@ -42,7 +43,8 @@ def _next_business_day(d):
 
 
 def _round_up_half_hour(dt):
-    dt = dt.replace(second=0, microsecond=0)
+    if dt.second or dt.microsecond:
+        dt = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
     if dt.minute == 0 or dt.minute == 30:
         return dt
     if dt.minute < 30:
@@ -88,7 +90,7 @@ def format_flags_html(flags_str):
     Kept simple; the raw braces are preserved."""
     if not flags_str:
         return "&lt;not available&gt;"
-    return (flags_str.replace("{", "{ ").replace("}", " }")
+    return (escape(str(flags_str)).replace("{", "{ ").replace("}", " }")
             .replace(",", ", ").replace("  ", " "))
 
 

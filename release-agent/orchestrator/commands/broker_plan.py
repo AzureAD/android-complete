@@ -29,14 +29,16 @@ def cmd_broker_plan(args):
         record.get("identity") if isinstance(record, dict) else None
     )
     expected = (
-        effect_input.get("identity")
-        or record_identity
-        or B.identity(st.release_id, T.broker_plan_name(st.release_id))
+        effect_input["identity"] if "identity" in effect_input
+        else record_identity if isinstance(record, dict) and "identity" in record
+        else B.identity(st.release_id, T.broker_plan_name(st.release_id))
     )
-    name = expected["name"]
     try:
         if not isinstance(record, dict):
             raise ValueError("Invalid Broker resource record; owner recovery required")
+        if not B._runtime_matches(expected):
+            raise ValueError("Invalid or changed Broker resource identity; owner recovery required")
+        name = expected["name"]
         if args.area_path is not None and args.plan_id is None:
             raise ValueError("--area-path requires --plan-id")
         if getattr(args, "preview_ui_repair", False):

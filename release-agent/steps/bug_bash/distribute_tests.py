@@ -1,6 +1,6 @@
 """Step: `distribute_tests` - validate manual bug-bash assignments (Phase 3, bug_bash).
 
-ADO is the source of truth for case assignees (System.AssignedTo) and plan testers.
+ADO release test-point Tester is the ownership source of truth, never case AssignedTo.
 This step READS those values, checks eligibility, workload balance and owner triage,
 and reports only needed corrections. Valid manual changes are preserved, not reset to
 an internal allocation. Availability decisions (OOF/OCE) and workflow status are durable;
@@ -27,29 +27,32 @@ ui_test_status (a valid completed fill result for the current release/RC/targets
 Missing/stale dependencies block; there is no fallback to a master plan or an empty
 automated-case set.
 
-build() is the engine entry point: Done only when live ADO is valid, otherwise Blocked.
+build() is the engine entry point: Done only when live ADO is valid, otherwise Blocked
+or a read-only NeedsSkill request for missing connector evidence.
 inspect_distribution() also returns the transient report for the CLI. After reviewing
 the exact corrections, use `distribute-tests --apply --review-hash <hash> --approved-by <reviewer>
 --release <id>` with the same availability flags. CLI previews never save evidence.
-Apply rereads ADO, uses native revision checks on changed cases, and validates read-back.
+Apply rereads ADO, checks reviewed point Testers, and validates read-back.
 Partial failures require inspecting the remaining live corrections, not replay/rollback.
+The exact roster DL must be read through the installed WorkIQ structured entity connector.
+Pass --roster-file (step-action: --param roster_file=<path>) containing {observations: [...]}
+with a fresh release-owner-bound envelope for the exact mail lookup and every actual member
+page. Their sources and typed identities are reviewed and revalidated before tester writes.
 
 Mock knobs (mocks.local.yaml / tests):
   oce            : verified primary on-call UPN to exclude (skill normally uses ICM).
-  roster         : team roster [{name, upn}] (skip Graph).
-  broker_cases   : Broker selection [{id, assignee}] (skip ADO case selection).
-  auth_cases     : Authenticator selection [{id, assignee, tags}] (skip ADO selection).
+  roster         : team roster [{name, upn}] (offline connector substitute).
+  broker_cases   : Broker selection [{id}] (skip ADO case selection).
+  auth_cases     : Authenticator selection [{id, tags}] (skip ADO selection).
   auth_automated : automated auth case IDs [..] (offline completed-result substitute).
   auth_failed    : applied failed auth IDs for triage, used with auth_automated.
-  case_snapshot  : string case ID -> {assignee, identity_id, revision}; mocked current
-                   ownership and same-read ADO revision (skip live assignment reads).
   point_sets     : [{prefix: 'B' or 'A', plan_id, suite_id,
-                   points: [{id, case_id, tester_id}]}] (skip live plan-tester reads).
-                   identity_id/tester_id are ADO identity IDs, not Teams user IDs.
+                   points: [{id, case_id, config_id, tester_id, tester_upn}]}]
+                   (skip live plan-tester reads). tester_id is an ADO identity ID.
   fail           : force a Blocked result with this detail.
 
 Case-selection mocks alone do NOT mock current ownership or plan testers: supply
-case_snapshot and point_sets for fully offline validation. These input knobs do not
+point_sets for fully offline validation. These input knobs do not
 stub apply writes. Tests must stub the writers explicitly and still confirm OOF via
 build(..., oof=[]), inspect_distribution(..., oof=[...]) or the CLI availability flags.
 """
@@ -58,7 +61,7 @@ from dataclasses import dataclass
 
 from orchestrator.step_context import StepContext, thaw
 
-from orchestrator.outcomes import Done, Blocked
+from orchestrator.outcomes import Done, Blocked, NeedsSkill
 from orchestrator.evidence import StepData
 from steps.lib.mockctx import MISSING
 from tools import distribution as D, testplans as T
@@ -73,13 +76,12 @@ WRITE_COMMAND = "distribute-tests"
 
 MOCKABLE = {
     "oce": {"kind": "input", "desc": "Verified primary on-call UPN."},
-    "roster": {"kind": "input", "desc": "Team roster [{name, upn}] (skip Graph)."},
-    "broker_cases": {"kind": "input", "desc": "Broker cases [{id, assignee}] (skip ADO selection)."},
-    "auth_cases": {"kind": "input", "desc": "Authenticator cases [{id, assignee, tags}] (skip ADO selection)."},
+    "roster": {"kind": "input", "desc": "Team roster [{name, upn}] (offline connector substitute)."},
+    "broker_cases": {"kind": "input", "desc": "Broker cases [{id}] (skip ADO selection)."},
+    "auth_cases": {"kind": "input", "desc": "Authenticator cases [{id, tags}] (skip ADO selection)."},
     "auth_automated": {"kind": "input", "desc": "Automated auth case IDs (offline result substitute)."},
     "auth_failed": {"kind": "input", "desc": "Applied automated failures, with auth_automated."},
-    "case_snapshot": {"kind": "input", "desc": "Current ownership by string case ID: {assignee,identity_id,revision}; skip ADO assignment reads."},
-    "point_sets": {"kind": "input", "desc": "ADO tester groups [{prefix,plan_id,suite_id,points:[{id,case_id,tester_id}]}]; skip point reads."},
+    "point_sets": {"kind": "input", "desc": "ADO groups [{prefix,plan_id,suite_id,points:[{id,case_id,config_id,tester_id,tester_upn}]}]; skip point reads."},
     "fail": {"kind": "input", "desc": "Force a blocked result."},
 }
 
@@ -103,13 +105,24 @@ def _auth_automated_ids(context):
     return set(_fill_input(context)[0])
 
 
-def _roster(context, cfg):
-    roster = context.input("roster", MISSING)
+def _roster(context, cfg, roster_file=None):
+    roster = context.input("roster", MISSING) if not roster_file else MISSING
+    observation = None
     if roster is MISSING:
-        ok, roster, detail = context.services.identities.resolve_roster(cfg["roster_group"])
+        if roster_file:
+            try:
+                observation = context.services.assets.json_file(roster_file)
+            except (OSError, ValueError) as exc:
+                raise ValueError(f"Cannot read roster observation: {exc}") from None
+        ok, roster, detail = context.services.identities.resolve_roster(
+            cfg["roster_group"], owner=context.release.owner_email, roster_observation=observation)
         if not ok:
             raise ValueError(f"Couldn't resolve roster '{cfg['roster_group']}' ({detail}).")
-    return D.canonical_roster(roster)
+        source = {"group_mail": cfg["roster_group"], "observations": observation["observations"],
+                  "members": roster}
+    else:
+        source = {"source": "offline-input", "members": roster}
+    return D.canonical_roster(roster), source
 
 
 def _oce(context, data):
@@ -132,8 +145,8 @@ def _auth_cases(context):
 
 
 def _owner_triage(context, cases, cfg):
-    failed = (context.input("auth_failed", []) if context.input("auth_automated", MISSING) is not MISSING
-              else completed_result(context)["auth"]["failed_case_ids"])
+    result = None if context.input("auth_automated", MISSING) is not MISSING else completed_result(context)
+    failed = context.input("auth_failed", []) if result is None else result["auth"]["failed_case_ids"]
     blocked_tags = {t.casefold() for t in cfg["authenticator"]["triage_tags"]}
     triage = {}
     for case in cases:
@@ -145,10 +158,14 @@ def _owner_triage(context, cases, cfg):
         if reasons:
             triage[f"A:{case['id']}"] = {
                 "assignee": context.release.owner_email.strip().casefold(), "reasons": reasons}
+    if result is not None:
+        for cid in result["broker"]["failed_case_ids"]:
+            triage[f"B:{cid}"] = {
+                "assignee": context.release.owner_email.strip().casefold(), "reasons": ["failed_automation"]}
     return dict(sorted(triage.items()))
 
 
-def _point_sets(context, selected, cfg):
+def _point_sets(context, selected, cfg, broker_manual_ids, triage):
     injected = context.input("point_sets", MISSING)
     if injected is not MISSING:
         return injected
@@ -161,15 +178,63 @@ def _point_sets(context, selected, cfg):
         raise ValueError("Authenticator release suite missing; refresh the owning clone step")
     groups = []
     for prefix, pid, sid in (("B", bp, root), ("A", T.AUTH_PLAN, auth_suite)):
-        ids = [key[2:] for key in selected if key.startswith(prefix + ":")]
+        ids = [key[2:] for key in selected if key.startswith(prefix + ":")
+               and (prefix != "B" or key[2:] in broker_manual_ids)]
         ok, rows, detail = context.services.testplans.read_point_testers(pid, sid, ids)
         if not ok:
             raise ValueError(detail)
+        if prefix == "A":
+            result = completed_result(context)["auth"]
+            expected_auth = {str(p["point_id"]): p for p in result["applied_points"]
+                             if p["outcome"] == "Failed"}
+            failure_only = {key[2:] for key, value in triage.items()
+                            if key.startswith("A:") and value["reasons"] == ["failed_automation"]}
+            found = set()
+            filtered = []
+            for group in rows:
+                points = []
+                for point in group["points"]:
+                    pid = str(point["id"])
+                    if point["case_id"] in failure_only and pid not in expected_auth:
+                        continue
+                    if pid in expected_auth:
+                        if pid in found or str(point["case_id"]) != str(expected_auth[pid]["case_id"]):
+                            raise ValueError("Applied Auth failure point case identity changed")
+                        found.add(pid)
+                    points.append(point)
+                if points:
+                    filtered.append({**group, "points": points})
+            if found != set(expected_auth):
+                raise ValueError("Applied Auth failure points missing from the release suite")
+            rows = filtered
         groups.extend({**row, "prefix": prefix} for row in rows)
+    result = completed_result(context)["broker"]
+    expected = {str(p["point_id"]): p for p in result["applied_points"] if p["outcome"] == "Failed"}
+    if expected:
+        ok, rows, detail = context.services.testplans.read_point_testers(
+            bp, result["target"]["suite_id"], result["failed_case_ids"])
+        if not ok:
+            raise ValueError(detail)
+        found = set()
+        for group in rows:
+            points = []
+            for point in group["points"]:
+                pid = str(point["id"])
+                if pid not in expected:
+                    continue
+                if (pid in found or str(point["case_id"]) != str(expected[pid]["case_id"])
+                        or str(point["config_id"]) != str(expected[pid]["config_id"])):
+                    raise ValueError("Applied Broker failure point case/configuration changed")
+                found.add(pid)
+                points.append(point)
+            if points:
+                groups.append({**group, "prefix": "B", "points": points})
+        if found != set(expected):
+            raise ValueError("Applied Broker failure points missing from the release suite")
     return groups
 
 
-def inspect_distribution(context, *, oof=None, oce=None):
+def inspect_distribution(context, *, oof=None, oce=None, roster_file=None):
     """Return an outcome and a transient report; persist only availability/workflow data."""
     data = thaw(context.evidence.step("bug_bash", ID).data or {})
     data.pop("plan", None)
@@ -180,7 +245,7 @@ def inspect_distribution(context, *, oof=None, oce=None):
         data["oce"] = oce.strip()
     report = {}
     try:
-        _inspect(context, report, oof, data)
+        _inspect(context, report, oof, data, roster_file)
         note = (f"Live ADO: {report['broker_total']} Broker + {report['auth_total']} Auth manual cases, "
                 f"{len(report['eligible'])} eligible testers; {len(report['owner_triage'])} owner-triage cases.")
         outcome = (Done(note + " Assignments and plan testers are valid.") if report["valid"] else
@@ -188,6 +253,16 @@ def inspect_distribution(context, *, oof=None, oce=None):
                            "point-tester corrections need review. Run distribute-tests --json; "
                            "apply only the reviewed corrections with --apply --review-hash <hash> "
                            "--approved-by <reviewer>, repeating the preview's availability flags."))
+    except D.ConnectorObservationRequired as exc:
+        report.update(error=str(exc), connector_reads=exc.requests,
+                      followup="Supply --roster-file <path> (step-action: --param roster_file=<path>) "
+                               "and repeat the availability flags; do not record completion.")
+        outcome = NeedsSkill(
+            tool=exc.tool,
+            payload={**exc.arguments, "_connector_reads": exc.requests,
+                     "_followup": report["followup"]},
+            summary="Gather the exact complete roster through the installed M365 connector",
+            note=str(exc))
     except ValueError as exc:
         outcome = Blocked(f"distribute_tests: {exc}")
         report["error"] = outcome.reason
@@ -195,7 +270,7 @@ def inspect_distribution(context, *, oof=None, oce=None):
     return outcome, report
 
 
-def _inspect(context, report, oof, data):
+def _inspect(context, report, oof, data, roster_file=None):
     fail = context.input("fail", MISSING)
     if fail is not MISSING:
         raise ValueError(str(fail))
@@ -204,7 +279,7 @@ def _inspect(context, report, oof, data):
     if not owner:
         raise ValueError("release owner missing; resolve the owner before showing availability choices.")
     oce = _oce(context, data)
-    roster = _roster(context, cfg)
+    roster, roster_source = _roster(context, cfg, roster_file)
     candidates = set(D.eligible_testers(
         [m["upn"] for m in roster], cfg.get("always_excluded", []), owner=owner, oce=oce))
     report["candidates"] = [m for m in roster if m["upn"] in candidates]
@@ -212,14 +287,22 @@ def _inspect(context, report, oof, data):
         raise ValueError("no eligible testers after owner, on-call and configured exclusions.")
     if oof is not None:
         data["oof"] = D.confirm_oof(oof, roster, owner, context.release.release_id,
-                                  now=context.clock.utc())
+                                  now=context.clock.utc(), ccd=context.release.ccd)
     confirmation = data.get("oof")
-    excluded = D.validate_oof(confirmation, roster, owner, context.release.release_id)
+    excluded = D.validate_oof(confirmation, roster, owner, context.release.release_id,
+                              ccd=context.release.ccd)
     eligible = D.eligible_testers(
         [m["upn"] for m in roster], cfg.get("always_excluded", []), owner=owner, oce=oce, oof=excluded)
     if not eligible:
         raise ValueError("no eligible testers after owner-confirmed OOF exclusions.")
     automated, fill = _fill_input(context)
+    destination_names = D.release_target_names(
+        context.evidence.step("bug_bash", "clone_plans_broker").data,
+        context.evidence.step("bug_bash", "clone_plans_auth").data)
+    if context.input("auth_automated", MISSING) is MISSING:
+        context.services.testplans.validate_release_targets(
+            context.release.release_id, context.release.ccd, fill["binding"],
+            expected_names=destination_names)
     bcases = context.input("broker_cases", MISSING)
     if bcases is MISSING:
         bp = _broker_plan_id(context)
@@ -234,50 +317,59 @@ def _inspect(context, report, oof, data):
     acases = _auth_cases(context)
     triage = _owner_triage(context, acases, cfg)
     manual_auth = [c for c in acases if int(c["id"]) not in automated and f"A:{c['id']}" not in triage]
-    keys = sorted([f"B:{c['id']}" for c in bcases] + [f"A:{c['id']}" for c in manual_auth])
+    manual_broker = [c for c in bcases if f"B:{c['id']}" not in triage]
+    keys = sorted([f"B:{c['id']}" for c in manual_broker] + [f"A:{c['id']}" for c in manual_auth])
     if len(keys) != len(set(keys)):
         raise ValueError("Duplicate cases in ADO selection; resolve before distributing.")
     selected = sorted(set(keys) | set(triage))
-    if len({key[2:] for key in selected}) != len(selected):
-        raise ValueError("A shared case occurs in both distribution sets; resolve overlap before assigning.")
-    snapshot = context.input("case_snapshot", MISSING)
-    if snapshot is MISSING:
-        ok, snapshot, detail = context.services.testplans.case_assignment_snapshot(key[2:] for key in selected)
-        if not ok:
-            raise ValueError(f"Cannot read current ADO assignments: {detail}")
-    if not {key[2:] for key in selected} <= set(snapshot):
-        raise ValueError("Incomplete live case assignments.")
-    current = {key: snapshot[key[2:]] for key in selected}
-    for key, case in current.items():
-        if case.get("assignee") and not case.get("identity_id"):
-            raise ValueError(f"Missing ADO assignee identity for {key}; cannot validate plan testers.")
+    groups = sorted(
+        [{**g, "points": sorted(g["points"], key=lambda p: str(p["id"]))}
+         for g in _point_sets(context, selected, cfg, {str(c["id"]) for c in bcases}, triage)],
+        key=lambda g: (g["prefix"], str(g["plan_id"]), str(g["suite_id"])))
+    observed, seen, identities = {key: [] for key in selected}, set(), {}
+    for group in groups:
+        if group.get("prefix") not in ("B", "A"):
+            raise ValueError("Unexpected product in release point data.")
+        for point in group["points"]:
+            key = f"{group['prefix']}:{point['case_id']}"
+            if key not in observed:
+                raise ValueError("Unexpected case in live point-tester data.")
+            point_key = (str(group["plan_id"]), str(group["suite_id"]), str(point["id"]))
+            if point_key in seen:
+                raise ValueError("Duplicate release test point.")
+            seen.add(point_key)
+            upn = D._identity(point.get("tester_upn")) or None
+            if bool(upn) != bool(point.get("tester_id")):
+                raise ValueError(f"Unresolved release-point Tester for {key}.")
+            if upn:
+                if upn in identities and identities[upn] != point["tester_id"]:
+                    raise ValueError(f"Conflicting ADO identities for {upn}")
+                identities[upn] = point["tester_id"]
+            observed[key].append((upn, point.get("tester_id")))
+    if any(not rows for rows in observed.values()):
+        raise ValueError("Selected cases are missing from the release plans; refresh the owning clone step.")
+    current = {}
+    for key, rows in observed.items():
+        unique = set(rows)
+        upn, identity = next(iter(unique)) if len(unique) == 1 else (None, None)
+        current[key] = {"assignee": upn, "identity_id": identity}
     result = D.distribute([{"id": key, "assignee": current[key]["assignee"]} for key in keys], eligible)
     targets = {**result["assignments"], **{key: row["assignee"] for key, row in triage.items()}}
     case_changes = [{"case": key, "from": current[key]["assignee"], "to": target,
                      "reason": ", ".join(triage[key]["reasons"]) if key in triage else "eligibility/workload balance"}
                     for key, target in targets.items()
                     if D._identity(current[key]["assignee"]) != D._identity(target)]
-    groups = sorted(
-        [{**g, "points": sorted(g["points"], key=lambda p: str(p["id"]))}
-         for g in _point_sets(context, selected, cfg)],
-        key=lambda g: (g["prefix"], str(g["plan_id"]), str(g["suite_id"])))
-    covered, point_changes = set(), []
+    point_changes = []
     for group in groups:
         for point in group["points"]:
             key = f"{group['prefix']}:{point['case_id']}"
-            if key not in current:
-                raise ValueError("Unexpected case in live point-tester data.")
-            covered.add(key)
-            if (point["tester_id"] != current[key]["identity_id"] or
-                    D._identity(current[key]["assignee"]) != D._identity(targets[key])):
+            if D._identity(point.get("tester_upn")) != D._identity(targets[key]):
                 point_changes.append({"case": key, "plan_id": group["plan_id"], "suite_id": group["suite_id"],
                                       "point_id": point["id"], "from": point["tester_id"], "to": targets[key]})
-    if covered != set(selected):
-        raise ValueError("Selected cases are missing from the release plans; refresh the owning clone step.")
     report.update(
         eligible=eligible, owner_excluded=owner, oce_excluded=oce,
         oof_excluded=[m for m in roster if m["upn"] in excluded],
-        broker_total=len(bcases), auth_total=len(manual_auth),
+        broker_total=len(manual_broker), auth_total=len(manual_auth),
         auth_excluded_automated=sum(int(c["id"]) in automated for c in acases),
         owner_triage=triage,
         current_counts={upn: sum(D._identity(current[key]["assignee"]) == upn for key in keys) for upn in eligible},
@@ -286,15 +378,17 @@ def _inspect(context, report, oof, data):
         _current=current, _targets=targets, _point_sets=groups)
     # Semantic availability, not the observation clock, belongs in the write review.
     inputs = D.review_inputs(roster, cfg.get("always_excluded"), owner, oce, confirmation)
+    inputs["roster_source"] = roster_source
     inputs["oof"].pop("confirmed_at", None)
     report["_review"] = {
-        "inputs": inputs, "configuration": cfg,
+        "destination_names": destination_names,
+        "inputs": inputs, "configuration": cfg, "ccd": context.release.ccd,
         "provider": {"org": D.ORG, "project": D.PROJECT},
         "broker_plan": _broker_plan_id(context), "auth_plan": T.AUTH_PLAN,
         "auth_suite": context.evidence.step("bug_bash", "clone_plans_auth").data.get("suite_id"),
         "fill": fill, "current": {
-            key: {"assignee": D._identity(row["assignee"]), "identity_id": row["identity_id"],
-                  "revision": row.get("revision")} for key, row in current.items()},
+            key: {"assignee": D._identity(row["assignee"]), "identity_id": row["identity_id"]}
+            for key, row in current.items()},
         "targets": targets, "points": groups,
     }
 
@@ -303,6 +397,7 @@ def _inspect(context, report, oof, data):
 class BuildParameters:
     oof: tuple[str, ...] | None = None
     oce: str | None = None
+    roster_file: str | None = None
 
 
 PARAMETERS = {"build": BuildParameters}
@@ -311,4 +406,4 @@ PARAMETERS = {"build": BuildParameters}
 def build(context: StepContext[BuildParameters]):
     oof = list(context.parameters.oof) if context.parameters.oof is not None else None
     oce = context.parameters.oce
-    return inspect_distribution(context, oof=oof, oce=oce)[0]
+    return inspect_distribution(context, oof=oof, oce=oce, roster_file=context.parameters.roster_file)[0]

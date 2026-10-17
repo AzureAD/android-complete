@@ -986,6 +986,32 @@ Phase 2's first audited source-capture contracts (`checker_fired` and
 `orchestrator_health`) are in `docs/build-verify-contracts.txt`; remaining Phase 2
 steps are still being audited. The separate rehearsal framework was removed.
 
+Phase 3's eleven field-level contracts and local integration record are in
+`docs/bug-bash-contracts.txt` (shared paths: `docs/release-state-data.txt`, section 9).
+The five `tests\test_phase3_*.py` modules cover focused offline regressions, not
+live release execution. `docs/release-audit.txt` also records the open default
+case-budget overflow; targeted passes do not certify that guard as passing.
+
+Microsoft 365 routing is independent of Azure DevOps authentication. Calendar,
+mail and supported files use structured native WorkIQ tools; directory groups
+use hosted WorkIQ entity reads; exact Teams chat/member operations use the Agency
+Teams MCP. WorkIQ Ask is for discovery/synthesis, not exact release identities or
+delivery proof. M365 paths must not obtain Graph tokens through Azure CLI.
+ADO pipeline/Test Plans/repository/wiki operations retain their existing ADO
+authentication and checked execution fences.
+
+Entry readiness separates `m365_access` (actual loaded tool inventory and fresh
+owner/target-bound read probes) from `m365_write_access` (explicit owner confirmation
+of send/upload grants). `m365-capabilities --release <id>` prints the read-only
+probe plan. `record-check --item m365_access --status pass --evidence-file <file>`
+validates the structured observations; registration, `az login`, raw pasted results
+and bare passes are insufficient. Missing hosted entity tools or denied group
+paths block setup early, not during distribution. No test send/upload is authorized.
+Actual destination access is rechecked when used, especially future Bug Bash chats.
+Hosted WorkIQ new-file upload is unavailable; native `workiq_upload_file` only
+replaces an existing item. New immutable report creation therefore uses a checked
+SharePoint browser upload with its owning receipt, not a fictitious upload API.
+
 Run from `release-agent/`. **Directory/default runs now select the daily core suite**,
 capped at 1,086 cases (half the previous 2,172-case suite). The reviewed selection in
 `tests/_suite.py` keeps engine/lifecycle, ownership and write fences, approvals,

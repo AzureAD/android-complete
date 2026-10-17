@@ -20,20 +20,172 @@ not a new persisted runtime schema.
 
 CURRENT CHECKPOINT
 ------------------
-LATEST OWNER DIRECTION (2026-10-16, 19:51 PT):
-  Save the completed Phase2 checkpoint LOCALLY on feature/release-agent-phase2-audit,
-  then move to Phase3 audit/fixes one step at a time, beginning clone_plans_broker.
-  origin AzureAD/android-complete is PUBLIC; owner chose "Commit locally first".
-  Do not push this checkpoint's internal live-release audit details to that remote.
-  Include only intended release-agent source/tests/docs; exclude .kotlin and all
-  generated release/session evidence. Snapshot6bcafa5cb remains the parent.
-  Isolated checker1705624 exercise is COMPLETE9/9, including real approved report
-  publication, Teams/HTML email deliveries and explicit test-only human approval.
-  Existing release state and production pipeline gates were not changed.
-  Remaining Phase2 malformed-input/RC-discovery and status-label audit findings
-  are deferred, not silently certified by this one live case. Resume them separately.
-  The earlier checkpoint/next instructions below are historical; this paragraph
-  governs the current work. No replacement runner is requested.
+LATEST OWNER REQUEST (2026-10-16 23:05 PT): migrate M365 operations to the correct
+connectors, verify actual capabilities before release entry, commit, push safely,
+and compact context. A046 implementation COMPLETE locally; prior Phase3 work kept.
+The coherent snapshot includes Phase3 audit/integration plus this migration.
+No existing release was adopted, advanced, reopened, reseeded or notified.
+Origin is PUBLIC AzureAD/android-complete: internal release details must not be
+pushed there. Delivery is a local commit; publication needs an approved private/
+internal destination. No public push is authorized by this checkpoint.
+
+A046 - M365 provider routing and actual entry capability checks
+  Removed all active Azure CLI Graph token/REST paths for meeting binding, roster/
+  mention reads and RC SharePoint publication. ADO/Git adapters remain separate.
+  Native WorkIQ profile/calendar and Agency Teams exact-chat/member observations
+  drive chat binding; encoded meetup thread proof is explicit. Opaque links use the
+  preserved exact owner-confirmed link recovery, never topic search/new invitation.
+  Structured hosted WorkIQ entity reads own exact group/member/user identities.
+  Distribution freezes/revalidates complete typed roster pages before Tester-only
+  writes. Mentions accept actual member GUID/display name plus fresh directory
+  evidence for UPN/SMTP differences; no inaccessible implicit Graph fallback.
+  Shared m365 observation validation binds version/tool/exact args/owner/offset
+  timestamp/successful structured result, <=15minutes old, never future-dated.
+  These are host-supplied observations, not cryptographic identity or write consent.
+  Native profile alias handling accepts actual aliases from the same returned user,
+  not a guessed SMTP address. Completed chat proof retains only needed fields.
+  Publication now issues ONE durable checked connector/browser upload handoff.
+  Native upload only replaces an exactly proven existing immutable item. NEW files
+  use a reviewed SharePoint browser action with exact folder context/local bytes,
+  snapshot-derived controls, no overwrite/renaming/sharing expansion. Unknown
+  outcomes never obtain replay permission. Result-only recovery binds original
+  execution/review/target/SHA/size and fresh provider readbacks; receipts survive
+  failed source/completion fences but never approve stale reports.
+  Review found two real response-contract gaps: canonical link resolution need not
+  include item metadata, and native download can be raw text/base64. Both corrected:
+  missing metadata/download emits exact ID-bound reads, and only matching frozen
+  SHA/size bytes are accepted. Secondary attention-record failures are surfaced.
+  Readiness now has13items: m365_access requires actual loaded tool inventory plus
+  owner/calendar/exact group+complete membership/representative Teams membership/
+  report site+library reads. Bare pass and registration-only assertions reject.
+  Separate m365_write_access is an explicit owner grant attestation: reads do not
+  prove actual send/upload. Bindings invalidate on release/owner/CCD/tool/target
+  changes. MCP checks reject disabled/empty/missing required tool allowlists.
+  Attestation cards batch at most4items plus confirmation (host maximum5answers),
+  never auto-confirm the fifth item. The owner must answer the remaining card.
+  Tool/permission capability gaps are explicit setup holds. Hosted entity fetch is
+  NOT currently exposed in this Scout session; no invented endpoint or successful
+  live-ready claim. Hosted WorkIQ new-file uploader is not released; native
+  workiq_upload_file is existing-item only. Task-level access is still rechecked.
+  Native sign-in/profile were read; no test send/upload was attempted.
+  Updated source/installed Scout routing, knowledge, readiness/ref/contracts; no
+  test-case AssignedTo guidance remains for release-specific Tester ownership.
+  Focused proof (overlapping selections; not a full-suite-green claim):
+    initial readiness64pass/2follow-through failures18.20s; corrected65pass15.27s;
+    integrated663pass/2fixture failures146.93s;
+    provider-shape/fixture follow-up89pass/1misplaced-test assertion72.30s;
+    remaining Phase3/core570pass/10fail73.65s;
+    isolated saved HEAD8baseline core failures2.10s;
+    final prompt/capability/publication11pass4.16s; collection4.95s.
+  Coupled fixtures/assertions were corrected without weakening live guards.
+  Reviewer confirms actual provider-shape findings resolved, no direct ownership
+  regression found. Final knowledge/configuration guards2pass1.02s.
+  Pytest/reproduction/collection cumulative338.58s, under15min.
+  Temporary runs and baseline archive removed.
+  Current inventory2906total=1473core+1433extended. A044 remains OPEN1473>1086cap;
+  no tests deleted, skipped by new policy or silently reclassified, no raised budget.
+
+A047 - Eight unrelated test_core cases are already red in saved HEAD
+  An isolated archive of a00dabfcc reproduces all eight failures:
+    test_holds_at_first_hold; test_phase0_opens_on_ccd_minus_7;
+    test_no_anchor_when_ccd_unknown_runs_immediately;
+    test_agent_steps_render_as_automatic_not_pending;
+    test_current_steps_label_scout_not_user_action;
+    test_local_mock_blocks_agent_step; test_local_mock_applies_to_later_phases;
+    test_step_modules_and_config_stay_in_sync.
+  Includes stale chronological/human-frontier expectations and the legacy
+  build_verify.rc_report module/config mismatch. Kept unchanged, not silently
+  weakened or called green. The agent-render case fails at a different assertion
+  in current code versus saved HEAD; both versions are already failing the case.
+  NEXT: approved safe push destination; separate owner-directed A044/A047 cleanup,
+  not production adoption or Phase4 Remove RC Tags approval.
+
+THE FOLLOWING CHECKPOINTS ARE HISTORICAL:
+FOLLOW-UP OWNER REQUEST (2026-10-16): prevent activate_chat permission failures
+from trapping the release engineer after they offer to activate the chat/paste its
+link. A045 LOCAL FIX COMPLETE: automatic Graph verification remains available,
+but an explicit owner-reviewed Teams-link binding no longer requires Graph.
+Details and limitations immediately below; prior Phase3 integration is preserved.
+Do not execute/adopt/reopen the existing release merely to apply this source fix.
+
+A045 - activate_chat access failure had no owner-confirmed link recovery
+  Owner reports a full-day release delay. Read-only local2026-10 state confirms
+  activate_chat and bugbash_updates were skipped with Graph AUTH HTTP403 notes.
+  The investigation session also traced record-bugbash-chat -> meeting.resolve ->
+  distribution._graph_get -> az account get-access-token for Microsoft Graph.
+  The precise rejected endpoint/scope/tenant policy was not established here.
+  Graph authorization is separate from access through Teams/WorkIQ: existence or
+  manual activation of the chat cannot make the CLI token authorized.
+  ROOT CAUSE: --chat-id was only an assertion, and ALL successful bindings required
+  the same Graph resolution. Scout guidance deliberately rejected unverified links.
+  That safety policy lacked a distinct, auditable owner-attestation recovery path;
+  therefore the suggested human action still returned to the failing dependency.
+  Waiting/opening Chat is not a403 fix. This is a recovery-design gap, not missing
+  effort by the release engineer. The reported full-day duration was not timed or
+  independently reconstructed from the local test-state records.
+  CORRECTION: --chat-link previews exact acknowledged invite/event/recipients/link,
+  no Graph and no state write. --confirm-activated requires the current exact
+  review_hash, release owner and explicit reason. Saved evidence is owner_attested
+  with confirmed_at, invite/review digests and confirmation provenance, never a
+  fabricated online meeting ID or Graph proof. Encoded thread contradictions,
+  missing/uncertain invite receipts, stale reviews, out-of-order/terminal decisions
+  and silent replacement reject. Full invitation receipt is source-bound.
+  Consumers accept a current attested binding and freeze provenance into claims;
+  actual membership, send permission, delivery and human release gates remain
+  independent. Current provider event/attendees/access and confirmer identity are
+  NOT independently verified by this manual mode.
+  UX: first access failure immediately offers owner-confirmed link, private/manual
+  progress, or hold; no unchanged retry/wait loop. Handler, knowledge, repository
+  skill/reference/contracts AND this machine's installed skill have the rule.
+  PROOF:125 focused cases passed11.43s; after final changes326 activation/progress/
+  mention/manual-report/retention/communication/authority/parameter cases passed
+  26.06s. Selections overlap. Manual recorder and real first-update builder work
+  while any Graph call is forbidden, using a synthetic exact-chat member response.
+  No real provider send/access certification is claimed. Collection4.95s:
+  2780total =1466core +1314extended; existing module policy puts the9new cases in
+  extended. A044 remains OPEN, unchanged1466core >1086cap; no reclassification.
+  Cumulative validation about43seconds, below15minutes. Temporary state removed.
+  No release-state/CCD/adoption, external call/write, notification, commit or push.
+  NEXT: review uncommitted diff and A044 coverage budget; deploying to an existing
+  pinned run still requires its separately reviewed workflow-adoption impact.
+
+PRIOR PHASE3 INTEGRATION CHECKPOINT:
+LATEST OWNER DIRECTION / RECOVERED CHECKPOINT (2026-10-16, 22:09 PT):
+  Continue the stalled audit here, finish the current Phase3 integration, save
+  the checkpoint and compact the conversation. Do not restart clone_plans_auth.
+  All ELEVEN Phase3 contracts and local/offline step integration are complete.
+  Contract: docs\bug-bash-contracts.txt; shared paths: release-state-data.txt.
+  Broker A036/A037 retained; Auth identity/recovery, release-point Tester-only
+  writes/progress, exact invitation/chat/recipient proof and human source guards
+  are integrated. UI retries preserve manual results and acknowledged receipts.
+  A043 additionally binds a PENDING Native Auth confirmation to the exact
+  acknowledged notification attempt/descriptor/provenance, not just engineer/
+  plan. Explicit reopen now works for prepared source-bound human prompts, while
+  untouched pending steps still reject a meaningless reopen. Human notes and
+  original confirmation sources survive generated-evidence refresh.
+  629 Phase3/coupled regressions passed57.12s;349 shared regressions passed54.98s.
+  After the final correction,421 Phase3/human/lifecycle/notification selectors
+  passed31.04s. These overlap; do not sum them as unique/full-suite coverage.
+  Validation/reproduction/collection cumulative time about3.4minutes, under15.
+  OPEN A044: default-suite case-budget guard fails1466core >1086cap. An isolated
+  archive of saved HEAD a00dabfcc already collects1182core >1086; Phase3 adds284.
+  No tests silently deferred/deleted/reclassified and no cap/timeout increased.
+  Therefore this is NOT a green-default-suite or live-provider certification.
+  NEXT: owner-reviewed coverage consolidation/classification to restore the
+  existing cap, preserving critical safety coverage; inspect current Phase3
+  uncommitted diff before any commit. Do not automatically start Phase4 or execute
+  its Remove RC Tags gate. Its first future audit step is remove_rc_tags_gate.
+  Current branch feature/release-agent-phase3-audit, HEAD a00dabfcc. All Phase3
+  changes remain UNCOMMITTED; nothing pushed. Phase2 checkpoint a00dabfcc and
+  parent6bcafa5cb are unchanged. origin AzureAD/android-complete is PUBLIC:
+  do not push internal live-release audit details there. Leave .kotlin untouched.
+  No live provider action, normal release-state/adoption/CCD change, pipeline
+  approval, notification, automation, reset or new runner occurred in this pass.
+  Previous Phase2 isolated checker1705624 remains the completed9/9 TEST exercise;
+  it does not authorize any Phase3 or production action. Earlier readiness/
+  Phase2 findings remain deferred/open, not silently certified.
+
+HISTORICAL CHECKPOINT DETAILS (the current block above governs resumption):
 
 LATEST OWNER DECISION: reject/remove the rehearsal runner and return to the
 direct phase-by-phase audit and fixes. No replacement framework is requested.
@@ -1365,6 +1517,103 @@ Proof:
   No full Phase 2 completion, real provider query, report send or pipeline launch.
 
 Next: direct mrwp_ecs/mrwp_local audit and fixes. Preserve Phase 0-1 commit.
+
+PHASE3 COMPLETED LOCAL CONTRACT / INTEGRATION PASS
+---------------------------------------------------
+2026-10-16: continued all eleven Test / Bug Bash building blocks from the saved
+Phase2 checkpoint, recovered the stalled conversation, finished the shared
+integration and replaced the stale "next clone_plans_auth" checkpoint.
+Data contracts: docs\bug-bash-contracts.txt, sections1-11.
+Shared field register: docs\release-state-data.txt, section9.
+
+  A036-A037 / LOCALLY FIXED / Broker plan creation:
+    Preserve the earlier malformed-source/provider holds, early created plan ID
+    checkpoint and uncertain-create ownership. No duplicate POST/reset/deletion.
+
+  A038 / LOCALLY FIXED / Auth suite identity and recovery:
+    Canonical dates/names/positive bound IDs, malformed discovery/read-back
+    holds, exact direct-parent/query identity (quoted WIQL whitespace retained),
+    created ID saved before read-back and retained retry history.
+    Source: clone_plans_auth.py, tools\testplans.py.
+
+  A039 / LOCALLY FIXED / UI results, ownership and manual-safe recovery:
+    Compact frozen projections/current targets; validate actual applied points
+    before triage. Only release-point Testers change, never shared case AssignedTo.
+    Reuse acknowledged unchanged results; block changed/manual/unknown outcomes;
+    retain partial receipts across interrupted retries. Native outcome batches
+    recheck case/configuration/outcome immediately before each PATCH.
+    Distribution rechecks exact reviewed points/targets/Tester IDs; progress reads
+    those live Testers, tracks exact originally failed points and keeps per-product
+    triage separate from distinct-case and owner-local totals.
+    Source: ui_test_status.py/ui_results.py/distribute_tests.py/bugbash_updates.py,
+    tools\testplans.py/distribution.py/bugbash.py and checked distribute command.
+
+  A040 / LOCALLY FIXED / Invitation, meeting and Native Auth delivery:
+    Source-bound approved payloads, escaped display/flags, upward notice rounding,
+    explicit unknown scheduling availability. Exact acknowledged invitation ->
+    live event/join/thread/chat with exact attendee role/multiplicity checks.
+    Invalid/missing/partial provider nodes and unsafe joins HOLD. Native Auth
+    requires a verified recipient/provenance and exact applied delivery receipt;
+    bare engineer data or terminal status is not proof. Legacy raw recorders
+    cannot create successful delivery. Existing notification lifecycle still
+    owns claim/result/deduplication; no generic shortcut grants new send authority.
+
+  A041 / LOCALLY FIXED / Human review provenance:
+    Actual human done rechecks current handler/source conditions. Preserve
+    confirmation_preconditions separately from refreshed producer conditions;
+    generated UIFailureReminder may replace only its contribution. A new result
+    UUID is irrelevant; changed represented failures with the same run IDs still
+    block old review. Own/transitive/preceding sequential source conditions are
+    checked before final gate decisions. Blocked done CLI saves/logs no success.
+
+  A042 / LOCALLY FIXED / Future-step status:
+    Unmet prerequisites show pending rather than automatic work/ready approval.
+    Future human tasks are not incorrectly advertised as actionable decisions.
+
+  A043 / LOCALLY FIXED / Pending confirmation could replace delivery source:
+    Reproduced complete_step returning ran after changing an acknowledged Native
+    Auth attempt ID while retaining the same engineer/plan. attestation_binding
+    now includes notification ID/execution/descriptor/provenance, not just the
+    release/owner/date/engineer/plan tuple. The pending request HOLDs unchanged.
+    Existing generic reopen rejected this prepared pending human prompt, making
+    its own recovery instruction unusable. Eligibility now permits explicit
+    reopen for source-bound human confirmations only; untouched pending work and
+    pending external steps are unchanged. Reopen + fresh done succeeds; cosmetic
+    timestamps preserve the binding. No human completion occurs automatically.
+    Source: native_auth_signoff.py, transitions.py; direct regressions in
+    test_phase3_human_contracts.py and test_transitions.py.
+
+  A044 / OPEN / Default daily-case-budget overflow:
+    tests\test_validation_scope.py::test_daily_suite_is_at_most_half_without_losing_extended_cases
+    fails because current core1466 exceeds the unchanged1086cap. Read-only
+    collection of a temporary git archive of HEAD a00dabfcc independently shows
+    baseline1182core/2487full; current is1466core/2771full,1305extended.
+    This predates this recovery pass and the cap was already broken at saved
+    Phase2; Phase3 adds284 cases. Do not hide it with a timeout/cap increase,
+    silent deletion/reclassification or an assertion change. Next owner-reviewed
+    action is coverage consolidation/classification preserving critical coverage.
+    Baseline archive and temporary test directories were removed.
+
+Proof / scope:
+  Existing pytest only; synthetic provider responses and isolated temporary
+  state, real handlers/CLI/engine where relevant; live providers are blocked.
+  Recovered integration:629passed57.12s. Coupled shared coverage:349passed54.98s.
+  Added pending-notice replacement test first failed as expected; corrective
+  reopen follow-through exposed the generic pending eligibility gap.
+  Final combined Phase3/human/lifecycle/notification selection:421passed31.04s.
+  No summed unique-test/full-suite-green claim. Including red/collection runs,
+  Expanded handler/effect/parameter coverage passed226 cases; two follow-through
+  assertions were corrected and passed1.12s: a real fresh review supplies its new
+  human note, and handler catalog identity equals all configured keys (not stale
+  hardcoded68). This retains the missing/extra-handler oracle without provider IO.
+  Cumulative validation was about3.4minutes, below the15-minute budget.
+  Eleven step contracts are complete, but live end-to-end operation and the
+  default-case budget remain explicitly unproven/open.
+  All source/test/doc changes are local/uncommitted on
+  feature/release-agent-phase3-audit. No normal release-state/CCD/adoption,
+  external pipeline/plan/calendar/Teams/automation operation, commit or push.
+  Earlier readiness A007-A010, simulator A012 and deferred Phase2 robustness work
+  remain open/deferred; do not silently clear them.
 
 HOW TO UPDATE THIS RECORD
 -------------------------

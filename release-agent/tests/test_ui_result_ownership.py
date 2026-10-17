@@ -15,6 +15,11 @@ from tests._ui_results import publish, checkpoint_memory, broker_fill, auth_fill
 from tools import pipelines as P, testplans as T, distribution, bugbash
 
 
+@pytest.fixture(autouse=True)
+def offline_destination_identity(monkeypatch):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
+
+
 def forbidden(*args, **kwargs):
     raise AssertionError("Upstream acquisition/projection/reconciliation must not run here")
 
@@ -33,6 +38,7 @@ def state():
 
 
 def block_upstream(monkeypatch):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
     from tools.pipelines import auth_evidence, ui_projection, test_evidence, tests_results
     for module in (P, auth_evidence, ui_projection, test_evidence, tests_results):
         for name in ("project_auth_ui_results", "project_mrwp_ui_results", "reconcile_retries",
@@ -103,7 +109,8 @@ def test_distribution_progress_use_result_without_raw_evidence(monkeypatch):
                         lambda *a, **kw: (seen.append(kw) is None, {}, ""))
     assert BU.gather(_context(st))[0] and seen == [{
         "auto_failed_ids": [200], "auth_automated_ids": [100, 200],
-        "broker_ui_result": ui_results.completed_result(_context(st))["broker"]}]
+        "broker_ui_result": ui_results.completed_result(_context(st))["broker"],
+        "auth_ui_result": ui_results.completed_result(_context(st))["auth"]}]
 
 
 @pytest.mark.parametrize("damage", ["missing", "incomplete", "failed_ids", "target", "point", "duplicate"])
@@ -248,6 +255,7 @@ def test_unexpected_writer_error_propagates_after_durable_invalidation(monkeypat
 
 
 def test_failed_completion_checkpoint_invalidates_in_memory_and_disk(monkeypatch, tmp_path):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
     st = state()
     path = tmp_path / "state.json"
 
@@ -260,7 +268,7 @@ def test_failed_completion_checkpoint_invalidates_in_memory_and_disk(monkeypatch
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
     monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     monkeypatch.setattr(
-        distribution, "set_assigned_to", lambda *a, **kw: (True, ""))
+        distribution, "set_point_testers", lambda *a, **kw: (True, ""))
     assert _invoke(U.build, st).kind == "blocked"
     for copy in (st, ReleaseState.load(str(path))):
         with pytest.raises(ValueError):
@@ -269,6 +277,7 @@ def test_failed_completion_checkpoint_invalidates_in_memory_and_disk(monkeypatch
 
 
 def test_partial_auth_write_preserves_diagnostics_without_publishing(monkeypatch):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
     st = state()
     publish(st)
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
@@ -281,7 +290,7 @@ def test_partial_auth_write_preserves_diagnostics_without_publishing(monkeypatch
         return False, summary, "synthetic partial batch"
 
     monkeypatch.setattr(T, "fill_auth_ui_results", partial)
-    monkeypatch.setattr(distribution, "set_assigned_to", forbidden)
+    monkeypatch.setattr(distribution, "set_point_testers", forbidden)
     assert _invoke(U.build, st).kind == "blocked"
     data = st.get_step("bug_bash", U.ID).data
     assert data["summary"]["applied_points"] and data["auth"]["mapping"]["uncertain_points"]
@@ -290,6 +299,7 @@ def test_partial_auth_write_preserves_diagnostics_without_publishing(monkeypatch
 
 
 def test_only_applied_failures_enter_progress_or_assignments(monkeypatch):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
     st = state()
     st.pipeline_runs["rcs"][-1]["ecs"] = current_rc(
         ecs={PROD: [("test_500_unmatched", "Failed")]})["ecs"]
@@ -298,7 +308,7 @@ def test_only_applied_failures_enter_progress_or_assignments(monkeypatch):
     monkeypatch.setattr(T, "fill_auth_ui_results",
                         lambda plan, suite, outcomes, **_coordinates: auth_fill(
                             plan, suite, {100: "Passed"}))
-    monkeypatch.setattr(distribution, "set_assigned_to", forbidden)
+    monkeypatch.setattr(distribution, "set_point_testers", forbidden)
     assert _invoke(U.build, st).kind == "done"
     result = ui_results.completed_result(_context(st))
     assert result["auth"]["automated_case_ids"] == [100, 200]
@@ -309,12 +319,13 @@ def test_only_applied_failures_enter_progress_or_assignments(monkeypatch):
 
 
 def test_assignment_failure_is_nonblocking_and_not_claimed_as_success(monkeypatch):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
     st = state()
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
     monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     monkeypatch.setattr(
         distribution,
-        "set_assigned_to",
+        "set_point_testers",
         lambda *a, **kw: (False, "assignment rejected"),
     )
     outcome = _invoke(U.build, st)
@@ -327,6 +338,7 @@ def test_assignment_failure_is_nonblocking_and_not_claimed_as_success(monkeypatc
 
 @pytest.mark.parametrize("missing", ["target", "applied_points"])
 def test_success_shaped_writer_summary_cannot_publish(monkeypatch, missing):
+    monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
     st = state()
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
 
@@ -337,14 +349,15 @@ def test_success_shaped_writer_summary_cannot_publish(monkeypatch, missing):
 
     monkeypatch.setattr(T, "fill_auth_ui_results", incomplete)
     monkeypatch.setattr(
-        distribution, "set_assigned_to", lambda *a, **kw: (True, ""))
+        distribution, "set_point_testers", lambda *a, **kw: (True, ""))
     assert _invoke(U.build, st).kind == "blocked"
     with pytest.raises(ValueError, match="missing/partial/invalidated"):
         ui_results.completed_result(_context(st))
 
 
 def test_auth_writer_reports_completed_and_uncertain_batches(monkeypatch):
-    points = [{"id": 1, "testCase": {"id": 100}}, {"id": 2, "testCase": {"id": 200}}]
+    points = [{"id": 1, "testCase": {"id": 100}, "outcome": "Unspecified"},
+              {"id": 2, "testCase": {"id": 200}, "outcome": "Unspecified"}]
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, points, ""))
     monkeypatch.setattr(T, "_set_points_outcome",
                         lambda p, s, ids, outcome, t, **kw:

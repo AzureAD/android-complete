@@ -19,6 +19,23 @@ from tests.test_handler_execution import _auto, _orch
 from tests.test_handlers import _catalog, _effect_module, _module
 
 
+def test_release_point_tester_port_has_no_shared_case_assignment_authority(monkeypatch):
+    from orchestrator.service_adapters import production_effects
+    from tools import distribution
+
+    calls = []
+    monkeypatch.setattr(distribution, "set_point_testers",
+                        lambda *args, **kwargs: (calls.append((args, kwargs)) is None, ""))
+    ports = production_effects(
+        WriteCapabilities((WriteOperation.SET_POINT_TESTERS,)),
+        validate=lambda: calls.append("fenced"), committer=None, clock=None)
+    assert ports.set_assigned_to is None
+    assert [field.name for field in fields(ports) if getattr(ports, field.name) is not None] == [
+        "set_point_testers"]
+    assert ports.set_point_testers(10, 20, [30], "owner@example.test")[0]
+    assert calls == ["fenced", ((10, 20, [30], "owner@example.test"), {})]
+
+
 def test_new_read_only_producer_needs_only_an_own_data_declaration(tmp_path):
     def build(ctx):
         assert ctx.effect is None

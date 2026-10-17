@@ -40,6 +40,8 @@ def publish(state):
     from steps.bug_bash import ui_test_status as U
     checkpoint_memory(state)
     with patch.object(T, "fill_ui_automation_results", broker_fill), patch.object(
-            T, "fill_auth_ui_results", auth_fill), patch.object(D, "set_assigned_to", return_value=(True, "")):
+            T, "fill_auth_ui_results", auth_fill), patch.object(
+            D, "set_point_testers", return_value=(True, "")), patch.object(
+            D, "validate_release_targets", return_value=None):
         outcome = _invoke(U.build, state)
     assert outcome.kind == "done", outcome

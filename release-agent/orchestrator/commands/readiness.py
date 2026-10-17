@@ -104,7 +104,15 @@ def cmd_record_check(args):
     e.g. the ICM on-call lookup. The skill runs the check via its MCP tools and
     calls this to store the pass/fail result in the engine."""
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
-    res = orch.gate.record_check(args.item, args.status, args.detail or "")
+    evidence = None
+    if getattr(args, "evidence_file", None):
+        try:
+            with open(args.evidence_file, encoding="utf-8-sig") as stream:
+                evidence = _json.load(stream)
+        except (OSError, ValueError) as exc:
+            print(f"Cannot read readiness evidence: {exc}")
+            return 1
+    res = orch.gate.record_check(args.item, args.status, args.detail or "", evidence=evidence)
     if "error" in res:
         print(res["error"])
         return 1
@@ -117,6 +125,24 @@ def cmd_record_check(args):
     C.emit(args.runs_root, args.release,
            f"[{mark}] {(item or {}).get('label', args.item)}: {args.status}"
            f"{(' — ' + args.detail) if args.detail else ''}{tail}", kind="record_check")
+    return 0
+
+
+def cmd_m365_capabilities(args):
+    from orchestrator.m365_capabilities import plan
+    st, _ = C.load_orch(args.runs_root, args.release, args.config)
+    if not st.owner_email:
+        print(_json.dumps({"error": "Set the confirmed release owner before probing connector capabilities"}))
+        return 1
+    try:
+        evidence = None
+        if args.evidence_file:
+            with open(args.evidence_file, encoding="utf-8-sig") as stream:
+                evidence = _json.load(stream)
+        print(_json.dumps(plan(st, evidence=evidence), indent=2))
+    except (ValueError, OSError) as exc:
+        print(_json.dumps({"error": str(exc), "permission_to_send": False}))
+        return 1
     return 0
 
 
@@ -140,7 +166,13 @@ def register(sub):
     rc.add_argument("--status", required=True, choices=["pass", "fail", "degraded"],
                     help="pass | fail (or 'degraded' for opt-out items the user proceeds without)")
     rc.add_argument("--detail", default="", help="Short evidence/summary (e.g. 'not in roster')")
+    rc.add_argument("--evidence-file", help="Structured fresh M365 capability inventory/probe results")
     rc.set_defaults(func=cmd_record_check)
+
+    cp = sub.add_parser("m365-capabilities", help="Plan actual read-only M365 capability probes before release entry")
+    cp.add_argument("--release", required=True)
+    cp.add_argument("--evidence-file", help="Partial observations to request exact next group/member/library reads")
+    cp.set_defaults(func=cmd_m365_capabilities)
 
     sg = sub.add_parser("sign", help="Attest human readiness items (also runs auto verify)")
     sg.add_argument("--release", required=True)

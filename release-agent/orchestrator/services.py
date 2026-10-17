@@ -59,6 +59,7 @@ class TestPlanReads:
     find_suite_id_by_name: Callable[..., tuple]
     read_point_testers: Callable[..., tuple]
     gather_progress: Callable[..., dict]
+    validate_release_targets: Callable[..., None]
 
 
 @dataclass(frozen=True)
@@ -102,4 +103,5 @@ class EffectServices:
     fill_auth_ui_results: Callable[..., tuple] | None = None
     fill_ui_automation_results: Callable[..., tuple] | None = None
     set_assigned_to: Callable[..., tuple] | None = None
+    set_point_testers: Callable[..., tuple] | None = None
     submit_pipeline_approval: Callable[..., tuple] | None = None

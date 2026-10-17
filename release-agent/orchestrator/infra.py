@@ -98,6 +98,17 @@ def ensure_mcp_servers(req: dict, register: bool) -> list:
         name = m.get("name", key)
         rec = {"id": m.get("id"), "name": name, "scout_key": key}
         if key in existing:
+            entry = existing[key]
+            required = set(m.get("readiness_tools", m.get("tools", [])) or [])
+            configured = entry.get("tools") if isinstance(entry, dict) else None
+            if (not isinstance(entry, dict) or entry.get("enabled") is False
+                    or required and (not isinstance(configured, list)
+                                     or any(not isinstance(tool, str) or not tool for tool in configured)
+                                     or not required.issubset(configured))):
+                results.append({**rec, "status": "capabilities_missing",
+                                "detail": "Server disabled or required tool allowlist missing; "
+                                          "correct configuration and restart Scout. Registration is not access proof."})
+                continue
             results.append({**rec, "status": "present", "detail": "already in Scout config"})
             continue
         # Not registered. Is its launcher present?

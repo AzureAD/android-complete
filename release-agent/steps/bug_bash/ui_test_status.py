@@ -1,5 +1,5 @@
 """Step: `ui_test_status` — fill BOTH the Broker + Authenticator UI suites from the RC
-pipelines, and reassign failed auth automation to the release owner (Phase 3, bug_bash;
+pipelines, and assign failed release-point Testers to the release owner (Phase 3, bug_bash;
 runs right before `distribute_tests`).
 
 BROKER: maps validated current-RC ECS/Local snapshots, with no pipeline refetch.
@@ -11,15 +11,16 @@ AUTHENTICATOR: this step ALSO fills the Authenticator bug-bash suite (from `clon
 from this release's auth ECS post-build UI-test run (`state.rcs[-1].auth.test`, captured by
 the Phase-2 `auth_ecs` step). For the automated cases only (join on `test_<caseId>_`), it
 writes Passed->Passed / Failed->Failed and LEAVES manual cases untouched; reassignment of
-applied FAILED cases to the release owner (`state.owner_email`) is attempted for triage.
+applied FAILED points to the release owner (`state.owner_email`) is attempted for triage.
 Monthly UI Tests is intentionally report-only; all its failures remain owner investigations.
 
 Depends on `clone_plans_broker` (and, for the auth fill, `clone_plans_auth` + the Phase-2 RC
 runs). Missing, incomplete or stale evidence for either app blocks BEFORE external writes.
 Refresh evidence in Phase 2, then re-run this step to fill from the new snapshot.
 
-REASSIGNMENT: only cases actually written FAILED — Broker AND Authenticator — are
-submitted for release-owner assignment in ADO. Assignment errors are nonblocking and
+TRIAGE: only acknowledged FAILED points — Broker AND Authenticator — are
+submitted for release-specific Tester assignment, never shared System.AssignedTo.
+Assignment errors are nonblocking and
 recorded separately, never treated as successful owner changes. Then the
 downstream `ui_failures` human reminder is forward-populated with the full per-test list.
 
@@ -40,13 +41,14 @@ from steps.build_verify._common import latest_rc
 from steps.lib.mockctx import MISSING
 from tools import testplans as T
 from tools import pipelines as P
+from tools import distribution as D
 from steps.bug_bash import ui_results
 
 from orchestrator.authority import OwnStepData, UIFailureContribution, WriteOperation
 
 EVIDENCE = (OwnStepData(), UIFailureContribution("bug_bash.ui_failures"))
 WRITES = (WriteOperation.FILL_AUTH_UI_RESULTS, WriteOperation.FILL_UI_AUTOMATION_RESULTS,
-          WriteOperation.SET_ASSIGNED_TO)
+          WriteOperation.SET_POINT_TESTERS)
 ID = "ui_test_status"
 KIND = "agent"
 EFFECT_MODE = "idempotent"
@@ -79,6 +81,12 @@ def prepare_effect(context):
         )
     try:
         current_binding = ui_results.current_binding(context)
+        destination_names = D.release_target_names(
+            context.evidence.step("bug_bash", "clone_plans_broker").data,
+            context.evidence.step("bug_bash", "clone_plans_auth").data)
+        context.services.testplans.validate_release_targets(
+            context.release.release_id, context.release.ccd, current_binding,
+            expected_names=destination_names)
     except ValueError as exc:
         return Blocked(f"ui_test_status: {exc}")
     auth = rc.get("auth") or {}
@@ -106,11 +114,15 @@ def prepare_effect(context):
     ).hexdigest()[:16]
     return {
         "binding": current_binding,
+        "destination_names": destination_names,
         "broker_plan_id": plan_id,
         "evidence_sha256": digest,
         "broker_projection": frozen_broker,
         "auth_projection": frozen_auth,
-        "rc": rc,
+        "rc": {"rc": rc["rc"],
+               "ecs": {"run_id": binding["ecs"]}, "local": {"run_id": binding["local"]},
+               "auth": {"build": {"run_id": binding["auth_build"]},
+                        "test": {"run_id": binding["auth_test"]}}},
         "owner_email": context.release.owner_email,
         "coordinates": {
             "test_plan_org": T.ORG,
@@ -184,7 +196,46 @@ def _auth_suite_id(context):
     return (context.evidence.step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
 
 
-def _fill_auth(context, notes, projection, binding, owner, coordinates):
+def _prior_applied_points(data, binding):
+    """Reuse only acknowledged points from this release and these exact destinations."""
+    data = thaw(data or {})
+    result = data.get("result") or {}
+    previous = result.get("binding") or {}
+    receipts = {"broker": [], "auth": []}
+    if previous.get("release") != binding["release"]:
+        return receipts
+    for product, partial in (("broker", data.get("summary")),
+                             ("auth", (data.get("auth") or {}).get("mapping"))):
+        if previous.get(product) != binding[product]:
+            continue
+        candidates = [result.get(product), partial]
+        points = {}
+        for record in candidates:
+            if (not isinstance(record, dict) or record.get("target") != binding[product]
+                    or not isinstance(record.get("applied_points"), list)):
+                continue
+            validated = ui_results.applied_record(
+                record, {p.get("case_id") for p in record["applied_points"] if isinstance(p, dict)},
+                product, binding[product])
+            for point in validated["applied_points"]:
+                points[int(point["point_id"])] = point
+        receipts[product] = list(points.values())
+    return receipts
+
+
+def _retain_applied_points(summary, prior_points, product, target):
+    """A failed retry cannot erase acknowledged writes from its earlier attempt."""
+    if not isinstance(summary.get("applied_points"), list):
+        raise ValueError("Failed UI write returned a malformed applied-point receipt")
+    ui_results.applied_record(
+        summary, {p.get("case_id") for p in summary["applied_points"] if isinstance(p, dict)},
+        product, target)
+    retained = {int(point["point_id"]): deepcopy(point) for point in prior_points or []}
+    retained.update({int(point["point_id"]): deepcopy(point) for point in summary["applied_points"]})
+    return {**summary, "applied_points": list(retained.values())}
+
+
+def _fill_auth(context, notes, projection, binding, owner, coordinates, prior_points=None):
     """Write only validated mapped cases; retain report-only failures and assignment errors."""
     suite_id = binding["auth"]["suite_id"]
     plan_id = binding["auth"]["plan_id"]
@@ -198,9 +249,13 @@ def _fill_auth(context, notes, projection, binding, owner, coordinates):
         outcomes,
         org=coordinates["test_plan_org"],
         project=coordinates["test_plan_project"],
+        **({"prior_points": prior_points} if prior_points else {}),
     )
+    if not ok and isinstance(summ, dict):
+        summ = _retain_applied_points(summ, prior_points, "auth", binding["auth"])
     data = thaw(context.recovery().step("bug_bash", ID).data or {})
-    data["auth"] = {"suite_id": suite_id, "mapping": summ,
+    previous_mapping = (data.get("auth") or {}).get("mapping")
+    data["auth"] = {"suite_id": suite_id, "mapping": summ if isinstance(summ, dict) else previous_mapping,
                          "failures": projection["failures"], "provenance": projection["provenance"]}
     context.effect.commit.commit(StepData(data))
     if not ok:
@@ -209,25 +264,13 @@ def _fill_auth(context, notes, projection, binding, owner, coordinates):
             or summ.get("target") != {"plan_id": int(plan_id), "suite_id": int(suite_id)}
             or not isinstance(summ.get("applied_points"), list)):
         return False, "Missing actual applied Authenticator target/points; retry ui_test_status"
+    ui_results.applied_record(summ, outcomes, "auth", binding["auth"])
 
     # Only acknowledged Failed point writes may trigger an owner assignment.
     failed_ids = sorted({p["case_id"] for p in summ["applied_points"] if p["outcome"] == "Failed"})
-    assigned = 0
-    errors = []
-    if owner:
-        for cid in failed_ids:
-            oka, detail = context.effect.services.set_assigned_to(
-                cid,
-                owner,
-                org=coordinates["test_plan_org"],
-                project=coordinates["test_plan_project"],
-            )
-            if oka:
-                assigned += 1
-            else:
-                errors.append({"case_id": cid, "detail": detail})
-    elif failed_ids:
-        notes.append("No release owner on record — failed auth cases not reassigned (set-owner).")
+    assigned, errors = _assign_failure_points(context, summ, owner, coordinates)
+    if failed_ids and not owner:
+        notes.append("No release owner on record - failed Auth point Testers unchanged (set-owner).")
 
     # Titles for the failed cases (for the ui_failures render), keyed by str(case_id).
     failed_titles = {}
@@ -257,27 +300,33 @@ def _fill_auth(context, notes, projection, binding, owner, coordinates):
                   f"filled in suite {suite_id}{owner_note}. {P.AUTH_MAPPING_NOTE}")
 
 
-def _reassign_broker_failures(context, ids, notes, owner, coordinates):
-    """Reassign every failing Broker UI case to the release owner for investigation — mirrors the
-    auth reassignment in _fill_auth so BOTH apps' failures land in the owner's queue. Stores the
-    ids + assigned count on the step. Best-effort: a case with no parseable id is skipped, and a
-    missing owner is noted rather than fatal."""
-    assigned = 0
+def _assign_failure_points(context, summary, owner, coordinates):
+    """Only applied failure points in this release are eligible for owner triage."""
+    failed = [p for p in summary["applied_points"] if p["outcome"] == "Failed"]
+    ids = sorted({p["case_id"] for p in failed})
     errors = []
-    if ids and owner:
-        for cid in ids:
-            oka, detail = context.effect.services.set_assigned_to(
-                cid,
-                owner,
+    if not failed:
+        return 0, errors
+    if not owner:
+        return 0, [{"case_id": cid, "detail": "Release owner missing; point Tester unchanged"} for cid in ids]
+    for cid in ids:
+        points = [p["point_id"] for p in failed if p["case_id"] == cid]
+        ok, detail = context.effect.services.set_point_testers(
+                summary["target"]["plan_id"], summary["target"]["suite_id"], points, owner,
+                expected_points={str(p["point_id"]): {
+                    key: p[key] for key in ("case_id", "config_id") if key in p}
+                    for p in failed if p["case_id"] == cid},
                 org=coordinates["test_plan_org"],
-                project=coordinates["test_plan_project"],
-            )
-            if oka:
-                assigned += 1
-            else:
-                errors.append({"case_id": cid, "detail": detail})
-    elif ids and not owner:
-        notes.append("No release owner on record — failed Broker UI cases not reassigned (set-owner).")
+                project=coordinates["test_plan_project"])
+        if not ok:
+            errors.append({"case_id": cid, "point_ids": points, "detail": detail})
+    return len(ids) - len(errors), errors
+
+
+def _reassign_broker_failures(context, summary, notes, owner, coordinates):
+    """Record release-point Tester triage results, separate from outcome-fill success."""
+    ids = sorted({p["case_id"] for p in summary["applied_points"] if p["outcome"] == "Failed"})
+    assigned, errors = _assign_failure_points(context, summary, owner, coordinates)
     data = thaw(context.recovery().step("bug_bash", ID).data or {})
     data = dict(data or {})
     data["broker"] = {"failed_case_ids": ids, "failed_assigned_to_owner": assigned,
@@ -293,7 +342,8 @@ def _replace_failure_reminder(context, note, links, broker_count, failed_ids):
     """Replace only this producer's note prefix/links/data, never human status or notes."""
     auth = context.recovery().step("bug_bash", ID).data.get("auth") or {}
     context.effect.commit.commit(UIFailureReminder(
-        note, tuple(links), broker_count, tuple(failed_ids), tuple(auth.get("failures") or ())))
+        note, tuple(links), broker_count, tuple(failed_ids), tuple(auth.get("failures") or ()),
+        gate_preconditions=ui_results.reminder_preconditions(context)))
 
 
 def _surface_ui_failures(context, rc, failures, coordinates):
@@ -346,11 +396,8 @@ def _surface_ui_failures(context, rc, failures, coordinates):
         return
 
     # ---- build the step-8-style markdown note ----
-    try:
-        from orchestrator import schedule
-        month_year = schedule.target_month_label(context.release)
-    except Exception:
-        month_year = ""
+    from orchestrator import schedule
+    month_year = schedule.target_month_label(context.release)
     owner = context.release.owner_email or "the release owner"
     title = f"\U0001f9ea {month_year + ' ' if month_year else ''}Bug Bash \u2014 UI failures to investigate"
 
@@ -414,9 +461,28 @@ def _run_effect(context, prepared):
 
     data = thaw(context.recovery().step("bug_bash", ID).data or {})
     data = dict(data or {})
-    for key in ("auth", "broker", "summary", "provenance", "fill_status"):
+    acknowledged = _prior_applied_points(data, prepared["binding"])
+    prior = prepared.get("prior_points") or {}
+    prepared = {**prepared, "prior_points": {
+        product: list({int(p["point_id"]): p for p in
+                       [*prior.get(product, []), *acknowledged[product]]}.values())
+        for product in ("broker", "auth")}}
+    # Keep existing receipt slots durable across the reset, including a crash before
+    # either writer returns. They must not alter the frozen effect operation key.
+    for product in ("broker", "auth"):
+        points = prepared["prior_points"][product]
+        if not points:
+            continue
+        receipt = {"target": prepared["binding"][product], "applied_points": points}
+        if product == "broker":
+            data["summary"] = {**(data.get("summary") or {}), **receipt}
+        else:
+            auth = data.setdefault("auth", {})
+            auth["mapping"] = {**(auth.get("mapping") or {}), **receipt}
+    for key in ("broker", "provenance", "fill_status"):
         data.pop(key, None)
-    data["result"] = {"id": context.new_id(), "status": "incomplete", "stage": "validation"}
+    data["result"] = {"id": context.new_id(), "status": "incomplete", "stage": "validation",
+                      "binding": prepared["binding"]}
     data["fill_status"] = "incomplete"
     context.effect.commit.commit(StepData(data))
     # A missing persistence capability must prevent even the first provider write.
@@ -430,12 +496,8 @@ def _run_effect(context, prepared):
                 if summary.get("target") != result["binding"][product] or not isinstance(
                         summary.get("applied_points"), list):
                     raise ValueError(f"Missing actual applied {product} target/points; retry ui_test_status")
-                result[product] = {
-                    "target": summary["target"], "applied_points": summary["applied_points"],
-                    "automated_case_ids": result[product]["automated_case_ids"],
-                    "failed_case_ids": sorted({p["case_id"] for p in summary["applied_points"]
-                                               if p["outcome"] == "Failed"}),
-                }
+                result[product] = ui_results.applied_record(
+                    summary, result[product]["automated_case_ids"], product, result["binding"][product])
             if result["binding"] != prepared["binding"]:
                 raise ValueError("UI fill result changed its frozen execution binding")
             result.update(status="complete", stage="complete")
@@ -463,6 +525,12 @@ def _apply_prepared(context, prepared):
     auth_projection = _thaw_auth_projection(prepared["auth_projection"])
     owner = prepared["owner_email"]
     coordinates = prepared["coordinates"]
+    if ui_results.current_binding(context) != binding:
+        return Blocked("UI execution binding changed; no test-plan writes attempted")
+    context.services.testplans.validate_release_targets(
+        context.release.release_id, context.release.ccd, binding,
+        org=coordinates["test_plan_org"], project=coordinates["test_plan_project"],
+        expected_names=prepared.get("destination_names"))
 
     data = thaw(context.recovery().step("bug_bash", ID).data or {})
     data = dict(data or {})
@@ -485,8 +553,14 @@ def _apply_prepared(context, prepared):
         suite_id=binding["broker"]["suite_id"],
         org=coordinates["test_plan_org"],
         project=coordinates["test_plan_project"],
+        **({"prior_points": prepared["prior_points"]["broker"]}
+           if prepared["prior_points"]["broker"] else {}),
     )
-    data["summary"] = summ
+    if not ok and isinstance(summ, dict):
+        summ = _retain_applied_points(
+            summ, prepared["prior_points"]["broker"], "broker", binding["broker"])
+    if isinstance(summ, dict):
+        data["summary"] = summ
     data["result"]["stage"] = "auth_write" if ok else "broker_write"
     context.effect.commit.commit(StepData(data))
     if not ok:
@@ -495,9 +569,9 @@ def _apply_prepared(context, prepared):
     if (not isinstance(summ, dict) or summ.get("target") != binding["broker"]
             or not isinstance(summ.get("applied_points"), list)):
         return Blocked("Missing actual applied Broker target/points; retry ui_test_status")
+    ui_results.applied_record(summ, projection["verdicts"], "broker", binding["broker"])
 
-    # Also fill the Authenticator bug-bash suite from the captured auth ECS evidence;
-    # every FAILED automated auth case is reassigned to the release owner for triage.
+    # Fill Authenticator from captured evidence, then triage acknowledged failure points.
     notes = []
     skipped = sum(len(p["skipped_mapping"]) for p in projection["provenance"]["providers"])
     if skipped:
@@ -507,20 +581,16 @@ def _apply_prepared(context, prepared):
     if untouched or unmatched:
         notes.append(f"{untouched} plan point(s) left untouched; {unmatched} projected verdict(s) "
                      "had no matching plan point; see summary mapping diagnostics.")
-    # Store only this attempt's Auth write diagnostics.
-    data.pop("auth", None)
-    context.effect.commit.commit(StepData(data))
+    # Retain acknowledged Auth points until the writer returns its next receipt.
     ok, auth_note = _fill_auth(
-        context, notes, auth_projection, binding, owner, coordinates
+        context, notes, auth_projection, binding, owner, coordinates, prepared["prior_points"]["auth"]
     )
     if not ok:
         return Blocked(f"ui_test_status: {auth_note}. Broker results may already have changed.")
 
-    # Reassign every FAILED Broker UI case to the release owner too — all UI failures (Broker +
-    # Auth) are the owner's to investigate.
-    failed_broker_ids = sorted({p["case_id"] for p in summ["applied_points"] if p["outcome"] == "Failed"})
+    # Triage only acknowledged failed Broker points in this release's exact UI suite.
     broker_assigned = _reassign_broker_failures(
-        context, failed_broker_ids, notes, owner, coordinates
+        context, summ, notes, owner, coordinates
     )
 
     # Forward-populate the downstream `ui_failures` human-review reminder with the combined

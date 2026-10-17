@@ -69,7 +69,7 @@ def production_services(*, status_email=None, status_recipients=None):
         TestPlanReads(
             B.prepare_source, T.find_auth_query_suite, T.validate_auth_query_suite,
             D.auth_bugbash_cases, D.broker_manual_cases, D.case_assignment_snapshot,
-            D.find_suite_id_by_name, D.read_point_testers, BB.gather_progress,
+            D.find_suite_id_by_name, D.read_point_testers, BB.gather_progress, D.validate_release_targets,
         ),
         IdentityReads(C.current_az_user, D.resolve_roster, BB.resolve_mention_people),
         AssetReads(_template, _changelog, _json, _text, D.load_config,
@@ -110,6 +110,7 @@ def production_effects(capabilities: WriteCapabilities, *, validate, committer, 
         WriteOperation.FILL_AUTH_UI_RESULTS: testplans.fill_auth_ui_results,
         WriteOperation.FILL_UI_AUTOMATION_RESULTS: testplans.fill_ui_automation_results,
         WriteOperation.SET_ASSIGNED_TO: distribution.set_assigned_to,
+        WriteOperation.SET_POINT_TESTERS: distribution.set_point_testers,
         WriteOperation.SUBMIT_PIPELINE_APPROVAL: pipelines.submit_pipeline_approval,
     }
     return EffectServices(**{op.value: guarded(ports[op]) for op in capabilities.operations})
