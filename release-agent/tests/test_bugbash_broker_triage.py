@@ -143,7 +143,9 @@ def test_initial_and_periodic_producers_both_include_live_broker_triage(monkeypa
     evidence = receipt([row(1, 100)])
     evidence["target"]["plan_id"] = broker_plan
     monkeypatch.setattr(U, "completed_result", lambda _: {
-        "auth": {"failed_case_ids": [], "automated_case_ids": []}, "broker": evidence})
+        "auth": {"target": {"plan_id": U.T.AUTH_PLAN,
+                           "suite_id": st.get_step("bug_bash", "clone_plans_auth").data["suite_id"]},
+                 "failed_case_ids": [], "automated_case_ids": []}, "broker": evidence})
     stub(monkeypatch, [row(1, 100)], auth=[row(2, 200, outcome="Passed")])
     with command_inputs("bug_bash.bugbash_updates", {"people": {OWNER: {
             "name": "Owner", "id": "11111111-1111-1111-1111-111111111111"}}}):

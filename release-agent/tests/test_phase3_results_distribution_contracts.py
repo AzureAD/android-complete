@@ -254,7 +254,8 @@ def test_distribution_live_triage_selects_exact_failed_points(monkeypatch):
                            for pid, cid, config in points]}
     auth = group(902, (1, 100, 84), (2, 100, 85))
     broker = group(901, (4, 200, 84), (5, 200, 85))
-    fill = {"auth": {"applied_points": [{"point_id": 1, "case_id": 100, "outcome": "Failed"}]},
+    fill = {"auth": {"target": {"plan_id": T.AUTH_PLAN, "suite_id": 902},
+                     "applied_points": [{"point_id": 1, "case_id": 100, "outcome": "Failed"}]},
             "broker": {"applied_points": [{"point_id": 4, "case_id": 200,
                                            "config_id": 84, "outcome": "Failed"}],
                        "target": {"suite_id": 901}, "failed_case_ids": [200]}}

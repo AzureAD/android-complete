@@ -197,6 +197,62 @@ automatic reset, forced clear, timeout lease or generic record-step bypass. Do n
 the run-state JSON to discard uncertain work. An absent receipt proves only missing
 evidence, not that the provider write never happened.
 
+## Authenticator Manual / Automated categories
+
+By default new `bug_bash.clone_plans_auth` executions create an `auth-manual-automated-v1`
+static release parent under the standing Authenticator root, with two dynamic
+children: **Manual Tests** and **Automated Tests**. Use the owner's chosen
+**verified current Phase 2 Android case mapping**, never Automation Status or
+the generic Automated tag. Both queries preserve the curated Android/ReleaseBugBash,
+area and non-Closed predicates; one excludes the frozen mapped IDs and the other
+includes them. Both categories remain even when empty. No case copies or edits.
+
+Clone data `suite_id` links to the static parent; `manual_suite_id` and
+`automated_suite_id` are the direct children. Each create has a durable intent,
+acknowledged ID and exact readback, including configuration inheritance. Missing,
+duplicate or changed identities/source/queries hold rather than recreate.
+The completed fill's typed auth target uses `suite_id` for the automated child
+and includes parent/manual IDs plus frozen classification/query proof.
+
+Only **Automated Tests** receives the later fill; Manual Tests stays untouched.
+Distribution/progress read actual category points and the completed fill, retaining
+manual work and failed-automation owner triage. Monthly Firebase remains report-only on v1.
+Legacy single-query-suite executions/data recover as-is; never migrate, clear IDs,
+reuse a same-named legacy suite as the static parent, or re-POST uncertain creates.
+An explicit retry needs the owner's reason and exhaustive verified absence for
+the owning unacknowledged category. Existing acknowledged IDs must reconcile.
+
+### Explicit fresh Monthly failure-tracker layout
+
+For an eligible **fresh** clone, the typed build/prepare parameter
+`--param layout=auth-manual-automated-monthly-v2` opts in through the existing
+`step-action --release <id> --phase bug_bash --step clone_plans_auth` lifecycle.
+This is a provider-writing clone, **not a preview command**; do not execute it
+without the exact scope review, engine eligibility and runtime-revision handling.
+`tools.auth_monthly.preview(rc, release, parent_name)` renders source-bound JSON
+without provider I/O and without manufacturing runnable release state.
+
+V2 keeps Manual/Automated queries/IDs unchanged and creates a STATIC sibling
+**Monthly UI Failure Triage** only when the validated initial Monthly source has
+distinct unresolved failures after exact-title retries. Each gets one NEW owned
+investigation case with exact provenance and `ReleaseMonthlyInvestigation`, never
+`ReleaseBugBash` or automation IDs. No passing/NA/recovered initial cases, empty
+folder, clone-time results, or clone-time assignments. P3S3 alone fills points
+and publishes current receipts; failed-point Tester errors are visible/nonblocking.
+Manual resolutions and previously tracked now-recovered rows/history remain.
+Distribution/progress/invitations require completed fill and actual live points.
+
+Existing completed/frozen v1 targets (including TEST ONLY parent3794450) **cannot
+be amended by replay**. No existing-parent amendment/adoption or Monthly
+unknown-create reset command is implemented. Acknowledged IDs reconcile by exact
+readback; unknown POSTs block without replay or same-name adoption. Choose a new
+reviewed v2 clone, never splice state or rerun an old frozen operation as v2.
+Canonical E2E mappings and both source-execution quality gates remain unchanged.
+
+Before a live isolated test, review the exact parent/child creation payloads,
+source classification and a distinct TEST ONLY name, then obtain explicit approval.
+No generic command, old Broker preview or prior public-push approval authorizes it.
+
 ## Broker plan recovery
 
 New plans use source-v4 FAILURES ONLY, flight-first: Automation Failure Triage →

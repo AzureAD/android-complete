@@ -70,6 +70,7 @@ def production_services(*, status_email=None, status_recipients=None):
             B.prepare_source, T.find_auth_query_suite, T.validate_auth_query_suite,
             D.auth_bugbash_cases, D.broker_manual_cases, D.case_assignment_snapshot,
             D.find_suite_id_by_name, D.read_point_testers, BB.gather_progress, D.validate_release_targets,
+            T.find_auth_suite, T.validate_auth_suite,
         ),
         IdentityReads(C.current_az_user, D.resolve_roster, BB.resolve_mention_people),
         AssetReads(_template, _changelog, _json, _text, D.load_config,
@@ -113,13 +114,43 @@ def production_effects(capabilities: WriteCapabilities, *, validate, committer, 
             kwargs["checkpoint"] = persist
         return testplans.fill_ui_automation_results(*args, **kwargs)
 
+    def ensure_monthly(source, parent, record):
+        from tools import auth_monthly as M
+        from .evidence import StepData
+        detached = thaw(record)
+
+        def persist(value):
+            data = thaw(committer.read().step("bug_bash", "clone_plans_auth").data)
+            data["monthly"] = value
+            committer.commit(StepData(data))
+            validate()
+
+        return M.ensure(thaw(source), parent, detached, persist)
+
+    def fill_monthly(record, projection, previous):
+        from tools import auth_monthly as M
+        from .evidence import StepData
+
+        def persist(value):
+            data = thaw(committer.read().step("bug_bash", "ui_test_status").data)
+            data["monthly"] = value
+            committer.commit(StepData(data))
+            validate()
+
+        return M.fill(thaw(record), thaw(projection), thaw(previous), persist)
+
     if WriteOperation.ENSURE_BROKER_PLAN in capabilities.operations and committer is None:
         raise ValueError("Broker adapter requires a durable evidence committer")
+    if set(capabilities.operations).intersection({WriteOperation.ENSURE_AUTH_MONTHLY, WriteOperation.FILL_AUTH_MONTHLY}) and committer is None:
+        raise ValueError("Monthly adapters require a durable evidence committer")
     ports = {
         WriteOperation.ONEAUTH_WRITE_ACCESS: checks.oneauth_write_access,
         WriteOperation.CREATE_LIGHTWEIGHT_TAG: pipelines.create_lightweight_tag,
         WriteOperation.ENSURE_BROKER_PLAN: ensure,
         WriteOperation.CREATE_AUTH_QUERY_SUITE: testplans.create_auth_query_suite,
+        WriteOperation.CREATE_AUTH_SUITE: testplans.create_auth_suite,
+        WriteOperation.ENSURE_AUTH_MONTHLY: ensure_monthly,
+        WriteOperation.FILL_AUTH_MONTHLY: fill_monthly,
         WriteOperation.FILL_AUTH_UI_RESULTS: testplans.fill_auth_ui_results,
         WriteOperation.FILL_UI_AUTOMATION_RESULTS: fill_ui,
         WriteOperation.SET_ASSIGNED_TO: distribution.set_assigned_to,

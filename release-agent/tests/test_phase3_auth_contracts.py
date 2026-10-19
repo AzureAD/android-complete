@@ -22,7 +22,10 @@ def test_invalid_name_is_a_preparation_hold(name):
 
 def _state(data=None):
     state = ReleaseState(release_id="2026-08", ccd="2026-08-13")
-    state.set_step("bug_bash", A.ID, StepState(data=data or {}))
+    frozen = {"release": state.release_id, "org": T.ORG, "project": T.PROJECT,
+              "plan_id": T.AUTH_PLAN, "parent_suite_id": T.AUTH_ROOT_SUITE,
+              "name": T.auth_suite_name(state.ccd), "query": T.auth_bugbash_query()}
+    state.set_step("bug_bash", A.ID, StepState(data=data or {}, execution={"effect_input": frozen}))
     state._checkpoint = lambda: None
     return state
 

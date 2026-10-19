@@ -3,6 +3,7 @@
 Gate counts remain ADO execution aggregates. Target mapping belongs to Phase 3.
 """
 from collections import Counter
+from copy import deepcopy
 from tools import pipelines as P
 from .tests_results import _positive_test_id
 from .test_evidence import require as _require, validate_snapshot_tests, result_links
@@ -10,8 +11,9 @@ from .test_evidence import require as _require, validate_snapshot_tests, result_
 AUTH_EVIDENCE_VERSION = 1
 MONTHLY_REPORT_ONLY = "Firebase Test Lab - Monthly UI Tests"
 AUTH_MAPPING_NOTE = (
-    "Monthly UI Tests intentionally has no test-plan case map (report-only). "
-    "Do not create cases or block for that absence. All failures require release-owner "
+    "Monthly UI Tests intentionally has no test-plan case map (report-only canonical coverage). "
+    "Phase 2 never creates cases or blocks for that absence. Explicit fresh Monthly-v2 layouts "
+    "may own separate failed-scenario investigations, not automation mappings. All failures require release-owner "
     "investigation. Auth gate denominators are source executions (passed + failed), "
     "not distinct tests or case points; Monthly never enters the Broker pass rate."
 )
@@ -118,7 +120,7 @@ def _inspect(evidence, rc, apk, bid):
             raw_counts[int(attempt["run_id"])][attempt["outcome"]] += 1
         cid = ids[0] if ids else None
         source = {"suite": suite, "title": test["title"], "case_id": cid,
-                  "verdict": test["verdict"],
+                  "verdict": test["verdict"], "attempts": deepcopy(test["attempts"]),
                   "links": result_links(test["attempts"], "auth")}
         sources.append(source)
     for run in runs:
@@ -133,7 +135,7 @@ def _inspect(evidence, rc, apk, bid):
                            "distinct_tests": len(tests)}}
 
 
-def inspect_auth_ui_evidence(rc):
+def inspect_auth_ui_evidence(rc, *, include_attempts=False):
     """Validate source identity/coverage and expose source facts, never case-point outcomes."""
     try:
         _require(isinstance(rc, dict), "current RC missing")
@@ -147,6 +149,9 @@ def inspect_auth_ui_evidence(rc):
         facts = _inspect(evidence, rc.get("rc"), build.get("run_id"), test.get("run_id"))
         _require(test.get("suites") == _rates(evidence["runs"]),
                  "Authenticator captured gate rates disagree with source evidence")
+        if not include_attempts:
+            for source in facts["sources"]:
+                source.pop("attempts", None)
         return True, facts, ""
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
         return False, None, f"{exc}; refresh Phase-2 Authenticator verification"

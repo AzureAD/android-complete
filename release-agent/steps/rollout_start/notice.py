@@ -140,11 +140,27 @@ def _plans(context):
     auth_plan = coords.testplan("authenticator")["plan"]
     if auth.status != "done" or not _positive_id(suite_id):
         return (None, "completed Authenticator release test suite is missing")
+    from tools import auth_partition as A
+    monthly_links = []
+    try:
+        A.current(context, thaw(auth.data))
+        if auth.data.get("layout") == A.MONTHLY_LAYOUT:
+            from steps.bug_bash.ui_results import completed_result
+            from tools import auth_monthly as M, distribution as D
+            result = completed_result(context)
+            context.services.testplans.validate_release_targets(
+                context.release.release_id, context.release.ccd, result["binding"],
+                expected_names=D.release_target_names(
+                    context.evidence.step("bug_bash", "clone_plans_broker").data, auth.data))
+            monthly_links = M.links(result["monthly"]["target"])
+    except (ValueError, KeyError, TypeError) as exc:
+        return None, str(exc)
     return ({
         "authenticator": {
             "name": auth.data.get("suite_name") or f"Authenticator suite {suite_id}",
             "url": TP.plan_web_url(auth_plan, suite_id),
         },
+        **({"monthly": monthly_links[0]} if monthly_links else {}),
     }, "")
 
 
@@ -277,6 +293,9 @@ def render_html(model):
         f'Release payload</td><td style="padding:8px 14px;border-top:1px solid #eaecf0;">'
         f'<a href="{_attr(model["payload_url"])}">{T.esc(model["month_year"])} payload page</a></td></tr>'
     )
+    if model["plans"].get("monthly"):
+        link = model["plans"]["monthly"]
+        resources += f'<tr><td>Monthly UI Failure Triage</td><td>{_link_html(link["name"], link["url"])}</td></tr>'
     return f"""\
 <div style="font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#101828;max-width:760px;margin:0 auto;font-size:14px;line-height:1.5;">
   <div style="padding:20px 22px;background:#0b3a6f;border-radius:12px 12px 0 0;color:#fff;">
@@ -375,10 +394,13 @@ def render_plain(model):
     ]
     validation = (f"VALIDATION COPY: {model['validation_note']}\n\n"
                   if model.get("validation_note") else "")
+    monthly = (f"- Monthly UI Failure Triage: {model['plans']['monthly']['url']}\n"
+               if model["plans"].get("monthly") else "")
     return (
         f"{validation}Hello everyone,\n\nThis is a notice of intent to start the Android Authenticator "
         f"{model['month_year']} release.\n\nApp Version\n{model['build']['version']}\n\n"
         f"Monthly release\n- Authenticator test suite: {model['plans']['authenticator']['url']}\n"
+        f"{monthly}"
         f"- Release build: {model['release_build']['url']}\n"
         f"- Release branch: {model['branch_url']}\n"
         f"- Release payload: {model['payload_url']}\n\nAuthenticator\n"
@@ -409,6 +431,11 @@ def _state_matches(context):
         (["target_month"], context.release.target_month),
         (["owner_email"], context.release.owner_email),
     ))
+    if context.evidence.step("bug_bash", "clone_plans_auth").data.get("layout") == "auth-manual-automated-monthly-v2":
+        matches.extend((
+            (["steps", "bug_bash.ui_test_status"], thaw(asdict(context.evidence.steps["bug_bash.ui_test_status"]))),
+            (["pipeline_runs", "rcs", -1, "auth", "test"], runs[-1]["auth"]["test"]),
+        ))
     return [
         {"path": path, "hash": delivery.fingerprint(value)}
         for path, value in matches

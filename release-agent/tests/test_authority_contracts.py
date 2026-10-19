@@ -110,6 +110,8 @@ def test_invalid_or_incompatible_declarations_fail_catalog_startup(attributes, m
     (WriteOperation.ENSURE_BROKER_PLAN, (), "transactional", "BrokerPlanEvidence"),
     (WriteOperation.CREATE_AUTH_QUERY_SUITE, (), "transactional", "OwnStepData"),
     (WriteOperation.CREATE_AUTH_QUERY_SUITE, (OwnStepData(),), "idempotent", "transactional"),
+    (WriteOperation.CREATE_AUTH_SUITE, (), "transactional", "OwnStepData"),
+    (WriteOperation.CREATE_AUTH_SUITE, (OwnStepData(),), "idempotent", "transactional"),
     (WriteOperation.SUBMIT_PIPELINE_APPROVAL, (), "transactional", "approval hook"),
 ])
 def test_write_capability_prerequisites_are_checked(operation, scopes, mode, match):

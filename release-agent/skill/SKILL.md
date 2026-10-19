@@ -202,6 +202,16 @@ if it created files; use the checked publication upload handoff and owning recei
 Never switch transports or repeat an upload/send after an unknown outcome.
 
 ## Behaviour dispatch
+- **Authenticator Manual/Automated split:** NEW releases use a static release
+  parent with Manual Tests and Automated Tests query children. Classify only by
+  verified captured Phase2 Android mapped-case IDs, not Automation Status or a
+  generic Automated tag. Clone suite_id is the parent; typed fill suite_id is
+  the automated child. Only that child receives results; distribution/progress
+  use actual category points plus completed-fill evidence. Preserve legacy
+  single-query-suite recovery without migration and all per-create ownership.
+  Monthly canonical mapping remains report-only; an explicitly selected fresh
+  `auth-manual-automated-monthly-v2` layout adds separate release-owned failed-scenario
+  investigations. Historical layouts never migrate. Live creation still requires exact scoped approval.
 - **Fresh Stress/UI runs:** new failure-only plans freeze classification policy 2 and
   create distinct Stress Tests and UI Automation leaves from the start. Reports show
   separate categories while preserving the combined UI+Stress gate. A held historical
@@ -244,7 +254,7 @@ Never switch transports or repeat an upload/send after an unknown outcome.
 - **Bug Bash progress counts:** count human manual/triage work from BOTH plans, including Broker UI failures outside the Broker manual subtree. Use the completed fill's classification to exclude automation-only Auth cases, retain applied failures for both apps, and preserve real manual completions. Broker triage matches the original failed point/case/config IDs; count each case once and require all its tracked failures to resolve. Owners/outcomes remain live ADO; no assignment cache.
 - **Bug Bash rendering:** always show every workload case, including completed cases and finished owners' full lists. The leading outcome icon and single report legend replace repeated trailing status text; Passed and N/A use distinct icons. Keep unresolved work first and mention only owners with remaining work. Label each row Broker/Authenticator from the source plan; retain only a short Automation triage context note. The final wrap-up includes the full completed list.
 - **Two-plan routing:** No Phase-3 result refetch or invented attribution. Broker routing uses the complete MSAL/Broker/flight combination: LTW RC/RC targets existing 293/330, not 294/344. Use `broker-plan --preview-ui-repair` for read-only old/new point evidence; applying a repair requires later exact approval. Never clear historical/manual outcomes without ownership receipts and match-before-write.
-- **Authenticator Monthly policy:** `Firebase Test Lab - Monthly UI Tests` intentionally has **NO test-plan case map**. Do not create cases, force mappings or block merely because it is unmapped. Keep every failure by exact name and source link in the standard report and existing release-owner `ui_failures` investigation reminder. Preserve owner notes/attestation. The independent Firebase aggregate gate is unchanged; Monthly never contributes to Broker's pass rate.
+- **Authenticator Monthly policy:** `Firebase Test Lab - Monthly UI Tests` intentionally has **NO canonical test-plan case map**. Phase 2 never creates cases or forces mappings. Historical/v1 layouts remain report-only. Explicit fresh `auth-manual-automated-monthly-v2` clone preparation (`--param layout=auth-manual-automated-monthly-v2`) owns a separate STATIC sibling `Monthly UI Failure Triage` only for distinct unresolved failures after exact-title retries; no initial pass/NA/recovered cases or empty folder. New cases retain exact RC/APK/test-build/run/result provenance, dedicated `ReleaseMonthlyInvestigation` tag and durable intent/ack/member proof; never `ReleaseBugBash`, automation IDs or shared-case edits. P3S3 alone fills points and attempts failed-point Tester assignment. Preserve manual resolutions/history and retained recovered investigations. Distribution/progress/invitations require current completed fill and live owned points. Old completed/frozen layouts cannot be amended by replay; no amendment/adoption or unknown-create retry command is supplied. Existing reports/reminders and independent source-execution Firebase gates remain unchanged; Monthly never contributes to Broker's rate. Preview/review is not permission to execute.
 - **Phase 5 Beta Play Store start requires the release owner.** For
   `rollout_start.beta_play_store`, preview `start-beta-play-store` and show the exact
   target/hash with fresh status; use `m_ask_user` Approve/Deny. Execute only with the

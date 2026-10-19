@@ -40,11 +40,16 @@ def current_binding(context):
             or build.get("result") not in ("succeeded", "partiallySucceeded")
             or _id(build.get("rc")) != _id(rc.get("rc"))):
         raise ValueError(f"UI result source is no longer current/completed; {REFRESH}")
+    from tools import auth_partition as A
+    auth_target = A.target(thaw(suite))
     binding = {"release": context.release.release_id, "rc": _id(rc.get("rc")),
             "ecs_build": _id(rc["ecs"].get("run_id")), "local_build": _id(rc["local"].get("run_id")),
             "auth_apk_build": _id(build.get("run_id")), "auth_test_build": _id(test.get("run_id")),
             "broker": broker_target,
-            "auth": {"plan_id": _id(T.AUTH_PLAN), "suite_id": _id(suite.get("suite_id"))}}
+            "auth": auth_target}
+    if "monthly" in auth_target:
+        from tools import auth_monthly as M, broker_scenarios as S
+        binding["monthly_source_sha256"] = S.digest(M.current(thaw(rc), auth_target["monthly"]))
     if broker.get("source_version") in (3, 4) or version in (3, 4):
         from tools import broker_scenarios as S
         if (broker.get("source_version") != version or resource.get("status") != "ready"
@@ -83,6 +88,13 @@ def reminder_preconditions(context):
         (own + ["binding"], binding),
         (own + ["status"], "complete"), (own + ["stage"], "complete"),
     ]
+    from tools import auth_partition as A
+    if A.is_partition(auth):
+        values.extend((["steps", "bug_bash.clone_plans_auth", "data", key], thaw(auth[key]))
+                      for key in sorted(A.FIELDS | {"plan_id"}))
+        if auth.get("layout") == A.MONTHLY_LAYOUT:
+            values.extend((["steps", "bug_bash.clone_plans_auth", "data", key], thaw(auth[key]))
+                          for key in ("monthly", "monthly_source"))
     field = "automation" if broker.get("source_version") == 4 else "ui_suite_id"
     values.append((["steps", "bug_bash.clone_plans_broker", "data", field], thaw(broker[field])))
     for path in (["ecs"], ["local"], ["auth", "build"], ["auth", "test"]):
@@ -104,6 +116,13 @@ def completed_result(context):
         raise ValueError(f"Completed UI fill result unavailable (missing/partial/invalidated); {REFRESH}")
     if result.get("binding") != current_binding(context):
         raise ValueError(f"UI fill result RC/build/plan/suite binding changed; {REFRESH}")
+    if "monthly" in result["binding"]["auth"]:
+        from tools import auth_monthly as M, broker_scenarios as S
+        monthly = result["binding"]["auth"]["monthly"]
+        projection = M.current(thaw(latest_rc(context)), monthly)
+        if S.digest(projection) != result["binding"]["monthly_source_sha256"]:
+            raise ValueError("Monthly fill source changed")
+        M.validate_fill(result.get("monthly") or {}, monthly, projection)
     investigations = result.get("investigations")
     if not isinstance(investigations, dict) or any(not isinstance(investigations.get(key), list)
             for key in ("broker", "auth", "unmapped_broker", "report_only_or_unmapped_auth")):
@@ -119,6 +138,11 @@ def completed_result(context):
             ids = record[key]
             if ids != sorted({_id(i) for i in ids}):
                 raise ValueError(f"Invalid recorded UI case identities; {REFRESH}")
+        if product == "auth" and record["target"].get("layout"):
+            from tools import auth_partition as A
+            A.validate_target(record["target"])
+            if record["automated_case_ids"] != record["target"]["classification"]["mapped_case_ids"]:
+                raise ValueError(f"Published Authenticator classification changed; {REFRESH}")
         if product == "broker" and "broker_scenarios" in result["binding"]:
             if (record.get("mapping_version") != context.evidence.resources["broker_test_plan"]["source"]["schema_version"]
                     or record.get("suite_targets") != result["binding"]["broker_scenarios"]["suite_ids"]):
@@ -135,6 +159,8 @@ def completed_result(context):
                 raise ValueError(f"Invalid/duplicate applied UI point; {REFRESH}")
             seen.add(pid)
             if product == "broker":
+                _id(point.get("config_id"))
+            elif record["target"].get("layout"):
                 _id(point.get("config_id"))
             if point["outcome"] == "Failed":
                 failed.add(cid)
@@ -158,7 +184,7 @@ def applied_record(summary, automated_case_ids, product, target, *, complete=Tru
         if pid in seen or cid not in automated or point.get("outcome") not in outcomes:
             raise ValueError(f"Invalid/duplicate applied UI point; {REFRESH}")
         seen.add(pid)
-        if product == "broker":
+        if product == "broker" or product == "auth" and target.get("layout"):
             _id(point.get("config_id"))
         if point["outcome"] == "Failed":
             failed.add(cid)

@@ -114,12 +114,20 @@ def gather(context):
         return (False, None, "the Broker plan / Auth suite aren't ready (run the clone steps).")
     try:
         result = completed_result(context)
+        if result["auth"]["target"].get("layout"):
+            from tools import distribution as D
+            context.services.testplans.validate_release_targets(
+                context.release.release_id, context.release.ccd, result["binding"],
+                expected_names=D.release_target_names(
+                    context.evidence.step("bug_bash", "clone_plans_broker").data,
+                    context.evidence.step("bug_bash", "clone_plans_auth").data))
     except ValueError as exc:
         return False, None, str(exc)
     return context.services.testplans.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite,
                               auto_failed_ids=result["auth"]["failed_case_ids"],
                               auth_automated_ids=result["auth"]["automated_case_ids"],
-                              broker_ui_result=result["broker"], auth_ui_result=result["auth"])
+                              broker_ui_result=result["broker"], auth_ui_result=result["auth"],
+                              **({"monthly_result": result["monthly"]} if "monthly" in result else {}))
 
 
 def plan_links(context):
@@ -133,12 +141,20 @@ def plan_links(context):
     for name, run_id, _ in runs:
         if not valid_id(run_id):
             raise ValueError(f"Missing/invalid current RC run ID for {name}; refresh the owning verification step")
+    from tools import auth_partition as A
+    auth_data = thaw(context.evidence.step("bug_bash", "clone_plans_auth").data)
+    if A.is_partition(auth_data):
+        A.target(auth_data)
+    monthly_links = []
+    if "monthly" in auth_data:
+        from tools import auth_monthly as M
+        monthly_links = M.links(completed_result(context)["monthly"]["target"])
     return [
         {"name": "Broker test plan", "url": T.plan_web_url(_broker_plan(context))},
         {"name": "Authenticator suite", "url": T.plan_web_url(T.AUTH_PLAN, _auth_suite(context))},
     ] + [{"name": name, "url": url_for(run_id)} for name, run_id, url_for in runs] + [
         {"name": "Get test accounts", "url": coords.link("test_accounts")},
-    ]
+    ] + monthly_links
 
 
 def poll_interval_hours(context, config_path):

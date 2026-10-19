@@ -69,7 +69,9 @@ def _latest_rc(context):
 
 
 def source_matches(context, *steps, pipelines=False):
-    fields = {"clone_plans_broker": ("plan_id",), "clone_plans_auth": ("plan_id", "suite_id")}
+    fields = {"clone_plans_broker": ("plan_id",), "clone_plans_auth": (
+        "plan_id", "suite_id", "layout", "manual_suite_id", "automated_suite_id", "classification", "queries",
+        "monthly", "monthly_source"), "ui_test_status": ("result",)}
     sources = []
     for step in steps:
         record = context.evidence.step("bug_bash", step)
@@ -214,6 +216,20 @@ def build(context: StepContext):
     if auth_step.status != "done" or not valid_id(auth_suite):
         return Blocked("send_invite: the Authenticator bug-bash suite hasn't been created yet "
                        "(clone_plans_auth) — run that first.")
+    from tools import auth_partition as A
+    monthly_links = []
+    try:
+        A.current(context, thaw(auth_step.data))
+        if auth_step.data.get("layout") == A.MONTHLY_LAYOUT:
+            from .ui_results import completed_result
+            from tools import auth_monthly as M, distribution as D
+            result = completed_result(context)
+            context.services.testplans.validate_release_targets(
+                context.release.release_id, context.release.ccd, result["binding"],
+                expected_names=D.release_target_names(broker_step.data, auth_step.data))
+            monthly_links = M.links(result["monthly"]["target"])
+    except (ValueError, KeyError, TypeError) as exc:
+        return Blocked(f"send_invite: {exc}")
 
     month_year = schedule.target_month_label(context.release)
 
@@ -271,11 +287,15 @@ def build(context: StepContext):
         "AUTH_PIPELINE_URL": escape(auth_build_url(auth_build["run_id"]), quote=True),
     }
     body = I.render_invite(tokens, context.services.assets.invite_template())
+    for link in monthly_links:
+        body += f'<p><a href="{escape(link["url"], quote=True)}">{escape(link["name"])}</a> — release-owned failure investigations; canonical E2E cases unchanged.</p>'
 
     recipients, rnote, prefix = resolve_recipients(context, RECIPIENTS)
     subject = f"{prefix}{month_year} Release Bug Bash"
 
     sources = source_matches(context, "clone_plans_broker", "clone_plans_auth", pipelines=True)
+    if auth_step.data.get("layout") == A.MONTHLY_LAYOUT:
+        sources += source_matches(context, "ui_test_status")
     return NeedsSkill(
         tool="workiq_create_event",
         payload={

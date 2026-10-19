@@ -226,8 +226,14 @@ def _compile_authority(step, module):
             raise ValueError("ENSURE_BROKER_PLAN requires BrokerPlanEvidence")
         if WriteOperation.CREATE_AUTH_QUERY_SUITE in operations and not evidence.for_update(StepData):
             raise ValueError("CREATE_AUTH_QUERY_SUITE requires OwnStepData")
-        if operations.intersection({
+        if WriteOperation.CREATE_AUTH_SUITE in operations and not evidence.for_update(StepData):
+            raise ValueError("CREATE_AUTH_SUITE requires OwnStepData")
+        if set(operations).intersection({WriteOperation.ENSURE_AUTH_MONTHLY, WriteOperation.FILL_AUTH_MONTHLY}) and not evidence.for_update(StepData):
+            raise ValueError("Monthly operations require OwnStepData")
+        if set(operations).intersection({
             WriteOperation.ENSURE_BROKER_PLAN, WriteOperation.CREATE_AUTH_QUERY_SUITE,
+            WriteOperation.CREATE_AUTH_SUITE,
+            WriteOperation.ENSURE_AUTH_MONTHLY,
         }) and step.effect_mode != EffectMode.TRANSACTIONAL:
             raise ValueError("Resource creation requires a transactional effect")
         return evidence, writes

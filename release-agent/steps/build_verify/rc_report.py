@@ -386,9 +386,10 @@ def _auth_next_steps(model) -> str:
             "Open the Authenticator ECS UI-test run "
             f"{test_ref} and start with {focus}; use the failing-title/source links in the "
             "Authenticator ECS card.",
-            "Monthly UI failures are not mapped to ADO test-plan cases today, so do not "
-            "create or force mappings for them; still investigate the source failures by "
-            "name and source link.",
+            "Monthly UI failures are not mapped to ADO test-plan cases (canonical mapping). "
+            "Phase 2 never creates cases or forces mappings; investigate failures by name "
+            "and source link. Explicit fresh Monthly-v2 Phase-3 layouts may separately own "
+            "failed-scenario investigations; historical/v1 layouts remain report-only.",
             "If this is test flake or infrastructure, re-run the post-build Firebase UI "
             f"tests for Authenticator build {build_ref}. After the rerun completes, run "
             f"`reopen --release {release} --phase build_verify --step auth_ecs "

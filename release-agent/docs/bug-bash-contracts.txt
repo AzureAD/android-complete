@@ -9,6 +9,35 @@ All eleven step contracts and local integration are now complete. This is offlin
 proof, not live-provider certification. The existing default-suite case-budget
 failure is a separate OPEN blocker; see the final section and release-audit.txt.
 
+MONTHLY FAILURE INVESTIGATIONS: EXPLICIT FRESH V2 CONTRACT (2026-10-19)
+  Default/historical auth-manual-automated-v1 remains unchanged and report-only.
+  Public clone build/prepare parameter layout=auth-manual-automated-monthly-v2
+  selects a fresh compatible layout: unchanged static parent + Manual/Automated
+  dynamic children, plus STATIC sibling leaf Monthly UI Failure Triage iff there
+  are validated initial unresolved Monthly failures after exact-title retries.
+  One NEW owned case per failed scenario; exact title and release/RC/APK/test-build/
+  run/result/attempt/source links. Dedicated ReleaseMonthlyInvestigation tag;
+  omit ReleaseBugBash and automation IDs so both dynamic queries exclude it.
+  No initial passing, NA or recovered rows; no empty folder. No shared/template edits.
+  Source digest + row ownership + create intent/ack + exact case content and
+  suite/member/config/point manifests are durable clone proof. Acknowledged creates
+  recover by exact ID/readback. Unknown creates never replay or adopt by name;
+  no Monthly unknown-create reset/recovery command is supplied.
+  ui_test_status alone fills exact Monthly points, retaining prior tracked recovered
+  scenarios, manual point resolutions and acknowledgement history. Lost response
+  intent is recovered by exact live readback or guarded idempotent outcome write.
+  Provider ACK is durably retained before exact outcome readback; an ACK-only
+  response cannot produce a complete fill receipt or downstream publication.
+  Current RC/build/source and LIVE target isolation validate before ANY fills.
+  Complete result.monthly is mandatory for v2 downstream authority. Failed-point
+  Tester only; nonblocking assignment errors remain visible. Distribution/progress/
+  invitation/rollout links include Monthly and use actual live outcomes/Testers.
+  Canonical E2E IDs and source-execution Firebase quality gates never change.
+  Existing frozen/completed v1 parents cannot add this child by replay. Supported
+  product path is a newly reviewed v2 clone through normal engine eligibility and
+  runtime-revision controls, not handwritten adoption or a generic rehearsal runner.
+  Local implementation/proofs do NOT authorize provider execution.
+
 1. bug_bash.clone_plans_broker
 -------------------------------
 PURPOSE / ENTRY:
@@ -226,31 +255,48 @@ SUBSEQUENT WORK:
 2. bug_bash.clone_plans_auth
 ----------------------------
 PURPOSE / ENTRY:
-  Transactional/frozen automatic effect after Broker plan creation. Create/reuse
-  a dynamic suite in the configured standing Authenticator plan/root; no copied
-  work items, Tester assignment or test outcomes here.
+  Transactional/frozen automatic effect after Broker plan creation. NEW layouts
+  create a CCD-named static parent in the standing Authenticator plan/root and
+  two direct dynamic children: Manual Tests and Automated Tests. Both children
+  are retained even when empty. No copied work items, Testers or outcomes here.
+  Legacy single-dynamic-suite state and frozen operations remain unchanged.
 INPUT:
   release_id and canonical valid ccd YYYY-MM-DD. Default suite name is
   Android release/MM/DD/YYYY; explicit nonblank test name may override it.
-  Config supplies org/project/plan_id/parent_suite_id and Android ReleaseBugBash
-  WIQL. Saved step.data.suite_id and creation receipt, or frozen execution input,
-  are authoritative recovery identities; a falsey corrupt ID is not "absent".
+  Config supplies org/project/plan_id/parent_suite_id and curated Android
+  ReleaseBugBash WIQL. NEW layouts also consume only the captured current
+  pipeline_runs.rcs[-1] Authenticator evidence through project_auth_ui_results.
+  Classification authority is phase2_android_case_mapping_v1, NOT Automation
+  Status or a generic Automated tag. Monthly canonical mapping remains report-only;
+  the explicit fresh-v2 owned investigation contract above is separate.
 GENERATED / FROZEN OPERATION:
-  effect_input={release,org,project,plan_id,parent_suite_id,name,query}, full
-  operation_key/execution ownership from the existing engine. Resolve before
-  reserving; recovery uses the same target/query, never current mutated defaults.
+  NEW effect_input={release,org,project,plan_id,parent_suite_id,name,
+    layout:"auth-manual-automated-v1",classification,queries}.
+  classification={version:1,authority:"phase2_android_case_mapping_v1",
+    rc,apk_build_id,test_build_id,mapped_case_ids:<sorted unique positive ints>}.
+  Queries retain ALL curated base predicates: automated adds Id IN mapped IDs,
+  manual adds Id NOT IN the same IDs. Empty mapping uses Id=0 and Id>0,
+  respectively, not invalid IN(). Disjoint/exhaustive within the curated set.
+  Missing source, changed RC/build/mapping or unknown layout holds; changing
+  only outcomes does not reclassify. Full engine operation_key owns execution.
+  LEGACY effect_input={release,org,project,plan_id,parent_suite_id,name,query}.
 PROVIDER CONTRACT:
-  Exhaustive suite discovery requires a valid collection and a unique matching
-  direct child. Read-back validates exact positive ID/name/type/parent/query.
-  Query layout normalization preserves whitespace inside quoted literals.
+  Parent static under configured root; both children dynamic under its actual
+  ID. Each NEW suite explicitly inherits parent configurations; no pin PATCH
+  or config expansion. Exact ID/name/type/direct-parent/query/inheritance and
+  exhaustive uniqueness validate before ready. Query normalization preserves
+  quoted-literal whitespace. No silent adoption of an unowned same-named suite
+  or dynamic legacy suite as a new static parent.
 PERSISTED OUTPUT:
   steps["bug_bash.clone_plans_auth"].data:
-    suite_id, suite_name
-    creation={operation_key,status:creating|created|ready|retry_authorized,
-              suite_id?,last_failure?,retry_reason?,attempt_history?}
-  Status creating is checkpointed before POST. A valid acknowledged ID is saved
-  as suite_id/status=created BEFORE identity read-back; failed read-back therefore
-  retains a directly recoverable target. Successful validation marks ready.
+    NEW {layout,plan_id,suite_id:<STATIC parent>,suite_name,manual_suite_id,
+      automated_suite_id,classification,queries,
+      creations:{parent,manual,automated}}.
+    Each creation={operation_key,status:creating|created|ready|retry_authorized,
+      suite_id?,last_failure?,retry_reason?,attempt_history?}.
+    LEGACY {suite_id:<dynamic target>,suite_name,creation:{...}}.
+  Each creating intent is checkpointed before its POST; the acknowledged ID is
+  saved BEFORE readback. Failed reads retain all IDs and attempt provenance.
   Preserve attempt history/retry evidence rather than replacing it on success.
   Engine alone owns step status/completed_at/execution; successful Done has suite link.
 FAILURE / RECOVERY / LIFETIME:
@@ -260,16 +306,26 @@ FAILURE / RECOVERY / LIFETIME:
   create because ID is unreadable/zero/null. Wrong/moved suite needs owner repair.
   Explicit retry needs a nonblank owner reason and verified absence for a frozen
   request with no recorded suite ID. Existing ID cannot be reauthorized as absent.
-  Retain suite identity, query binding and attempt evidence across reopen/resume.
+  Retain every parent/child identity, frozen partition/query and attempt receipt
+  across reopen/resume. No automatic legacy migration or category movement.
 CONSUMERS:
-  ui_test_status target, distribution's release points, invite/report links;
-  do not substitute another release's same-named/nearby suite or the plan root.
+  ui_test_status uses auth_partition.target/current to bind ONLY the automated
+  child, including parent/manual IDs, classification and queries. Distribution
+  uses completed-result targets to read actual category points, with manual
+  workload plus exact failed-automation owner triage. Progress reads both
+  categories and retains human resolutions; no duplicate or vanished work.
+  Invite/report links use the static parent and bind all category identities.
+  Human-source checks reject stale confirmations after category/source changes.
+  Never substitute another release's same-named suite or the standing plan root.
 CORRECTIONS / PROOF:
   Canonical date/name validation, malformed provider holds, positive bound IDs,
   early created-ID checkpoint, no-ID retry protection, retained attempt history,
   and quoted-WIQL identity correction. New auth contract cases passed together
   with human/kernel/capability/lifecycle selectors (188passed4.93s); earlier
   selected legacy Auth fixtures also pass after required capability wiring.
+  New category proof: tests\test_auth_categories.py plus existing affected
+  authority, point/result recovery, distribution, progress and invitation tests.
+  No live ADO suite was created for this redesign.
 
 3. bug_bash.ui_test_status
 ---------------------------
@@ -284,7 +340,10 @@ GENERATED / FROZEN:
   effect_input={binding,destination_names,broker_plan_id,evidence_sha256,
     broker_projection,auth_projection,rc,owner_email,coordinates}.
   binding={release,rc,ecs_build,local_build,auth_apk_build,auth_test_build,
-    broker:{plan_id,suite_id},auth:{plan_id,suite_id}} uses positive normalized IDs.
+    broker:<source-versioned target>,auth:<legacy or typed category target>}.
+  NEW auth target={layout,plan_id,suite_id:<AUTOMATED child>,parent_suite_id,
+    manual_suite_id,classification,queries}; not the clone's parent suite_id.
+  LEGACY auth target remains {plan_id,suite_id:<dynamic>}.
   Projections retain mapped verdicts/provenance/failure diagnostics, not full raw
   Unit/Instrumented result arrays. rc carries only IDs needed by generated links.
   The full operation_key owns recovery; the short evidence_sha256 is diagnostic.
@@ -300,7 +359,11 @@ PERSISTED OUTPUT:
     target={plan_id,suite_id}, applied_points[], reused_points[], points_total,
     set_passed/set_failed[/set_not_applicable], untouched_points[],
     unmatched_verdicts[], incomplete_outcome?/uncertain_points?.
-  Each applied point has point_id,case_id,outcome and Broker config_id. result
+  Each applied point has point_id,case_id,outcome and Broker config_id. NEW
+  Authenticator category receipts also require config_id; legacy remains intact.
+  For new Authenticator layouts automated_case_ids is the complete frozen mapped
+  set, including NA-only mapped cases, not only points with written outcomes.
+  result
   product records compact these into target,automated_case_ids,failed_case_ids,
   applied_points. investigations={broker,auth,unmapped_broker,
     report_only_or_unmapped_auth}. The result UUID is observation identity, not
@@ -355,6 +418,10 @@ INPUT:
   sibling category suites. Combined coverage must match every acknowledged failure
   exactly once with unchanged plan/suite/point/case/config/source identities.
   Category investigations remain owner triage, excluded from balanced manual work.
+  NEW Authenticator work reads actual Manual/Automated child memberships through
+  the completed fill target, never reprojects Phase 2 or substitutes base WIQL.
+  Manual work excludes mapped automation; only acknowledged failed automated
+  points join owner triage, bound to exact point/case/configuration identities.
 TRANSIENT OUTPUT / AUTHORITY:
   Candidates, eligible roster, observed/proposed workloads, manual totals,
   owner_triage, case_changes, point_changes, _current/_targets/_point_sets and
@@ -390,6 +457,8 @@ INPUT:
   (plus explicit plan_id when present), current RC number/ECS/Local/Auth build IDs,
   release/target_month/owner metadata, clock, recipient config and local flags.
   Missing/malformed/incomplete plan sources or mismatched RC identities HOLD.
+  NEW Authenticator invitation links use the static parent; source conditions
+  include layout/manual/automated IDs, classification and queries as well.
 WORK / TRANSIENT OUTPUT:
   Existing invite template produces exact HTML and workiq_create_event payload:
     subject,start,end,timeZone,body,bodyContentType,attendees,isOnlineMeeting.

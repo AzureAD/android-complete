@@ -6,6 +6,31 @@ from tests._ui_results import broker_fill, auth_fill, publish
 import pytest
 
 
+_fresh_bb_build = _bb_build
+
+
+def _legacy_auth_input(state, name=None):
+    from tools import testplans as T
+    return {"release": state.release_id, "org": T.ORG, "project": T.PROJECT,
+            "plan_id": T.AUTH_PLAN, "parent_suite_id": T.AUTH_ROOT_SUITE,
+            "name": name or T.auth_suite_name(state.ccd), "query": T.auth_bugbash_query()}
+
+
+def _bb_build(sid, mocks, release="2026-08", ccd="2026-08-13"):
+    """Existing single-suite regressions replay historical frozen executions."""
+    if sid != "clone_plans_auth" or not ccd:
+        return _fresh_bb_build(sid, mocks, release=release, ccd=ccd)
+    import steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    state = ReleaseState(release_id=release, ccd=ccd)
+    state.set_step("bug_bash", sid, StepState(execution={
+        "effect_input": _legacy_auth_input(state, mocks.get("name"))}))
+    _enable_memory_checkpoints(state)
+    with mockctx.active(mocks):
+        return state, as_dict(_invoke(steps.get_step("bug_bash", sid).build, state))
+
+
 @pytest.fixture(autouse=True)
 def _synthetic_release_targets(monkeypatch):
     from tools import distribution
@@ -318,6 +343,7 @@ def test_clone_plans_auth_reconciles_creation_without_duplicate():
     from steps.lib import mockctx
 
     state = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    state.set_step("bug_bash", step.ID, StepState(execution={"effect_input": _legacy_auth_input(state)}))
     handler = effects.EffectHandler(
         step_id=step.ID,
         mode=effects.EffectMode.TRANSACTIONAL,
@@ -430,6 +456,7 @@ def test_clone_plans_auth_owner_verified_retry_requires_absence(monkeypatch):
     from tools import testplans as T
 
     state = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    state.set_step("bug_bash", step.ID, StepState(execution={"effect_input": _legacy_auth_input(state)}))
     frozen = step.prepare_effect(_context(state))
     execution = {
         "id": "effect",

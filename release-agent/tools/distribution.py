@@ -539,9 +539,38 @@ def _tags_of(case_ids, timeout=90):
     return (True, out, "")
 
 
-def auth_bugbash_cases(timeout=90):
-    """Return every query case with tags; ownership belongs to release points."""
-    ok, ids, d = _wiql_ids(T.auth_bugbash_query(), timeout)
+def auth_bugbash_cases(timeout=90, *, target=None):
+    """Read actual category work (legacy: curated query); ownership belongs to live points."""
+    if target is not None:
+        from tools import auth_partition as A
+        try:
+            A.validate_target(target)
+        except ValueError as exc:
+            return False, None, str(exc)
+        ids = set()
+        automated = set(target["classification"]["mapped_case_ids"])
+        for key, is_auto in (("manual_suite_id", False), ("suite_id", True)):
+            ok, rows, detail = P._ado_rest_get_all(
+                f"{ORG}/{PROJECT}/_apis/test/Plans/{target['plan_id']}/Suites/{target[key]}/points?api-version=5.0",
+                timeout)
+            if not ok:
+                return False, None, detail
+            if error := T._point_validation_error(rows, require_config=True):
+                return False, None, error
+            cases = {int(p["testCase"]["id"]) for p in rows}
+            if any((cid in automated) != is_auto for cid in cases) or ids & cases:
+                return False, None, "Authenticator live categories violate the frozen partition"
+            ids.update(cases)
+        if "monthly" in target:
+            from tools import auth_monthly as M
+            monthly_points = M.validate_live(target["monthly"], timeout)
+            monthly_ids = {int(p["testCase"]["id"]) for p in monthly_points}
+            if ids & monthly_ids:
+                return False, None, "Monthly investigations leaked into curated category queries"
+            ids.update(monthly_ids)
+        ok, ids, d = True, sorted(map(str, ids)), ""
+    else:
+        ok, ids, d = _wiql_ids(T.auth_bugbash_query(), timeout)
     if not ok:
         return (False, None, d)
     okt, meta, dt = _tags_of(ids, timeout)
@@ -556,7 +585,7 @@ def auth_bugbash_cases(timeout=90):
     return (True, out, "")
 
 
-def read_point_testers(plan_id, root_suite, case_ids, timeout=90):
+def read_point_testers(plan_id, root_suite, case_ids, timeout=90, *, include_outcomes=False):
     """Read selected test-point identities across a suite subtree without changing ADO."""
     selected = {str(cid) for cid in case_ids}
     if not selected:
@@ -584,7 +613,8 @@ def read_point_testers(plan_id, root_suite, case_ids, timeout=90):
                     return False, None, str(exc)
                 rows.append({"id": p["id"], "case_id": cid,
                              "config_id": str(p["configuration"]["id"]),
-                             "tester_id": tester["id"], "tester_upn": tester["upn"]})
+                             "tester_id": tester["id"], "tester_upn": tester["upn"],
+                             **({"outcome": p.get("outcome") or "Unspecified"} if include_outcomes else {})})
         if rows:
             groups.append({"plan_id": plan_id, "suite_id": sid,
                            "points": sorted(rows, key=lambda p: int(p["id"]))})
@@ -696,11 +726,43 @@ def validate_release_targets(release_id, ccd, binding, *, org=ORG, project=PROJE
         raise ValueError(f"Broker UI destination identity changed: {detail}")
     if str(auth["plan_id"]) != str(T.AUTH_PLAN):
         raise ValueError("Authenticator destination plan changed")
-    ok, _, detail = T.validate_auth_query_suite(
-        auth["suite_id"], auth_name, T.auth_bugbash_query(), timeout,
-        org=org, project=project, plan_id=auth["plan_id"], parent_suite_id=T.AUTH_ROOT_SUITE)
-    if not ok:
-        raise ValueError(f"Authenticator release-suite identity changed: {detail}")
+    if "layout" in auth:
+        from tools import auth_partition as A
+        A.validate_target(auth)
+        specs = [(auth["parent_suite_id"], auth_name, None, "staticTestSuite", T.AUTH_ROOT_SUITE),
+                 (auth["manual_suite_id"], "Manual Tests", auth["queries"]["manual"],
+                  "dynamicTestSuite", auth["parent_suite_id"]),
+                 (auth["suite_id"], "Automated Tests", auth["queries"]["automated"],
+                  "dynamicTestSuite", auth["parent_suite_id"])]
+        for sid, name, query, kind, parent in specs:
+            options = {"suite_type": kind, "org": org, "project": project,
+                       "plan_id": auth["plan_id"], "parent_suite_id": parent}
+            ok, info, detail = T.validate_auth_suite(sid, name, query, timeout, **options)
+            if not ok:
+                raise ValueError(f"Authenticator category identity changed: {detail}")
+            ok, found, detail = T.find_auth_suite(name, query, timeout, **options)
+            if not ok or not isinstance(found, dict) or str(found.get("id")) != str(sid):
+                raise ValueError(f"Authenticator category no longer unique: {detail}")
+        if "monthly" in auth:
+            from tools import auth_monthly as M
+            monthly_points = M.validate_live(auth["monthly"], timeout)
+            owned = {int(p["testCase"]["id"]) for p in monthly_points}
+            for key in ("manual_suite_id", "suite_id"):
+                ok, points, detail = P._ado_rest_get_all(
+                    f"{org}/{project}/_apis/test/Plans/{auth['plan_id']}/Suites/{auth[key]}/points?api-version=5.0",
+                    timeout)
+                if not ok or T._point_validation_error(points, require_config=True):
+                    raise ValueError("Cannot prove Monthly/category point isolation: " + detail)
+                if owned & {int(p["testCase"]["id"]) for p in points}:
+                    raise ValueError("Monthly investigations leaked into a curated dynamic category")
+    else:
+        if set(auth) != {"plan_id", "suite_id"}:
+            raise ValueError("Malformed legacy Authenticator target")
+        ok, _, detail = T.validate_auth_query_suite(
+            auth["suite_id"], auth_name, T.auth_bugbash_query(), timeout,
+            org=org, project=project, plan_id=auth["plan_id"], parent_suite_id=T.AUTH_ROOT_SUITE)
+        if not ok:
+            raise ValueError(f"Authenticator release-suite identity changed: {detail}")
 
 
 def resolve_tester_identity(upn, *, org=ORG, timeout=60):

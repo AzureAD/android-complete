@@ -2,6 +2,24 @@ RELEASE STATE: DATA OWNERSHIP AND STEP BUILDING BLOCKS
 =====================================================
 Updated: 2026-10-16. Baseline: a1390093aa6ce1b84686906fa68197c651aa31be.
 Documentation only: this is not a replacement state schema or runtime input.
+MONTHLY V2 ADDENDUM (2026-10-19; local only):
+  Explicit fresh Authenticator layout auth-manual-automated-monthly-v2 adds
+  clone_plans_auth.data.monthly_source and .monthly; historical/v1 schemas do not.
+  monthly_source freezes version/release/RC/APK/test-build/evidence SHA256 plus
+  distinct failed rows with exact title/suite/retry attempts and source links.
+  monthly records version/source/source_sha256/plan_id/parent_suite_id/operations/
+  suite_id/bindings/status. Operations checkpoint intent BEFORE POST, acknowledged
+  ID BEFORE readback, then membership hash/applied proof. Bindings carry row key,
+  case/config/point IDs. Empty initial failures => no suite/cases/operations.
+  Auth result target embeds this full owned record, not an invented canonical map.
+  ui_test_status.data.monthly retains partial applied/preserved/uncertain points
+  and history across interruption. data.result.monthly publishes only completed
+  current source+target receipts; result.binding.monthly_source_sha256 binds the
+  refreshed exact captured source. Manual resolutions and all prior history remain.
+  Distribution/progress/invitations require complete current fill and live owned
+  point identities/outcomes/Testers. Old completed/frozen layouts remain untouched;
+  no automatic migration/amendment/adoption or unknown-create reset is supplied.
+  These fields are engine-owned outputs, never instructions to hand-edit state.
 Scope: central state structure, 13 readiness items, all nine preflight steps,
 all three CCD steps, Phase2 checker/orchestrator captures and RC storage, and
 all eleven Phase3 Bug Bash steps (local/offline integration).
@@ -580,10 +598,24 @@ resources.broker_test_plan:
   replacement directory/work-item database.
 
 steps["bug_bash.clone_plans_auth"].data:
-  Producer: clone_plans_auth through OwnStepData. suite_id/suite_name/creation
-  retain acknowledged external identity, operation key/status and retry history.
+  Producer: clone_plans_auth through OwnStepData. New explicit
+  layout=auth-manual-automated-v1 stores plan_id,suite_id (static release parent),
+  suite_name,manual_suite_id,automated_suite_id,classification,queries,creations.
+  Classification={version:1,authority:phase2_android_case_mapping_v1,rc,
+  apk_build_id,test_build_id,mapped_case_ids}. Queries partition the existing
+  curated case universe by captured Phase2 mapped IDs, never generic tags/status.
+  creations.parent/manual/automated each retain operation_key/status/suite_id
+  and optional failed-attempt/retry provenance. Intent precedes each POST;
+  acknowledged ID precedes readback. Both children inherit configurations.
+  Old single-dynamic-suite data retains suite_id/suite_name/creation unchanged;
+  it is never reinterpreted as the new parent or migrated automatically.
   Why stored: recovery without repeating an uncertain suite POST, and subsequent
   release suite references. Preserve across read-back failure and reopen.
+  New UI fill auth target uses suite_id=automated child, plus parent_suite_id,
+  manual_suite_id,layout,classification,queries; do not confuse it with the clone
+  parent ID. Current RC/build/mapping changes hold; outcome-only refresh keeps
+  classification stable. Distribution/progress consume completed-fill targets,
+  actual category points and live Testers; invitations bind the complete layout.
 
 steps["bug_bash.ui_test_status"].execution:
   Engine-owned id/owner/mode/recovery/operation_key/effect_input. Compact frozen

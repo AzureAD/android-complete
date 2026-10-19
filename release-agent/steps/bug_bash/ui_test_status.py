@@ -6,12 +6,14 @@ BROKER v3: exact current-RC device scenarios plus additional failure investigati
 each parameter/API/flight scenario owns a distinct release point. Historical v2
 plans retain their existing failed-wins mapping, never an automatic migration.
 
-AUTHENTICATOR: this step ALSO fills the Authenticator bug-bash suite (from `clone_plans_auth`)
-from this release's auth ECS post-build UI-test run (`state.rcs[-1].auth.test`, captured by
-the Phase-2 `auth_ecs` step). For the automated cases only (join on `test_<caseId>_`), it
-writes Passed->Passed / Failed->Failed and LEAVES manual cases untouched; reassignment of
+AUTHENTICATOR: canonical fills target ONLY the Automated Tests child; Manual Tests is
+never written. Explicit fresh Monthly-v2 layouts separately fill owned failure
+investigations. Historical single-query-suite targets retain their receipt-aware fill path.
+The frozen verified mapping comes from this release's captured Phase-2 Authenticator
+evidence, not an ADO automation field or generic tag. It writes Passed/Failed; reassignment of
 applied FAILED points to the release owner (`state.owner_email`) is attempted for triage.
-Monthly UI Tests is intentionally report-only; all its failures remain owner investigations.
+Monthly has no canonical mapping. V1 remains report-only; v2 tracks unresolved
+source failures with durable release-owned cases and preserves human resolutions.
 
 Depends on `clone_plans_broker` (and, for the auth fill, `clone_plans_auth` + the Phase-2 RC
 runs). Missing, incomplete or stale evidence for either app blocks BEFORE external writes.
@@ -47,7 +49,7 @@ from orchestrator.authority import OwnStepData, UIFailureContribution, WriteOper
 
 EVIDENCE = (OwnStepData(), UIFailureContribution("bug_bash.ui_failures"))
 WRITES = (WriteOperation.FILL_AUTH_UI_RESULTS, WriteOperation.FILL_UI_AUTOMATION_RESULTS,
-          WriteOperation.SET_POINT_TESTERS)
+          WriteOperation.SET_POINT_TESTERS, WriteOperation.FILL_AUTH_MONTHLY)
 ID = "ui_test_status"
 KIND = "agent"
 EFFECT_MODE = "idempotent"
@@ -99,12 +101,20 @@ def prepare_effect(context):
         )
     try:
         current_binding = ui_results.current_binding(context)
+        if current_binding["auth"].get("layout"):
+            from tools import auth_partition as A
+            if A.classification(rc, auth_projection) != current_binding["auth"]["classification"]:
+                raise ValueError("Authenticator RC/build/mapped-case classification changed; owner recovery required")
         destination_names = D.release_target_names(
             context.evidence.step("bug_bash", "clone_plans_broker").data,
             context.evidence.step("bug_bash", "clone_plans_auth").data)
         context.services.testplans.validate_release_targets(
             context.release.release_id, context.release.ccd, current_binding,
             expected_names=destination_names)
+        monthly_projection = None
+        if "monthly" in current_binding["auth"]:
+            from tools import auth_monthly as M
+            monthly_projection = M.current(thaw(rc), current_binding["auth"]["monthly"])
     except ValueError as exc:
         return Blocked(f"ui_test_status: {exc}")
     auth = rc.get("auth") or {}
@@ -126,6 +136,7 @@ def prepare_effect(context):
         "current_binding": current_binding,
         "broker_projection": frozen_broker,
         "auth_projection": frozen_auth,
+        **({"monthly_projection": monthly_projection} if monthly_projection is not None else {}),
         **({"scenario_resource": scenario_resource} if scenario_resource else {}),
     }
     digest = hashlib.sha256(
@@ -138,6 +149,7 @@ def prepare_effect(context):
         "evidence_sha256": digest,
         "broker_projection": frozen_broker,
         "auth_projection": frozen_auth,
+        **({"monthly_projection": monthly_projection} if monthly_projection is not None else {}),
         **({"scenario_resource": scenario_resource} if scenario_resource else {}),
         "rc": {"rc": rc["rc"],
                "ecs": {"run_id": binding["ecs"]}, "local": {"run_id": binding["local"]},
@@ -212,8 +224,9 @@ def _broker_plan_id(context):
 
 
 def _auth_suite_id(context):
-    """The release's Authenticator bug-bash suite id (from clone_plans_auth), or None."""
-    return (context.evidence.step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
+    """The automated child for category layouts, otherwise the historical dynamic target."""
+    data = context.evidence.step("bug_bash", "clone_plans_auth").data or {}
+    return data.get("automated_suite_id") if "layout" in data else data.get("suite_id")
 
 
 def _prior_applied_points(data, binding):
@@ -269,6 +282,7 @@ def _fill_auth(context, notes, projection, binding, owner, coordinates, prior_po
         outcomes,
         org=coordinates["test_plan_org"],
         project=coordinates["test_plan_project"],
+        **({"target": binding["auth"]} if binding["auth"].get("layout") else {}),
         **({"prior_points": prior_points} if prior_points else {}),
     )
     if not ok and isinstance(summ, dict):
@@ -281,7 +295,7 @@ def _fill_auth(context, notes, projection, binding, owner, coordinates, prior_po
     if not ok:
         return False, f"Could not completely fill auth UI results ({d}); retry with current evidence"
     if (not isinstance(summ, dict)
-            or summ.get("target") != {"plan_id": int(plan_id), "suite_id": int(suite_id)}
+            or summ.get("target") != binding["auth"]
             or not isinstance(summ.get("applied_points"), list)):
         return False, "Missing actual applied Authenticator target/points; retry ui_test_status"
     ui_results.applied_record(summ, outcomes, "auth", binding["auth"])
@@ -555,6 +569,22 @@ def _apply_prepared(context, prepared):
     coordinates = prepared["coordinates"]
     if ui_results.current_binding(context) != binding:
         return Blocked("UI execution binding changed; no test-plan writes attempted")
+    if binding["auth"].get("layout"):
+        from tools import auth_partition as A
+        if A.current(context, thaw(context.evidence.step("bug_bash", "clone_plans_auth").data)) != binding["auth"]:
+            return Blocked("Authenticator execution classification changed; no test-plan writes attempted")
+    if "monthly" in binding["auth"]:
+        from tools import auth_monthly as M, broker_scenarios as S
+        monthly = M.current(thaw(latest_rc(context)), binding["auth"]["monthly"])
+        if (monthly != prepared.get("monthly_projection")
+                or S.digest(monthly) != binding.get("monthly_source_sha256")):
+            return Blocked("Monthly execution source changed; no test-plan writes attempted")
+        M.validate_live(binding["auth"]["monthly"])
+        owned = {r["title"]: next(b["case_id"] for b in binding["auth"]["monthly"]["bindings"]
+                                 if b["key"] == r["key"]) for r in monthly["rows"]}
+        for item in [*auth_projection["sources"], *auth_projection["failures"]]:
+            if item["suite"] == P.MONTHLY_REPORT_ONLY and item["title"] in owned:
+                item.update(case_id=owned[item["title"]], status="owned_monthly_investigation")
     context.services.testplans.validate_release_targets(
         context.release.release_id, context.release.ccd, binding,
         org=coordinates["test_plan_org"], project=coordinates["test_plan_project"],
@@ -568,8 +598,10 @@ def _apply_prepared(context, prepared):
         binding=binding, stage="broker_write",
         broker={"automated_case_ids": sorted({r["case_id"] for r in projection["scenario_bindings"]})
                 if projection.get("scenario_bindings") else sorted(projection["verdicts"])},
-        auth={"automated_case_ids": sorted(cid for cid, case in auth_projection["cases"].items()
-                                            if case["outcome"] in ("Passed", "Failed"))},
+        auth={"automated_case_ids": binding["auth"]["classification"]["mapped_case_ids"]
+              if binding["auth"].get("layout") else sorted(
+                  cid for cid, case in auth_projection["cases"].items()
+                  if case["outcome"] in ("Passed", "Failed"))},
         investigations={"broker": projection["failures"], "auth": auth_projection["failures"],
                         "unmapped_broker": [s for p in projection["provenance"]["providers"]
                                             for s in p["skipped_mapping"]],
@@ -620,6 +652,25 @@ def _apply_prepared(context, prepared):
     )
     if not ok:
         return Blocked(f"ui_test_status: {auth_note}. Broker results may already have changed.")
+    if "monthly" in binding["auth"]:
+        from tools import auth_monthly as M
+        previous = thaw(context.recovery().step("bug_bash", ID).data.get("monthly") or {})
+        ok, monthly_summary, detail = context.effect.services.fill_auth_monthly(
+            binding["auth"]["monthly"], prepared["monthly_projection"], previous)
+        data = thaw(context.recovery().step("bug_bash", ID).data)
+        data["monthly"] = monthly_summary
+        context.effect.commit.commit(StepData(data))
+        if not ok:
+            return Blocked("Monthly fill incomplete: " + detail)
+        M.validate_fill(monthly_summary, binding["auth"]["monthly"], prepared["monthly_projection"])
+        monthly_assigned, monthly_errors = _assign_failure_points(
+            context, monthly_summary, owner, coordinates)
+        data["result"]["monthly"] = monthly_summary
+        data["monthly_assignment_errors"] = monthly_errors
+        data["monthly_failed_assigned_to_owner"] = monthly_assigned
+        context.effect.commit.commit(StepData(data))
+        if monthly_errors:
+            notes.append(f"Monthly owner assignment incomplete: {len(monthly_errors)} case(s).")
 
     # Triage only acknowledged failed Broker points in this release's exact UI suite.
     broker_assigned = _reassign_broker_failures(
@@ -653,6 +704,9 @@ def _apply_prepared(context, prepared):
                           org=coordinates["test_plan_org"],
                           project=coordinates["test_plan_project"],
                       )})
+    if "monthly" in binding["auth"]:
+        from tools import auth_monthly as M
+        links.extend(M.links(binding["auth"]["monthly"]))
     return Done(
         f"Filled UI Automation results in Broker plan {plan_id}: {p + f + na} test points "
         f"({p} Passed, {f} Failed, {na} N/A) across {summ.get('cases_touched', 0)} cases."

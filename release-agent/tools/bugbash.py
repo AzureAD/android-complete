@@ -240,7 +240,7 @@ def _broker_ui_triage_points(broker_plan_id, result, timeout):
 
 def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_id,
                     timeout=90, auto_failed_ids=None, *, auth_automated_ids, broker_ui_result,
-                    auth_ui_result=None):
+                    auth_ui_result=None, monthly_result=None):
     """(ok, progress, detail). Reads live test points from the Broker manual subtree +
     the Auth bug-bash suite, groups cases by their release-point Tester, and computes a
     per-owner + overall breakdown of manual work and retained failure triage for BOTH apps.
@@ -274,9 +274,23 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     if not auto_failed <= automated:
         return False, None, "Applied Auth failures are missing from the automated-case classification"
     auth_expected = {}
+    auth_target = (auth_ui_result or {}).get("target") or {}
+    category = "layout" in auth_target
+    if category:
+        from tools import auth_partition as A
+        try:
+            A.validate_target(auth_target)
+            if (auth_target["plan_id"] != int(auth_plan_id)
+                    or auth_target["parent_suite_id"] != int(auth_suite_id)
+                    or set(auth_target["classification"]["mapped_case_ids"]) !=
+                       {int(cid) for cid in auth_automated_ids}):
+                raise ValueError("Authenticator progress category binding changed")
+        except (ValueError, TypeError) as exc:
+            return False, None, str(exc)
     if auto_failed:
         if (not isinstance(auth_ui_result, dict)
-                or auth_ui_result.get("target") != {"plan_id": int(auth_plan_id), "suite_id": int(auth_suite_id)}
+                or not category and auth_ui_result.get("target") != {
+                    "plan_id": int(auth_plan_id), "suite_id": int(auth_suite_id)}
                 or not isinstance(auth_ui_result.get("applied_points"), list)):
             return False, None, "Missing/mismatched completed Auth failure-point evidence"
         for point in auth_ui_result["applied_points"]:
@@ -284,8 +298,8 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
                 pid, cid = str(point.get("point_id")), str(point.get("case_id"))
                 if pid in auth_expected or not pid.isascii() or not pid.isdigit() or int(pid) <= 0:
                     return False, None, "Invalid/duplicate applied Auth failure point"
-                auth_expected[pid] = cid
-        if set(auth_expected.values()) != auto_failed:
+                auth_expected[pid] = (cid, str(point.get("config_id"))) if category else cid
+        if {v[0] if category else v for v in auth_expected.values()} != auto_failed:
             return False, None, "Auth failed cases have no matching applied failure points"
     ok_ui, ui_points, detail = _broker_ui_triage_points(broker_plan_id, broker_ui_result, timeout)
     if not ok_ui:
@@ -293,7 +307,20 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     okb, bpts, db = _broker_points(broker_plan_id, broker_suite_name, timeout)
     if not okb:
         return (False, None, f"broker: {db}")
-    oka, apts, da = _points_of_suite(auth_plan_id, auth_suite_id, timeout)
+    if category:
+        oka, apts, da = _points_of_suite(auth_plan_id, auth_target["manual_suite_id"], timeout)
+        if not oka:
+            return False, None, f"auth manual: {da}"
+        ok_auto, auto_points, detail = _points_of_suite(auth_plan_id, auth_target["suite_id"], timeout)
+        if not ok_auto:
+            return False, None, f"auth automated: {detail}"
+        if (any(str(p["case_id"]) in automated for p in apts)
+                or any(str(p["case_id"]) not in automated for p in auto_points)
+                or {p["point_id"] for p in apts} & {p["point_id"] for p in auto_points}):
+            return False, None, "Authenticator points no longer match the category partition"
+        apts = [*apts, *auto_points]
+    else:
+        oka, apts, da = _points_of_suite(auth_plan_id, auth_suite_id, timeout)
     if not oka:
         return (False, None, f"auth: {da}")
 
@@ -301,7 +328,8 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     for pt in apts:
         pid = str(pt.get("point_id"))
         if pid in auth_expected:
-            if pid in found or str(pt["case_id"]) != auth_expected[pid]:
+            identity = (str(pt["case_id"]), str(pt.get("config_id"))) if category else str(pt["case_id"])
+            if pid in found or identity != auth_expected[pid]:
                 return False, None, "Auth failure point case identity changed; refresh the owning fill"
             found[pid] = pt
     if set(found) != set(auth_expected):
@@ -313,10 +341,30 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     if auth_triage != auto_failed:
         return False, None, "Applied Auth failure cases missing from the release suite; refresh the owning fill"
     broker_triage = {pt["case_id"] for pt in ui_points}
+    monthly_points, monthly_ids = [], set()
+    if "monthly" in auth_target:
+        from tools import auth_monthly as M
+        try:
+            record = auth_target["monthly"]
+            M.validate_fill(monthly_result or {}, record, (monthly_result or {}).get("source") or {})
+            if record["suite_id"]:
+                ok, monthly_points, detail = _points_of_suite(auth_plan_id, record["suite_id"], timeout)
+                if not ok:
+                    raise ValueError(detail)
+                expected = {(str(b["point_id"]), str(b["case_id"]), str(b["config_id"]))
+                            for b in record["bindings"]}
+                if {(p["point_id"], p["case_id"], p["config_id"]) for p in monthly_points} != expected:
+                    raise ValueError("Monthly progress point identities changed")
+                monthly_ids = {p["case_id"] for p in monthly_points}
+                if monthly_ids & (automated | {p["case_id"] for p in apts}):
+                    raise ValueError("Monthly investigations leaked into curated progress")
+        except (ValueError, KeyError, TypeError) as exc:
+            return False, None, str(exc)
     # Product comes from the source plan, not the case title or automation classification.
     cases, owner_cases, triage_outcomes = {}, {}, {}
     for product, points, failure_ids in (("Broker", bpts, set()), ("Authenticator", apts, auth_triage),
-                                        ("Broker", ui_points, broker_triage)):
+                                        ("Broker", ui_points, broker_triage),
+                                        ("Authenticator", monthly_points, monthly_ids)):
         for pt in points:
             cid = pt["case_id"]
             c = cases.setdefault(cid, {"name": pt.get("name"), "outcomes": [], "products": set()})
@@ -364,7 +412,8 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
         o["tests"].append({"id": cid, "name": c.get("name") or f"Test {cid}",
                            "url": f"{ORG}/{PROJECT}/_workitems/edit/{cid}", "state": state,
                            "products": sorted(c["products"]),
-                           "auto_failed": af, "auto_products": products})
+                           "auto_failed": af, "auto_products": products,
+                           **({"investigation_kind": "monthly"} if cid in monthly_ids else {})})
 
     return (True, {"total": total, "done": done, "remaining": total - done,
                    "auto_failed_remaining": auto_failed_remaining,

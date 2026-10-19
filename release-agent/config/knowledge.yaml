@@ -688,7 +688,7 @@ build_verify.auth_ecs:
     read cross-org via az/REST (no ADO MCP); the build->test link is the test run's
     resources.pipeline.authenticatorBuild id.
     'Firebase Test Lab - Monthly UI Tests' intentionally has NO test-plan case map.
-    This is valid report-only coverage, not permission to create cases or force mappings.
+    This is valid report-only canonical coverage, not permission for Phase-2 case creation or forced mappings.
     Every unresolved failure is retained by exact name and source link for release-owner
     investigation. The existing independent aggregate Firebase gates remain unchanged.
   faqs:
@@ -896,20 +896,38 @@ bug_bash.clone_plans_broker:
       a: "Tell Scout which existing plan to retain after reviewing candidate IDs, areas, suites and results. Scout binds the verified plan with broker-plan, then resumes next. A bound plan cannot be silently switched because downstream results/assignments may already refer to it. Duplicate-plan deletion is a separate owner-approved action; never delete the shared case work items."
 
 bug_bash.clone_plans_auth:
-  summary: "Create the Authenticator bug-bash query-based test suite for this release."
+  summary: "Create the Authenticator release folder with Manual Tests and Automated Tests."
   what: >
-    Creates a NEW query-based (dynamic) test suite under the standing 'MSAuthenticator
-    Test Passes' plan (#714514, root suite 714515), named 'Android release/MM/DD/YYYY'
-    from the CCD (e.g. CCD 2026-08-13 -> 'Android release/08/13/2026'). Its WIQL selects the Android bug-bash test cases
-    (tag 'Android' + 'ReleaseBugBash', area 'Engineering\\ISP\\Identity Apps', not Closed
-    — matches the current prod suite 3728419 'Android release/08/13/2026'). This is the
-    Authenticator half of the old clone_plans step. It STOPS after creating the suite —
-    assigning testers is a later, manual step.
+    NEW releases use a static parent under 'MSAuthenticator Test Passes' (plan714514,
+    root714515), named 'Android release/MM/DD/YYYY' from the CCD. Its two direct dynamic
+    children are Manual Tests and Automated Tests. Both preserve the curated Android +
+    ReleaseBugBash, Authenticator-area and non-Closed query filters. Automated Tests
+    includes the verified case IDs mapped from the captured current-RC Phase 2 Android
+    results; Manual Tests excludes exactly those IDs. The queries are disjoint and cover
+    the same curated set. This is NOT ADO Automation Status or the generic Automated tag.
+    Both children remain even when one is empty; existing cases are referenced, never
+    copied or edited. Monthly Firebase canonical coverage remains report-only with no forced mapping.
+    Explicit fresh clone preparation with --param layout=auth-manual-automated-monthly-v2
+    adds a STATIC Monthly UI Failure Triage sibling only for distinct unresolved failures
+    after exact-title retries, with no empty folder or initial passing/NA/recovered cases.
+    Cases use ReleaseMonthlyInvestigation (never ReleaseBugBash), exact source provenance,
+    and durable create/membership receipts. Historical/frozen/completed layouts never
+    migrate by replay; no existing-parent amendment/adoption is implemented.
+    This step stops after creating and validating the hierarchy; no outcomes or Testers.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-suite create API)."
   how: >
-    Idempotent — the created suite id is stashed on the step, and it also reuses an
-    existing same-named suite rather than making a duplicate. If the create fails
-    (auth/API), the step blocks with the ADO error; fix and `next`, or `skip --reason`.
+    Freeze layout auth-manual-automated-v1, RC/APK/test-build identities, sorted mapped
+    case IDs and both exact queries before writes. Every parent/child POST has its own
+    durable creation intent and acknowledged ID saved before readback. Validate exact
+    direct parent/name/type/query and configuration inheritance, plus unique exhaustive
+    discovery. A partial or uncertain create retains ownership; never clear IDs or blindly
+    create again. Explicit retry needs an owner reason and verified absence for that
+    exact unacknowledged category. Changed RC/build/mapped IDs hold for owner recovery;
+    outcome-only refresh does not reclassify. Old single-dynamic-suite records and frozen
+    executions keep their original recovery path, never migrate. A same-named legacy
+    suite is not a new static parent; use a separately reviewed TEST ONLY name for testing.
+    Saved suite_id links to the parent; manual_suite_id and automated_suite_id identify
+    the children. Only the automated child is filled by ui_test_status later.
   links:
     - name: "MSAuthenticator Test Passes plan (#714514)"
       url: "https://identitydivision.visualstudio.com/Engineering/_testManagement?_a=tests&planId=714514&suiteId=714515"
@@ -917,17 +935,20 @@ bug_bash.clone_plans_auth:
       url: "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-"
   faqs:
     - q: "Does it assign testers?"
-      a: "No — it stops after creating the query-based suite. Assigning testers is done later (a separate, manual step)."
+      a: "No. It creates and validates the parent and two query children only. Results and release-point Testers are handled by later steps; shared case AssignedTo is never changed."
     - q: "What names the suite?"
       a: "From the CCD: 'Android release/MM/DD/YYYY' (e.g. CCD 2026-08-13 → 'Android release/08/13/2026'), matching prod."
     - q: "Which test cases does it include?"
-      a: "The curated bug-bash set — Android test cases tagged 'ReleaseBugBash' (the tag also matches month-specific 'ReleaseBugBash<Month>' tags), not Closed. This matches prod; a broad 'all Android' filter would over-include (e.g. ComposeTesting/DarkMode cases)."
+      a: "The existing curated Android ReleaseBugBash set, including matching month-specific tags, under the Authenticator area and not Closed. Phase 2 verified mapped Android IDs go into Automated Tests; the remainder go into Manual Tests. It does not broaden to all Android cases or invent Monthly mappings."
+    - q: "Does this change an existing release suite?"
+      a: "No. Historical single-query-suite identities and their frozen recovery inputs remain unchanged. New layouts are explicit and malformed or conflicting identities hold; no automatic migration or replacement."
 
 bug_bash.distribute_tests:
   summary: "Validate live ADO distribution and apply only reviewed corrections."
   what: >
     Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree)
-    + Authenticator (the ReleaseBugBash query set) — and checks
+    + Authenticator (actual Manual Tests category points for new layouts; the curated
+    ReleaseBugBash query for historical layouts) — and checks
     that live ADO assignments are eligible and evenly balanced, with matching plan testers.
     Proposes corrections only for mismatches, preserving current assignments where possible.
     It never silently redistributes or replays a saved assignment map. The Authenticator set EXCLUDES cases already
@@ -1016,8 +1037,11 @@ bug_bash.ui_test_status:
     map to one plan point, any Failed verdict wins; otherwise any Passed wins over NA, and
     NA-only evidence sets NotApplicable. Historical RCs never contribute. (2) AUTHENTICATOR: reads this
     release's frozen auth ECS post-build UI-test evidence (rcs[-1].auth.test, captured by auth_ecs)
-    and fills the Authenticator bug-bash suite (from clone_plans_auth) for the automated cases
-    only — Passed->Passed, Failed->Failed — leaving the manual cases untouched for testers.
+    and fills ONLY the Automated Tests child for new Authenticator layouts, using the
+    clone's frozen Phase 2 mapping and exact child target. Manual Tests is never filled.
+    Historical single dynamic suites keep their original target. Passed->Passed and
+    Failed->Failed; mapped NA-only cases stay in the automated category without an
+    invented result or a manual assignment.
     Only cases actually written Failed are submitted for release-owner assignment
     through this release's point Tester, never shared System.AssignedTo. Assignment errors are nonblocking, explicitly recorded, and never
     claimed as successful reassignment. Both source projections are validated before any external write; no alternate
@@ -1032,8 +1056,11 @@ bug_bash.ui_test_status:
     explicit combination mapping; --preview-ui-repair is only their reviewed repair path.
     Old LTW outcomes at 294/344 are NEVER auto-cleared: equal outcomes are not ownership;
     cleanup needs provenance receipts, match-before-write and later exact approval.
-    For Authenticator, E2E carries case ids; Monthly intentionally has no map and remains
-    report-only, including ALL failures in the existing ui_failures owner reminder and report.
+    For Authenticator, E2E carries canonical case ids; Monthly intentionally has no canonical map.
+    Historical/v1 coverage remains report-only. Fresh explicitly selected Monthly-v2 layouts
+    separately own failure investigations; P3S3 alone fills their bound points, attempts failed-point
+    Tester assignment, preserves manual resolutions/history, and publishes the complete source-bound
+    receipt required by distribution/progress/invitations. Include ALL failures in the owner reminder/report.
     Before ANY external mutation, both MRWP snapshots must be complete,
     have count_basis distinct_tests_pass_any and build_id matching their MRWP run_id, and contain
     valid complete reconciled test/attempt evidence. Missing/stale evidence blocks: refresh
@@ -1057,7 +1084,7 @@ bug_bash.ui_test_status:
     - q: "A test failed for one config but passed for another — what gets written?"
       a: "Per full combination AND flight. Never treat RC MSAL + RC Broker as RC MSAL + PROD Broker. Distinct API/device/parameterized tests stay separate as evidence and use Failed-wins only at their explicitly mapped case/config point."
     - q: "Should Monthly UI Tests get test-plan cases?"
-      a: "No. Its intentionally unmapped coverage is valid. Do not create cases, force mappings or block merely for that absence. Prominently retain every failure by exact title and source-result link for the release owner. Its aggregate gate remains independent of Broker."
+      a: "Never fabricate canonical Monthly mappings. Historical/v1 coverage stays report-only. Explicit fresh auth-manual-automated-monthly-v2 clones may create separate release-owned investigations for distinct unresolved failures only, never initial pass/NA/recovered cases or an empty folder. P3S3 owns fills; preserve manual resolutions/history. Existing completed layouts cannot be amended by replay. Its source-execution aggregate gate stays independent of Broker."
     - q: "What happens to a Firebase E2E test that FAILED?"
       a: "A matching point is written Failed and owner reassignment is attempted for triage. Missing target points remain explicit investigations, not applied failures. Passed automated cases are marked Passed; both passed and failed automated case IDs are excluded from the manual split. Assignment errors remain visible and do not imply owner changes."
     - q: "What does a test that failed then passed get?"

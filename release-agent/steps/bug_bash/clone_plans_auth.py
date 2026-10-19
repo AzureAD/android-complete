@@ -1,20 +1,11 @@
-"""Step: `clone_plans_auth` — create the Authenticator bug-bash test suite for this
-release (Phase 3, bug_bash).
+"""Create a CCD-named static Authenticator release parent with two query children.
 
-Per the Authenticator "How to make a test suite for bug bash" doc, each release creates
-a NEW query-based (dynamic) test suite under the standing "MSAuthenticator Test Passes"
-plan (714514 / rootSuite 714515), named after the release CCD ("Android release/MM/DD/YYYY"),
-whose WIQL selects the Android bug-bash test cases. This is the Authenticator half of the
-old `clone_plans` stub.
+Manual Tests and Automated Tests partition curated Android cases using the frozen,
+verified current-RC mapping. Every create owns durable intent and acknowledgement;
+no shared cases or configuration pins change. Historical single-dynamic-suite
+records and frozen executions retain their original recovery path without migration.
 
-We CREATE the suite and STOP — assigning testers is a later, manual step (out of scope
-here, per the doc's "Assign Testers" cut line).
-
-Idempotent: the created suite id is stashed on the step (data.suite_id); a re-run
-re-confirms it and reports done without creating a duplicate. As a second guard the step
-also looks for an existing same-named child suite before creating.
-
-Mock knobs (mocks.local.yaml / tests):
+Legacy mock knobs (mocks.local.yaml / tests):
   suite_id  : pretend the suite already exists (this id) — verifies + reports done.
   create_id : the id the create should "return" (skip the live create).
   existing  : id of an already-present same-named suite the name-scan should "find".
@@ -35,7 +26,8 @@ from steps.build_verify._common import valid_id
 from orchestrator.authority import OwnStepData, WriteOperation
 
 EVIDENCE = (OwnStepData(),)
-WRITES = (WriteOperation.CREATE_AUTH_QUERY_SUITE,)
+WRITES = (WriteOperation.CREATE_AUTH_QUERY_SUITE, WriteOperation.CREATE_AUTH_SUITE,
+          WriteOperation.ENSURE_AUTH_MONTHLY)
 ID = "clone_plans_auth"
 KIND = "agent"
 EFFECT_MODE = "transactional"
@@ -45,6 +37,10 @@ EFFECT_RECOVERY = "frozen"
 def prepare_effect(context):
     execution = context.evidence.step("bug_bash", ID).execution or {}
     if isinstance(execution.get("effect_input"), dict):
+        if (getattr(context.parameters, "layout", "auth-manual-automated-v1")
+                == "auth-manual-automated-monthly-v2"
+                and execution["effect_input"].get("layout") != "auth-manual-automated-monthly-v2"):
+            return Blocked("Historical frozen layout cannot be amended to Monthly v2 by replay.")
         return dict(execution["effect_input"])
     fail = context.input("fail", MISSING)
     if fail is not MISSING:
@@ -61,27 +57,66 @@ def prepare_effect(context):
         name = T.auth_suite_name(ccd.isoformat())
     if not isinstance(name, str) or not name.strip() or name != name.strip():
         return Blocked("clone_plans_auth: suite name must be nonblank text without surrounding whitespace.")
-    return {
+    identity = {
         "release": context.release.release_id,
         "org": T.ORG,
         "project": T.PROJECT,
         "plan_id": T.AUTH_PLAN,
         "parent_suite_id": T.AUTH_ROOT_SUITE,
         "name": name,
-        "query": T.auth_bugbash_query(),
     }
+    data = context.evidence.step("bug_bash", ID).data or {}
+    from tools import auth_partition as A
+    from . import auth_categories
+    try:
+        categories = A.is_partition(data)
+    except ValueError as exc:
+        return Blocked(f"clone_plans_auth: {exc}")
+    if not categories and ("suite_id" in data or "creation" in data):
+        if getattr(context.parameters, "layout", A.LAYOUT) != A.LAYOUT:
+            return Blocked("Historical Authenticator target cannot be amended to Monthly v2 by replay.")
+        return {**identity, "query": T.auth_bugbash_query()}
+    return auth_categories.prepare(context, identity, layout=getattr(context.parameters, "layout", A.LAYOUT))
 
 
 def execute(context: StepContext):
-    return _build(
-        context, allow_create=True, frozen=thaw(context.effect.execution["effect_input"])
-    )
+    return _dispatch(context, allow_create=True)
 
 
 def reconcile(context: StepContext):
-    return _build(
-        context, allow_create=False, frozen=thaw(context.effect.execution["effect_input"])
-    )
+    return _dispatch(context, allow_create=False)
+
+
+def _effect_input(execution):
+    frozen = thaw(execution.get("effect_input"))
+    if isinstance(frozen, dict):
+        # The engine hashes its input overrides with the operation, not the domain schema.
+        frozen.pop("__effect_mocks__", None)
+    return frozen
+
+
+def _dispatch(context, *, allow_create):
+    from . import auth_categories
+    from tools import auth_partition as A
+    frozen = _effect_input(context.effect.execution)
+    if not isinstance(frozen, dict):
+        return Blocked("clone_plans_auth: malformed frozen execution")
+    if "layout" in frozen:
+        return auth_categories.build(context, frozen)
+    if (set(frozen) != {"release", "org", "project", "plan_id", "parent_suite_id", "name", "query"}
+            or not isinstance(frozen.get("query"), str) or not frozen["query"].strip()):
+        return Blocked("clone_plans_auth: unknown/malformed legacy execution")
+    try:
+        if A.is_partition(context.recovery().step("bug_bash", ID).data):
+            return Blocked("clone_plans_auth: category data cannot use a legacy execution")
+    except ValueError as exc:
+        return Blocked(f"clone_plans_auth: {exc}")
+    return _build(context, allow_create=allow_create, frozen=frozen)
+
+
+@dataclass(frozen=True)
+class BuildParameters:
+    layout: str = "auth-manual-automated-v1"
 
 
 @dataclass(frozen=True)
@@ -89,7 +124,7 @@ class RetryParameters:
     reason: str
 
 
-PARAMETERS = {"authorize_retry": RetryParameters}
+PARAMETERS = {"build": BuildParameters, "prepare_effect": BuildParameters, "authorize_retry": RetryParameters}
 
 
 def authorize_retry(context: StepContext[RetryParameters]):
@@ -97,6 +132,9 @@ def authorize_retry(context: StepContext[RetryParameters]):
     execution = context.evidence.step("bug_bash", ID).execution
     reason = context.parameters.reason
     step = context.evidence.step("bug_bash", ID)
+    if execution and "layout" in (execution.get("effect_input") or {}):
+        from . import auth_categories
+        return auth_categories.authorize_retry(context, _effect_input(execution), reason)
     if not execution or "suite_id" in step.data:
         return RetryDecision(False, "A recorded suite must be reconciled, never recreated.")
     if not isinstance(reason, str) or not reason.strip():

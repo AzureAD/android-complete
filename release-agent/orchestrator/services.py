@@ -60,6 +60,8 @@ class TestPlanReads:
     read_point_testers: Callable[..., tuple]
     gather_progress: Callable[..., dict]
     validate_release_targets: Callable[..., None]
+    find_auth_suite: Callable[..., tuple]
+    validate_auth_suite: Callable[..., tuple]
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,9 @@ class EffectServices:
     create_lightweight_tag: Callable[..., tuple] | None = None
     ensure_broker_plan: Callable[..., tuple] | None = None
     create_auth_query_suite: Callable[..., tuple] | None = None
+    create_auth_suite: Callable[..., tuple] | None = None
+    ensure_auth_monthly: Callable[..., tuple] | None = None
+    fill_auth_monthly: Callable[..., tuple] | None = None
     fill_auth_ui_results: Callable[..., tuple] | None = None
     fill_ui_automation_results: Callable[..., tuple] | None = None
     set_assigned_to: Callable[..., tuple] | None = None

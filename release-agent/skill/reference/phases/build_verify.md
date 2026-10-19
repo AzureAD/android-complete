@@ -174,7 +174,7 @@ historical aggregate-only captures require refresh, not silent migration. Redisc
 invalidates old Auth evidence while a new APK/test build is still pending.
 
 **Firebase Test Lab - Monthly UI Tests intentionally has NO test-plan case map.**
-This is valid report-only evidence, not a reason to create cases, force mappings or
+This is valid report-only canonical evidence, not authority for Phase-2 case creation, forced mappings or
 block merely for unmapped coverage. Keep every failure by name and source link in the
 standard HTML/plain/CLI report and existing release-owner `ui_failures` reminder.
 Do not mark investigations complete or send outside the existing lifecycle.
@@ -200,7 +200,7 @@ and mapped case points are not interchangeable. Monthly failures never enter Bro
 `bug_bash.ui_test_status` projects only `pipeline_runs.rcs[-1]`. NEW source-v4 uses
 `tools.broker_failure_triage`: reconciled FAILURES ONLY from BOTH complete MRWP
 all-category snapshots. Conditional hierarchy is Automation Failure Triage →
-ECS/Local → UI Automation, Instrumented Tests, Unit Tests, Lab API, Native Auth E2E
+ECS/Local → UI Automation, Stress Tests, Instrumented Tests, Unit Tests, Lab API, Native Auth E2E
 and/or Other UI Automation; no empty categories/flights/root. Passing/NA/recovered
 scenarios stay in Phase2 evidence/reports, not tracker cases. No failures means
 manual-only. Exact scenario title/parameters/suite/API/flight and true build/run/
@@ -214,6 +214,20 @@ older matrix resources keep their original contract. Retain resolved history and
 explicit current source-outcome proof. RC/build/new-failure changes require a new
 reviewed source before writes; never auto-migrate any existing plan/pinned workflow.
 The legacy `project_mrwp_ui_results` helper remains for historical matrix resources.
+New Authenticator release folders separately partition the curated bug-bash cases
+into Manual Tests and Automated Tests using the verified case IDs mapped from this
+captured current-RC Authenticator evidence. Classification does not use ADO
+Automation Status or a generic Automated tag. The clone freezes RC/APK/test-build
+identities and the mapped set; changed sources hold rather than move cases silently.
+Only the automated child receives canonical E2E fills. Historical/v1 Monthly coverage
+remains report-only. Explicit fresh `auth-manual-automated-monthly-v2` layouts additionally
+own a STATIC `Monthly UI Failure Triage` sibling, containing only initially unresolved
+distinct failed scenarios after exact-title retries; zero failures creates no folder.
+These are release-owned human investigations, never canonical automation mappings.
+P3S3 alone fills their exact bound points and attempts failed-point Tester assignment;
+manual resolutions and acknowledged histories survive retries. New pass/NA/recovered
+cases are never created. Old/frozen/completed layouts cannot be amended by replay.
+This split does not change either gate or any canonical case ID.
 Do not refetch MRWP results in Phase 3, merge historical
 RCs, or recompute retry verdicts. Missing/incomplete evidence, a stale `count_basis`,
 or mismatched summary `build_id`/MRWP `run_id` blocks before **any** plan/assignment write:
@@ -313,7 +327,8 @@ display exactly two decimals; gate calculations still use unrounded ratios.
     1. Open the linked Authenticator ECS UI-test run and inspect the failing Firebase
        suite(s), failing titles and source links shown in the Authenticator ECS card.
        UIAutomator E2E below 90% is the usual gate hold. Monthly UI failures are not
-       mapped to ADO test-plan cases today, so do not create or force mappings for them;
+       canonically mapped to ADO test-plan cases; never force such mappings. Fresh
+       explicitly selected Monthly-v2 layouts may separately own failure investigations;
        still investigate the source failures by name and source link.
     2. If the owner judges the failures flaky or infrastructure-related, re-run the
        post-build Firebase UI tests for the captured Authenticator build. After the

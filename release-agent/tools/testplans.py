@@ -16,12 +16,12 @@ Two DIFFERENT release procedures, per the team docs:
       original flat master-case matrix; they are never silently migrated.
       Doc: eng.ms/.../internal-release-checklist/test-plans
 
-  * AUTHENTICATOR — CREATE a new query-based (dynamic) test suite under the standing
-      "MSAuthenticator Test Passes" plan (714514 / rootSuite 714515), named after the
-      release "Android release/MM/DD/YYYY", whose WIQL selects the Android bug-bash test
-      cases (tag 'Android' + 'ReleaseBugBash', not Closed — matches the current prod suite
-      3728419 "Android release/08/13/2026"). We STOP after creating the suite — assigning
-      testers is a later, manual step.
+  * AUTHENTICATOR — create a static "Android release/MM/DD/YYYY" parent under standing
+      plan 714514/root 714515, with direct Manual Tests and Automated Tests query children.
+      Both preserve the curated Android/ReleaseBugBash/non-Closed filters and reference
+      originals; the captured current-RC mapped-case set partitions them. All three
+      explicitly inherit parent configurations without pins. Historical executions keep their
+      original creation, validation and recovery helpers.
       Doc: IdentityWiki page 33580 (How to make test suite for bug bash).
 
 Provider operations use tools.pipelines helpers and return (ok, value, detail).
@@ -161,6 +161,8 @@ def get_suite(plan_id, suite_id, timeout=60, *, org=ORG, project=PROJECT):
             "suiteType": j.get("suiteType"),
             "parentSuite": j.get("parentSuite"),
             "queryString": j.get("queryString"),
+            "inheritDefaultConfigurations": j.get("inheritDefaultConfigurations"),
+            "defaultConfigurations": j.get("defaultConfigurations"),
         },
         "",
     )
@@ -186,7 +188,14 @@ def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
 def _normalized_query(value):
     import re
     # Normalize layout only; whitespace inside quoted WIQL literals is significant.
-    return " ".join(re.findall(r"""'(?:''|[^'])*'|"(?:\"\"|[^"])*"|[^'"\s]+""", value or ""))
+    tokens = re.findall(r"""'(?:''|[^'])*'|"(?:\"\"|[^"])*"|[^'"\s]+""", value or "")
+    for index in range(len(tokens) - 2):
+        # ADO serializes [System.Id] NOT IN as NOT [System.Id] IN.
+        if (tokens[index].casefold() == "not"
+                and tokens[index + 1].casefold() == "[system.id]"
+                and tokens[index + 2].casefold() == "in"):
+            tokens[index], tokens[index + 1] = tokens[index + 1], tokens[index]
+    return " ".join(tokens)
 
 
 def _auth_suite_input_error(name, query, plan_id, parent_suite_id, suite_id=None):
@@ -308,6 +317,85 @@ def auth_suite_create_definitely_absent(detail):
         or text.startswith("AUTH: HTTP ")
         or text.startswith(("HTTP 400", "HTTP 404", "HTTP 409"))
     )
+
+
+def validate_auth_suite(suite_id, name, query, timeout=90, *, suite_type="dynamicTestSuite",
+                        org=ORG, project=PROJECT, plan_id=AUTH_PLAN, parent_suite_id=AUTH_ROOT_SUITE):
+    """Exact category identity and inherited configurations for parent and children."""
+    if suite_type == "dynamicTestSuite":
+        ok, info, detail = validate_auth_query_suite(
+            suite_id, name, query, timeout, org=org, project=project,
+            plan_id=plan_id, parent_suite_id=parent_suite_id)
+        if ok and info["name"] != name:
+            return False, info, "Authenticator category name changed"
+        if ok and info.get("inheritDefaultConfigurations") is not True:
+            return False, info, "Authenticator category must inherit default configurations"
+        return ok, info, detail
+    if (suite_type != "staticTestSuite" or query is not None
+            or _auth_suite_input_error(name, "static", plan_id, parent_suite_id, suite_id)
+            or suite_id is None):
+        return False, None, "Invalid Authenticator static-suite identity"
+    ok, info, detail = get_suite(plan_id, suite_id, timeout, org=org, project=project)
+    if (not ok or not isinstance(info, dict) or str(info.get("id")) != str(suite_id)
+            or info.get("name") != name or info.get("suiteType") != suite_type
+            or not isinstance(info.get("parentSuite"), dict)
+            or str(info["parentSuite"].get("id")) != str(parent_suite_id)
+            or info.get("queryString") not in (None, "")):
+        return False, info, detail or "Authenticator static-suite identity mismatch"
+    if info.get("inheritDefaultConfigurations") is not True:
+        return False, info, "Authenticator category must inherit default configurations"
+    return True, info, ""
+
+
+def find_auth_suite(name, query, timeout=90, *, suite_type="dynamicTestSuite",
+                    org=ORG, project=PROJECT, plan_id=AUTH_PLAN, parent_suite_id=AUTH_ROOT_SUITE):
+    """Exhaustive duplicate discovery; never adopt a dynamic suite as a parent."""
+    if (_auth_suite_input_error(name, query if query is not None else "static", plan_id, parent_suite_id)
+            or suite_type not in ("staticTestSuite", "dynamicTestSuite")
+            or suite_type == "staticTestSuite" and query is not None):
+        return False, None, "Invalid Authenticator category request"
+    ok, rows, detail = P._ado_rest_get_all(
+        f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites?{_API}", timeout)
+    if not ok:
+        return False, None, detail
+    from tools.pipelines.tests_results import _positive_test_id
+    if (not isinstance(rows, list) or any(not isinstance(row, dict)
+            or not isinstance(row.get("name"), str)
+            or not _positive_test_id(row.get("id"))
+            or row.get("parentSuite") is not None and not isinstance(row["parentSuite"], dict)
+            or isinstance(row.get("parentSuite"), dict)
+            and not _positive_test_id(row["parentSuite"].get("id"))
+            for row in rows)):
+        return False, None, "Malformed Authenticator suite discovery"
+    matches = [row for row in rows if row["name"].strip().casefold() == name.strip().casefold()
+               and str((row.get("parentSuite") or {}).get("id")) == str(parent_suite_id)]
+    if len(matches) > 1:
+        return False, None, "Multiple same-named Authenticator category suites"
+    if not matches:
+        return True, None, ""
+    return validate_auth_suite(matches[0].get("id"), name, query, timeout, suite_type=suite_type,
+                               org=org, project=project, plan_id=plan_id, parent_suite_id=parent_suite_id)
+
+
+def create_auth_suite(name, query, timeout=90, *, suite_type="dynamicTestSuite",
+                      org=ORG, project=PROJECT, plan_id=AUTH_PLAN, parent_suite_id=AUTH_ROOT_SUITE):
+    """Create only a suite referencing existing cases, inheriting parent configurations."""
+    if (suite_type not in ("staticTestSuite", "dynamicTestSuite")
+            or suite_type == "staticTestSuite" and query is not None
+            or _auth_suite_input_error(name, query if suite_type == "dynamicTestSuite" else "static",
+                                       plan_id, parent_suite_id)):
+        return False, None, "Invalid Authenticator category request"
+    body = {"suiteType": suite_type, "name": name, "parentSuite": {"id": parent_suite_id},
+            "inheritDefaultConfigurations": True}
+    if suite_type == "dynamicTestSuite":
+        body["queryString"] = query
+    ok, row, detail = P._ado_rest_send(
+        f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites?{_API}", "POST", body, timeout)
+    from tools.pipelines.tests_results import _positive_test_id
+    sid = row.get("id") if isinstance(row, dict) else None
+    if not ok or not _positive_test_id(sid):
+        return False, None, detail or "suite create returned no id"
+    return True, int(sid), ""
 
 
 # ---------------------------------------------------------------- writes
@@ -797,6 +885,7 @@ def fill_auth_ui_results(
     org=ORG,
     project=PROJECT,
     prior_points=None,
+    target=None,
 ):
     """Fill the Authenticator bug-bash suite's points from per-case AUTOMATED outcomes
     ({case_id: 'Passed'|'Failed'} — supplied by the ui_test_status mapping owner).
@@ -806,15 +895,38 @@ def fill_auth_ui_results(
     UNTOUCHED (it stays pending for a manual tester). Passed -> 'Passed'; Failed -> 'Failed'.
     Returns (ok, summary, detail) where summary = {points_total, set_passed, set_failed,
     failed_case_ids} — `failed_case_ids` is what the step reassigns to the release owner."""
+    if target is not None:
+        from tools import auth_partition as A
+        try:
+            A.validate_target(target)
+            if target["plan_id"] != int(plan_id) or target["suite_id"] != int(suite_id):
+                raise ValueError("Authenticator automated destination changed")
+            if not set(map(int, case_outcomes)) <= set(target["classification"]["mapped_case_ids"]):
+                raise ValueError("Authenticator fill escaped frozen mapping")
+        except (ValueError, TypeError) as exc:
+            return False, None, str(exc)
     outcomes = {int(k): v for k, v in (case_outcomes or {}).items()}
     okp, pts, dp = P._ado_rest_get_all(
         f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points?api-version=5.0",
         timeout)
     if not okp:
         return (False, None, dp)
-    error = _point_validation_error(pts, require_config=False)
+    error = _point_validation_error(pts, require_config=target is not None)
     if error:
         return False, None, error
+    if target is not None and any(int(p["testCase"]["id"]) not in
+                                 target["classification"]["mapped_case_ids"] for p in pts):
+        return False, None, "Authenticator automated category contains an unmapped case"
+    if target is not None and prior_points:
+        current = {int(p["id"]): p for p in pts}
+        if (not isinstance(prior_points, list) or any(
+                not isinstance(old, dict)
+                or any(type(old.get(key)) is not int for key in ("point_id", "case_id", "config_id"))
+                or old.get("point_id") not in current
+                or old.get("case_id") != int(current[old["point_id"]]["testCase"]["id"])
+                or old.get("config_id") != int(current[old["point_id"]]["configuration"]["id"])
+                for old in prior_points)):
+            return False, None, "Acknowledged Authenticator point case/configuration disappeared or changed"
     buckets = {"Passed": [], "Failed": []}
     failed_cases = set()
     matched, untouched = set(), []
@@ -828,13 +940,14 @@ def fill_auth_ui_results(
         buckets[oc].append(p.get("id"))
         if oc == "Failed":
             failed_cases.add(cid)
-    summary = {"target": {"plan_id": int(plan_id), "suite_id": int(suite_id)},
+    summary = {"target": target or {"plan_id": int(plan_id), "suite_id": int(suite_id)},
                "applied_points": [], "points_total": len(pts), "set_passed": 0, "set_failed": 0,
                "untouched_points": untouched,
                "unmatched_verdicts": [{"case_id": cid, "verdict": outcomes[cid]}
                                       for cid in sorted(outcomes) if cid not in matched],
                "failed_case_ids": []}
-    desired = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]), "outcome": outcome}
+    desired = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]), "outcome": outcome,
+                **({"config_id": int(p["configuration"]["id"])} if target is not None else {})}
                for outcome, ids in buckets.items() for p in pts if p["id"] in ids]
     reused, error = _preserved_result_check(pts, desired, prior_points)
     if error:
@@ -848,7 +961,8 @@ def fill_auth_ui_results(
         summary[count] = sum(row["outcome"] == outcome for row in reused)
         point_ids = [pid for pid in point_ids if int(pid) not in reused_ids]
         if point_ids:
-            batch = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]), "outcome": outcome}
+            batch = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]), "outcome": outcome,
+                      **({"config_id": int(p["configuration"]["id"])} if target is not None else {})}
                      for p in pts if p["id"] in point_ids]
             oko, do = _set_points_outcome(
                 plan_id,

@@ -1,14 +1,261 @@
 RELEASE-AGENT RESUME CONTEXT
 ==========================
-Saved: 2026-10-18, America/Los_Angeles.
+Saved: 2026-10-19, America/Los_Angeles.
 Repository: C:\repos\android-complete
 Agent root: C:\repos\android-complete\release-agent
 Branch: feature/release-agent-phase3-audit
-Previous committed baseline: cd2b6dda0b45fa1b59235e7f926efb92dd23e40e.
+Previous published baseline: 6052bf14e8092cdd22f759ba79d0638e3e9ec848.
 Checkpoint commit: the commit containing this file; resolve it with
   git log -1 --format="%H %s" -- release-agent/docs/resume-context.txt
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
+
+SAVE-PROGRESS CHECKPOINT (2026-10-19 15:32 PDT)
+--------------------------------------------
+Owner requested committing and pushing the completed local work before continuing.
+This checkpoint includes the Authenticator category split, native recovery fixes
+and explicit fresh Monthly-v2 failure tracker, with source/tests/contracts/skills.
+Runtime states, captured evidence, receipts and local preview payloads stay outside
+the commit. Resolve this checkpoint's exact hash with the git-log command above.
+Origin is https://github.com/AzureAD/android-complete.git (PUBLIC); current push
+requires explicit review of this new commit, not reuse of the earlier push consent.
+No ADO creation, result fill, assignment, release advancement or runtime adoption
+is authorized by saving progress. Continue with the fresh-v2 preview review below.
+
+LATEST LOCAL CHECKPOINT: MONTHLY FAILURE TRACKER IMPLEMENTED (2026-10-19)
+-----------------------------------------------------------------------
+Owner selected FAILED SCENARIOS ONLY at14:12PDT. Local implementation and focused
+offline proof are complete; NO ADO writes, M365 sends, pipelines, release-state
+mutation/adoption, commit or push. Earlier Manual/Automated dirty work is preserved.
+
+Explicit fresh layout auth-manual-automated-monthly-v2 adds STATIC sibling leaf
+Monthly UI Failure Triage only when initial validated unresolved Monthly failures
+remain after exact-title retries. Manual/Automated children and canonical E2E IDs
+are unchanged. Default/frozen v1 recovery remains report-only; never auto-migrate.
+Each distinct failed scenario gets one NEW release-owned investigation, exact
+title/source-suite/release/RC/APK/test-build/run/result/attempt identities and links.
+ReleaseMonthlyInvestigation tag deliberately omits ReleaseBugBash and automation
+fields. No initial passing/NA/recovered cases or empty folder. Typed clone effects
+reuse durable Broker intent-before-POST/ack-before-readback/member proof.
+P3S3 alone fills exact points and publishes complete result.monthly; retains manual
+resolutions and acknowledged history, and assigns only live Failed point Testers.
+Downstream distribution/progress/invitation/rollout consume completed current fill
+and actual live owned points. Owner assignment errors stay visible/nonblocking.
+Source/target/config/point drift blocks before fills. Unknown creates/membership
+never blindly replay or adopt by name; acknowledged IDs recover by exact readback.
+
+Real immutable RC2 proof: Monthly376executions=359passed+17failed(95.5%),
+367distinct reconciled scenarios,17unresolved failures/0recovered; all17single
+attempt/run695864941 with distinct resultIDs. E2E26canonical cases cover29scenarios,
+22passed/7failed; gate22/29=75.9%, not a26case denominator. Gates unchanged.
+Validated facts expose optional attempts only to the owned source builder;
+canonical/report projection stays unchanged. Native defaultConfigurations is
+retained for exact inherited config proof, never guessed.
+
+Final focused validation:685passed in70.27s (wall71.61s), including actual capture
+test with RELEASE_AGENT_MONTHLY_CAPTURE. Earlier final producer/downstream group:
+617passed32.25s. Cumulative feature test wall~276.1s (<900s); no full-suite claim.
+Monthly provider acknowledgement is checkpointed before exact outcome readback;
+acknowledgement without actual applied outcome cannot publish a complete receipt.
+Command: python -m pytest tests\test_auth_monthly.py tests\test_auth_categories.py
+ tests\test_phase3_auth_contracts.py tests\test_phase3_results_distribution_contracts.py
+ tests\test_phase3_point_result_recovery.py tests\test_ui_result_ownership.py
+ tests\test_ui_projection.py tests\test_authority_contracts.py tests\test_bug_bash.py
+ tests\test_bugbash_broker_triage.py tests\test_bugbash_manual_progress.py
+ tests\test_bugbash_progress_counts.py tests\test_bugbash_header_links.py
+ tests\test_bugbash_invite_auth_link.py tests\test_phase3_communication_contracts.py
+ tests\test_rollout_start.py tests\test_rc_auth_failure_render.py tests\test_rc_evidence.py
+ -q -p no:cacheprovider --basetemp <unique-project-owned-dir>\pytest --maxfail=3 --tb=short
+Each run used PYTHONDONTWRITEBYTECODE=1 and unique TEMP/TMP/basetemp; owned scratch
+directories cleaned. Existing unrelated baseline findings remain unchanged.
+Parent follow-through:195passed6.89s(wall8.521s), actual capture enabled, selectors
+test_auth_monthly/test_auth_categories/test_authority_contracts. Total feature
+validation wall~284.621s/900s. Final diff check clean; no live operations.
+
+Preview/proof:
+ C:\Users\pedroro\.scout\copilot\session-state\b099e680-aeae-427e-a0f1-d571878c60d2\files\
+ newmonthly-tracker-20261019\fresh-v2-external-preview.json
+ newmonthly-tracker-20261019\captured-source-proof.json
+Product-rendered preview: standing plan714514/root714515, NEW TEST ONLY parent
+"TEST ONLY Monthly failure tracker v2 2026-10-19", unchanged dynamic queries,
+one Monthly sibling and17newcase payloads. Four prospective suite creates total;
+unresolved new-parent acknowledgement placeholders, no fabricated target IDs.
+Zero results/assignments/canonical changes/provider calls. Existing v1parent3794450
+explicitly UNCHANGED; no existing-parent amendment/adoption path is implemented.
+Exact preview file SHA256:
+8071e3626aa07d2e2f7f4888c67fc1c68a1ab2772d0356b6a8d5c9584d8fd9bf.
+Monthly source SHA256:cb3157674522be93184f9513f7b554449f3cfdb77dd39fb29e3f7d8f6e750817.
+Original Phase2source and Auth isolated state hashes rechecked unchanged:
+ f35f93bfa42623f8272ce540d067cbe439e0e987c8805d31363be13f53a7525c
+ 6f568ab04f6472566bc72b6fadbddc42f60284e2b63ee102c0b6413c90241292
+
+NEXT: owner reviews fresh-v2 scope before any provider action. Supported product
+entry is clone build/prepare --param layout=auth-manual-automated-monthly-v2 through
+normal engine eligibility/runtime-revision controls; execution is NOT a preview.
+Do not amend3794450 by replay, hand-splice independent test states, or treat
+p3s3-input-references.json as adoption. If owner requires that exact existing parent,
+a separate explicitly engine-compatible amendment/adoption feature is still needed.
+No live Monthly-v2 certification or unknown-create reset command is claimed.
+
+PRIOR CHECKPOINT: AUTHENTICATOR MANUAL / AUTOMATED SPLIT
+----------------------------------------------------------
+LATEST REQUEST (2026-10-19 14:07 PT): owner wants another folder of NEW
+release-specific tracking cases for Firebase Test Lab - Monthly UI Tests,
+similar to Broker's owned failure investigations. UIAutomator E2E already
+has canonical mapped cases; preserve them. Owner explicitly asked to checkpoint
+and compact before continuing so the conversation does not get stuck.
+Owner confirmed FAILED SCENARIOS ONLY at2026-10-19 14:12PT.
+Context reduction confirmed17.4%(160851/922000). Captured RC2 evidence validated
+through inspect_auth_ui_evidence:376source executions,359passed/17failed,
+367distinct Monthly scenarios,17unresolved failures and0recovered scenarios.
+Implement local owned Monthly failure tracker; no provider writes authorized yet.
+The request permits designing an explicit new investigation tracker, NOT
+inventing automation IDs or forcing Monthly results into existing E2E case maps.
+Captured Monthly evidence/results/source execution gate stay independent and
+unchanged. New cases should be owned only by this test/release folder, not shared
+template cases, with exact title/run/result/build provenance and durable receipts.
+Retain canonical E2E26cases/29scenarios and current Manual25cases; no ID rewrites.
+Existing owned-case creation/recovery, failure-only membership, result receipt,
+Tester/distribution/progress patterns from Broker are prior art to reuse.
+Do not run P3S3 fills or mutate existing suites before an exact preview/approval.
+Recommended future sibling leaf: Monthly UI Failure Triage under the existing
+Authenticator TEST ONLY parent; names/scope remain for owner confirmation.
+NEXT: implement with focused offline proof and prepare exact creation preview.
+Preserve P3S2 completed IDs and current uncommitted changes below.
+
+CURRENT STATUS: P3S2 LIVE TEST COMPLETE (2026-10-19).
+Owner clarified canonical IDs intentionally map multiple variants to one case,
+then requested the25manual/26automated test at12:04/12:05PT. Preserve IDs.
+The one-case-per-scenario/six-newcase proposal below is SUPERSEDED history and
+MUST NOT execute. No new Test Case work items or automation-method renames.
+
+Created TEST ONLY - Authenticator Manual Automated RC2 2026-10-18 2259:
+  plan714514; static parent3794450; Manual Tests3794454; Automated Tests3794456.
+  https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=714514&suiteId=3794450
+Actual native readback:25manual cases/points +26automated cases/points,
+disjoint and exhaustive across51curated cases. Automated26cases cover29mapped
+UIscenarios. All51points Unspecified, config84, inherited configurations true.
+No outcomes, Testers, shared case writes, later steps or normal release advance.
+Phase2gate stays22/29=75.9%; do not substitute the26case denominator.
+Broker plan3793685, Phase2source, old receipts and normal state remain unchanged.
+
+Live test exposed/corrected two adapter boundaries and one WIQL equivalence:
+- clone handler strips only engine-owned __effect_mocks__ from its PRIVATE
+  domain input before exact schema validation, preserving frozen operation hash.
+- get_suite now retains native inheritDefaultConfigurations for validation.
+- query comparison recognizes provider NOT [System.Id] IN as equivalent to
+  [System.Id] NOT IN, without altering quoted values or accepting changed IDs.
+First diagnostic failed before ANY provider write and is preserved unchanged.
+Corrected test retained the acknowledged parent/manual IDs across readback
+holds, never repeated a POST and completed only the missing child.
+Transient read projections used during owned reconciliation preserved exact
+native evidence; final readback used corrected production code with NO overrides.
+Focused follow-through144passed3.44s +235passed9.06s; no full-suite-green claim.
+The inheritance hold was NOT eventual consistency: the read projection omitted
+the field even though ADO returned true. No config PATCH or guard bypass used.
+
+Session artifacts under files\auth-categories-test-20261018-2259:
+  p3s2-readback-proof.json
+  p3s3-input-references.json (read-only references, not an adopted runnable state)
+  runs\2026-10-auth-categories-a5a98dd93670b8e4-checked\release-state.json
+Auth state SHA256:
+  6f568ab04f6472566bc72b6fadbddc42f60284e2b63ee102c0b6413c90241292.
+Earlier blocked zero-write diagnostic remains in the same root without -checked.
+Canonical P3S2 creation/queries/source proof remain frozen in creation-approval.json
+and checked-execution-authorization.json. Provider traces show3suite POSTs total.
+NEXT: owner can request P3S3 changes/testing. Do not run it automatically or
+hand-splice the distinct synthetic Broker/Auth states, adopt normal workflow,
+clear a source binding or claim the independent Authenticator HOLD is resolved.
+Source fixes changed runtime after terminal P3S2; future execution must use
+explicit reviewed compatible test setup, not implicit revision adoption.
+Changes remain local/uncommitted after published6052bf14e.
+
+SUPERSEDED MIGRATION PROPOSAL (NOT ACTIVE):
+Owner initially chose ONE ADO CASE PER RUNNABLE SCENARIO at23:18PT.
+The earlier51-case preview (25manual/26automated) is SUPERSEDED, not approved.
+Current29 UI scenarios map to26IDs because3cases each combine fresh/upgrade.
+All29source scenarios are retained; source gate remains22/29=75.9%.
+Actual original cases1579381/1579382/1579395 explicitly cover both variants
+and are shared Android/iOS. Preserve them rather than redefine their history.
+Staged migration preview proposes6NEW Android-only case records (3flows x2),
+then six source mappings and future versioned Android query scope that replaces
+the3combined IDs with6specific IDs. Expected future25manual+29automated=54.
+New staged cases deliberately lack ReleaseBugBash tags so current release
+queries are not broadened simply by creating the catalog entries.
+Fresh Phase2 evidence is required after source changes; do not relabel the old
+26-ID capture. No new scenario cases or suites have been created yet.
+Exact6case preview is session-local:
+  files\auth-scenario-migration-20261018\six-scenario-case-creation-approval.json
+  SHA548dfc54f0dee92cc3e48760df7abbb88a0df5c49e0d81ef0dc4c5b330734f97.
+FIRST next permission is only6standalone case creations, not source edits,
+suite creation, test launches, result writes, assignments, commits or pushes.
+Source definitions are in separate PRIVATE checkout C:\repos\android-complete\
+authenticator, under PhoneFactor\uiautomator-tests; never publish it through
+the public outer origin. No private source edits performed; preserve existing
+WalletLibrary submodule dirt. Full continuation details are in session plan.md.
+That proposal was withdrawn after clarification of the canonical case mapping.
+It is NOT a prerequisite to P3S2/P3S3 and no migration should be performed.
+
+Owner chose Manual Tests and Automated Tests, then explicitly chose Phase 2
+mapping as the classification authority on2026-10-18 at22:22PT.
+This new redesign is COMPLETE LOCALLY/UNCOMMITTED after published6052bf14e. Prior public
+push consent applied only to that commit; do not push this change implicitly.
+The category suites have now been created only in the isolated test above.
+
+NEW layout: auth-manual-automated-v1. A CCD-named STATIC release parent under
+Authenticator plan714514/root714515 has two direct DYNAMIC query children:
+Manual Tests and Automated Tests. Both remain even when empty. Existing cases
+are referenced, not copied or edited; all suites inherit parent configurations.
+Curated Android/ReleaseBugBash/area/non-Closed base filters stay unchanged.
+Automated query adds membership in the frozen verified mapped Android case-ID
+set from captured current-RC project_auth_ui_results. Manual excludes the SAME
+set. This is not AutomationStatus or a cross-platform Automated tag.
+Empty mapping: automated Id=0, manual Id>0; no invalid empty IN clause.
+Mapped NA-only cases stay automated without invented results/manual assignments.
+Firebase Monthly remains report-only; no new cases or forced mappings for it.
+RC/APK/test-build/mapped-ID drift holds; changed outcomes alone do not reclassify.
+Both independent quality gates are unchanged.
+
+Exact clone frozen input:
+  {release,org,project,plan_id,parent_suite_id,name,layout,classification,queries}
+classification:
+  {version:1,authority:phase2_android_case_mapping_v1,rc,apk_build_id,
+   test_build_id,mapped_case_ids:<sorted unique positive ints>}
+Exact clone step.data:
+  {layout,plan_id,suite_id:<STATIC parent>,suite_name,manual_suite_id,
+   automated_suite_id,classification,queries,creations}
+creations.parent/manual/automated each retain operation_key/status and acknowledged
+suite_id, plus retry provenance as required. Every intent precedes its POST and
+every acknowledged ID precedes exact readback. Uncertain creates never blindly
+repeat. Existing single-dynamic-suite identities/frozen executions stay legacy;
+never adopt a same-named legacy suite as a new static parent or migrate it.
+
+Exact new fill auth target:
+  {layout,plan_id,suite_id:<AUTOMATED child>,parent_suite_id,manual_suite_id,
+   classification,queries}
+Do not confuse clone suite_id with fill suite_id. Only Automated Tests receives
+result writes. Manual Tests is untouched. Config IDs are retained in new auth
+applied-point receipts. Consumers use completed fill targets and live category
+points, not fresh interpretations of raw Phase2 data. Manual work and exact
+failed-automation owner triage remain visible without duplication. Invitations
+link the parent and bind every category/source identity for stale-review safety.
+
+Implementation modules: tools\auth_partition.py and
+steps\bug_bash\auth_categories.py, plus clone/fill/binding/distribution/progress/
+invitation/rollout links and typed handler/service authority. New focused proof
+is tests\test_auth_categories.py. Existing legacy recovery stays separate.
+New parent/child POSTs explicitly set inheritDefaultConfigurations:true and
+readback requires literal True; false/missing/malformed/ignored values hold
+with acknowledged IDs preserved. No config PATCH or legacy behavior change.
+Final combined new/legacy/downstream/help435passed19.42s. Total measured test
+time261.619s including agent failed runs and baseline reproduction (<900s).
+One failed_suites=None test_tools baseline independently reproduced on untouched
+HEAD remains unrelated; a broad-run Windows replacement access error passed
+its targeted rerun. Do not claim the whole project suite is green.
+Normal release, old receipts, captured Phase2 and completed step1 state retain
+their protected fingerprints. Docs/step-info/installed skill match this contract.
+P3S2's exact scope was approved and executed as recorded above. Future external
+writes still need their own review; do not replay creation or broaden approval.
 
 USER REQUEST / STOPPING POINT
 ----------------------------
@@ -131,17 +378,17 @@ Credential-pattern inspection of43selected files found no matching credential
 patterns. Runtime state, receipts, personal mocks and caches are excluded.
 
 origin is https://github.com/AzureAD/android-complete.git and was confirmed PUBLIC.
-Its feature/release-agent-phase3-audit branch pointed to cd2b6dda0 at inspection.
-This change contains internal ADO references and release-audit details.
-At this checkpoint, local commit is requested; outward push is paused pending
-an explicit public-content confirmation or an approved private destination.
-Never infer that a local commit was pushed; inspect remote branch identity.
+Owner explicitly confirmed the internal-content warning and public push of
+6052bf14e on2026-10-18 at22:11PT. git ls-remote confirmed that exact branch tip.
+The NEW Authenticator redesign described above is not committed or pushed and
+needs fresh authorization. This repository contains internal release/audit data.
+Never infer that a later local commit was pushed; inspect remote branch identity.
 Never force-push, publish runtime receipts/mocks/secrets, or broaden recipients.
 
 RESUMING
 --------
 Read this file, git status, and the latest commit/remote state first.
-The user has not authorized Phase3 step2 or result filling. If they request
+The user has authorized local step2 redesign, not live creation or result filling. If they request
 continuation, confirm whether they mean the isolated test or the normal release,
 then inspect its exact supported workflow/source prerequisites. Do not auto-adopt
 the existing release or claim its Phase2 HOLD is cleared.

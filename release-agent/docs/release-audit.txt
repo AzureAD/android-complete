@@ -1,6 +1,6 @@
 RELEASE-AGENT: STAGED AUDIT AND RESUME RECORD
 ==========================================
-Updated: 2026-10-18 (America/Los_Angeles)
+Updated: 2026-10-19 (America/Los_Angeles)
 Project: C:\repos\android-complete\release-agent
 Baseline commit: a1390093aa6ce1b84686906fa68197c651aa31be
 config\phases.yaml SHA256:
@@ -60,6 +60,135 @@ not a new persisted runtime schema.
 
 CURRENT CHECKPOINT
 ------------------
+MONTHLY FAILED-SCENARIO TRACKER IMPLEMENTED LOCALLY; NO PROVIDER EXECUTION.
+  Owner authorization at2026-10-19 14:12PDT was FAILED SCENARIOS ONLY, not ADO
+  writes. Explicit fresh auth-manual-automated-monthly-v2 creates a STATIC sibling
+  Monthly UI Failure Triage iff initial unresolved failures; one NEW owned case per
+  exact reconciled scenario. Dedicated tag/provenance/intent/ack/member/config/point
+  proof; never ReleaseBugBash, canonical automation IDs or shared-case assignment.
+  P3S3 typed fill/publication retains manual results/history and uses failed-point
+  Tester assignment only. Distribution/progress/invitation/rollout use complete
+  current receipts and actual owned points. Unknown creates never replay/adopt.
+  Default/frozen v1 behavior/recovery remains intact. Existing completed parent
+  3794450 is UNCHANGED; no blind replay, state hand-splice or amendment/adoption.
+  Supported future path is a separately reviewed fresh v2 clone via normal engine
+  eligibility/runtime-revision controls. Existing-parent amendment is not supplied.
+  Actual RC2source:376Monthlyexecutions/359passed/17failed,367distinct/17unresolved/
+  0recovered,run695864941;17distinct resultIDs. E2E26cases/29scenarios/22passed/
+  7failed and22/29=75.9% gate unchanged. No source case maps or denominator changes.
+  Product-rendered session previews under:
+   C:\Users\pedroro\.scout\copilot\session-state\b099e680-aeae-427e-a0f1-d571878c60d2\files\
+   newmonthly-tracker-20261019\fresh-v2-external-preview.json
+   newmonthly-tracker-20261019\captured-source-proof.json
+  Fresh preview has4suitecreates (newparent/manual/automated/Monthly),17newcase
+  payloads, explicit unresolved acknowledgement placeholders,0results/assignments/
+  canonical changes/provider calls. Plan/root714514/714515;3794450unchanged.
+  Final focused grouped pytest:685passed70.27s, including exact immutable capture;
+  prior producer/downstream group617passed32.25s. Total feature wall~276.1s(<900).
+  Monthly provider ACK is checkpointed before exact outcome readback. ACK-only
+  responses cannot publish complete fill; uncertain receipt/history survives.
+  Commands/environment are in newest resume-context checkpoint; no full-suite claim.
+  Owned scratch directories cleaned. Original Phase2/Auth isolated hashes rechecked:
+   f35f93bfa42623f8272ce540d067cbe439e0e987c8805d31363be13f53a7525c
+   6f568ab04f6472566bc72b6fadbddc42f60284e2b63ee102c0b6413c90241292
+  Source/tests/contracts/help/skills (installed skill surgical sync) are updated
+  and uncommitted. No ADO/M365/pipelines/state mutation/adoption/commit/push.
+  Next: owner reviews fresh-v2 scope. Do not advance real P3S3 or mistake offline
+  proof for live certification; earlier live P3S2 checkpoint remains history below.
+
+PRIOR LIVE CHECKPOINT (PRESERVED):
+P3S2 LIVE ISOLATED TEST COMPLETE; STOP BEFORE P3S3 (2026-10-19).
+  Owner clarified canonical case IDs intentionally cover scenario variants,
+  then explicitly requested the25manual/26automated test at12:04/12:05PT.
+  No new Test Case IDs or source method renames were needed or performed.
+  Created3suites only under Authenticator plan714514/root714515:
+    TEST ONLY parent3794450; Manual Tests3794454; Automated Tests3794456.
+  Native production readback verified25manual points/cases and26automated
+  points/cases covering29mappedUIscenarios; disjoint/exhaustive51curatedcases.
+  All points Unspecified/config84, all3suites inherit configurations. No result
+  fill, Testers, sharedcase edits, invitations or later step. Authgate22/29HOLD.
+  Normalrelease, originalreceipts,16:03Phase2capture and Brokerplan3793685
+  test-state fingerprints remain unchanged.
+  First zero-write diagnostic exposed engine __effect_mocks__ in exact domain
+  validation; handler now removes only that reserved metadata from its private
+  view while engine's operation-key/ownership remain intact. Real-engine
+  named-input interrupted/readback/recovery regression covers this boundary.
+  Later acknowledged parent readback held because get_suite omitted native
+  inheritance; corrected projection now carries the exact provider flag.
+  ADO serializes Id NOT IN as NOT Id IN; token-level query normalization now
+  accepts only that equivalent Id predicate while preserving quoted literals.
+  Product-native adapter tests cover changedID/falseinherit/quotedvalue negatives.
+  The original zero-write diagnostic is retained; corrected owning execution
+  reconciled actual parent/manual IDs and posted only missing children. No
+  clearing/repeating create, config PATCH, runtime adoption or newcase migration.
+  Final independent readback used corrected production code with no overrides.
+  Targeted regressions144passed3.44s plus235passed9.06s; no new tools or limits.
+  Session artifacts: files\auth-categories-test-20261018-2259\
+    p3s2-readback-proof.json; p3s3-input-references.json; runs\
+    2026-10-auth-categories-a5a98dd93670b8e4-checked\release-state.json.
+  AuthstateSHA6f568ab04f6472566bc72b6fadbddc42f60284e2b63ee102c0b6413c90241292.
+  NEXT: discuss owner-requestedP3S3 changes/testing using saved source/target
+  references. Do not hand-splice synthetic identities, adopt normal state or
+  automatically execute fill/assignment. Current source/doc edits uncommitted;
+  no further push is authorized by previous6052bf14e public publication.
+
+SUPERSEDED CASE-ID MIGRATION PROPOSAL (historical, not execution permission)
+-------------------------------------------------------------------------
+ONE CASE PER SCENARIO STANDARD PROPOSED; MIGRATION PREVIEW ONLY (2026-10-18).
+  Owner rejected the confusing29source-scenario/26ADOcase count and chose
+  one ADOcase per runnable scenario at23:18PT. No scenario was previously
+  dropped: three IDs each have freshInstall+upgrade titles; all29are mapped.
+  Actual legacy cases1579381/1579382/1579395 explicitly combine both variants
+  and are shared Android/iOS. Safe proposal is6newAndroid-specific cases,
+  preserved originals, six automation mappings, and a new versioned Android
+  queryscope replacing those3IDs with6. Staged cases must initially lack
+  ReleaseBugBash tags to avoid broadening active legacy dynamic suites.
+  Future expected curated54=25manual+29automated, after matching NEW Phase2
+  capture. Do not rewrite old evidence or use26case counts as the source gate.
+  Exact6case creation preview exists in session files\auth-scenario-migration-
+  20261018; review SHA548dfc54...734f97. It is not yet approved or executed.
+  The prior7218b545...26case suite preview is superseded and MUST NOT execute.
+  No ADOcase/suite writes, private Authenticator source edits, new builds,
+  commits or pushes in this migration. See resume-context.txt for safe handoff.
+
+AUTHENTICATOR MANUAL / AUTOMATED REDESIGN COMPLETE LOCALLY (2026-10-18).
+  Owner chose the two category names, then explicitly selected verified Phase2
+  Android case mapping at22:22PT, not ADO AutomationStatus or generic tags.
+  New layout auth-manual-automated-v1: static CCD-named release parent with
+  Manual Tests and Automated Tests dynamic children under standing plan/root.
+  Base curated query filters stay unchanged; mapped current-RC case IDs are
+  included/excluded by the two disjoint/exhaustive queries. Both categories
+  remain even when empty. Monthly stays report-only; shared cases/gates unchanged.
+  Exact data paths/types/recovery/consumers are in bug-bash-contracts section2
+  and resume-context.txt ACTIVE LOCAL CHANGE. Clone suite_id means STATIC
+  parent; fill auth target suite_id means AUTOMATED child, with typed parent/
+  manual identities, classification and queries. Do not conflate these IDs.
+  Each create is transactional/frozen and durably acknowledged before readback;
+  unknown results retain ownership. Old single-query-suite recovery stays legacy.
+  Only automated child gets results; actual manual workload and exact failed
+  automated point investigations flow through distribution/progress/invitations.
+  No ADO category creation, normal release/old receipt/Phase2/step1 state change,
+  commit or push for this redesign. Published6052bf14e is the clean baseline.
+  Parent review found implicit/unverified inheritance; new parent and both child
+  POSTs now explicitly request inheritDefaultConfigurations:true, with literal
+  boolean-True readback required. Legacy creator/validator remain unchanged.
+  New negative proofs cover missing/false/malformed/ignored inheritance,
+  acknowledged IDs retained on failure and no duplicate POST on recovery.
+  Inheritance follow-through142passed4.478s after24bad fixture-field assertions
+  were corrected; no production guard was weakened. Agent cumulative242.199s.
+  Parent final combined new/legacy/fill/distribution/progress/human/authority/help
+  selection435passed19.42s. Total measured pytest261.619s/900s, including reds
+  and baseline reproduction. Broader912passed/2failures are NOT all-green:
+  one independent untouched-HEAD failed_suites=None baseline, one transient
+  Windows replacement access error passed its targeted rerun. Existing other
+  baseline findings remain separate, not silently fixed.
+  All existing protected normal/Phase2/step1 state fingerprints stayed unchanged.
+  Documentation, exact field contracts, step-info and repository/installed skill
+  are synchronized. New source/test/doc changes remain local/uncommitted.
+  NEXT: wait for an owner-requested live step2 test, then show its exact NEW
+  TEST ONLY parent/child payloads and captured classification for approval.
+  Do not create, adopt a pinned workflow, commit or push automatically.
+
 SAVE / LOCAL COMMIT REQUEST (2026-10-18 22:01 PT).
   Owner accepted plan3793685 and requested save, commit, push and durable context.
   Concise entry point: docs\resume-context.txt. The test outcome below is unchanged.
