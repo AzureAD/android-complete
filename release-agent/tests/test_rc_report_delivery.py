@@ -169,7 +169,7 @@ def test_report_notification_keeps_provider_rates_separate(ready):
     outcome = N.build(orch.context("build_verify", N.ID))
     assert outcome.kind == "needs_skill"
     message = outcome.payload["message"]
-    assert "MRWP ECS: 80.0% pass; MRWP Local: 100.0% pass" in message
+    assert "MRWP ECS: 80.0% pass (UI+Stress); MRWP Local: 100.0% pass (UI+Stress)" in message
     assert "Authenticator ECS: pass (97.0% lowest-suite pass)" in message
     assert "MRWP UI:" not in message
     assert R.rc_ui_gate(R.rc_report_model(context(st)))["pass_pct"] == 90.0

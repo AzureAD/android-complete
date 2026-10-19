@@ -538,10 +538,46 @@ No new release-state root field, assignment ledger or replacement runner.
 
 resources.broker_test_plan:
   Producer: clone_plans_broker through BrokerResource. Durable release-owned
-  identity/source/status/plan_id/ui_suite_id plus selection/retry history.
+  identity/source/status/plan_id plus versioned suite IDs and selection/retry history.
   Why stored: non-idempotent creation ownership, reconciliation and exact target
   binding for fill/distribution/invite/progress. Keep for the release lifetime;
   invalidation/reopen never authorizes deletion or blind replacement.
+  Versioned source-v3/v4 resources additionally persist the complete exact scenario
+  projection (including all-category failure triage), per-create operations with
+  immutable payload/full SHA256/status/actual IDs, suite role IDs and scenario
+  bindings. Owned scenario IDs never replace original/source identities.
+  Every create intent and receipt is durable before the next provider request.
+  Original schema-less matrix resources remain readable without auto-migration.
+  RC/source changes require explicit review; resolved tracked triage stays present.
+  No clearing ownership, guessed create discovery, or absence-based versioned retry.
+  New source-v4 uses layout=mrwp_failure_triage_by_flight and its own v4 marker:
+    scenario_projection.inventory=[]; triage contains initial Failed MRWP scenarios.
+    plan_root_id is the actual stable plan root. There is NO v4 ui_suite_id.
+    automation={layout,anchor:{kind:"plan_root",suite_id},root_suite_id,flights}.
+    automation.root_suite_id is the conditional Automation Failure Triage subtree,
+      null when no failures; flights maps ECS/Local to their actual suite/category IDs.
+    suites roles include broker/native and only applicable triage, flight:<flight>,
+      category:<flight>:<category>. No empty flight/category folders.
+    Clone step data records source_version/source digest/automation, not a UI ID.
+    V4 typed fill target={plan_id,layout,root_suite_id:<stable PLAN root>}; the layout/
+      anchor kind distinguishes it from the conditional automation subtree.
+    Tracked resolved rows and their original creation provenance remain immutable in
+      resources; current source observation/outcome proof belongs to fill receipts.
+    Full pass/NA/recovered evidence and gate denominators remain Phase2-owned.
+  Frozen source-v3 still uses its existing full device inventory/UI-suite contract;
+  schema-less and v3 live resources are never automatically migrated to v4.
+  The standalone isolated TEST ONLY command saves this same resource contract in
+  broker-scenario-resource.json under a separate synthetic instance/lock, plus
+  snapshot_sha256 and fill receipts. It never saves this source release-state,
+  events, resources, workflow revision or step completion.
+  Additional operation keys include config-pin:<suite>, membership:<suite>,
+  assignment-repair:<suite> and metadata-repair. Configuration/membership entries
+  retain status/digest; repair entries also retain the reviewed approval digest,
+  with the metadata payload where required. Applying is not success: exact
+  provider readback must precede applied. Retain unsettled/pending evidence and
+  recovery backups; never clear them to replay a create/PATCH. Original-case
+  canonical URL proofs are read-only and cached for validation, not saved as a
+  replacement directory/work-item database.
 
 steps["bug_bash.clone_plans_auth"].data:
   Producer: clone_plans_auth through OwnStepData. suite_id/suite_name/creation
@@ -562,6 +598,16 @@ steps["bug_bash.ui_test_status"].data:
   Why stored: prove what was actually applied, avoid overwriting manual outcomes,
   classify automation/failure workload for distribution and progress, and supply
   exact source facts to human review. Uncertain points are not replay authority.
+  Source-v3/v4 summary/result.broker includes matching mapping_version, suite_targets,
+  scenario_bindings, and applied point suite_id/scenario_key. Current binding
+  includes broker_scenarios source SHA256 and exact suite IDs. Completed results
+  must cover every scenario and retain resource-owned case/config/suite identity.
+  Both MRWP build IDs are immutable creation-source identities: even same-RC
+  build replacements require new-source review and fail before outcome PATCHes.
+  Distribution reads failure points from their recorded suites, not only the
+  main UI suite; category investigations never become balanced manual reruns.
+  V4 zero-failure receipts have empty bindings/points/suite_targets, a proven typed
+  plan-root target, and complete status; absence of evidence is never empty success.
   Retain current receipts until deliberate producer refresh; changed targets
   cannot borrow another destination's receipts. Keep human original bindings.
 

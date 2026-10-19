@@ -180,6 +180,27 @@ def _broker_points(broker_plan_id, suite_name, timeout=90):
 
 def _broker_ui_triage_points(broker_plan_id, result, timeout):
     """Read only the fill's originally failed points, preserving their case/config identity."""
+    if isinstance(result, dict) and result.get("mapping_version") in (3, 4):
+        from steps.bug_bash.ui_results import _scenario_points
+        if not isinstance(result.get("target"), dict) or str(result["target"].get("plan_id")) != str(broker_plan_id):
+            return False, None, "Scenario progress destination changed"
+        try:
+            _scenario_points(result, complete=True)
+        except ValueError as exc:
+            return False, None, str(exc)
+        collected = []
+        for sid in result["suite_targets"]:
+            points = [p for p in result["applied_points"] if p["suite_id"] == sid]
+            partial = {"target": {"plan_id": broker_plan_id, "suite_id": sid},
+                       "applied_points": points, "failed_case_ids": sorted({
+                           p["case_id"] for p in points if p["outcome"] == "Failed"})}
+            ok, rows, detail = _broker_ui_triage_points(broker_plan_id, partial, timeout)
+            if not ok:
+                return False, None, detail
+            collected.extend(rows)
+        if {int(p["case_id"]) for p in collected} != set(result["failed_case_ids"]):
+            return False, None, "Scenario failed cases do not match retained failure receipts"
+        return True, collected, ""
     if (not isinstance(result, dict) or not isinstance(result.get("target"), dict)
             or str(result["target"].get("plan_id")) != str(broker_plan_id)
             or not result["target"].get("suite_id")

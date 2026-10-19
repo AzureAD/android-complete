@@ -83,9 +83,13 @@ def ui_evidence_issues(model):
         if tests.get("count_basis") != P.MRWP_COUNT_BASIS:
             issues.append(f"MRWP {provider}: stale/unreconciled counts; refresh verification "
                           "for distinct-test pass-any evidence")
-        ui = (tests.get("categories") or {}).get("ui")
+        try:
+            ui = P.ui_stress_counts(tests)
+        except ValueError as exc:
+            issues.append(f"MRWP {provider}: invalid UI+Stress evidence ({exc})")
+            continue
         if not valid_counts(ui) or ui["total"] != ui["passed"] + ui["failed"]:
-            issues.append(f"MRWP {provider}: missing or invalid non-zero UI results")
+            issues.append(f"MRWP {provider}: missing or invalid non-zero UI+Stress results")
     return issues
 
 
@@ -130,6 +134,7 @@ def prepare_report_evidence(model):
             for suite, test in tests:
                 if test["verdict"] == "Failed":
                     failures.append({"product": "Broker", "provider": flight, "suite": suite,
+                                     "category": P.classify_test_run(suite),
                                      "title": test["title"],
                                      "links": result_links(test["attempts"], "engineering")})
             for suite in snapshot["tests"]["suites"]:
@@ -233,18 +238,19 @@ def _ui_failing_suites_summary(model, limit=6) -> str:
     suites = []
     for prov in ("ECS", "Local"):
         for s in (((model.get("mrwp") or {}).get(prov) or {}).get("failed_suites") or []):
-            if s.get("category", "ui") == "ui" and s.get("failed"):
+            if s.get("category", "ui") in ("ui", "stress") and s.get("failed"):
                 suites.append((prov, s))
     suites.sort(key=lambda ps: (-ps[1]["failed"], ps[0], ps[1]["name"]))
     if not suites:
         return ""
-    return "\nTop UI failures (summary; full details in report):\n" + "\n".join(
-        f"  \u2022 [{prov}] {s['name']}: {s['failed']}/{s['total']} distinct tests failed"
+    return "\nTop UI+Stress failures (summary; full details in report):\n" + "\n".join(
+        f"  \u2022 [{prov}; {P._CATEGORY_LABEL[s.get('category', 'ui')]}] "
+        f"{s['name']}: {s['failed']}/{s['total']} distinct tests failed"
         for prov, s in suites[:limit])
 
 
 def rc_ui_gate(model) -> dict:
-    """The Phase-2 RC quality gate — a THREE-tier decision on the combined UI-automation
+    """The unchanged Phase-2 gate — a THREE-tier decision on combined UI+Stress
     pass rate across both MRWP providers (ECS + Local). Returns
       {ui_total, ui_passed, ui_failed, pass_pct, threshold, verdict, blocking, detail}
     where `verdict` is:
@@ -261,29 +267,32 @@ def rc_ui_gate(model) -> dict:
     ui_total = ui_pass = ui_fail = 0
     missing = ui_evidence_issues(model)
     for prov in ("ECS", "Local"):
-        ui = (((((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {})
-               .get("categories") or {}).get("ui") or {})
+        try:
+            ui = P.ui_stress_counts(((model.get("mrwp") or {}).get(prov) or {}).get("tests"))
+        except ValueError:
+            continue  # The explicit evidence issue above makes this gate unavailable.
         if valid_counts(ui):
             ui_total += ui["total"]
             ui_pass += ui["passed"]
             ui_fail += ui["failed"]
     thr = RC_UI_PASS_THRESHOLD
-    base = {"ui_total": ui_total, "ui_passed": ui_pass, "ui_failed": ui_fail, "threshold": thr}
+    base = {"ui_total": ui_total, "ui_passed": ui_pass, "ui_failed": ui_fail, "threshold": thr,
+            "coverage": "UI+Stress"}
     if missing:
         return {**base, "pass_pct": None, "verdict": "unavailable", "blocking": True,
                 "detail": "; ".join(missing) + ". Capture both providers before evaluating."}
     pass_pct = round(ui_pass * 100.0 / ui_total, 1)
-    head = (f"UI-automation pass rate {pass_pct}% ({ui_pass}/{ui_total} passed, "
+    head = (f"UI+Stress pass rate {pass_pct}% ({ui_pass}/{ui_total} passed, "
             f"{ui_fail} failed distinct tests) across ECS + Local")
     if ui_pass == ui_total:
         return {**base, "pass_pct": pass_pct, "verdict": "clean", "blocking": False,
-                "detail": (f"UI-automation pass rate 100% ({ui_pass}/{ui_total}) — all UI "
+                "detail": (f"UI+Stress pass rate 100% ({ui_pass}/{ui_total}) — all UI+Stress "
                            f"distinct tests passed. Proceeding to bug bash.")}
     if ui_pass * 100 >= thr * ui_total:
         return {**base, "pass_pct": pass_pct, "verdict": "warn", "blocking": False,
                 "detail": (f"{head} \u2014 at or above the {thr:.0f}% gate but not clean. "
                            f"Proceeding to bug bash; release owner: investigate the {ui_fail} "
-                           f"failing UI tests in parallel (a later step confirms the retest, "
+                           f"failing UI+Stress tests in parallel (a later step confirms the retest, "
                            f"so bug bash is not blocked)." + _ui_failing_suites_summary(model))}
     return {**base, "pass_pct": pass_pct, "verdict": "attention", "blocking": True,
             "detail": (

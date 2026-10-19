@@ -29,7 +29,7 @@ def test_status_email_composes_milestone_dashboard():
     assert "Bug Bash Test Plan" in labels                      # D (renamed)
     html = res["html"]
     assert "September 2026 Release" in html and "8.4.2" in html
-    assert "UI automation 97.0%" in html                       # B (combined 194/200)
+    assert "UI+Stress 97.0%" in html                            # B (combined 194/200)
     assert "tree/release/24.6.0" in html                       # C (real release/<version> link)
     assert "Update common" in html                             # change list
 

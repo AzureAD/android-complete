@@ -100,6 +100,19 @@ def production_effects(capabilities: WriteCapabilities, *, validate, committer, 
         return broker_plans.ensure_plan(
             release_id, name, detached, persist, now=clock.now, **thaw(kwargs))
 
+    def fill_ui(*args, **kwargs):
+        if kwargs.get("scenario_resource") is not None:
+            from .evidence import StepData
+
+            def persist(summary):
+                data = thaw(committer.read().step("bug_bash", "ui_test_status").data)
+                data["summary"] = summary
+                committer.commit(StepData(data))
+                validate()
+
+            kwargs["checkpoint"] = persist
+        return testplans.fill_ui_automation_results(*args, **kwargs)
+
     if WriteOperation.ENSURE_BROKER_PLAN in capabilities.operations and committer is None:
         raise ValueError("Broker adapter requires a durable evidence committer")
     ports = {
@@ -108,7 +121,7 @@ def production_effects(capabilities: WriteCapabilities, *, validate, committer, 
         WriteOperation.ENSURE_BROKER_PLAN: ensure,
         WriteOperation.CREATE_AUTH_QUERY_SUITE: testplans.create_auth_query_suite,
         WriteOperation.FILL_AUTH_UI_RESULTS: testplans.fill_auth_ui_results,
-        WriteOperation.FILL_UI_AUTOMATION_RESULTS: testplans.fill_ui_automation_results,
+        WriteOperation.FILL_UI_AUTOMATION_RESULTS: fill_ui,
         WriteOperation.SET_ASSIGNED_TO: distribution.set_assigned_to,
         WriteOperation.SET_POINT_TESTERS: distribution.set_point_testers,
         WriteOperation.SUBMIT_PIPELINE_APPROVAL: pipelines.submit_pipeline_approval,

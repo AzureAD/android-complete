@@ -676,13 +676,23 @@ def validate_release_targets(release_id, ccd, binding, *, org=ORG, project=PROJE
                if line.startswith("release-agent:broker-plan:")]
     if markers and markers != ["release-agent:broker-plan:" + release_id]:
         raise ValueError("Broker destination belongs to another release")
-    ok, suite, detail = T.get_suite(broker["plan_id"], broker["suite_id"], timeout, org=org, project=project)
+    from tools import broker_failure_triage as F
+    failure_only = broker.get("layout") == F.LAYOUT
+    if broker.get("layout") is not None and not failure_only:
+        raise ValueError("Unknown Broker automation target layout")
+    if failure_only and (set(broker) != {"plan_id", "layout", "root_suite_id"}
+                         or str(broker["root_suite_id"]) != str(plan["rootSuiteId"])
+                         or F.MARKER not in description.splitlines()
+                         or not isinstance(binding.get("broker_scenarios"), dict)):
+        raise ValueError("Failure-only plan-root ownership changed")
+    sid = broker["root_suite_id"] if failure_only else broker["suite_id"]
+    ok, suite, detail = T.get_suite(broker["plan_id"], sid, timeout, org=org, project=project)
     if (not ok or not isinstance(suite, dict)
-            or str(suite.get("id")) != str(broker["suite_id"])
-            or suite.get("name") != T.BROKER_UI_SUITE_NAME
+            or str(suite.get("id")) != str(sid)
+            or suite.get("name") != (broker_name if failure_only else T.BROKER_UI_SUITE_NAME)
             or suite.get("suiteType") != "staticTestSuite"
-            or not isinstance(suite.get("parentSuite"), dict)
-            or str(suite["parentSuite"].get("id")) != str(plan["rootSuiteId"])):
+            or (not failure_only and (not isinstance(suite.get("parentSuite"), dict)
+                or str(suite["parentSuite"].get("id")) != str(plan["rootSuiteId"])))):
         raise ValueError(f"Broker UI destination identity changed: {detail}")
     if str(auth["plan_id"]) != str(T.AUTH_PLAN):
         raise ValueError("Authenticator destination plan changed")

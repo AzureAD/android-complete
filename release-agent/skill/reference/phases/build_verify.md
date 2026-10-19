@@ -8,7 +8,7 @@ owns the quality go/no-go; telemetry remains a separate required prerequisite.
 ## Execution model
 Parallel phase with an explicit ordered capture DAG. A single `next` runs the agent chain (checker → orchestrator → ECS/Local
 MRWP → Authenticator ECS); collection **blocks** on missing evidence (including absent
-MRWP UI coverage), unexecuted MRWP stages, or an unhealthy orchestrator. Evaluated
+MRWP UI+Stress coverage), unexecuted MRWP stages, or an unhealthy orchestrator. Evaluated
 test failures and a completed failed Authenticator build are reportable data, not
 collection holds. Exact dependencies are `checker_fired → orchestrator_health →
 mrwp_ecs → mrwp_local → auth_ecs`, then **both** `telemetry_verify` and `rc_report`
@@ -107,13 +107,25 @@ attempts plus one Passed means SUCCESS; a Passed followed by Failed also stays s
 Keep parameterizations and suite/API/device distinctions separate, and never merge
 ECS/Local or historical RC builds. A real non-NA result without any pass is one failure.
 The denominator is **passed + failed**, excluding NA-only titles (`NotExecuted`,
-`NotApplicable`, `None`/null, `Inconclusive`, `Warning`). The UI threshold stays 90%.
+`NotApplicable`, `None`/null, `Inconclusive`, `Warning`). The threshold stays 90%
+on the historical **UI+Stress aggregate**, not the newly separated UI-only row.
+Explicit `Stress Tests` source suites have category `stress` and display **Stress Tests**;
+classification uses the source suite/run name, never a test-title guess. New captures
+record `category_basis: suite_name_stress_v1` and all four category summaries.
+Validated historical three-category captures remain unchanged: the report derives a
+separate UI/Stress view without rewriting frozen evidence. Missing/corrupt Stress
+coverage is unavailable, not zero failures. Stress adds no independent blocking gate.
+Historical Unit/Instrumented precedence is retained even for a `Stress Tests - ...`
+name containing `UnitTests`/`InstrumentedTests`; only the historical UI bucket is split.
+That derived report copy uses `legacy_suite_precedence_stress_view_v1`, not the new
+capture classifier basis, so historical gate coverage remains unchanged.
 Authenticator Firebase retains its separate existing count/build/suite-selection policy.
 
 Report summaries must show **MRWP ECS, MRWP Local and Authenticator ECS separately**.
 Do not combine ECS/Local into a headline rate or blend Authenticator into Broker counts.
 All large percentages show **success rates**, including the Authenticator card's
-**worst gated suite** (labeled explicitly). Unit, Instrumented, UI and Firebase rows show
+**worst gated suite** (labeled explicitly). MRWP headline rates explicitly say
+**UI+Stress**. Unit, Instrumented, UI, Stress Tests and Firebase rows show
 `75.86% pass · 24.1% fail`. Checker, Orchestrator and Versions each get their own row,
 with run links beside Checker/Orchestrator rather than beside Versions. Never average
 Firebase suites to hide a failing suite. Missing/empty evidence is unavailable, not 0% failure.
@@ -185,15 +197,31 @@ and mapped case points are not interchangeable. Monthly failures never enter Bro
 
 ### Phase-3 two-plan result fill uses this same evidence
 
-`bug_bash.ui_test_status` projects only `rcs[-1]` through the pure tools-level
-`project_mrwp_ui_results` helper. Do not refetch MRWP results in Phase 3, merge historical
+`bug_bash.ui_test_status` projects only `pipeline_runs.rcs[-1]`. NEW source-v4 uses
+`tools.broker_failure_triage`: reconciled FAILURES ONLY from BOTH complete MRWP
+all-category snapshots. Conditional hierarchy is Automation Failure Triage →
+ECS/Local → UI Automation, Instrumented Tests, Unit Tests, Lab API, Native Auth E2E
+and/or Other UI Automation; no empty categories/flights/root. Passing/NA/recovered
+scenarios stay in Phase2 evidence/reports, not tracker cases. No failures means
+manual-only. Exact scenario title/parameters/suite/API/flight and true build/run/
+result links survive; no-ID concurrent failures are real owned cases, never dropped.
+Verified singleton UI pairs may reference originals; collisions and other categories
+use owned cases. Both original manual suites retain membership/config/query behavior.
+The failure tracker is NOT execution coverage or a pass-rate denominator; broad
+Phase2 UI totals/gates and Authenticator Firebase/Monthly remain unchanged.
+Frozen source-v3 retains its full exact device inventory/additional-category layout;
+older matrix resources keep their original contract. Retain resolved history and
+explicit current source-outcome proof. RC/build/new-failure changes require a new
+reviewed source before writes; never auto-migrate any existing plan/pinned workflow.
+The legacy `project_mrwp_ui_results` helper remains for historical matrix resources.
+Do not refetch MRWP results in Phase 3, merge historical
 RCs, or recompute retry verdicts. Missing/incomplete evidence, a stale `count_basis`,
 or mismatched summary `build_id`/MRWP `run_id` blocks before **any** plan/assignment write:
 refresh Phase-2 MRWP verification first.
 
 The map preserves ECS/Local AND the full MSAL/Broker pair: 292/328 = PROD MSAL/RC Broker,
 294/344 = RC MSAL/PROD Broker, 293/330 = RC MSAL/RC Broker (including LTW and mapped Stress).
-BrokerHost explicitly rolls up into 292/328, matching the master subtree. Multiple distinct
+BrokerHost uses 292/328 while retaining exact scenario identity. In LEGACY resources, multiple distinct
 titles/parameterizations/API suites mapping to one point use **Failed if any fails**,
 otherwise Passed if anything passed, otherwise NotApplicable for NA-only evidence.
 Only same-title retries within a normalized suite get pass-any, upstream. Unknown
@@ -204,8 +232,8 @@ Assignments use only cases actually written Failed; failures without applied poi
 investigations in `ui_failures`, including every report-only failure. Reassignment errors
 are separately visible and nonblocking, never claimed as owner changes. Recovered failures are cleared
 on rerun without changing human completion or unrelated notes/data. Partial writes must
-be surfaced, not reported as fully applied. New plans selectively add RC/RC points and
-freeze that per-case matrix for recovery. Missing RC/RC points require
+be surfaced, not reported as fully applied. Historical plans retain their frozen
+per-case matrix for recovery. Historical missing RC/RC points require
 `broker-plan --preview-ui-repair`; the writer never mislabels or clears historical results.
 The preview does not apply repairs or mutate release state. In-place changes need later
 exact approval; cleanup additionally needs ownership receipts and match-before-write.

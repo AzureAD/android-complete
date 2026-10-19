@@ -1,6 +1,6 @@
 PHASE 3: STEP-BY-STEP DATA CONTRACTS AND CORRECTIONS
 ===================================================
-Updated: 2026-10-16. Baseline: local Phase2 checkpoint a00dabfcc.
+Updated: 2026-10-17. Baseline: local Phase2 checkpoint a00dabfcc.
 Branch: feature/release-agent-phase3-audit (not pushed).
 Current owner request: finish all eleven Phase3 steps, in workflow order, with
 contract/correction/focused proof for each. No real test plan, meeting or message
@@ -12,8 +12,9 @@ failure is a separate OPEN blocker; see the final section and release-audit.txt.
 1. bug_bash.clone_plans_broker
 -------------------------------
 PURPOSE / ENTRY:
-  Build or safely reuse this release's Broker test plan with exactly three flat
-  suites, referencing existing test cases rather than cloning work items.
+  Build/reuse a source-versioned Broker plan. NEW source-v4 plans preserve both
+  manual suites and track automation FAILURES ONLY, flight first then category.
+  Frozen v3 keeps its full device inventory; historical matrix plans stay unchanged.
   Automatic transactional effect; recovery=frozen. Normal workflow requires
   readiness and prior phases, including the human Phase2 RC report gate.
   Never use the completed isolated Phase2 test as approval to mutate shared ADO.
@@ -42,15 +43,25 @@ INPUT CONFIG:
 
 INPUT PROVIDER / PREPARATION:
   Read master root's explicit configurations; resolve its Native Auth WIQL.
-  Flatten manual/UI master subtree memberships into unique referenced case IDs.
-  Project frozen Phase2 UI scenarios into target configuration combinations.
+  Freeze manual membership and a verified UI case catalog from the master.
+  Validate ALL complete current-RC Phase2 categories from both MRWP flights.
+  Select only reconciled Failed scenarios from all MRWP categories; retain exact
+  source suite/API, parameterized title and flight (not a cross-product).
+  Routed Broker/device/LTW/BrokerHost failures appear as UI Automation; canonical
+  Stress source suites use a separate Stress Tests category under policy2.
+  Instrumented, Unit, Lab API, Native Auth E2E and Other UI have distinct categories.
+  Authenticator Firebase/Monthly remains separate, never enters this Broker plan.
+  Passing/NA/recovered evidence stays in Phase2 reports; recovered retries are
+  warnings, not cases. Tracker size is NOT coverage or a pass-rate denominator.
   Verify actual ADO configuration identities, names/state/flight metadata.
   Freeze source = {
     root_configs, broker_configs, ui_configs: nonempty unique positive int lists,
     broker_cases, ui_cases: nonempty unique positive int lists,
     native_query: nonblank WIQL,
-    ui_case_configs: string case ID -> allowed unique configuration IDs,
-    ui_projection_provenance: RC/provider/build/count-policy/mapping attribution
+    schema_version: 4, layout: "mrwp_failure_triage_by_flight",
+    scenario_projection: empty inventory, exact failure triage/warnings, current RC,
+      both build identities, category totals, count policy, classification_policy:2,
+      true build/run/result links
   }.
   Missing/malformed source is blocked BEFORE the engine reserves an external
   effect. Explicit invalid saved source is not silently replaced from the master.
@@ -58,7 +69,7 @@ INPUT PROVIDER / PREPARATION:
 
 GENERATED TRANSIENT VALUES:
   Validated source projections, candidate plan list, validation diagnostics.
-  No copied test cases, changed results, test assignments, tester identities,
+  No shared case changes, changed results, test assignments, tester identities,
   invites/messages, human quality decisions or Authenticator suite are produced.
 
 ENGINE-OWNED PERSISTED OPERATION:
@@ -80,12 +91,20 @@ BUSINESS/RECOVERY PERSISTENCE:
     source: frozen membership/query/configuration/projection snapshot
     started_at: pre-create UTC timestamp
     plan_id: positive provider ID, checkpointed immediately on receipt
-    ui_suite_id: verified target UI Automation suite
+    ui_suite_id: only historical matrix/v3 verified target UI Automation suite
+    plan_root_id: v4 stable actual plan-root anchor, never a fake UI suite
+    automation: v4 {layout,anchor:{kind:"plan_root",suite_id},root_suite_id,flights}
+      root_suite_id is the CONDITIONAL automation root (null with zero failures).
+      flights maps flight -> {suite_id,categories:{category:actual_suite_id}}.
     area_path: actual accepted area identity
     verified_at: final validation UTC timestamp
     selection?={plan_id,reason,source,at,by?}: explicit owner binding
     attempt_history?: retained unresolved attempts
     retry_review?={reason,source,at,by?}: explicit reviewed absence authorization.
+    source-v3/v4 adds operations={key:{status,sha256,payload?,id?,recovery?,approval_sha256?}},
+      suites={role:actual_id}, scenario_bindings=[exact source rows plus actual
+      case_id/suite_id/reuse_case_id]. Every plan, suite AND case create reserves
+      intent before POST and saves its receipt before the next write.
   This resource survives reopening/completion; it is not a second step status.
   During initial creation source is also in effect_input for safe recovery;
   terminal engine lifecycle clears execution, not the resource.
@@ -93,17 +112,35 @@ BUSINESS/RECOVERY PERSISTENCE:
 TERMINAL STEP OUTPUT:
   steps["bug_bash.clone_plans_broker"]:
     common status=done/completed_at/note/by/links after complete target validation,
-    data={plan_id,plan_name,ui_suite_id}, preserving other owned/protected data.
+    data={plan_id,plan_name,ui_suite_id} for historical plans; v4 instead records
+      source_version=4, scenario_source_sha256 and typed automation tree.
+    Other owned/protected data remains preserved.
   Resource producer commits through BrokerResource; handler returns StepData.
   IDs are deliberate compact references for consumers, not full plan duplication.
 
 EXTERNAL OUTPUT:
-  New plan plus exactly three top-level suites under the root:
+  NEW source-v4 plan:
+    Manual Tests (Android Broker): same static cases/configs293/330.
+    Manual Tests (Native Auth): same dynamic WIQL/inherited configuration behavior.
+    Automation Failure Triage: only when initial failures exist.
+      ECS / Local: only flights with failures.
+        UI Automation, Instrumented Tests, Unit Tests, Lab API, Native Auth E2E,
+        Other UI Automation: only actual nonempty failing categories.
+    Zero failures is a valid manual-only plan. Folder suites contain no test points.
+    Retain previously created cases/folders after resolution, with explicit current
+    source outcomes; no silent history deletion on resolution or RC transitions.
+  Frozen source-v3 plan (retained, not upgraded):
     Manual Tests (Android Broker): static, manual flight configurations.
     Manual Tests (Native Auth): dynamic, preserved WIQL, inherits root configs.
-    UI Automation (Android Broker): static, baseline plus selective represented
-      RC/RC configurations from frozen source.
-  Cases are REFERENCES to existing work items; Native Auth query stays dynamic.
+    UI Automation (Android Broker): static, EXACT source scenarios/configurations.
+    Automation Failure Triage: only with actual additional failures, category
+      children Instrumented Tests, Unit Tests, Lab API, Native Auth E2E and/or
+      Other UI Automation, never empty folders or duplicate device failures.
+  Verified singleton case/configs reference originals unchanged. Collisions ALL
+  get separate release-owned cases linked to the original; no-ID/unverified-ID
+  scenarios get real owned cases with exact source title and provider links.
+  No guessed numeric IDs, shared tags or AssignedTo edits. Outcomes belong to
+  points, not work-item state. Native Auth query/inheritance stays dynamic.
   The dynamic suite's membership may change as shared tags change; this step
   freezes its query, not an independent snapshot of every future query result.
   Resource marker and verified-build completion marker in plan description.
@@ -111,12 +148,17 @@ EXTERNAL OUTPUT:
 
 SUCCESS / REUSE:
   Validate exact plan name/area/iteration/ownership marker, explicit root configs,
-  exactly three flat suite names/types/parents, Native Auth query and exact unique
-  static case/configuration points against saved source.
+  versioned suite names/types/parents, Native Auth query, exact unique source
+  points, case provenance/links and creation receipts against the saved source.
   Existing unique complete plan is reused without recreating suites or resetting
   test results. Multiple candidates require explicit owner selection.
   Configuration drift, unreadable lookup or missing bound plan BLOCKS; never
   fall back to creating a replacement that loses existing results.
+  Durable config-pin receipts verify existing suite defaults without reapplying
+  them after membership. Every membership POST requires exact point readback.
+  Completion-marker PATCH preserves verified plan metadata; strict readback
+  precedes ready. Related-link GUID aliases, including cross-project originals,
+  require exact authenticated original-case identity proof; hyperlinks stay exact.
 
 FAILURE / RECONCILIATION:
   Corrupt discovery/source/root/suite/point data is an explicit hold, not an
@@ -132,15 +174,33 @@ FAILURE / RECONCILIATION:
   broker-plan command inspects/selects existing resources or records explicit
   reviewed absence; it never creates a plan or marks the workflow step done.
   Invalid recorded identity is not treated as missing and replaced by defaults.
+  Historical sources without schema_version retain the old master-matrix contract;
+  never silently adopt/migrate a historical plan into source-v3/v4. Each version
+  requires its dedicated marker AND original resource receipts. RC/MRWP-build/inventory/
+  new-failure changes hold for explicit new-source review; resolved tracked triage is retained,
+  never deleted. Versioned uncertain creates require exact owner-supplied provider
+  receipt recovery, not --confirm-not-created or clearing IDs/ownership.
+  See skill/reference/commands.md for the separate isolated TEST ONLY preview:
+  it never adopts/advances a release, sends notices, or saves source release state.
+  Isolated unpublished-only membership repair uses separate assignment-repair
+  intent/approval/readback receipts. Only a proven complete unrun default matrix
+  can be normalized; unknown points, human results and partial matrices hold.
+  Frozen-metadata recovery is limited to the specific owned TEST ONLY area-reset
+  regression, not arbitrary identity adoption. Neither repair creates cases or
+  writes outcomes. Uncertain attempts are readback-only; no blind PATCH replay.
 
 CONSUMERS / RETENTION:
-  clone_plans_auth eligibility; ui_test_status reads plan_id/ui_suite_id to fill
+  clone_plans_auth eligibility; ui_test_status reads versioned plan/target IDs to fill
   frozen RC results; ui_results binds publication to exact target identities.
   distribute_tests, progress, invite and Native Auth notice consume release plan
   references, never silently fall back to the shared master.
   Preserve resource/source/IDs/selection/retry receipts for the release lifetime
   and reopen/recovery. No automatic garbage collection, shared-case AssignedTo
   changes, or replacement/deletion is introduced here.
+  V4 fill/publication/distribution/progress use the typed stable plan-root target,
+  grouping actual points by their leaf suite_id. Identical category names in ECS
+  and Local never authorize name-based suite selection. Failed point Testers only;
+  neither category cases nor their resolved history become balanced manual work.
 
 CORRECTIONS / PROOF:
   A036: reject malformed record/name/source before effect reservation; normalize
@@ -245,6 +305,15 @@ PERSISTED OUTPUT:
   applied_points. investigations={broker,auth,unmapped_broker,
     report_only_or_unmapped_auth}. The result UUID is observation identity, not
   the semantic identity of the failures a human reviewed.
+  Source-v3 also carries mapping_version=3, suite_targets, scenario_bindings,
+  point suite_id/scenario_key and broker_scenarios source digest/suite binding.
+  Production service checkpoints each outcome batch intent/acknowledgement.
+  Both MRWP build IDs remain pinned to the creation source, even within the same
+  RC. Changed builds block before any outcome writes; no source-amendment route
+  is implied. Fill and publication enforce the same immutable binding fields.
+  A completed publication must cover every source point exactly once. Testers,
+  failure reminders and progress use actual generated IDs and exact owned suites;
+  original case IDs and true source result links remain separate provenance.
 EXTERNAL OUTPUT / RECOVERY:
   Outcome PATCHes affect only mapped automated release points. All point shapes
   and prior results validate before writes; each native PATCH batch rechecks
@@ -282,6 +351,10 @@ INPUT:
   exact next read request; no Azure CLI Graph or people-search fallback.
   Missing current UI receipts/destinations/identities HOLD. Auth failures use only
   acknowledged failed points, not every configuration of a shared case.
+  Source-v3 Broker failure receipts are grouped by their actual suite_id, including
+  sibling category suites. Combined coverage must match every acknowledged failure
+  exactly once with unchanged plan/suite/point/case/config/source identities.
+  Category investigations remain owner triage, excluded from balanced manual work.
 TRANSIENT OUTPUT / AUTHORITY:
   Candidates, eligible roster, observed/proposed workloads, manual totals,
   owner_triage, case_changes, point_changes, _current/_targets/_point_sets and

@@ -332,8 +332,11 @@ def test_source_snapshot_selects_rc_rc_configs_only_for_represented_cases(monkey
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, configs, ""))
     ok, source, detail = B._snapshot(120, rc)
     assert ok, detail
-    assert source["ui_case_configs"] == {
-        "100": [292, 293, 294, 328, 330, 344], "101": [292, 294, 328, 344]}
+    assert source["schema_version"] == 4
+    assert "ui_case_configs" not in source
+    assert source["scenario_projection"]["inventory"] == []
+    assert {(row["title"], row["config_id"]) for row in source["scenario_projection"]["triage"]} == {
+        ("test_100_ltw", 293), ("test_100_ltw", 330)}
     configs[0]["name"] = "wrong combination"
     assert not B._snapshot(120, rc)[0]
 

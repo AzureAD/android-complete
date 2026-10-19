@@ -6,8 +6,11 @@ import re as _re_mod
 
 
 _UI_API_RE = _re_mod.compile(r"\(API\s*\d+\)", _re_mod.IGNORECASE)
-TEST_CATEGORIES = ("unit", "instrumented", "ui")
-_CATEGORY_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
+TEST_CATEGORIES = ("unit", "instrumented", "ui", "stress")
+TEST_CATEGORY_BASIS = "suite_name_stress_v1"
+TEST_CATEGORY_LEGACY_VIEW_BASIS = "legacy_suite_precedence_stress_view_v1"
+_CATEGORY_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation",
+                   "stress": "Stress Tests"}
 
 _VERSION_KEYS = ("Common", "Msal", "Broker")
 
@@ -29,20 +32,49 @@ def format_release_versions(versions, fallback: str = "") -> str:
                      if v.get(k)) or fallback
 
 
-def classify_test_run(name):
-    """Bucket a test-run/suite name into one of THREE categories:
+def classify_test_run(name, *, legacy=False):
+    """Bucket the source run/suite name, never an individual test title:
       * '*_UnitTests'          → unit
       * '*_InstrumentedTests'  → instrumented
+      * 'Stress Tests - ...'   → stress (also the exact 'Stress Tests' suite)
       * everything else        → ui   (the device UI-automation suites, which carry an
                                        '(API NN)' tag, plus any other run such as
                                        'Lab Api Tests' — 'the rest are UI').
+    legacy=True retains the original Unit/Instrumented/UI precedence without splitting Stress.
     """
     low = (name or "").lower()
+    if not legacy and _re_mod.match(r"^stress tests(?:\s*-|\s*$)", low.strip()):
+        return "stress"
     if "unittest" in low:
         return "unit"
     if "instrumentedtest" in low:
         return "instrumented"
     return "ui"
+
+
+def ui_stress_counts(summary):
+    """Historical MRWP gate coverage: UI plus Stress, counted once for either schema."""
+    if not isinstance(summary, dict):
+        raise ValueError("Missing UI+Stress summary")
+    cats = summary.get("categories")
+    if not isinstance(cats, dict) or not isinstance(cats.get("ui"), dict):
+        raise ValueError("Missing UI results")
+    if summary.get("category_basis") is not None or any(
+            s.get("category") == "stress" for s in (summary.get("suites") or []) if isinstance(s, dict)):
+        if summary.get("category_basis") not in (
+                None, TEST_CATEGORY_BASIS, TEST_CATEGORY_LEGACY_VIEW_BASIS) or "stress" not in cats:
+            raise ValueError("Missing or invalid Stress Tests coverage")
+    counts = {k: 0 for k in ("total", "passed", "failed", "na")}
+    for cat in ("ui", "stress") if "stress" in cats else ("ui",):
+        value = cats[cat]
+        if (not isinstance(value, dict)
+                or any(type(value.get(k)) is not int or value[k] < 0 for k in ("total", "passed", "failed"))
+                or value["total"] != value["passed"] + value["failed"]
+                or type(value.get("na", 0)) is not int or value.get("na", 0) < 0):
+            raise ValueError(f"Invalid {cat} results")
+        for key in counts:
+            counts[key] += value.get(key, 0)
+    return counts
 
 
 # Outcomes that are neither a pass nor a real failure (skipped / not run / inconclusive).
@@ -226,7 +258,8 @@ def summarize_test_runs(org, project, build_id, runs, timeout=90):
             cats[cat][key] += suite[key]
         cats[cat]["recovered"].extend({"suite": name, "title": title} for title in rec["recovered"])
     totals = {key: sum(c[key] for c in cats.values()) for key in ("total", "passed", "failed", "na")}
-    return (True, {**totals, "count_basis": MRWP_COUNT_BASIS, "build_id": build_id,
+    return (True, {**totals, "count_basis": MRWP_COUNT_BASIS, "category_basis": TEST_CATEGORY_BASIS,
+                   "build_id": build_id,
                    "result_entries": sum(s["result_entries"] for s in suites),
                    "runs": out_runs, "categories": cats, "suites": suites,
                    "failed_suites": sorted((s for s in suites if s["failed"]),
@@ -274,4 +307,4 @@ def get_failed_tests(org, project, build_id, timeout=90):
     ok, summary, detail = _pp.get_test_summary(org, project, build_id, timeout)
     return (ok, summary["failed_suites"] if ok else None, detail)
 
-__all__ = ['TEST_CATEGORIES', 'MRWP_COUNT_BASIS', '_CATEGORY_LABEL', '_NA_OUTCOMES', '_UI_API_RE', '_VERSION_KEYS', '_msal_variant', '_run_results', '_test_runs', '_suite_base_name', '_ui_case_id_from_result', 'classify_test_run', 'format_release_versions', 'format_versions', 'get_failed_tests', 'get_test_summary', 'summarize_test_runs', 'reconcile_retries']
+__all__ = ['TEST_CATEGORIES', 'TEST_CATEGORY_BASIS', 'TEST_CATEGORY_LEGACY_VIEW_BASIS', 'MRWP_COUNT_BASIS', '_CATEGORY_LABEL', '_NA_OUTCOMES', '_UI_API_RE', '_VERSION_KEYS', '_msal_variant', '_run_results', '_test_runs', '_suite_base_name', '_ui_case_id_from_result', 'classify_test_run', 'ui_stress_counts', 'format_release_versions', 'format_versions', 'get_failed_tests', 'get_test_summary', 'summarize_test_runs', 'reconcile_retries']

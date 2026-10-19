@@ -2,6 +2,17 @@
 
 _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent` folder (see SKILL.md → FIRST RUN; `python -m orchestrator.cli paths --json` prints it)._
 
+New failure-only v4 sources freeze `classification_policy: 2`: canonical Stress source
+suites route to distinct **Stress Tests** leaves before device/UI routing. Missing
+policy means historical policy 1; existing v3 and v4 evidence, source hashes and create
+payloads are not automatically reclassified. Only the explicit completed TEST ONLY
+correction below records a checked effective-label amendment while retaining that history.
+For this rename-only correction, exact acknowledged automation points may retain paired
+published run/result IDs with Completed dictionary details. Their complete provider
+history and tester fields are frozen in the reviewed preview and must remain identical
+through rename/readback/recovery; duration or actor identity never proves origin.
+Unreceipted manual history and inconsistent/in-progress metadata still hold.
+
 ### Typed step inputs
 
 `--param name=value` accepts only fields declared by the requested module's `build`
@@ -91,6 +102,9 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | **Phase 3 — preview UI mapping repair** | `python -m orchestrator.cli broker-plan --release <id> --preview-ui-repair [--plan-id <id>]` — deterministic source/old/new configs and affected points; read-only ADO, no state save, bind, apply or cleanup |
 | **Phase 3 — bind owner-selected existing plan** | `python -m orchestrator.cli broker-plan --release <id> --plan-id <plan-id> --reason "<owner selection>" [--area-path "<observed area>"]` — local identity binding only; no ADO writes, step completion, or plan replacement |
 | **Phase 3 — authorize retry after confirmed non-creation** | `python -m orchestrator.cli broker-plan --release <id> --confirm-not-created --reason "<owner-reviewed evidence>"` — only after original runner stopped; also requires successful discovery with zero candidates and no recorded plan ID |
+| **Isolated TEST ONLY — preview Local Stress label correction** | `python -m orchestrator.commands.broker_scenario_plan --snapshot <collected-state.json> --isolated-root <original-isolated-root> --name "<original TEST ONLY - name>" --correct-stress-category <exact-scenario-key> --correction-preview <new-preview.json>` — read-only provider proof and exclusive-create local preview artifact. Requires completed owned source-v4 policy 1, exactly one source-proven Local Stress row and one acknowledged Failed point in the old UI leaf. Reviews the exact modern suite PATCH, parent/configurations, all suites/points/results and old source/creation-ledger hashes. Mixed/empty leaves, unknown identities, changed human/results or other drift hold. |
+| **Isolated TEST ONLY — apply reviewed Stress label correction** | Repeat the same snapshot/root/name/key with `--execute --confirm-source-sha256 <original-source-hash> --confirm-correction-sha256 <fresh-reviewed-correction-hash>`; omit `--correction-preview`. Obtain explicit scoped approval for the preview's exact external payload first. Checkpoints a separate classification amendment before **one** suite rename; never creates/deletes cases/suites/points, replays outcomes, resets defaults with classic PATCH, adopts a workflow or rewrites owned-case provenance. Only exact full readback publishes current Stress roles/categories/fill labels; frozen raw source, original create receipts and historical fill remain intact. |
+| **Isolated TEST ONLY — recover uncertain Stress rename** | Replace `--correct-stress-category` with `--recover-stress-category <same-key>` for a fresh read-only preview; then use its new correction digest plus the original source digest with `--execute`. Recovery is **readback/local receipt only**, never a second suite PATCH. Old label, changed points/configs/parent/results, or pending atomic receipt hold for owner recovery; do not retry the rename or invoke create recovery. |
 | Activate conditional hotfix phase | `python -m orchestrator.cli activate --release <YYYY-MM> --phase hotfix` |
 | **Notify** — push line if something needs me | `python -m orchestrator.cli notify [--release <YYYY-MM>] [--as-of <date>] [--force]` |
 | **Plan startup automations** | `automation plan --release <YYYY-MM> [--slug push-reminders\|daily-status-email] --json` — canonical metadata + complete `provider_spec`; excludes on-demand pollers; CCD one-shots require confirmed date, valid owner/host zones and a future target |
@@ -184,6 +198,93 @@ the run-state JSON to discard uncertain work. An absent receipt proves only miss
 evidence, not that the provider write never happened.
 
 ## Broker plan recovery
+
+New plans use source-v4 FAILURES ONLY, flight-first: Automation Failure Triage →
+ECS/Local → nonempty failure categories, including UI Automation. Both manual
+suites stay unchanged; zero failures is manual-only. No passed/NA/recovered cases
+or invented UI suite ID. This tracker is NOT a coverage/pass-rate denominator.
+Frozen v3 full-device and schema-less matrix plans retain their existing contracts;
+never migrate them or adopt a pinned workflow automatically.
+`--preview-ui-repair` is historical matrix-only, not a v3/v4 repair.
+For an uncertain versioned plan/suite/case create, retain its operation key and original
+runner ownership. After the owner supplies an exact provider receipt and reason:
+`broker-plan --release <id> --recover-create "<operation-key>" --resource-id <id> --reason "<owner evidence>"`.
+This only reads/verifies the frozen payload/provenance and saves that exact receipt;
+no creates, guessed matches, ownership clearing or force-create. Legacy
+`--confirm-not-created` cannot authorize source-v3/v4 retries. Normal workflow recovery
+still requires the pinned revision; never bypass adoption holds.
+
+### Isolated collected-data plan (explicit approval only)
+
+For a fresh test, use a new explicit TEST ONLY name, not the name/receipt of a
+held historical correction. The isolated instance is derived from release plus
+name; reusing the same name intentionally resumes its existing frozen source
+instead of rebuilding under policy 2. Never delete/reset the old receipt to force
+new classification. Fresh plans create Stress Tests leaves directly and do not
+depend on completing an old label correction.
+
+From `<AGENT_ROOT>`, preview without state/provider writes:
+
+```powershell
+python -m orchestrator.commands.broker_scenario_plan --snapshot "C:\repos\android-complete\.release-runs\2026-10\release-state.json" --isolated-root "C:\repos\android-complete\.release-agent-isolated" --name "TEST ONLY - Fresh Stress separation RC2"
+```
+
+Optionally add `--approval-manifest "<new-session-local-file.json>"` to the READ-ONLY
+preview. This exports frozen source, exact plan/suite/case/membership payloads,
+target area/iteration, source build/run/result links and point-outcome intents.
+New provider IDs are explicitly symbolic until actual receipts exist. Export uses
+exclusive creation, cannot overwrite source/receipt, requires v4, and cannot combine
+with `--execute`; remove that export flag before execution. A saved manifest can be
+reviewed without repeating live source reads. Never substitute fake rehearsal IDs.
+Show the owner the exact destination, source SHA256, source/build identity, flight/
+category hierarchy, failure outcomes, owned-case/reference counts and warnings.
+ONLY after explicit approval repeat the SAME arguments with
+`--execute --confirm-source-sha256 "<reviewed source_sha256>"`.
+This creates/fills only that isolated plan; it does not assign Testers, notify anyone,
+bind a release plan, adopt/advance/reopen/complete the real workflow or save source state.
+Master reads remain live read-only; changed source requires a fresh preview.
+The synthetic identity differs from the real release marker. A separate durable
+receipt/OS lock lives outside the source release directory. Keep it for recovery.
+Re-running reuses acknowledged resources/results, not uncertain creates.
+For exact isolated create-receipt recovery, repeat those arguments plus
+`--recover-create "<key>" --resource-id <actual-id> --reason "<owner evidence>"`;
+that call performs provider reads/local receipt updates only, not creation/fill.
+New RC/inventory/failure sources require explicit new-source review; old resources
+and resolved triage are retained, never silently deleted.
+The earlier "TEST ONLY - Broker source scenarios RC2" instance remains frozen v3;
+the distinct new name above cannot adopt, rewrite or clean up that historical plan.
+For a bounded OFFLINE production-path proof with the collected snapshot, run:
+`$env:RELEASE_AGENT_MRWP_STATE="<read-only release-state.json>"`
+then `python -m pytest tests\test_broker_failure_triage.py::test_collected_rc2_failure_only_production_path -q`.
+This injects only the existing in-memory ADO adapter; it does not create provider
+records. Optional RELEASE_AGENT_APPROVAL_MANIFEST points to a new local JSON file.
+
+An outstanding `.pending` receipt blocks further execution. Keep both versions and
+their provider IDs; reconcile the exact difference under the isolated lock before
+archiving a redundant pending file. Never discard pending evidence or clear create
+ownership to retry. Windows sharing failures have a bounded atomic-replace retry;
+permanent failures remain explicit holds.
+
+Suite configuration pins are verified on resume, not reapplied to existing members.
+If an unpublished owned plan has a proven full default-configuration expansion,
+repeat the isolated arguments with `--repair-membership` for a read-only preview.
+Show the exact removed points and obtain approval, then repeat with `--execute`,
+the original `--confirm-source-sha256`, and
+`--confirm-repair-sha256 "<membership_repair.repair_sha256>"`.
+Only unrun default-expansion points may be removed; unknown/partial matrices,
+human results and completed resources hold. Cases are never deleted. An uncertain
+PATCH is readback-only, not permission to re-PATCH.
+
+For the specific unfilled TEST ONLY completion-update area-reset regression,
+`--repair-metadata` previews restoration of the original frozen subarea. Review its
+exact payload against the original approved creation intent; execute using the same
+source hash and `--confirm-repair-sha256 "<metadata_repair.repair_sha256>"`.
+This cannot choose a new area, alter memberships/results or repair a real release.
+Completion updates preserve metadata and require strict post-PATCH readback.
+Both repair modes return without filling outcomes; normal isolated execution may
+resume afterward. Retain their separate operation receipts, including uncertainty.
+
+### Historical resource recovery
 
 `clone_plans_broker` runs through `next`. Its durable identity and source snapshot live
 in `resources.broker_test_plan`, independent of step status. Reopen clears completion,

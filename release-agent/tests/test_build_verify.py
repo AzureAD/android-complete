@@ -462,7 +462,7 @@ def test_build_verify_rc_report_publish_builds_renderer_payload():
     assert out["payload"]["site_url"] == "https://microsoft.sharepoint-df.com/teams/MsalAndroidRelease"
     body = out["payload"]["html"]
     assert "1678863" in body                          # run id present
-    assert "UI-automation success rate" in body
+    assert "UI+Stress success rate" in body
     assert "61.8%" in body                            # 102/165 UI failures — the real UI rate
     assert "Unit" in body and "Instrumented" in body and "UI automation" in body
     assert "test_1_Foo" in body                       # failing test names still listed
@@ -567,7 +567,7 @@ def test_rc_report_notify_uses_published_sharepoint_link():
     assert out["kind"] == "needs_skill" and out["tool"] == "m_send_teams_message"
     message = out["payload"]["message"]
     assert "https://sharepoint/report.html" in message
-    assert ("Summary: MRWP ECS: 95.0% pass; MRWP Local: 95.0% pass; "
+    assert ("Summary: MRWP ECS: 95.0% pass (UI+Stress); MRWP Local: 95.0% pass (UI+Stress); "
             "Authenticator ECS: pass (97.0% lowest-suite pass).") in message
     assert "Open the report for failure details and next steps." in message
     assert "Next:" not in message

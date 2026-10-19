@@ -224,14 +224,15 @@ def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, fa
 
 
 def test_gate_uses_unrounded_counts(ready):
-    for key in ("ecs", "local"):
-        ready.pipeline_runs["rcs"][-1][key]["tests"]["categories"]["ui"] = {
+    model = rc_report.rc_report_model(_context(ready))
+    for key in ("ECS", "Local"):
+        model["mrwp"][key]["tests"]["categories"]["ui"] = {
             "total": 2000, "passed": 1799, "failed": 201}
-    assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["blocking"]
-    for key in ("ecs", "local"):
-        ready.pipeline_runs["rcs"][-1][key]["tests"]["categories"]["ui"] = {
+    assert rc_report.rc_ui_gate(model)["blocking"]
+    for key in ("ECS", "Local"):
+        model["mrwp"][key]["tests"]["categories"]["ui"] = {
             "total": 20000, "passed": 19999, "failed": 1}
-    assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["verdict"] == "warn"
+    assert rc_report.rc_ui_gate(model)["verdict"] == "warn"
 
 
 def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, capsys, monkeypatch):

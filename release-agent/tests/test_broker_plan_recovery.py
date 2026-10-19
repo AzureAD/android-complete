@@ -100,6 +100,7 @@ class ADO:
         if match and method == "PATCH":
             if self.failure == "marker":
                 return False, None, "HTTP 503"
+            self.plans[int(match[1])]["areaPath"] = body.get("areaPath", T.PROJECT)
             self.plans[int(match[1])].update(body)
             return True, {}, ""
         record = ReleaseState.load(str(self.path)).resources[B.RESOURCE]

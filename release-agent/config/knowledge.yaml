@@ -738,7 +738,7 @@ build_verify.rc_report:
     Firebase suites), this step CONSOLIDATES it into the Phase-2 RC report and emails it to the
     release owner (on CCD+1). It is the terminal Phase-2 step and the single decision point — the
     verification steps only gather data; this step decides. After claimed delivery, `notification result` applies
-    TWO independent gates: (1) the three-tier MRWP UI gate on the combined UI-automation pass rate
+    TWO independent gates: (1) the three-tier MRWP UI+Stress gate on the combined historical coverage
     across both MRWP runs (100% clean, >=90% warn/proceed, <90% hold); and (2) the Authenticator ECS
     gate (both Firebase suites >= 90%, and the auth build succeeded). The release AUTO-ADVANCES only
     when BOTH gates clear; if EITHER holds, the step blocks and WAITS for human attestation. There is
@@ -755,7 +755,10 @@ build_verify.rc_report:
     separate. Full unresolved-failure and recovered-success lists preserve source evidence.
     The separate Authenticator Firebase gate retains its existing count/build policy.
     rc_report prepares source-only execution counts, failures, recoveries and result links.
-    The HTML heading is Broker UI-automation results. Failure titles and source-result
+    UI Automation and Stress Tests have separate rows and failure labels; their combined
+    UI+Stress coverage retains the existing gate denominator and thresholds. Fresh captures
+    freeze the Stress classification policy; old captures are normalized only in report
+    copies, never rewritten. The HTML heading is Broker UI and Stress results. Failure titles and source-result
     links live in their product/suite cards; the separate Source evidence / release-owner
     investigation panel is omitted to avoid duplication. Source facts remain available
     to the plaintext/CLI report and gate logic.
@@ -835,29 +838,31 @@ build_verify.rc_report_notify:
 # =============================== Phase 3 · bug_bash ===============================
 
 bug_bash.clone_plans_broker:
-  summary: "Build this release's Broker test plan — three flat suites: Broker + Native Auth + UI Automation."
+  summary: "Build this release's Broker test plan: manual suites plus failure-only triage by flight/category."
   what: >
     Each release gets a Broker test plan named 'Android Monthly Release - <Mon YYYY>' (e.g.
     'Android Monthly Release - Aug 2026', area 'Engineering\\Auth Client\\Broker\\Android').
     Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite tree),
-    Scout creates a fresh plan with exactly THREE FLAT top-level suites: (1) 'Manual Tests
+    Scout creates a fresh plan preserving (1) 'Manual Tests
     (Android Broker)' — a static suite of the manual-broker cases resolved from the master
     template (#2007357, subtree suite 2008656), each pinned to the two flight configurations
     (293 'RC MSAL - RC Broker' / ECS + 330 '… (LocalFlights)') → 2 points/case; (2)
     'Manual Tests (Native Auth)' — a single dynamic (tag-query) suite carrying the master's
-    Native-Auth query (#2864589 flattened), so it stays current; and (3) 'UI Automation
-    (Android Broker)' — a static suite of all distinct UI-automation cases (the master's
-    #2007399 subtree resolved/flattened), pinned to the UI folder's flight configs. All three
-    are FLAT (no nested folders) and all cases are REFERENCED (shared, not duplicated) — the
-    classic Test Suite Clone is avoided because it COPIES the case work items. distribute_tests
-    + the progress updates find the flat Broker suite by name, so it's a drop-in.
+    Native-Auth query (#2864589 flattened), so it stays current. Automation contains ONLY
+    reconciled current-RC MRWP failures under 'Automation Failure Triage' -> ECS/Local ->
+    nonempty categories. 'Stress Tests' is separate from 'UI Automation'; Instrumented,
+    Unit, Lab API, Native Auth E2E and Other UI retain their own categories. No full UI
+    inventory, passing/NA/recovered cases or empty folders; zero failures means manual-only.
+    Verified singleton UI case/configuration pairs reference originals. Collisions, Stress
+    and no-ID failures get release-owned investigation cases with exact source links.
+    Shared case fields are never edited; Testers belong to this release's test points.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan API)."
   how: >
     Find/reuse before create. The release-owned resources.broker_test_plan record survives
     step reopen; step.data.plan_id remains the downstream reference. A recorded ID is
     verified, never replaced after an API/auth/404 error. Without an ID, complete paged ADO
     discovery includes inactive and same-name plans. One matching plan must pass identity,
-    flat-suite, query, configuration and point checks; multiple matches block for owner
+    source-versioned hierarchy, query, configuration and point checks; multiple matches block for owner
     selection. Tell Scout which existing plan to retain. Scout uses broker-plan --release
     <id> to inspect candidates, then --plan-id <id> --reason "<owner selection>" to bind
     without ADO writes or marking the step done. --area-path <observed area> can explicitly
@@ -865,11 +870,11 @@ bug_bash.clone_plans_broker:
     A new build checkpoints its source snapshot and creating intent under the existing
     release lock BEFORE POST, then checkpoints the returned ID before building suites.
     Partial plans are retained, not deleted. Retries verify the SAME plan against the
-    frozen source and per-case UI configuration matrix: four baseline configs plus
-    RC/RC293/330 selectively assigned to cases represented by captured source evidence.
-    Never blanket-expand to six configs or silently migrate historical source snapshots.
-    Missing points require owner-approved in-place repair; preview with --preview-ui-repair.
-    Repair missing suites/points in that plan before continuing. An uncertain
+    frozen source and durable create/fill receipts. New failure-only sources use
+    classification_policy 2, creating Stress Tests leaves from the start; they do not
+    need an old plan's label correction. Historical matrix/v3/v4-policy-1 resources
+    retain their frozen layout and classification until separately reviewed recovery.
+    Never clear a held plan or reuse its identity to force a fresh plan. An uncertain
     create remains blocked even if no candidate is yet visible. Only after the owner confirms
     the original runner is stopped and creation did not occur may Scout use broker-plan
     --confirm-not-created --reason "<evidence>"; this also verifies absence and retains the
@@ -881,12 +886,12 @@ bug_bash.clone_plans_broker:
     - name: "Broker test-plans doc"
       url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
   faqs:
-    - q: "Why is the plan three flat suites instead of the master's folder tree?"
-      a: "The bug bash is easiest to run and track as flat lists. Manual Broker is a flattened snapshot; Native Auth is a single dynamic (tag-query) suite so it stays current; UI Automation is all its distinct cases in one flat suite. No nested folders."
+    - q: "How are automation failures grouped?"
+      a: "Automation Failure Triage -> ECS/Local -> nonempty category leaves, including separate UI Automation and Stress Tests. Both manual suites remain unchanged. Passing/NA/recovered evidence stays in Phase 2 reports, not new plan cases; zero failures means manual-only."
     - q: "Does it duplicate the test cases?"
-      a: "No — it references the existing test cases (shared). Edit test cases only in the master template. (The classic Test Suite Clone is deliberately avoided because it COPIES cases, which previously exploded the Native-Auth tag count.)"
+      a: "Manual cases and verified singleton UI case/configuration pairs reference originals. Collisions, Stress and no-ID failures get owned investigation cases, not edits to shared originals. Every investigation retains its exact build/run/result provenance."
     - q: "Does it auto-update if the master changes later?"
-      a: "The two static suites (Manual Broker, UI Automation) are frozen snapshots at build time (stable monthly cut). The Native Auth dynamic suite re-resolves its query. Retrying/reopening reuses the same plan and saved snapshot; never delete its ID to request another plan. Changing the monthly test set needs a separate explicit review."
+      a: "Manual membership and failure-source identity are frozen at build time; Native Auth re-resolves its dynamic query. Retrying/reopening reuses the same plan and receipts, retaining resolved failure history. New builds, RCs or failures require explicit new-source review; never delete its ID to request another plan."
     - q: "How do I recover missing metadata or duplicate plans?"
       a: "Tell Scout which existing plan to retain after reviewing candidate IDs, areas, suites and results. Scout binds the verified plan with broker-plan, then resumes next. A bound plan cannot be silently switched because downstream results/assignments may already refer to it. Duplicate-plan deletion is a separate owner-approved action; never delete the shared case work items."
 
@@ -998,7 +1003,10 @@ bug_bash.ui_test_status:
   summary: "Own both plan mappings/writes and publish the completed UI fill result; retain report-only failures."
   what: >
     Fills the release's UI-automation results from Phase-2's captured runs — for BOTH apps.
-    (1) BROKER: maps the reconciled current-RC source evidence also displayed by rc_report
+    (1) BROKER: new source-v4 plans fill ONLY reconciled current-RC failure investigations,
+    grouped by flight/category with Stress Tests separate from UI Automation. Both manual
+    suites remain unchanged. Historical source versions retain their original mapping.
+    Uses the reconciled current-RC source evidence also displayed by rc_report
     (state.pipeline_runs.rcs[-1].ecs/local.tests.suites[].test_results), without refetching
     pipeline results or reevaluating retries. Routing encodes the FULL MSAL/Broker combination:
     PROD MSAL + RC Broker -> ECS292/Local328; RC MSAL + PROD Broker -> ECS294/Local344;
@@ -1016,13 +1024,12 @@ bug_bash.ui_test_status:
     Phase-3 Authenticator refetch or best-effort evidence skip is allowed.
   who: "Scout runs it automatically during `next` (an agent step) — before distribute_tests."
   how: >
-    Broker uses the existing case-id extractor on the recorded exact title ('test_<caseId>_...').
-    Unmapped titles/suites are explicit skipped-mapping diagnostics, never guessed IDs. Only
-    explicitly recognized full suite combinations are placed on a config. New plans retain
-    the four baseline configs and add 293/330 only to cases represented by current RC/RC
-    evidence; membership and per-case matrix are frozen for recovery. No duplicate work items.
-    Missing RC/RC target points block all Broker outcome writes and require read-only
-    broker-plan --preview-ui-repair followed by separate owner-approved in-place repair.
+    New failure-only plans use the clone's frozen scenario bindings and typed
+    plan-root/flight/category suite IDs, not a fake UI-suite ID. Singleton UI references
+    and owned Stress/collision/no-ID cases preserve exact scenario identity and source
+    links. Missing target points or new RC/build/failure identities block before writes.
+    Historical matrix plans retain the existing title-based case-id extractor and
+    explicit combination mapping; --preview-ui-repair is only their reviewed repair path.
     Old LTW outcomes at 294/344 are NEVER auto-cleared: equal outcomes are not ownership;
     cleanup needs provenance receipts, match-before-write and later exact approval.
     For Authenticator, E2E carries case ids; Monthly intentionally has no map and remains
@@ -1043,8 +1050,9 @@ bug_bash.ui_test_status:
     unmapped investigations, and minimal source/target binding. Consumers use the small
     ui_results.completed_result API, not diagnostic summary fields or raw evidence. Missing,
     partial or stale results require supported owner refresh, never fallback/migration.
-    clone_plans_broker records the validated UI suite ID as well as plan identity; refresh
-    that owning step if an older state lacks it, then rerun ui_test_status.
+    clone_plans_broker records the source-versioned validated destination: typed automation
+    hierarchy for v4, UI suite ID only for historical matrix/v3. Refresh that owning step
+    if its destination is missing; never silently migrate it or invent a UI-suite ID.
   faqs:
     - q: "A test failed for one config but passed for another — what gets written?"
       a: "Per full combination AND flight. Never treat RC MSAL + RC Broker as RC MSAL + PROD Broker. Distinct API/device/parameterized tests stay separate as evidence and use Failed-wins only at their explicitly mapped case/config point."

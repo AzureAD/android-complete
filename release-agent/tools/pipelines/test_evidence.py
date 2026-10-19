@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 
 from .tests_results import (
     MRWP_COUNT_BASIS, TEST_CATEGORIES, _RESULT_OUTCOMES, _positive_test_id,
-    _suite_base_name, reconcile_retries,
+    _suite_base_name, reconcile_retries, classify_test_run, TEST_CATEGORY_BASIS,
+    TEST_CATEGORY_LEGACY_VIEW_BASIS,
 )
 from tools.coordinates import coords
 
@@ -20,7 +22,18 @@ def _counts_match(record, expected):
         type(record.get(k)) is int and record[k] == v for k, v in expected.items())
 
 
-def validate_snapshot_tests(snapshot, *, allow_empty=False):
+def _snapshot_category(name, summary):
+    basis = summary.get("category_basis")
+    legacy = basis == TEST_CATEGORY_LEGACY_VIEW_BASIS or (
+        basis is None and "stress" not in summary["categories"])
+    category = classify_test_run(name, legacy=legacy)
+    # A derived legacy view splits only historical UI, never Unit/Instrumented.
+    if basis == TEST_CATEGORY_LEGACY_VIEW_BASIS and category == "ui":
+        return classify_test_run(name)
+    return category
+
+
+def validate_snapshot_tests(snapshot, *, allow_empty=False, include_all=False):
     """Validate attribution, coverage and recorded verdicts against exact-title retries."""
     require(isinstance(snapshot, dict), "missing snapshot")
     bid = _positive_test_id(snapshot.get("run_id"))
@@ -50,7 +63,15 @@ def validate_snapshot_tests(snapshot, *, allow_empty=False):
         run_counts[rid] = run["result_entries"]
         run_names[rid] = _suite_base_name(run["name"])
     seen_suites, seen_runs, seen_results = set(), set(), set()
-    categories = {cat: Counter(total=0, passed=0, failed=0, na=0) for cat in TEST_CATEGORIES}
+    recorded_categories = summary.get("categories")
+    require(isinstance(recorded_categories, dict), "missing category coverage")
+    explicit_stress = "stress" in recorded_categories or summary.get("category_basis") is not None
+    require(summary.get("category_basis") in (
+        None, TEST_CATEGORY_BASIS, TEST_CATEGORY_LEGACY_VIEW_BASIS),
+            "unsupported category classification basis")
+    expected_categories = TEST_CATEGORIES if explicit_stress else TEST_CATEGORIES[:-1]
+    require(set(recorded_categories) == set(expected_categories), "missing/unknown category coverage")
+    categories = {cat: Counter(total=0, passed=0, failed=0, na=0) for cat in expected_categories}
     ui_tests = []
     for suite in suites:
         require(isinstance(suite, dict), "invalid suite")
@@ -59,6 +80,8 @@ def validate_snapshot_tests(snapshot, *, allow_empty=False):
                  and isinstance(cat, str) and cat in categories
                  and suite.get("count_basis") == MRWP_COUNT_BASIS,
                  "invalid/duplicate suite or count_basis")
+        expected_category = _snapshot_category(name, summary)
+        require(cat == expected_category, f"{name}: source category attribution mismatch")
         seen_suites.add(name)
         ids, tests = suite.get("run_ids"), suite.get("test_results")
         require(isinstance(ids, list) and ids and isinstance(tests, list),
@@ -104,7 +127,7 @@ def validate_snapshot_tests(snapshot, *, allow_empty=False):
                      f"{name}: verdict does not match exact-title retry evidence")
             counts["na" if verdict == "NotApplicable" else verdict.lower()] += 1
             counts["total"] += verdict != "NotApplicable"
-            if cat == "ui":
+            if cat in ("ui", "stress") or include_all:
                 ui_tests.append((name, test))
         require(all(entries[rid] == run_counts[rid] for rid in rids)
                  and _counts_match(suite, {**counts, "result_entries": sum(entries.values())}),
@@ -114,7 +137,6 @@ def validate_snapshot_tests(snapshot, *, allow_empty=False):
             f"{name}: failure titles do not match reconciled tests")
         categories[cat].update(counts)
     require(seen_runs == set(run_counts), "incomplete suite/run coverage")
-    recorded_categories = summary.get("categories")
     require(isinstance(recorded_categories, dict) and all(
         _counts_match(recorded_categories.get(cat), counts) for cat, counts in categories.items()),
         "category counts do not match reconciled tests")
@@ -127,6 +149,29 @@ def validate_snapshot_tests(snapshot, *, allow_empty=False):
              "failure details do not match reconciled summary")
     require(ui_tests or allow_empty, "missing UI test evidence")
     return bid, sorted(ui_tests, key=lambda pair: (pair[0], pair[1]["title"]))
+
+
+def report_snapshot(snapshot):
+    """Normalize a validated report COPY; never rewrite frozen capture/resource evidence."""
+    validate_snapshot_tests(snapshot, allow_empty=True, include_all=True)
+    view = deepcopy(snapshot)
+    summary = view["tests"]
+    legacy = summary.get("category_basis") == TEST_CATEGORY_LEGACY_VIEW_BASIS or (
+        summary.get("category_basis") is None and "stress" not in summary["categories"])
+    summary["category_basis"] = TEST_CATEGORY_LEGACY_VIEW_BASIS if legacy else TEST_CATEGORY_BASIS
+    counts = {cat: {"total": 0, "passed": 0, "failed": 0, "na": 0, "recovered": []}
+              for cat in TEST_CATEGORIES}
+    for suite in summary["suites"]:
+        cat = suite["category"] = _snapshot_category(suite["name"], summary)
+        for key in ("total", "passed", "failed", "na"):
+            counts[cat][key] += suite[key]
+        counts[cat]["recovered"].extend({"suite": suite["name"], "title": t["title"]}
+                                       for t in suite["test_results"] if t["recovered"])
+    summary["categories"] = counts
+    summary["failed_suites"] = sorted((s for s in summary["suites"] if s["failed"]),
+                                      key=lambda s: (-s["failed"], s["name"]))
+    view["failed_suites"] = summary["failed_suites"]
+    return view
 
 
 def result_links(attempts, project):

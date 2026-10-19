@@ -2,17 +2,18 @@
 
 Two DIFFERENT release procedures, per the team docs:
 
-  * BROKER  — build a three-folder monthly plan. Instead of ADO's "Copy Test Plan" (which
-      reproduces the master's whole 45-suite tree), create a fresh plan "Android Monthly
-      Release - <Mon YYYY>" with exactly three FLAT top-level suites: (1) "Manual Tests (Android
+  * BROKER  — build a source-versioned monthly plan. Instead of ADO's "Copy Test Plan" (which
+      reproduces the master's whole tree), create a fresh plan "Android Monthly
+      Release - <Mon YYYY>" with three original suites: (1) "Manual Tests (Android
       Broker)" — a static suite of the manual-broker cases (master 2007357 / subtree 2008656
       resolved), pinned to the two flight configs (293 ECS + 330 LocalFlights); (2) "Manual
       Tests (Native Auth)" — a single dynamic (query) suite carrying the master's Native-Auth
       tag query (its 2864589 subtree, flattened); and (3) "UI Automation (Android Broker)" — a
-      static suite of all distinct UI-automation cases (master's 2007399 subtree resolved and
-      flattened), pinned to the UI folder's flight configs. All three are FLAT (no nested
-      folders); cases are REFERENCED (shared, not duplicated) — the classic Test Suite Clone is
-      avoided because it COPIES cases (see `_native_auth_query`).
+      static suite of exact current-RC ECS/Local Broker/device scenarios. Verified singleton
+      case/config pairs reference originals; collisions and scenarios without verified IDs
+      get release-owned cases. Additional automation failures conditionally add category
+      suites under "Automation Failure Triage". Historical schema-less plans retain their
+      original flat master-case matrix; they are never silently migrated.
       Doc: eng.ms/.../internal-release-checklist/test-plans
 
   * AUTHENTICATOR — CREATE a new query-based (dynamic) test suite under the standing
@@ -23,8 +24,8 @@ Two DIFFERENT release procedures, per the team docs:
       testers is a later, manual step.
       Doc: IdentityWiki page 33580 (How to make test suite for bug bash).
 
-Everything shells out to `az` (bearer token) via tools.pipelines helpers and returns an
-(ok, value, detail) triple. Reads are cheap; the two creates are the only writes.
+Provider operations use tools.pipelines helpers and return (ok, value, detail).
+Writes include release-owned creation, membership/configuration and point outcomes.
 """
 from __future__ import annotations
 
@@ -53,16 +54,14 @@ BROKER_MANUAL_SUITE_NAME = "Manual Tests (Android Broker)"
 # Assigned explicitly so the flat suite gets exactly 2 points/case (matches the master's
 # matrix) instead of inheriting the project's ~190 default configurations.
 BROKER_CONFIGS = list(_BROKER["configs"])
-# The "Manual Tests (Native Auth)" and "UI Automation (Android Broker)" subtrees of the master
-# are FLATTENED into single suites: Native Auth -> one dynamic (tag-query) suite; UI Automation
-# -> one static suite of all its distinct cases. So the monthly plan has THREE FLAT top-level
-# suites: Manual Broker (static), Native Auth (dynamic), UI Automation (static). Cases are
-# referenced, never copied.
+# Native Auth retains the master's dynamic tag query. The UI master is a verified
+# case catalog, not the source-v3 inventory; schema-less plans retain their old matrix.
 BROKER_NATIVE_AUTH_ROOT_SUITE = _BROKER["native_auth_root_suite"]
 BROKER_NATIVE_AUTH_SUITE_NAME = "Manual Tests (Native Auth)"
 BROKER_UI_ROOT_SUITE = _BROKER["ui_root_suite"]
 BROKER_UI_SUITE_NAME = "UI Automation (Android Broker)"
-# Test configurations the flat UI-automation suite runs each case under — the ECS + LocalFlight
+# Historical UI-matrix configurations — source-v3 uses only exact scenario configs.
+# The ECS + LocalFlight
 # matrix (the UI root itself only carries the two ECS configs, so we pin explicitly to also cover
 # LocalFlight). 4 points/case:
 #   292 = "PROD MSAL - RC Broker (ECS)"          294 = "RC MSAL - PROD Broker (ECS)"
@@ -126,6 +125,10 @@ def _plan_url(plan_id, extra=""):
 
 # ---------------------------------------------------------------- reads
 
+_PLAN_UPDATE_FIELDS = ("name", "areaPath", "iteration", "description", "owner", "startDate",
+                       "endDate", "state", "buildId", "buildDefinition", "releaseEnvironmentDefinition")
+
+
 def get_plan(plan_id, timeout=60):
     """(ok, {id,name,areaPath,iteration,rootSuiteId}, detail) for a test plan, or block
     detail. Used to confirm an already-recorded clone still exists (idempotency)."""
@@ -136,7 +139,8 @@ def get_plan(plan_id, timeout=60):
             or not isinstance(j.get("rootSuite"), dict) or not j["rootSuite"].get("id")):
         return (False, None, "plan lookup returned no id/rootSuite")
     root = (j or {}).get("rootSuite") or {}
-    return (True, {"id": j.get("id"), "name": j.get("name"),
+    return (True, {**{key: j[key] for key in _PLAN_UPDATE_FIELDS if key in j},
+                   "id": j.get("id"), "name": j.get("name"),
                    "areaPath": j.get("areaPath"), "iteration": j.get("iteration"),
                    "rootSuiteId": root.get("id"), "description": j.get("description", "")}, "")
 
@@ -421,7 +425,8 @@ def _native_auth_query(timeout=120):
     return (False, None, "no dynamic query suite found under the Native-Auth root")
 
 
-def build_broker_plan(dest_name, timeout=120, *, source, description, on_created):
+def build_broker_plan(dest_name, timeout=120, *, source, description, on_created,
+                      resource=None, checkpoint=None):
     """Build the release's Broker test plan and return (ok, new_plan_id, detail).
 
     Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite
@@ -450,6 +455,11 @@ def build_broker_plan(dest_name, timeout=120, *, source, description, on_created
             raise ValueError("A creation checkpoint is required")
     except ValueError as exc:
         return False, None, str(exc)
+    if source.get("schema_version") in (3, 4):
+        from tools import broker_scenarios as S
+        if not isinstance(resource, dict) or not callable(checkpoint):
+            return False, None, "Scenario creation requires a durable resource ledger/checkpoint"
+        return S.build(dest_name, source, description, resource, checkpoint, timeout)
     # 1) empty plan
     ok, j, d = P._ado_rest_send(
         f"{ORG}/{PROJECT}/_apis/testplan/plans?{_API}", "POST",
@@ -647,7 +657,24 @@ def fill_ui_automation_results(
     org=ORG,
     project=PROJECT,
     prior_points=None,
+    scenario_resource=None,
+    scenario_bindings=None,
+    automation_target=None,
+    checkpoint=None,
 ):
+    if scenario_resource is not None:
+        from tools import broker_scenarios as S
+        return S.fill(plan_id, scenario_resource, scenario_bindings, suite_id=suite_id,
+                      automation_target=automation_target,
+                      org=org, project=project, prior_points=prior_points,
+                      checkpoint=checkpoint, timeout=timeout)
+    return _fill_ui_suite(plan_id, verdicts, timeout, suite_id=suite_id,
+                          org=org, project=project, prior_points=prior_points)
+
+
+def _fill_ui_suite(plan_id, verdicts, timeout=120, *, suite_id=None, org=ORG, project=PROJECT,
+                   prior_points=None, suite_name=BROKER_UI_SUITE_NAME, checkpoint=None,
+                   require_exact=False, exact_suite=False):
     """Fill the plan's flat "UI Automation (Android Broker)" suite from per-config verdicts
     ({case_id: {(flight, variant): 'Passed'|'Failed'|'NotApplicable'}} — from
     pipelines.project_mrwp_ui_results).
@@ -659,9 +686,17 @@ def fill_ui_automation_results(
     evidence/config mappings leave points untouched (including manual cases).
     Returns counts, mapping diagnostics and completed-write counts, also on a partial failure."""
     verdicts = {int(k): v for k, v in (verdicts or {}).items()}
-    oks, sid, d = _find_suite_by_name(
-        plan_id, BROKER_UI_SUITE_NAME, timeout, org=org, project=project
-    )
+    if exact_suite:
+        oks, observed, d = get_suite(plan_id, suite_id, timeout, org=org, project=project)
+        if (not oks or not isinstance(observed, dict) or observed.get("name") != suite_name
+                or observed.get("suiteType") != "staticTestSuite"
+                or str(observed.get("id")) != str(suite_id)):
+            return False, None, "Exact failure suite identity changed"
+        sid = suite_id
+    else:
+        oks, sid, d = _find_suite_by_name(
+            plan_id, suite_name, timeout, org=org, project=project
+        )
     if not oks:
         return (False, None, d)
     if not sid:
@@ -702,6 +737,8 @@ def fill_ui_automation_results(
                     "status": "no_matching_plan_point"}
                    for cid, values in sorted(verdicts.items()) for fv, outcome in sorted(values.items())
                    if (cid, fv) not in matched]}
+    if (require_exact and (summary["untouched_points"] or summary["unmatched_verdicts"])):
+        return False, summary, "Exact scenario target/source membership changed; no outcomes written"
     if any(row["variant"] == "rc_msal_rc_broker" for row in summary["unmatched_verdicts"]):
         return False, summary, ("Missing full-combination RC MSAL/RC Broker points. "
                                 "Run broker-plan --preview-ui-repair and obtain owner-approved repair; "
@@ -719,14 +756,18 @@ def fill_ui_automation_results(
     for outcome, point_ids in buckets.items():
         summary[count_key[outcome]] = sum(row["outcome"] == outcome for row in reused)
         point_ids = [pid for pid in point_ids if int(pid) not in reused_ids]
-        if point_ids:
+        for offset in range(0, len(point_ids), 40):
+            chunk_ids = point_ids[offset:offset + 40]
             batch = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]),
                       "config_id": int(p["configuration"]["id"]), "outcome": outcome}
-                     for p in pts if p["id"] in point_ids]
+                     for p in pts if p["id"] in chunk_ids]
+            if checkpoint:
+                summary["uncertain_points"] = batch
+                checkpoint(summary)
             oko, do = _set_points_outcome(
                 plan_id,
                 sid,
-                point_ids,
+                chunk_ids,
                 outcome,
                 timeout,
                 org=org,
@@ -736,10 +777,13 @@ def fill_ui_automation_results(
             if not oko:
                 summary["incomplete_outcome"] = outcome
                 summary["uncertain_points"] = batch
-                return (False, summary, f"setting {len(point_ids)} points -> {outcome} failed: {do}; "
+                return (False, summary, f"setting {len(chunk_ids)} points -> {outcome} failed: {do}; "
                         "earlier outcome batches remain applied; this batch may be partially applied")
-            summary[count_key[outcome]] += len(point_ids)
+            summary[count_key[outcome]] += len(chunk_ids)
             summary["applied_points"].extend(batch)
+            summary.pop("uncertain_points", None)
+            if checkpoint:
+                checkpoint(summary)
 
     return (True, summary, "")
 

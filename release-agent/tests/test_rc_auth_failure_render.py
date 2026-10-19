@@ -113,7 +113,7 @@ def test_html_has_product_specific_header_and_no_duplicate_evidence_panel():
     m = model({E2E: [("test_100_auth_failure", "Failed")], MONTHLY: [("monthly_failure", "Failed")]},
               broker_rows={PROD: [("test_500_broker_failure", "Failed")]})
     html = H.rc_email_html(m, {}, R.rc_ui_gate(m), R.auth_report_gate(m), R.rc_next_action(m))
-    assert ">Broker UI-automation results</p>" in html
+    assert ">Broker UI and Stress results (separate categories; combined RC gate)</p>" in html
     assert ">UI-automation results</p>" not in html
     assert "Source evidence / release-owner investigation" not in html
     for failure in m["ui_evidence"]["failures"]:
@@ -149,8 +149,8 @@ def test_header_keeps_all_three_legs_separate_without_averaging():
     assert "Auth ECS: HOLD (50.0% lowest-suite pass)" in subject
     plain = H.rc_email_plain(m, {}, gate, auth, R.rc_next_action(m))
     summary = plain.split("RESULTS (shown separately)", 1)[1].split("NEXT:", 1)[0]
-    assert "MRWP ECS: 75.0% pass; 25.0% fail" in summary
-    assert "MRWP Local: 100.0% pass; 0.0% fail" in summary
+    assert "MRWP ECS: 75.0% pass (UI+Stress); 25.0% fail" in summary
+    assert "MRWP Local: 100.0% pass (UI+Stress); 0.0% fail" in summary
     assert "Authenticator ECS: HOLD" in summary
     assert m == before
     assert (R.rc_ui_gate(m), R.auth_report_gate(m)) == (gate, auth)
@@ -264,6 +264,7 @@ def test_success_headlines_and_all_mrwp_categories_use_pass_then_fail_rates():
         "unit": {"passed": 4, "failed": 1, "total": 5},
         "instrumented": {"passed": 2, "failed": 1, "total": 3},
         "ui": {"passed": 22, "failed": 7, "total": 29},
+        "stress": {"passed": 0, "failed": 0, "total": 0},
     }
     for provider in ("ECS", "Local"):
         m["mrwp"][provider]["tests"]["categories"] = deepcopy(counts)
@@ -272,7 +273,8 @@ def test_success_headlines_and_all_mrwp_categories_use_pass_then_fail_rates():
     html = H.rc_email_html(m, {}, gate, auth, R.rc_next_action(m))
     for leg in ("mrwp-ecs", "mrwp-local", "auth-ecs"):
         cell = _result_cell(html, leg)
-        assert ">75.9%</div>" in cell and "UI-automation success rate" in cell
+        label = "UI-automation" if leg == "auth-ecs" else "UI+Stress"
+        assert ">75.9%</div>" in cell and label + " success rate" in cell
     assert "UI-automation failure rate" not in html
     for provider, end in (("ECS", "MRWP Local"), ("Local", "Authenticator ECS <span")):
         card = html.split(f">MRWP {provider}<span", 1)[1].split(end, 1)[0]

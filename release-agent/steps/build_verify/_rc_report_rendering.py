@@ -8,6 +8,7 @@ from steps.lib import templating as T
 from tools.pipelines import (
     format_versions, AUTH_UI_SUITES, AUTH_UI_PASS_THRESHOLD, MRWP_COUNT_BASIS,
     MONTHLY_REPORT_ONLY,
+    TEST_CATEGORIES, _CATEGORY_LABEL, ui_stress_counts,
 )
 
 
@@ -150,7 +151,7 @@ def source_evidence_lines(model):
         return ["UI source evidence unavailable: refresh the RC report preparation."]
     lines = list(facts["issues"])
     for provider in facts["providers"]:
-        lines.append(f"Broker {provider['flight']}: {provider['distinct_tests']} distinct UI tests; "
+        lines.append(f"Broker {provider['flight']}: {provider['distinct_tests']} distinct UI+Stress tests; "
                      f"{provider['source_executions']} source executions.")
     if facts["policy"]:
         lines.append(facts["policy"])
@@ -160,7 +161,9 @@ def source_evidence_lines(model):
                      f"{auth['distinct_tests']} distinct tests.")
     for failure in facts["failures"]:
         policy = "; intentional_report_only" if failure.get("report_only") else ""
+        category = _CATEGORY_LABEL.get(failure.get("category"))
         lines.append(f"INVESTIGATE {failure['product']} {failure['provider']} "
+                     + (f"{category} " if category else "") +
                      f"[{failure['suite']}{policy}] {failure['title']}")
         lines.extend(f"Source {link['run_id']}/{link['result_id']}: {link['url']}"
                      for link in failure["links"])
@@ -289,17 +292,20 @@ def auth_failure_details_html(model):
 def mrwp_leg_summary(model, provider) -> dict:
     """Provider-only display metrics; the owning step's release gate policy is unchanged."""
     tests = ((model.get("mrwp") or {}).get(provider) or {}).get("tests") or {}
-    ui = (tests.get("categories") or {}).get("ui")
+    try:
+        ui = ui_stress_counts(tests)
+    except ValueError:
+        ui = None
     if (tests.get("count_basis") != MRWP_COUNT_BASIS or not valid_counts(ui)
             or ui["total"] != ui["passed"] + ui["failed"]):
         return {"available": False, "pass_pct": None, "fail_pct": None,
-                "headline": "evidence unavailable", "detail": "Refresh UI verification"}
+                "headline": "evidence unavailable", "detail": "Refresh UI+Stress verification"}
     passed, failed, total = ui["passed"], ui["failed"], ui["total"]
     pct = round(passed * 100.0 / total, 1)
     return {"available": True, "passed": passed, "failed": failed, "total": total,
             "pass_pct": pct, "fail_pct": _fail_rate(failed, total),
-            "headline": f"{pct}% pass",
-            "detail": f"{failed} failed / {total} distinct UI tests"}
+            "headline": f"{pct}% pass (UI+Stress)",
+            "detail": f"{failed} failed / {total} distinct UI+Stress tests"}
 
 
 def auth_leg_summary(model, auth) -> dict:
@@ -362,10 +368,10 @@ def _fail_rate(failed, total) -> float:
 
 
 # Test-run category labels (mirrors tools.pipelines.classify_test_run).
-_CAT_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
+_CAT_LABEL = _CATEGORY_LABEL
 
 # Failing-suite display order: UI first (the RC-critical bucket), then instrumented, unit.
-_SUITE_ORDER = {"ui": 0, "instrumented": 1, "unit": 2}
+_SUITE_ORDER = {"ui": 0, "stress": 1, "instrumented": 2, "unit": 3}
 
 COUNT_NOTE = ("MRWP counts are distinct tests: one exact title per normalized suite within "
               "each current-RC build/provider; parameterizations and API/device suites stay separate. "
@@ -451,16 +457,19 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
         t = r.get("tests") or {}
         current = t.get("count_basis") == MRWP_COUNT_BASIS
         cats = (t.get("categories") or {}) if current else {}
-        ui = cats.get("ui") or {}
         L.append(f"  MRWP {prov} — run {r.get('run_id')} ({r.get('ran')}/{r.get('total')} stages)")
-        for cat in ("unit", "instrumented", "ui"):
+        for cat in TEST_CATEGORIES:
             c = cats.get(cat) or {}
             if not c.get("total"):
+                if c.get("na"):
+                    L.append(f"      {_CAT_LABEL[cat]:14} 0 evaluated · {c['na']} NA · rate unavailable")
                 continue
-            tag = "  <-- RC gate" if cat == "ui" else ""
             L.append(f"      {_CAT_LABEL.get(cat, cat):14} {c.get('passed')}/{c.get('total')} passed"
                      f" · {c.get('failed')} failed · {c['passed'] * 100 / c['total']:.2f}% pass"
-                     f" · {_fail_rate(c.get('failed'), c.get('total'))}% fail{tag}")
+                     f" · {_fail_rate(c.get('failed'), c.get('total'))}% fail"
+                     + (f" · {c['na']} NA" if c.get("na") else ""))
+        summary = mrwp_leg_summary(model, prov)
+        L.append(f"      UI+Stress RC gate coverage: {summary['headline']}; {summary['detail']}")
         fs = r.get("failed_stages") or []
         if fs:
             L.append(f"      Red stages ({len(fs)}): {', '.join(fs)}")
@@ -553,16 +562,19 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
     def _cat_row(cat, c):
         total = c.get("total") or 0
         if not total:
+            if c.get("na"):
+                return (f"<tr><td style='padding:5px 0;font-size:13px;'>{_CAT_LABEL[cat]}</td>"
+                        f"<td colspan='3' style='font-size:12px;color:#667085;'>"
+                        f"0 evaluated · {c['na']} NA · rate unavailable</td></tr>")
             return ""
         passed, failed = c.get("passed") or 0, c.get("failed") or 0
         fr = _fail_rate(failed, total)
         is_ui = cat == "ui"
         lbl_style = "font-weight:700;color:#101828;" if is_ui else "color:#475467;"
-        gate = (" <span style='font-size:11px;color:#0b5cad;'>&larr; RC gate</span>"
-                if is_ui else "")
+        na = f" · {c['na']} NA" if c.get("na") else ""
         pct_color = "#b42318" if fr >= 1 else ("#b54708" if fr > 0 else "#067647")
         return (f"<tr>"
-                f"<td style='padding:5px 0;font-size:13px;{lbl_style}'>{_CAT_LABEL.get(cat, cat)}{gate}</td>"
+                f"<td style='padding:5px 0;font-size:13px;{lbl_style}'>{_CAT_LABEL.get(cat, cat)}{na}</td>"
                 f"<td style='padding:5px 10px;font-size:12px;color:#98a2b3;white-space:nowrap;'>{passed}/{total}</td>"
                 f"<td width='130' style='padding:5px 0;'>{_split_bar(passed * 100 / total, h=6)}</td>"
                 f"<td align='right' style='padding:5px 0 5px 10px;font-size:13px;font-weight:700;"
@@ -577,7 +589,10 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
         if t.get("count_basis") != MRWP_COUNT_BASIS:
             return f"<p>MRWP {prov} run {r.get('run_id')}: {T.esc(failure_evidence_error(r))}</p>"
         cats = t.get("categories") or {}
-        ui = cats.get("ui") or {}
+        try:
+            ui = ui_stress_counts(t)
+        except ValueError:
+            ui = {}
         ui_total, ui_pass, ui_fail = ui.get("total") or 0, ui.get("passed") or 0, ui.get("failed") or 0
         summary = mrwp_leg_summary(model, prov)
         fs = r.get("failed_stages") or []
@@ -585,7 +600,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
                f"({len(fs)}): {T.esc(', '.join(fs))}</div>" if fs else "")
 
         cat_table = "".join(_cat_row(c, cats.get(c) or {}) for c in
-                            ("unit", "instrumented", "ui"))
+                            TEST_CATEGORIES)
 
         # Failing suites — UI first, then instrumented/unit; each tagged by category.
         suites = sort_failed_suites(r.get("failed_suites"))
@@ -626,9 +641,9 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             # Headline uses success; failure counts remain explicit alongside it.
             f"<div style='margin:10px 0 2px;'>"
             f"<span style='font-size:26px;font-weight:800;color:{rate_color};'>{str(summary['pass_pct']) + '%' if summary['available'] else 'unavailable'}</span>"
-            f"<span style='font-size:13px;color:#667085;'> UI-automation success rate &nbsp;·&nbsp; "
+            f"<span style='font-size:13px;color:#667085;'> UI+Stress success rate (RC gate coverage) &nbsp;·&nbsp; "
             f"<strong style='color:#12b76a;'>{ui_pass}</strong> passed / "
-            f"<strong style='color:#b42318;'>{ui_fail}</strong> failed of {ui_total} distinct UI tests</span></div>"
+            f"<strong style='color:#b42318;'>{ui_fail}</strong> failed of {ui_total} distinct UI+Stress tests</span></div>"
             f"{_split_bar(ui_pass * 100 / ui_total) if summary['available'] else ''}"
             # per-category breakdown
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
@@ -733,7 +748,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
                 f"style='padding:12px 16px;border-right:1px solid #eef0f3;vertical-align:top;'>"
                 f"<div style='font-size:13px;font-weight:700;'>MRWP {provider}</div>"
                 f"<div style='font-size:22px;font-weight:800;color:{color};'>{rate}</div>"
-                f"<div style='font-size:12px;color:#667085;'>UI-automation success rate</div>"
+                f"<div style='font-size:12px;color:#667085;'>UI+Stress success rate</div>"
                 f"<div style='font-size:12px;color:#98a2b3;'>{summary['detail']}</div></td>")
         worst = auth_summary["worst"]
         failure_pct = round(100 - worst[1], 1) if worst and worst[1] is not None else None
@@ -796,7 +811,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
     </tr>
   </table>
 
-  <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">Broker UI-automation results</p>
+  <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">Broker UI and Stress results (separate categories; combined RC gate)</p>
   <p style="font-size:12px;color:#667085;">{T.esc(COUNT_NOTE)}</p>
   {mrwp_card('ECS')}
   {mrwp_card('Local')}

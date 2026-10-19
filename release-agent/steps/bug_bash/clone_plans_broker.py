@@ -1,16 +1,16 @@
 """Step: `clone_plans_broker` — build this release's Broker test plan (Phase 3, bug_bash).
 
-Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite tree), this
-creates a fresh plan "Android Monthly Release - <Mon YYYY>" with exactly THREE FLAT top-level
-suites:
+Creates a source-versioned plan that preserves both manual suites:
   • "Manual Tests (Android Broker)" — a static suite of the manual-broker cases (the manual
     bug-bash set), pinned to the two flight configs (ECS + LocalFlights);
   • "Manual Tests (Native Auth)" — a single dynamic (tag-query) suite, so its cases show
     directly (no extra folder level);
-  • "UI Automation (Android Broker)" — a static suite of all distinct UI-automation cases.
-All cases are REFERENCED (shared, not duplicated) — the classic Test Suite Clone is
-deliberately avoided because it COPIES the case work items. Flat = easy to track; downstream
-steps find the Broker suite by name → drop-in.
+  • "Automation Failure Triage" — current-RC failures only, grouped by ECS/Local,
+    then nonempty categories. Stress Tests is separate from UI Automation.
+Verified singleton UI case/configs reference originals; collisions, Stress and no-ID
+scenarios create release-owned cases. No full UI inventory or empty categories.
+Shared cases are never edited.
+Historical sources remain readable without automatically migrating an existing plan.
 
 Identity lives in the release resource registry, separately from step completion.
 Re-entry validates/reuses the bound plan; lost metadata triggers discovery, not a
@@ -31,7 +31,7 @@ from orchestrator.outcomes import Done, Blocked
 from orchestrator.evidence import StepData
 from steps.lib.mockctx import MISSING
 from tools import testplans as T
-from tools import broker_plans as B
+from tools import broker_plans as B, broker_scenarios as S
 
 from orchestrator.authority import OwnStepData, BrokerPlanEvidence, WriteOperation
 
@@ -117,8 +117,21 @@ def record_plan(context, plan_id, name):
 
 def plan_binding(existing, resource, plan_id, name):
     data = thaw(existing or {})
+    resource = thaw(resource)
     data.update(plan_id=plan_id, plan_name=name)
+    if resource.get("source", {}).get("schema_version") == 4:
+        from tools import broker_failure_triage as F
+        F.target(resource)
+        data.pop("ui_suite_id", None)
+        data.update(source_version=4, scenario_source_sha256=S.digest(resource["source"]),
+                    automation=thaw(resource["automation"]))
+        return StepData(data)
     data["ui_suite_id"] = resource.get("ui_suite_id")
+    if resource.get("source", {}).get("schema_version") == 3:
+        data["source_version"] = 3
+        data["scenario_source_sha256"] = S.digest(resource["source"])
+        data["triage_suite_ids"] = {k: v for k, v in resource.get("suites", {}).items()
+                                   if k not in ("broker", "native", "ui", "triage")}
     return StepData(data)
 
 
@@ -167,8 +180,17 @@ def _build(context, effect_input=None):
         if not ok:
             return Blocked(
                 f"clone_plans_broker: {detail}", links=_links(clone_id) if clone_id else [])
+    binding = record_plan(context, clone_id, dest)
+    if binding.values.get("source_version") == 4:
+        return Done(
+            f"Broker test plan ready: '{dest}' (plan {clone_id}) — manual Broker and Native Auth "
+            f"suites preserved; automation failures only under Automation Failure Triage -> "
+            f"ECS/Local -> nonempty categories. UI Automation and Stress Tests stay separate; "
+            f"no full UI inventory or empty folders. Shared originals are never edited.",
+            links=_links(clone_id), updates=(binding,))
     return Done(
-        f"Broker test plan ready: '{dest}' (plan {clone_id}) — three flat suites "
+        f"Broker test plan ready: '{dest}' (plan {clone_id}) — manual Broker, Native Auth "
+        f"and UI suites, plus source-owned failure categories when required "
         f"('{T.BROKER_MANUAL_SUITE_NAME}', '{T.BROKER_NATIVE_AUTH_SUITE_NAME}', "
-        f"'{T.BROKER_UI_SUITE_NAME}'), referencing existing test cases.",
-        links=_links(clone_id), updates=(record_plan(context, clone_id, dest),))
+        f"'{T.BROKER_UI_SUITE_NAME}'). Shared originals are never edited.",
+        links=_links(clone_id), updates=(binding,))

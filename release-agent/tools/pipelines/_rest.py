@@ -189,7 +189,9 @@ def _ado_rest_send(url, method, body, timeout):
     data = _json.dumps(body or {}).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, method=method,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        headers={"Authorization": f"Bearer {token}", "Content-Type":
+                 "application/json-patch+json" if "/_apis/wit/workitems/$" in url.lower()
+                 else "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")

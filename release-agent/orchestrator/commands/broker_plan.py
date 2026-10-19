@@ -10,14 +10,15 @@ from orchestrator.outcomes import Done
 from orchestrator.step_context import thaw
 from orchestrator.transitions import TransitionIntent
 from steps.bug_bash import clone_plans_broker as step
-from tools import broker_plans as B, testplans as T
+from tools import broker_plans as B, broker_scenarios as S, testplans as T
 
 
 def cmd_broker_plan(args):
     st = C.load_state(args.runs_root, args.release)
     orch = Orchestrator(getattr(args, "config", C.DEFAULT_CONFIG), st)
     permit = None
-    if args.confirm_not_created or (args.plan_id is not None and not args.preview_ui_repair):
+    if (args.confirm_not_created or getattr(args, "recover_create", None)
+            or (args.plan_id is not None and not args.preview_ui_repair)):
         permit = orch.authorize_outcome(
             TransitionIntent.RECOVER_EVIDENCE, "bug_bash", step.ID,
             execution_id=(st.get_step("bug_bash", step.ID).execution or {}).get("id"))
@@ -42,11 +43,22 @@ def cmd_broker_plan(args):
         if args.area_path is not None and args.plan_id is None:
             raise ValueError("--area-path requires --plan-id")
         if getattr(args, "preview_ui_repair", False):
+            if record.get("source", {}).get("schema_version") in (3, 4):
+                raise ValueError("Historical matrix repair does not apply to a source-v3 plan; inspect its frozen scenario resource")
             from steps.build_verify._common import latest_rc
             pid = args.plan_id or record.get("plan_id") or (
                 st.get_step("bug_bash", step.ID).data or {}).get("plan_id")
             ok, preview, detail = B.preview_ui_repair(pid, latest_rc(context))
             result = {"preview": preview, "error": detail or None}
+        elif getattr(args, "recover_create", None):
+            B._validate_source(record.get("source"))
+            if record["source"].get("schema_version") not in (3, 4):
+                raise ValueError("Exact create receipts require a versioned scenario resource")
+            S.recover_create(record, args.recover_create, args.resource_id, args.reason, lambda: None)
+            orch.apply_evidence(permit, Done(updates=(BrokerResource(record),)), checkpoint=True)
+            ok = True
+            result = {"recovered_create": args.recover_create, "resource_id": args.resource_id,
+                      "provider_writes": False}
         elif args.confirm_not_created:
             if "plan_id" in (st.get_step("bug_bash", step.ID).data or {}):
                 raise ValueError("Step already references a plan; absence cannot authorize another create")
@@ -94,6 +106,8 @@ def register(sub):
     action.add_argument("--plan-id", type=int, help="Owner-selected existing plan; cannot replace a bound plan")
     action.add_argument("--confirm-not-created", action="store_true",
                         help="Owner confirmed interrupted create did not occur; verifies no candidate exists")
+    action.add_argument("--recover-create", help="Uncertain v3 operation key, verified only against an exact provider receipt")
+    p.add_argument("--resource-id", type=int, help="Owner-supplied actual plan/suite/case ID for --recover-create")
     p.add_argument("--reason", help="Owner-confirmed reason for selecting this existing plan")
     p.add_argument("--area-path", help="Explicitly reviewed existing plan area if different from configuration")
     p.add_argument("--preview-ui-repair", action="store_true",

@@ -28,7 +28,15 @@ def assemble_rc_model(release, checker, orchestrator, mrwp, *, rc=None,
     """
     checker = checker or {}
     orchestrator = orchestrator or {}
-    mrwp = mrwp or {}
+    mrwp = dict(mrwp or {})
+    from tools.pipelines.test_evidence import report_snapshot
+    for provider, snapshot in mrwp.items():
+        if isinstance((snapshot.get("tests") or {}).get("suites"), list):
+            try:
+                mrwp[provider] = report_snapshot(snapshot)
+            except ValueError as exc:
+                mrwp[provider] = {**snapshot, "tests": None, "failed_suites": None,
+                                  "tests_error": f"Invalid source category evidence: {exc}; refresh verification"}
     problems = []
 
     if checker.get("error"):
@@ -81,8 +89,9 @@ def release_report(org, project, release_month, checker_def=CHECKER_DEF,
     path and the state-snapshot path produce an identical model shape + problems. Any
     field that couldn't be read carries an `error` note (surfaced as a problem).
 
-    `with_failed_tests` (default True) also fetches the individual failing test names per
-    suite (extra REST calls — set False for a faster stage-only view)."""
+    `with_failed_tests` (default True) includes outer per-suite failure display details.
+    False omits only those details AFTER the complete acquired evidence is validated
+    and normalized; category counts and their source coverage are identical."""
     # --- checker (did the release fire?) ---
     ok, runs, detail = _pp.find_checker_runs(org, project, checker_def, release_month, timeout)
     if not ok:
@@ -144,10 +153,13 @@ def release_report(org, project, release_month, checker_def=CHECKER_DEF,
         if not okt:
             entry["tests_error"] = detail or "could not fetch complete test summary"
         # Reuse the exact evidence used to calculate the counts; no second acquisition.
-        if with_failed_tests:
-            entry["failed_suites"] = (tests or {}).get("failed_suites") if okt else None
+        entry["failed_suites"] = (tests or {}).get("failed_suites") if okt else None
         mrwp[provider] = entry
-    return _pp.assemble_rc_model(release_month, checker, o, mrwp, rc=ids.get("rc"),
-                             id_source=source)
+    model = _pp.assemble_rc_model(release_month, checker, o, mrwp, rc=ids.get("rc"),
+                                 id_source=source)
+    if not with_failed_tests:
+        for entry in model["mrwp"].values():
+            entry.pop("failed_suites", None)
+    return model
 
 __all__ = ['CHECKER_DEF', 'ENGINEERING_ORG', 'ENGINEERING_PROJECT', 'IDENTITYDIVISION', 'MRWP_DEF', 'MSAZURE', 'ORCHESTRATOR_DEF', 'ORCH_PARK_STAGE', 'ORCH_REQUIRED_STAGES', 'TRIGGER_JOB', 'assemble_rc_model', 'release_report']

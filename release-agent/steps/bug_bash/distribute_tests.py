@@ -169,6 +169,7 @@ def _point_sets(context, selected, cfg, broker_manual_ids, triage):
     injected = context.input("point_sets", MISSING)
     if injected is not MISSING:
         return injected
+    completed = completed_result(context)
     bp = _broker_plan_id(context)
     ok, root, detail = context.services.testplans.find_suite_id_by_name(bp, cfg["broker"]["suite_name"])
     if not ok or not root:
@@ -184,7 +185,7 @@ def _point_sets(context, selected, cfg, broker_manual_ids, triage):
         if not ok:
             raise ValueError(detail)
         if prefix == "A":
-            result = completed_result(context)["auth"]
+            result = completed["auth"]
             expected_auth = {str(p["point_id"]): p for p in result["applied_points"]
                              if p["outcome"] == "Failed"}
             failure_only = {key[2:] for key, value in triage.items()
@@ -208,29 +209,37 @@ def _point_sets(context, selected, cfg, broker_manual_ids, triage):
                 raise ValueError("Applied Auth failure points missing from the release suite")
             rows = filtered
         groups.extend({**row, "prefix": prefix} for row in rows)
-    result = completed_result(context)["broker"]
+    result = completed["broker"]
     expected = {str(p["point_id"]): p for p in result["applied_points"] if p["outcome"] == "Failed"}
-    if expected:
+    by_suite = {}
+    for point in expected.values():
+        sid = point["suite_id"] if result.get("mapping_version") in (3, 4) else result["target"]["suite_id"]
+        by_suite.setdefault(sid, []).append(point)
+    found = set()
+    for sid, failures in sorted(by_suite.items()):
         ok, rows, detail = context.services.testplans.read_point_testers(
-            bp, result["target"]["suite_id"], result["failed_case_ids"])
+            bp, sid, sorted({p["case_id"] for p in failures}))
         if not ok:
             raise ValueError(detail)
-        found = set()
         for group in rows:
+            if str(group["plan_id"]) != str(bp) or str(group["suite_id"]) != str(sid):
+                raise ValueError("Applied Broker failure point plan/suite identity changed")
             points = []
             for point in group["points"]:
                 pid = str(point["id"])
                 if pid not in expected:
                     continue
                 if (pid in found or str(point["case_id"]) != str(expected[pid]["case_id"])
-                        or str(point["config_id"]) != str(expected[pid]["config_id"])):
+                        or str(point["config_id"]) != str(expected[pid]["config_id"])
+                        or (result.get("mapping_version") in (3, 4)
+                            and str(expected[pid]["suite_id"]) != str(sid))):
                     raise ValueError("Applied Broker failure point case/configuration changed")
                 found.add(pid)
                 points.append(point)
             if points:
                 groups.append({**group, "prefix": "B", "points": points})
-        if found != set(expected):
-            raise ValueError("Applied Broker failure points missing from the release suite")
+    if found != set(expected):
+        raise ValueError("Applied Broker failure points missing from the release suites")
     return groups
 
 

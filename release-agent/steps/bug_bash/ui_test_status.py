@@ -2,10 +2,9 @@
 pipelines, and assign failed release-point Testers to the release owner (Phase 3, bug_bash;
 runs right before `distribute_tests`).
 
-BROKER: maps validated current-RC ECS/Local snapshots, with no pipeline refetch.
-Distinct titles/API suites mapping to one plan
-point use failed-wins (only retries of the SAME exact title get pass-any, in Phase 2).
-Unmapped source tests and untouched plan points are diagnosed explicitly.
+BROKER v3: exact current-RC device scenarios plus additional failure investigations;
+each parameter/API/flight scenario owns a distinct release point. Historical v2
+plans retain their existing failed-wins mapping, never an automatic migration.
 
 AUTHENTICATOR: this step ALSO fills the Authenticator bug-bash suite (from `clone_plans_auth`)
 from this release's auth ECS post-build UI-test run (`state.rcs[-1].auth.test`, captured by
@@ -66,7 +65,26 @@ def prepare_effect(context):
             "(clone_plans_broker) — run that first so the UI Automation suite exists."
         )
     rc = latest_rc(context)
-    ok, projection, detail = P.project_mrwp_ui_results(rc)
+    resource = context.evidence.resources.get("broker_test_plan") or {}
+    scenario_resource = resource if resource.get("source", {}).get("schema_version") in (3, 4) else None
+    if scenario_resource:
+        from tools import broker_scenarios as S, broker_plans as B, broker_failure_triage as F
+        scenario_resource = thaw(scenario_resource)
+        try:
+            ok, source_projection, detail = S.project(
+                rc, tracked=scenario_resource.get("scenario_bindings", []),
+                version=scenario_resource["source"]["schema_version"],
+                **({"classification_policy": F.policy_for_record(scenario_resource)}
+                   if scenario_resource["source"]["schema_version"] == F.VERSION else {}))
+            if ok:
+                projection = S.bind_projection(scenario_resource, source_projection)
+                ok, _, detail = B.validate_plan(
+                    plan_id, scenario_resource["identity"], scenario_resource["source"],
+                    resource=scenario_resource)
+        except ValueError as exc:
+            ok, detail = False, str(exc)
+    else:
+        ok, projection, detail = P.project_mrwp_ui_results(rc)
     if not ok:
         return Blocked(f"ui_test_status: {detail}.")
     ok, auth_projection, detail = P.project_auth_ui_results(rc)
@@ -108,6 +126,7 @@ def prepare_effect(context):
         "current_binding": current_binding,
         "broker_projection": frozen_broker,
         "auth_projection": frozen_auth,
+        **({"scenario_resource": scenario_resource} if scenario_resource else {}),
     }
     digest = hashlib.sha256(
         json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -119,6 +138,7 @@ def prepare_effect(context):
         "evidence_sha256": digest,
         "broker_projection": frozen_broker,
         "auth_projection": frozen_auth,
+        **({"scenario_resource": scenario_resource} if scenario_resource else {}),
         "rc": {"rc": rc["rc"],
                "ecs": {"run_id": binding["ecs"]}, "local": {"run_id": binding["local"]},
                "auth": {"build": {"run_id": binding["auth_build"]},
@@ -216,7 +236,7 @@ def _prior_applied_points(data, binding):
                 continue
             validated = ui_results.applied_record(
                 record, {p.get("case_id") for p in record["applied_points"] if isinstance(p, dict)},
-                product, binding[product])
+                product, binding[product], complete=False)
             for point in validated["applied_points"]:
                 points[int(point["point_id"])] = point
         receipts[product] = list(points.values())
@@ -229,7 +249,7 @@ def _retain_applied_points(summary, prior_points, product, target):
         raise ValueError("Failed UI write returned a malformed applied-point receipt")
     ui_results.applied_record(
         summary, {p.get("case_id") for p in summary["applied_points"] if isinstance(p, dict)},
-        product, target)
+        product, target, complete=False)
     retained = {int(point["point_id"]): deepcopy(point) for point in prior_points or []}
     retained.update({int(point["point_id"]): deepcopy(point) for point in summary["applied_points"]})
     return {**summary, "applied_points": list(retained.values())}
@@ -309,18 +329,22 @@ def _assign_failure_points(context, summary, owner, coordinates):
         return 0, errors
     if not owner:
         return 0, [{"case_id": cid, "detail": "Release owner missing; point Tester unchanged"} for cid in ids]
-    for cid in ids:
-        points = [p["point_id"] for p in failed if p["case_id"] == cid]
+    groups = sorted({(p.get("suite_id", summary["target"].get("suite_id")), p["case_id"]) for p in failed})
+    for sid, cid in groups:
+        selected = [p for p in failed if p["case_id"] == cid
+                    and p.get("suite_id", summary["target"].get("suite_id")) == sid]
+        points = [p["point_id"] for p in selected]
         ok, detail = context.effect.services.set_point_testers(
-                summary["target"]["plan_id"], summary["target"]["suite_id"], points, owner,
+                summary["target"]["plan_id"], sid, points, owner,
                 expected_points={str(p["point_id"]): {
                     key: p[key] for key in ("case_id", "config_id") if key in p}
-                    for p in failed if p["case_id"] == cid},
+                    for p in selected},
                 org=coordinates["test_plan_org"],
                 project=coordinates["test_plan_project"])
         if not ok:
-            errors.append({"case_id": cid, "point_ids": points, "detail": detail})
-    return len(ids) - len(errors), errors
+            errors.append({"case_id": cid, "point_ids": points, "detail": detail,
+                           **({"suite_id": sid} if summary.get("mapping_version") in (3, 4) else {})})
+    return len({cid for _, cid in groups} - {e["case_id"] for e in errors}), errors
 
 
 def _reassign_broker_failures(context, summary, notes, owner, coordinates):
@@ -399,10 +423,11 @@ def _surface_ui_failures(context, rc, failures, coordinates):
     from orchestrator import schedule
     month_year = schedule.target_month_label(context.release)
     owner = context.release.owner_email or "the release owner"
-    title = f"\U0001f9ea {month_year + ' ' if month_year else ''}Bug Bash \u2014 UI failures to investigate"
+    scope = "automation" if any(t.get("category") for t in failures) else "UI"
+    title = f"\U0001f9ea {month_year + ' ' if month_year else ''}Bug Bash \u2014 {scope} failures to investigate"
 
     total = broker_count + len(auth_failures)
-    summary = (f"**{total} failing UI test(s)** across Broker MRWP + Authenticator ECS \u2014 "
+    summary = (f"**{total} failing {scope} test(s)** across Broker MRWP + Authenticator ECS \u2014 "
                f"for {owner} to investigate (flake vs real bug). "
                "See UI result-fill details for assignment status; unmapped tests have no case link.")
     lines = [title, summary]
@@ -422,7 +447,10 @@ def _surface_ui_failures(context, rc, failures, coordinates):
             for suite, tests in buckets.items():
                 lines.append(f"_{suite}_ ({len(tests)}):")
                 for t in tests:
-                    lines.append(_mark(t["case_id"], t["title"]))
+                    original = (f" (original case {t['original_case_id']})"
+                                if t.get("original_case_id") and t.get("original_case_id") != t.get("case_id") else "")
+                    lines.append(_mark(t["case_id"], f"[{t['category']}] {t['title']}{original}"
+                                       if t.get("category") else t["title"]))
                     for link in t.get("links", []):
                         lines.append(f"  [Source {link['run_id']}/{link['result_id']}]({link['url']})")
                         links.append({"name": f"Test {link['run_id']}/{link['result_id']}", "url": link["url"]})
@@ -538,7 +566,8 @@ def _apply_prepared(context, prepared):
     data["provenance"] = projection["provenance"]
     data["result"].update(
         binding=binding, stage="broker_write",
-        broker={"automated_case_ids": sorted(projection["verdicts"])},
+        broker={"automated_case_ids": sorted({r["case_id"] for r in projection["scenario_bindings"]})
+                if projection.get("scenario_bindings") else sorted(projection["verdicts"])},
         auth={"automated_case_ids": sorted(cid for cid, case in auth_projection["cases"].items()
                                             if case["outcome"] in ("Passed", "Failed"))},
         investigations={"broker": projection["failures"], "auth": auth_projection["failures"],
@@ -550,11 +579,15 @@ def _apply_prepared(context, prepared):
     ok, summ, d = context.effect.services.fill_ui_automation_results(
         plan_id,
         projection["verdicts"],
-        suite_id=binding["broker"]["suite_id"],
+        **({"automation_target": binding["broker"]} if binding["broker"].get("layout") else
+           {"suite_id": binding["broker"]["suite_id"]}),
         org=coordinates["test_plan_org"],
         project=coordinates["test_plan_project"],
         **({"prior_points": prepared["prior_points"]["broker"]}
            if prepared["prior_points"]["broker"] else {}),
+        **({"scenario_resource": prepared["scenario_resource"],
+            "scenario_bindings": projection["scenario_bindings"]}
+           if prepared.get("scenario_resource") else {}),
     )
     if not ok and isinstance(summ, dict):
         summ = _retain_applied_points(
@@ -569,7 +602,7 @@ def _apply_prepared(context, prepared):
     if (not isinstance(summ, dict) or summ.get("target") != binding["broker"]
             or not isinstance(summ.get("applied_points"), list)):
         return Blocked("Missing actual applied Broker target/points; retry ui_test_status")
-    ui_results.applied_record(summ, projection["verdicts"], "broker", binding["broker"])
+    ui_results.applied_record(summ, data["result"]["broker"]["automated_case_ids"], "broker", binding["broker"])
 
     # Fill Authenticator from captured evidence, then triage acknowledged failure points.
     notes = []

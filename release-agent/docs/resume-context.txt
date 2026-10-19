@@ -1,0 +1,149 @@
+RELEASE-AGENT RESUME CONTEXT
+==========================
+Saved: 2026-10-18, America/Los_Angeles.
+Repository: C:\repos\android-complete
+Agent root: C:\repos\android-complete\release-agent
+Branch: feature/release-agent-phase3-audit
+Previous committed baseline: cd2b6dda0b45fa1b59235e7f926efb92dd23e40e.
+Checkpoint commit: the commit containing this file; resolve it with
+  git log -1 --format="%H %s" -- release-agent/docs/resume-context.txt
+The longer historical audit is docs\release-audit.txt; its older checkpoint
+sections are history, not new instructions to restart completed work.
+
+USER REQUEST / STOPPING POINT
+----------------------------
+The owner accepted the new TEST ONLY plan, then asked to save, commit, push and
+keep context so another conversation can continue without replaying this chat.
+Only Phase 3 step one was authorized and executed. Stop after that step.
+Further workflow actions need a fresh user request and their normal approval.
+Do not infer that accepting a test plan approves quality gates or later steps.
+
+IMPLEMENTATION SAVED IN THIS CHANGE
+-----------------------------------
+- NEW source-v4 Broker plans preserve both manual suites and track reconciled
+  current-RC MRWP failures only under Automation Failure Triage -> ECS/Local ->
+  nonempty categories. UI Automation and Stress Tests are separate.
+- Passing/NA/recovered results stay in Phase 2 evidence/reports, not new triage
+  cases; zero failures means manual-only. Retain resolved investigation history.
+- Classification policy2 is frozen for new sources. Frozen matrix/v3/v4-policy1
+  evidence and create receipts remain unchanged; no automatic migration.
+- Separate Stress rows and labels across report HTML/plain/CLI/status surfaces.
+  Historical UI+Stress gate denominator and thresholds remain unchanged.
+  MRWP ECS, MRWP Local and Authenticator retain separate headline success rates.
+  Authenticator Monthly stays report-only with no forced case mapping.
+- Complete attributed evidence is validated before lightweight display options.
+- Typed plan-root/flight/category IDs are used across clone, fill, distribution
+  and progress; shared case System.AssignedTo is never changed.
+- Fixed the real fresh-clone immutable-recovery boundary by thawing the private
+  resource view before target validation and publishing the step binding.
+- Updated workflow display labels, step-info, contracts and installed/repository
+  skill guidance. No normal workflow was adopted or advanced.
+- The isolated historical label-correction command preserves source/create/fill
+  history and has one-attempt, exact-readback recovery; never replay its PATCH.
+
+LATEST ACTUAL PHASE 2 TEST
+--------------------------
+Session artifacts root:
+  C:\Users\pedroro\.scout\copilot\session-state\
+  b099e680-aeae-427e-a0f1-d571878c60d2\files\
+Latest test directory: phase2-fresh-20261018-1603.
+State: <artifacts>\<test directory>\runs\2026-10\release-state.json.
+Its SHA256 is f35f93bfa42623f8272ce540d067cbe439e0e987c8805d31363be13f53a7525c.
+This was a deliberately Phase-2-only live-read test. Readiness/Phases0-1 were
+not exercised or attested. Do not present its test scope as production approval.
+Checker1705624 fired; orchestrator1705640 healthy and parked at Remove RC Tags.
+MRWP ECS1705757:24/24 stages, UI+Stress96.3% (158/164).
+MRWP Local1705758:23/23 stages, UI+Stress99.1% (108/109).
+Stress separately: ECS1Passed; Local1Failed (two attempts, one distinct test).
+Authenticator APK186032363, UI-test build186078476:
+  E2E22/29=75.9%, Monthly359/376=95.5%; independent quality HOLD.
+Actual Kusto telemetry:610 rows for AppInfo_Version6.2610.6911.
+6/9 scoped workflow steps complete; publication/notification/human gate pending.
+Exact local HTML report and publication-preview.json are in the test directory.
+No report was published/sent and no pipeline was launched.
+
+COMPLETED FIRST PHASE 3 STEP
+---------------------------
+Owner explicitly approved the exact creation preview on2026-10-18 at17:28PT.
+Plan3793685:
+  TEST ONLY - Fresh Phase 3 Broker plan RC2 2026-10-18 1626
+  https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=3793685&suiteId=3793689
+Area: Engineering\Auth Client\Broker\Android.
+Synthetic instance:2026-10-scenario-466f1a0ba3135d82.
+Plan root3793686; Manual Broker3793687:43cases/86points configs293/330.
+Manual Native3793688 preserves the original dynamic query/inheritance.
+Automation Failure Triage3793689:
+  ECS3793690: UI3793691 has6points; Instrumented3793692 has1point.
+  Local3793693: Stress Tests3793694 has1point; Instrumented3793695 has1point.
+3 owned investigation cases +6 verified existing UI references.
+Independent provider readback: all95observed static points are Unspecified,
+with no run/result history. No outcomes or Testers were written.
+Only real clone_plans_broker ran, with normal engine effect ownership, frozen
+reviewed input, durable checkpoints and real provider calls.
+No Auth clone, ui_test_status fill, distribution, invitation or notification.
+Normal release and its Authenticator HOLD were not changed.
+
+FIRST-STEP OWNERSHIP / RECOVERY FILES
+------------------------------------
+Under <artifacts>\phase2-fresh-20261018-1603:
+  first-phase3-plan-only-approval.json
+  create-approved-first-phase3-plan.py (one-off reviewed execution, NOT a new runner)
+  first-phase3-step-readback.json
+  phase3-step1-runs\2026-10-scenario-466f1a0ba3135d82\release-state.json
+State SHA256:
+  1481d431e0007af41f4ec7af090c91fe8d5c4ba0af19a13100cf20091957a3cc.
+Frozen source SHA256:
+  da9dc61a503d877f1daf2191cdd3c0eebcd140820a2cea161c49fc0447517b3f.
+Approved review SHA256:
+  58d660cc6448c1381af715eb6ed533f9f6a4f06cc101ca111cc1f6fb2f99765c.
+Retain the complete state/evidence directory and its provider IDs. Never rerun
+creation to rebuild this plan. Session artifacts are not source-controlled.
+
+PROTECTED EARLIER STATE / UNRESOLVED HISTORY
+-------------------------------------------
+Normal .release-runs\2026-10\release-state.json remains unchanged:
+  52efad6cce6fc118c084cff2e7c8ce587ee29f99d5b6bff8b595e4ae19f6fe96.
+Old v3 resource .release-agent-isolated\2026-10-scenario-f7342f158464e3f1\
+  broker-scenario-resource.json remains unchanged:
+  7ef133d93e194b67c9e9204b8d8bd61bc0901980df719f1e08678fb6ad74dc5f.
+Old v4 plan3793422/suite3793433 has an applying label amendment after ONE
+approved PATCH returned success but did not persist the rename in readback.
+Its receipt .release-agent-isolated\2026-10-scenario-0a0393d9b0382a0b\
+  broker-scenario-resource.json remains at:
+  4abbaa5efc08f4ad3778c27a257d6d8f6b7f8a5f434c3a2528b3d9befe757b9e.
+Do not repeat that PATCH or clear the amendment. Only exact readback recovery
+is allowed after an actual owner correction. It does not block NEW test plans.
+Keep earlier plans3791733/3793202 and unrelated user changes untouched.
+Open A044 daily-case budget, A047 baseline failures and baseline47-vs45 handler
+assertion are separate historical findings; no full-suite-green claim.
+
+VALIDATION / PUBLICATION
+------------------------
+Latest focused integration:305passed/1optional skipped in93.77seconds, including
+the actual collected RC2 offline proof and legacy-v3 receipt compatibility.
+Initial red fresh-handler regression reproduced the immutable-boundary bug;
+its two corrected modern/legacy cases pass through create/fill/report/replay.
+The complete live first-step result is a separate proof from offline fill tests.
+Final commit-time affected selection:721passed/3optional skipped in289.66seconds
+using the existing pytest runner, isolated temporary state and no provider IO.
+This is not a full-suite-green claim; the separate baseline findings stay open.
+Credential-pattern inspection of43selected files found no matching credential
+patterns. Runtime state, receipts, personal mocks and caches are excluded.
+
+origin is https://github.com/AzureAD/android-complete.git and was confirmed PUBLIC.
+Its feature/release-agent-phase3-audit branch pointed to cd2b6dda0 at inspection.
+This change contains internal ADO references and release-audit details.
+At this checkpoint, local commit is requested; outward push is paused pending
+an explicit public-content confirmation or an approved private destination.
+Never infer that a local commit was pushed; inspect remote branch identity.
+Never force-push, publish runtime receipts/mocks/secrets, or broaden recipients.
+
+RESUMING
+--------
+Read this file, git status, and the latest commit/remote state first.
+The user has not authorized Phase3 step2 or result filling. If they request
+continuation, confirm whether they mean the isolated test or the normal release,
+then inspect its exact supported workflow/source prerequisites. Do not auto-adopt
+the existing release or claim its Phase2 HOLD is cleared.
+Keep future work bounded, update this checkpoint and docs\release-audit.txt at
+meaningful milestones, and do not reconstruct the entire old conversation.

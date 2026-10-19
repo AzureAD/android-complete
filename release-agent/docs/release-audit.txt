@@ -1,13 +1,53 @@
 RELEASE-AGENT: STAGED AUDIT AND RESUME RECORD
 ==========================================
-Updated: 2026-10-16 (America/Los_Angeles)
+Updated: 2026-10-18 (America/Los_Angeles)
 Project: C:\repos\android-complete\release-agent
 Baseline commit: a1390093aa6ce1b84686906fa68197c651aa31be
 config\phases.yaml SHA256:
-b3933becdbb9b92f673ff179fc304fab1be81a4630ceda035b8edf6292bf565f
+c4b66645eb6350c313372b5730b2d7afff7ec892c39ee644c78981240ac0e451
 
 PURPOSE AND OWNER REQUEST
 -------------------------
+INITIAL SOURCE-SCENARIO IMPLEMENTATION (offline history; superseded below)
+  Source-v3 preserves both manual suites and builds exact current ECS+Local
+  Broker/device scenarios; category failure investigations share that plan.
+  Per-create plan/suite/case receipts and per-outcome-batch checkpoints survive
+  interruption. Original cases never receive shared AssignedTo/state/tag writes.
+  Historical matrix resources/pinned workflows are not automatically migrated.
+  Collected RC2 was read-only: the production builder/filler with in-memory ADO
+  produced 222 device points (200 Passed,7 Failed,15 NA;207 evaluated) plus TWO
+  instrumented failure points, no empty categories,31 owned cases and193 referenced
+  points. Manual Broker43 cases on293/330 and Native Auth query were unchanged.
+  This is OFFLINE proof, not live ADO certification; no provider writes/notices,
+  actual release-state changes, adoption/advancement, commit or push performed.
+  Safe prospective creation is a separately reviewed TEST ONLY instance using
+  orchestrator.commands.broker_scenario_plan, never a real-release next/adopt.
+  RC/inventory/new-failure changes fail closed for explicit new-source review.
+  Existing A044 core case-budget/A047 unrelated baseline findings remain open;
+  cap/classification is unchanged. Re-sync installed skill only after review.
+  Final focused validation:495 passed,1 deliberately deselected existing handler-
+  count assertion (test_step_context expects45, while unchanged discovery has47).
+  The preceding expanded run was489 passed/that one failure; it was not weakened.
+  Cumulative pytest/collection/reproduction time252.3seconds (<900second budget).
+  New negative proofs cover exact plan/suite/case receipt recovery, changed ledger
+  IDs/digests, forbidden triage-parent membership, complete result manifests,
+  every failure category and WIT-only JSON-patch content type. The actual-data
+  test is enabled with RELEASE_AGENT_MRWP_STATE; it checks source byte identity.
+  Post-review corrections: distribution groups acknowledged Broker failures by
+  actual suite_id and rejects plan/suite/point/case/config/source remapping.
+  Same-RC replacement MRWP builds now fail before either product writes outcomes;
+  direct fill and publication share the immutable resource-binding field contract.
+  Focused review validation:172 passed,1 already-proven collected-data test deselected;
+  the preceding actual RC2 production fill -> publication -> distribution proof
+  passed with all9 failure points, including both Instrumented investigations.
+  The first review run had4 new test-fixture persistence mistakes, corrected and
+  rechecked (all11 receipt/live-remapping negatives passed). No production hold was
+  weakened. Baseline cd2b6dda0 was separately archived: the exact unchanged
+  test_step_context::test_all_implemented_handlers_have_context_only_contracts
+  reproduced assert47==45. It remains separate from A047's eight core failures.
+  Updated cumulative validation377.9seconds (<900second budget). No installs or
+  external writes. Approval payload JSON is session-local, not a provider record.
+
 Audit this project phase by phase and step by step in bounded stages.
 Each step needs clear inputs, outputs, and a realistic way to prove it works.
 Keep decisions, findings, evidence, and the next starting point in this repo,
@@ -20,14 +60,278 @@ not a new persisted runtime schema.
 
 CURRENT CHECKPOINT
 ------------------
-LATEST OWNER REQUEST (2026-10-16 23:05 PT): migrate M365 operations to the correct
+SAVE / LOCAL COMMIT REQUEST (2026-10-18 22:01 PT).
+  Owner accepted plan3793685 and requested save, commit, push and durable context.
+  Concise entry point: docs\resume-context.txt. The test outcome below is unchanged.
+  origin was confirmed PUBLIC at AzureAD/android-complete; its branch still
+  points to cd2b6dda0. Outward push is paused for explicit informed confirmation
+  of internal release/audit details or an approved private destination.
+  Do not infer push completion from a local commit. Runtime evidence/receipts
+  stay ignored and no further release step is authorized by this save request.
+  Final existing affected pytest selection721passed/3optional skipped289.66s;
+  no provider IO, dependency installs or budget changes. Prior actual RC2/live
+  proofs remain separate. Selected43source/document files passed credential-
+  pattern inspection; generated state/receipts/mocks are excluded from staging.
+
+FIRST PHASE3 STEP LIVE ISOLATED TEST COMPLETE (2026-10-18).
+  Owner requested only clone_plans_broker using the16:03 Phase2 capture, then
+  explicitly approved the exact NEW TEST ONLY creation payload at17:28PT.
+  Created plan3793685:
+    TEST ONLY - Fresh Phase 3 Broker plan RC2 2026-10-18 1626
+    Engineering\Auth Client\Broker\Android.
+  New synthetic identity2026-10-scenario-466f1a0ba3135d82 uses its own persisted
+  single-step engine state. This is NOT normal release advancement, Phase2
+  gate approval or fabricated predecessor/readiness completion.
+  Exact reviewed source policy2 SHA:
+    da9dc61a503d877f1daf2191cdd3c0eebcd140820a2cea161c49fc0447517b3f.
+  Plan root3793686; Manual Broker3793687:43cases/86points293/330;
+  Manual Native3793688 preserves the dynamic query/inheritance.
+  Automation Failure Triage3793689:
+    ECS3793690 -> UI3793691:6; Instrumented3793692:1.
+    Local3793693 -> Stress Tests3793694:1; Instrumented3793695:1.
+  Source failures create3owned investigations and6original references. Every
+  observed static point is Unspecified with no run/result history, as approved.
+  The real clone handler/engine completed done/resource-ready in one execution.
+  Its normal effect permit, frozen input, source validation, per-create resource
+  checkpoints and real provider adapters were used; only the reviewed frozen
+  source read and destination name were supplied as explicit test inputs.
+  No outcome/status mock, synthetic provider, ui_test_status fill, Auth clone,
+  assignments, distribution, invitations, messages or subsequent step.
+  Independent provider readback proof:
+    session b099e680-aeae-427e-a0f1-d571878c60d2\files\
+    phase2-fresh-20261018-1603\first-phase3-step-readback.json.
+  Durable engine state is in that folder's phase3-step1-runs\
+    2026-10-scenario-466f1a0ba3135d82\release-state.json.
+  Retain it for recovery; never recreate/clear owned IDs.
+  Original normal release, both historical plan receipts and captured Phase2
+  state remained byte-identical. Authenticator75.9% quality HOLD unchanged.
+  NEXT: stop after the requested first step. No commit or push.
+
+PHASE 2 LIVE ISOLATED RETEST (2026-10-18 16:03 PT).
+  Latest owner request: test Phase2 only; do not execute the prepared Phase3 plan.
+  New session-local test root files\phase2-fresh-20261018-1603\runs.
+  Real checker1705624/orchestrator1705640/ECS1705757/Local1705758/Auth
+  APK186032363+UI186078476 reads completed. All5 capture handlers done;
+  actual Kusto610rows for6.2610.6911 recorded as telemetry pass.
+  Exact rendered local report retains distinct UI/Stress categories:
+  ECS96.3% and Local99.1% UI+Stress; Auth E2E75.9% => quality HOLD.
+  6/9 configured steps complete. Publication, notification and human gate stay
+  pending; no full Phase2 completion, delivery or release-approval claim.
+  Previous readiness/Phases0-1 were not run or attested in this isolated scope.
+  Normal release and both prior isolated resource receipts remain byte-identical.
+  No provider writes, pipeline launch, report publication/send, Phase3, adoption,
+  commit or push. Fresh implementation below remains available.
+
+FRESH-RUN STRESS/UI IMPLEMENTATION COMPLETE LOCALLY (2026-10-18).
+  Owner redirected at11:27PT: finish implementation for a fresh test later,
+  rather than continue the existing plan's held rename. No fresh live run was
+  requested or started. The historical correction below remains unresolved.
+  Fresh sources freeze policy2; report categories and new plan leaves separate
+  Stress Tests from UI Automation. Both manual suites remain unchanged; only
+  nonempty ECS/Local failure categories are created. Gate remains UI+Stress,
+  with independent Authenticator coverage and immutable legacy source evidence.
+  Fresh-handler proof exposed a real integration defect: record_plan passed
+  immutable recovery evidence to v4 target validation, whose derived row copy
+  remains immutable. Creation could succeed then fail before recording its
+  step binding. clone_plans_broker.plan_binding now thaws its private resource
+  view before validation, without mutating the source or weakening authority.
+  Updated source-version-aware completion text, workflow display labels,
+  step-info knowledge, field contract and repository/installed skill guidance.
+  No workflow order/gates changed. Existing pinned revisions were NOT adopted.
+  New tests follow real default master-source preparation -> clone handler ->
+  fill/publication -> distribution -> report -> idempotent replay, with modern
+  AND frozen legacy MRWP evidence and only in-memory provider ports.
+  Existing actual RC2 proof reproduced9Failed: ECS UI6+Instrumented1,
+  Local Stress1+Instrumented1; manual43cases/86points and24warnings unchanged.
+  Initial fresh proof2failed1.06s reproduced the immutable-boundary defect;
+  corrected fresh proof2passed1.16s. Final affected selection305passed1opt-in
+  skipped93.77s, including the actual RC2 proof and legacy v3 receipts.
+  Total pytest time95.99s; no new dependency, test framework or timeout change.
+  Source and both prior plan receipts retain their recorded hashes. No live
+  provider calls/writes, normal release-state changes, commit or push in this
+  implementation pass. Earlier A044/A047/baseline findings remain separate.
+  NEXT: when the owner requests a fresh live test, use a NEW explicit TEST ONLY
+  name, preview its full policy2 payload and obtain exact scoped approval.
+  Example and identity semantics: skill\reference\commands.md, Isolated
+  collected-data plan. Reusing the old name intentionally resumes its receipt;
+  never clear it, retry its PATCH or make its recovery a fresh-test prerequisite.
+  Local changes remain uncommitted on feature/release-agent-phase3-audit.
+
+PRECEDING CHECKPOINT (held historical rename; not the active next task)
+---------------------------------------------------------------------
+STRESS CLASSIFICATION FIX READY; APPROVED LIVE RENAME HELD FOR RECOVERY.
+  Recovered the owner's last substantive request from "Resume Stuck Large
+  Conversation": separate Stress from UI in both the RC report and test plan.
+  Existing local fixes cover the shared classifier, legacy normalization,
+  report renderers, lightweight reports and guarded source-v4 correction.
+  RC2 report: ECS Stress1 Passed, Local Stress1 Failed; UI+Stress gate remains
+  266/273 (97.4%), Authenticator independently HOLD. No report was published.
+  Fresh read-only provider preview on2026-10-18 verified plan3793422 and all9
+  Failed points. Current Local suite3793433 is still named UI Automation.
+  Proposed sole external write: modern suite PATCH to name "Stress Tests",
+  retaining parent3793432, staticTestSuite, config330 and no inheritance.
+  Cases, points, outcomes, Testers and complete run/result history stay frozen.
+  Preview:
+    C:\Users\pedroro\.scout\copilot\session-state\
+    b099e680-aeae-427e-a0f1-d571878c60d2\files\stress-correction-3793422-preview.json
+  Correction SHA256:
+    ef1a00b91e5a98f87857bb89b99484be52fbe6350327ba8f8e329fc954c77bb2
+  Original source SHA256 remains af4ade22...83cad (full in preview intent).
+  Source state and both isolated receipts stayed byte-identical after preview.
+  Focused existing modules:113passed/1opt-in skipped9.68s; that opt-in protected
+  RC2/receipt offline proof then passed1.41s. No dependencies or limits changed.
+  Owner explicitly selected "A. Apply rename" at00:30PT on2026-10-18.
+  One checked execution used the exact approved source/correction digests and
+  durably saved classification_amendment.status=applying before its sole PATCH.
+  The provider returned success, but full readback held on the expected Stress
+  suite identity. Independent modern/classic/collection reads still show the
+  original UI Automation name/revision4. Complete frozen provider comparison
+  equals the original before snapshot exactly: all9 Failed points, Testers and
+  history remain unchanged. Do not infer why the provider did not persist it.
+  Before/observed digest:
+    c27ac1c392fcff2d11f067b48d08e517fe8a6cf6330ed6cb8567bfab7b095419
+  Current owned receipt digest:
+    4abbaa5efc08f4ad3778c27a257d6d8f6b7f8a5f434c3a2528b3d9befe757b9e
+  NEXT: offer explicit owner manual rename of ONLY suite3793433 to Stress Tests,
+  preserving all other facts, then run --recover-stress-category preview and
+  exact digest-bound local readback completion. That recovery sends no PATCH.
+  Never repeat the attempted rename, clear its amendment or recreate resources.
+  Source release-state remains unchanged; no report publication, release
+  advancement/adoption, commit or push. One approved external PATCH was attempted;
+  all subsequent diagnosis was read-only.
+  Compact continuation: current session plan.md; prior session handoff predates
+  this correction and must not restart completed Phase3 work.
+
+PRECEDING CHECKPOINT (retained source-v4 creation history)
+---------------------------------------------------------
+SOURCE-V4 FAILURE-ONLY REDESIGN AND LIVE REHEARSAL COMPLETE (2026-10-17).
+  NEW plans preserve both manual suites; automation contains ONLY reconciled
+  current-RC MRWP failures, grouped Automation Failure Triage -> ECS/Local ->
+  nonempty categories. There is no full UI inventory; zero failures is manual-only.
+  Passing/NA/recovered evidence and all quality-gate denominators stay Phase2-owned.
+  Frozen source-v3 and schema-less resources remain readable/recoverable unchanged.
+  Typed plan-root/automation/flight/category IDs replace fake UI IDs in v4, including
+  fill/publication, point-Tester assignment, distribution, progress and checked CLI.
+  Original creation/metadata/configuration/link/uncertainty safeguards are retained.
+  Previously tracked resolved rows/folders are retained with explicit source outcome
+  proof. RC/build/new-failure changes require reviewed new source before any writes.
+  Initial collected RC2 production builder/fill/publication/distribution/progress,
+  using ONLY the existing in-memory ADO adapter, proved EXACTLY9 Failed points:
+    ECS/UI Automation6; ECS/Instrumented Tests1;
+    Local/UI Automation1; Local/Instrumented Tests1.
+    3 owned cases: ECS + Local testResourceAccountFlow, and Local
+      test_concurrentAcquireTokenSilent_withBroker (two failed attempts, one point).
+    6 references to verified original UI cases; no duplicate scenarios or dropped
+      no-ID failures.24 recovered unit warnings (12 per flight), no warning cases.
+    Manual Broker43 cases/86 points293/330; Native dynamic WIQL unchanged.
+    No Unit/Lab API/Native Auth E2E/Other UI folders in THIS collected snapshot.
+  New source SHA256:
+    af4ade221f14eb0370761809a72f17a899ce0792d4641a15d63658c14cf83cad
+  Created plan3793422: TEST ONLY - MRWP failure triage by flight RC2
+  Distinct instance:2026-10-scenario-0a0393d9b0382a0b
+  Exact live-preview approval artifact (session-local, not an external record):
+    C:\Users\pedroro\.scout\copilot\session-state\b9a2b6ca-201c-4f83-bcb4-935b6ccaa67d\broker-failure-triage-v4-live-approval.json
+  It includes frozen source, exact3 new-case payloads, symbolic suite/membership
+  payloads, destination area/iteration, nine source-linked outcome intents and24
+  warnings. Provider IDs for NEW objects are symbolic, not guessed existing IDs.
+  Production modeled32 writes:13 creates (plan+9 suites+3 cases),9 config pins,
+  5 memberships,1 metadata-preserving completion and4 outcome batches. Real already-
+  correct defaults can reduce pins; provider latency/readbacks determine live time.
+  Do not batch non-idempotent creates across durable intent/receipt checkpoints.
+  Validation cumulative227.94seconds /900seconds (including initial failures):
+    Initial21failed/41passed,7.732s; fixture diagnosis1.104s.
+    Corrected integrated compatibility354passed/2deselected,94.134s.
+    Initial collected-data proof1passed,53.006s.
+    Added CLI/export/negative contracts28passed/1deselected,10.915s.
+    Final production+actual-data+v3 compatibility35passed,61.049s.
+  Final actual-data test ALSO validated the protected live v3 receipt's original
+  source digest and all224 applied receipts without provider access or file changes.
+  Source state SHA52efad6c...fe96 and prior v3 receipt SHA7ef133d9...dc5f unchanged.
+  Initial implementation used no providers. The owner subsequently approved exact
+  live creation at22:38PT. No protected state/old-receipt edits, notices, workflow
+  adoption/advancement, dependency installs, commits or pushes. Plans3791733/3793202
+  were not written. A044/A047 and the baseline47-vs45 assertion remain unrelated.
+  Changed v4 contracts: tools\broker_failure_triage.py (new), broker_scenarios.py,
+  broker_plans.py, testplans.py, distribution.py, bugbash.py; clone_plans_broker,
+  ui_test_status, ui_results, distribute_tests; broker_plan/broker_scenario_plan
+  commands; test_broker_failure_triage.py (new), test_two_plan_mapping.py; directly
+  related contracts/state/audit and skill command/Phase2 guidance. Existing feature
+  edits, .gitignore and unrelated .kotlin remain preserved.
+  Independent review found no significant issues (13.14seconds of checks); parent
+  repeated the actual-data production proof (63.08seconds). New-change routine
+  validation totals approximately304.16seconds, below900seconds. No full-suite-green
+  claim; initial red/fixture corrections and unrelated baseline failures remain recorded.
+  LIVE execution completed in one owned attempt with ready/fill_status=complete,
+  nine applied receipts,3 owned cases3793436..3793438 and6 original references.
+  Independent exact provider readback verified:
+    plan-root3793423; Manual Broker3793425:43 cases/86 Unspecified points293/330;
+    Manual Native3793426: identical dynamic query and inherited configurations;
+    Automation Failure Triage3793427, no top-level full UI inventory;
+      ECS3793429 -> UI3793430:6 Failed, Instrumented3793431:1 Failed;
+      Local3793432 -> UI3793433:1 Failed, Instrumented3793434:1 Failed.
+  Only these nonempty failure categories exist; no passed/NA/warning cases were added.
+  The tracker is remediation evidence, not the Phase2 execution/pass-rate denominator.
+  Approved subarea Engineering\Auth Client\Broker\Android was preserved throughout.
+  Both protected fingerprints remain unchanged:
+    source52efad6cce6fc118c084cff2e7c8ce587ee29f99d5b6bff8b595e4ae19f6fe96
+    prior-v3-receipt7ef133d93e194b67c9e9204b8d8bd61bc0901980df719f1e08678fb6ad74dc5f.
+  Durable isolated receipt .release-agent-isolated\
+  2026-10-scenario-0a0393d9b0382a0b\broker-scenario-resource.json retains ownership,
+  source and outcomes; no outstanding pending checkpoint. Never recreate/clear IDs.
+  Installed skill v4 guidance was surgically synchronized; custom differences retained.
+  Safe recovery commands are in skill\reference\commands.md. Current work remains
+  local/uncommitted; actual release adoption, cleanup or publication is separate.
+
+PREVIOUS CHECKPOINT (retained historical live-v3 proof)
+------------------------------------------------------
+SOURCE-V3 IMPLEMENTATION AND ISOLATED LIVE REHEARSAL COMPLETE (2026-10-17).
+  Owner approved creating a separately named TEST ONLY plan from collected RC2,
+  then explicitly approved removing its 280 unintended unrun configuration points.
+  Isolated plan3793202, "TEST ONLY - Broker source scenarios RC2":
+    Manual Broker3793204:43 cases/86 points, all Unspecified; configs293/330.
+    Manual Native Auth3793205: original dynamic query/inheritance preserved.
+    Broker/device UI3793206:222 points,200 Passed/7 Failed/15 NotApplicable.
+    Automation Failure Triage3793207: empty parent; only Instrumented Tests3793208
+      exists underneath, with2 Failed points. No empty category children.
+    31 owned cases3793209..3793239;193 referenced automation points; no duplicates.
+  Production CLI returned ready/fill_status=complete with224 applied receipts.
+  Independent provider readback matched every intended case/config/outcome,
+  the approved subarea and hierarchy. Actual state snapshot remained byte-identical:
+    52efad6cce6fc118c084cff2e7c8ce587ee29f99d5b6bff8b595e4ae19f6fe96
+  Real current plan3791733 and normal workflow state were never targeted for writes.
+  Source digest:
+    bd5c3a7a80e301ab8cfa72075622bc3e605496d15aed2f90a1a4b21654cee116
+  Isolated receipts and recovery backups remain under .release-agent-isolated/,
+  excluded by .gitignore. Retain them; do not repeat creation or delete history.
+  Live provider findings were fixed in code, not bypassed:
+    Windows atomic replacement retries only bounded sharing/access failures;
+      permanent errors retain pending evidence and block subsequent execution.
+    Related links canonicalize project names to GUIDs. Cross-project originals
+      require an exact authenticated original-ID/canonical-link proof; source
+      result hyperlinks remain exact. Original case532736 belongs to DevEx.
+    Reapplying suite defaults can expand existing case configurations. Durable
+      config pins now read/verify rather than reapply on resume; membership POSTs
+      require exact readback. Explicit unpublished-only repair removed278 UI and
+      2 Instrumented default-expansion points, never cases or human results.
+    A sparse description-only completion PATCH reset the plan area. Completion
+      now preserves verified metadata and verifies post-PATCH identity before
+      ready. Guarded frozen-metadata recovery restored only the approved subarea.
+  All changes remain local/uncommitted. Installed skill source-v3 guidance was
+  synchronized surgically; other installed differences preserved. No notification,
+  normal release adoption/advancement, commit or push. A044/A047 and the separately
+  reproduced existing47-vs45 handler-count assertion remain unrelated open findings.
+  Focused regression rounds and actual-data offline proof passed; recorded pytest
+  time is approximately644seconds plus20 brief review selectors, below900seconds.
+  This live proof covers the approved RC2 source and isolated creation/recovery/
+  filling. It is not a full-suite-green claim or adoption into an existing release.
+
+HISTORICAL OWNER REQUEST (2026-10-16 23:05 PT): migrate M365 operations to the correct
 connectors, verify actual capabilities before release entry, commit, push safely,
 and compact context. A046 implementation COMPLETE locally; prior Phase3 work kept.
 The coherent snapshot includes Phase3 audit/integration plus this migration.
 No existing release was adopted, advanced, reopened, reseeded or notified.
-Origin is PUBLIC AzureAD/android-complete: internal release details must not be
-pushed there. Delivery is a local commit; publication needs an approved private/
-internal destination. No public push is authorized by this checkpoint.
+The owner subsequently published commit cd2b6dda0. Origin is PUBLIC
+AzureAD/android-complete; no additional publication is authorized by this task.
 
 A046 - M365 provider routing and actual entry capability checks
   Removed all active Azure CLI Graph token/REST paths for meeting binding, roster/

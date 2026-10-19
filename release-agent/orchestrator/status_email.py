@@ -121,22 +121,26 @@ def _release_branch_links(state):
 
 
 def _rc_ui_summary(state):
-    """A '{text}' item summarizing the combined RC UI-automation pass rate (ECS + Local),
+    """A '{text}' item summarizing the combined RC UI+Stress pass rate (ECS + Local),
     from the stored latest-RC test data. None when not available."""
     rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
     if not rcs:
         return None
     cur = rcs[-1]
     passed = total = 0
+    from tools.pipelines import ui_stress_counts
     for slot in ("ecs", "local"):
-        ui = (((cur.get(slot) or {}).get("tests") or {}).get("categories") or {}).get("ui") or {}
+        try:
+            ui = ui_stress_counts((cur.get(slot) or {}).get("tests"))
+        except ValueError:
+            return {"text": "UI+Stress evidence unavailable; refresh RC verification"}
         passed += ui.get("passed", 0) or 0
         total += ui.get("total", 0) or 0
     if not total:
         return None
     pct = round(passed * 100.0 / total, 1)
     gate = "✅" if pct >= 90 else "🔴"
-    return {"text": f"UI automation {pct}% ({passed}/{total}, gate ≥90% {gate})"}
+    return {"text": f"UI+Stress {pct}% ({passed}/{total}, gate ≥90% {gate})"}
 
 
 def _auth_build_link(state):
@@ -185,7 +189,7 @@ def milestones(state, phase_order, selection=None):
                  "date": "", "details": tp_details})
 
     # 4. RC builds + automation run — the MRWP/auth RC pipelines (Phase 2). Surface the
-    #    combined UI-automation pass rate (the 90% gate signal) alongside the build links.
+    #    combined UI+Stress pass rate (the unchanged 90% gate signal) alongside the build links.
     rc_details = _rc_build_links(state)
     ui = _rc_ui_summary(state)
     if ui:

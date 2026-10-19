@@ -25,17 +25,37 @@ def current_binding(context):
     auth = rc.get("auth") or {}
     build, test = auth.get("build") or {}, auth.get("test") or {}
     broker = context.evidence.step("bug_bash", "clone_plans_broker").data or {}
+    resource = context.evidence.resources.get("broker_test_plan") or {}
+    version = resource.get("source", {}).get("schema_version")
+    if version == 4 or broker.get("source_version") == 4:
+        from tools import broker_failure_triage as F
+        broker_target = F.target(thaw(resource))
+        if broker.get("automation") != resource.get("automation") or broker.get("ui_suite_id") is not None:
+            raise ValueError(f"Failure-only clone hierarchy changed; {REFRESH}")
+    else:
+        broker_target = {"plan_id": _id(broker.get("plan_id")), "suite_id": _id(broker.get("ui_suite_id"))}
     suite = context.evidence.step("bug_bash", "clone_plans_auth").data or {}
     if (any((rc.get(slot) or {}).get("complete") is not True for slot in ("ecs", "local"))
             or build.get("complete") is not True or test.get("complete") is not True
             or build.get("result") not in ("succeeded", "partiallySucceeded")
             or _id(build.get("rc")) != _id(rc.get("rc"))):
         raise ValueError(f"UI result source is no longer current/completed; {REFRESH}")
-    return {"release": context.release.release_id, "rc": _id(rc.get("rc")),
+    binding = {"release": context.release.release_id, "rc": _id(rc.get("rc")),
             "ecs_build": _id(rc["ecs"].get("run_id")), "local_build": _id(rc["local"].get("run_id")),
             "auth_apk_build": _id(build.get("run_id")), "auth_test_build": _id(test.get("run_id")),
-            "broker": {"plan_id": _id(broker.get("plan_id")), "suite_id": _id(broker.get("ui_suite_id"))},
+            "broker": broker_target,
             "auth": {"plan_id": _id(T.AUTH_PLAN), "suite_id": _id(suite.get("suite_id"))}}
+    if broker.get("source_version") in (3, 4) or version in (3, 4):
+        from tools import broker_scenarios as S
+        if (broker.get("source_version") != version or resource.get("status") != "ready"
+                or _id(broker.get("plan_id")) != binding["broker"]["plan_id"]
+               or resource.get("plan_id") != binding["broker"]["plan_id"]
+               or broker.get("scenario_source_sha256") != S.digest(thaw(resource.get("source")))):
+            raise ValueError(f"Scenario source/resource binding changed; {REFRESH}")
+        binding["broker_scenarios"] = {
+            "source_sha256": broker["scenario_source_sha256"],
+            "suite_ids": sorted({r["suite_id"] for r in resource["scenario_bindings"]})}
+    return binding
 
 
 def reminder_preconditions(context):
@@ -59,11 +79,12 @@ def reminder_preconditions(context):
         (source + ["auth", "test", "run_id"], rc["auth"]["test"]["run_id"]),
         (source + ["auth", "build", "rc"], rc["auth"]["build"]["rc"]),
         (["steps", "bug_bash.clone_plans_broker", "data", "plan_id"], broker["plan_id"]),
-        (["steps", "bug_bash.clone_plans_broker", "data", "ui_suite_id"], broker["ui_suite_id"]),
         (["steps", "bug_bash.clone_plans_auth", "data", "suite_id"], auth["suite_id"]),
         (own + ["binding"], binding),
         (own + ["status"], "complete"), (own + ["stage"], "complete"),
     ]
+    field = "automation" if broker.get("source_version") == 4 else "ui_suite_id"
+    values.append((["steps", "bug_bash.clone_plans_broker", "data", field], thaw(broker[field])))
     for path in (["ecs"], ["local"], ["auth", "build"], ["auth", "test"]):
         values.append((source + path + ["complete"], True))
     for product in ("broker", "auth"):
@@ -98,6 +119,12 @@ def completed_result(context):
             ids = record[key]
             if ids != sorted({_id(i) for i in ids}):
                 raise ValueError(f"Invalid recorded UI case identities; {REFRESH}")
+        if product == "broker" and "broker_scenarios" in result["binding"]:
+            if (record.get("mapping_version") != context.evidence.resources["broker_test_plan"]["source"]["schema_version"]
+                    or record.get("suite_targets") != result["binding"]["broker_scenarios"]["suite_ids"]):
+                raise ValueError(f"Scenario result suite binding changed; {REFRESH}")
+            _scenario_points(record, complete=True,
+                             expected_rows=thaw(context.evidence.resources["broker_test_plan"]["scenario_bindings"]))
         seen, failed = set(), set()
         for point in record["applied_points"]:
             if not isinstance(point, dict):
@@ -116,7 +143,7 @@ def completed_result(context):
     return deepcopy(result)
 
 
-def applied_record(summary, automated_case_ids, product, target):
+def applied_record(summary, automated_case_ids, product, target, *, complete=True):
     """Validate acknowledged provider points before any follow-on owner triage."""
     if (not isinstance(summary, dict) or summary.get("target") != target
             or not isinstance(summary.get("applied_points"), list)):
@@ -135,5 +162,48 @@ def applied_record(summary, automated_case_ids, product, target):
             _id(point.get("config_id"))
         if point["outcome"] == "Failed":
             failed.add(cid)
-    return {"target": deepcopy(target), "automated_case_ids": automated,
-            "failed_case_ids": sorted(failed), "applied_points": deepcopy(summary["applied_points"])}
+    result = {"target": deepcopy(target), "automated_case_ids": automated,
+              "failed_case_ids": sorted(failed), "applied_points": deepcopy(summary["applied_points"])}
+    if summary.get("mapping_version") in (3, 4):
+        _scenario_points(summary, complete=complete)
+        result.update({k: deepcopy(summary[k]) for k in ("mapping_version", "suite_targets", "scenario_bindings")})
+    return result
+
+
+def _scenario_points(record, *, complete=False, expected_rows=None):
+    if record.get("mapping_version") == 4:
+        from tools.broker_failure_triage import LAYOUT
+        target = record.get("target")
+        if (not isinstance(target, dict) or set(target) != {"plan_id", "layout", "root_suite_id"}
+                or target.get("layout") != LAYOUT):
+            raise ValueError(f"Invalid failure-only plan-root target; {REFRESH}")
+        _id(target["root_suite_id"])
+    rows = record.get("scenario_bindings")
+    targets = record.get("suite_targets")
+    if (not isinstance(rows, list) or (not rows and record.get("mapping_version") != 4)
+            or any(not isinstance(r, dict) for r in rows)
+            or not isinstance(targets, list)
+            or targets != sorted({_id(r.get("suite_id")) for r in rows})):
+        raise ValueError(f"Missing scenario target/provenance manifest; {REFRESH}")
+    expected = {(r["key"], _id(r["suite_id"]), _id(r["case_id"]), _id(r["config_id"])) for r in rows}
+    if (len(expected) != len(rows) or len({r["key"] for r in rows}) != len(rows)
+            or len({(_id(r["suite_id"]), _id(r["case_id"]), _id(r["config_id"])) for r in rows}) != len(rows)):
+        raise ValueError(f"Duplicate source scenario binding; {REFRESH}")
+    observed = set()
+    for point in record["applied_points"]:
+        identity = (point.get("scenario_key"), _id(point.get("suite_id")), _id(point["case_id"]),
+                    _id(point["config_id"]))
+        if identity not in expected or identity in observed:
+            raise ValueError(f"Applied point lost scenario/provider identity; {REFRESH}")
+        observed.add(identity)
+        if point["outcome"] != next(r["verdict"] for r in rows if r["key"] == point["scenario_key"]):
+            raise ValueError(f"Applied scenario outcome lost its source proof; {REFRESH}")
+    if complete and observed != expected:
+        raise ValueError(f"Completed scenario result omitted source points; {REFRESH}")
+    if expected_rows is not None:
+        from tools.broker_scenarios import BINDING_FIELDS
+        fields = (*BINDING_FIELDS, "build_url") if record.get("mapping_version") == 4 else BINDING_FIELDS
+        by_key = {r["key"]: r for r in expected_rows}
+        if (set(by_key) != {r["key"] for r in rows} or any(
+                any(r.get(k) != by_key[r["key"]].get(k) for k in fields) for r in rows)):
+            raise ValueError(f"Published scenario manifest changed its resource provenance; {REFRESH}")

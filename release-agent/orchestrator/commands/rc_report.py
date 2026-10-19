@@ -93,15 +93,19 @@ def _format(m) -> str:
         t = r.get("tests") or {}
         current = t.get("count_basis") == P.MRWP_COUNT_BASIS
         cats = (t.get("categories") or {}) if current else {}
-        _lbl = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
-        for cat in ("unit", "instrumented", "ui"):
+        _lbl = P._CATEGORY_LABEL
+        for cat in P.TEST_CATEGORIES:
             c = cats.get(cat) or {}
             if not c.get("total"):
+                if c.get("na"):
+                    L.append(f"   {_lbl[cat]:13} 0 evaluated · {c['na']} NA · rate unavailable")
                 continue
             fr = round((c.get("failed", 0)) * 100.0 / c["total"], 1)
-            gate = "  ← RC gate" if cat == "ui" else ""
             L.append(f"   {_lbl[cat]:13} {c.get('passed')}/{c.get('total')} passed · "
-                     f"{c.get('failed')} failed · {fr}%{gate}")
+                     f"{c.get('failed')} failed · {c['passed'] * 100 / c['total']:.2f}% pass"
+                     f" · {fr}% fail" + (f" · {c['na']} NA" if c.get("na") else ""))
+        summary = rendering.mrwp_leg_summary(m, provider)
+        L.append(f"   UI+Stress RC gate coverage: {summary['headline']}; {summary['detail']}")
         # Failing tests, grouped by suite (UI first), each tagged by category.
         suites = r.get("failed_suites") if current else []
         if suites:

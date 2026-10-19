@@ -8,6 +8,7 @@ from steps.build_verify._common import (
 from steps.lib.mockctx import MISSING
 from tools import pipelines as P
 from tools.pipelines import ORCHESTRATOR_DEF
+from tools.pipelines.test_evidence import validate_snapshot_tests
 
 
 def verify_mrwp(context, provider):
@@ -107,19 +108,26 @@ def verify_mrwp(context, provider):
         suites = (tests or {}).get("failed_suites")
 
     # 5) stash the FULL per-provider snapshot into the RC iteration (authoritative rc from tag).
-    evidence = stash_mrwp(context, provider, {
+    captured = {
         "run_id": mid, "complete": comp["complete"], "ran": comp["ran"],
         "total": comp["total"], "failed_stages": comp["failed"],
         "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"],
         "tests": tests, "tests_error": tests_error,
         "failed_suites": suites,
-    }, rc=rc_num)
+    }
+    evidence = stash_mrwp(context, provider, captured, rc=rc_num)
     if tests_error:
         return Blocked(f"{label}: test summary unavailable ({tests_error}); retry verification.",
                        links=links, updates=(evidence,))
-    ui = ((tests or {}).get("categories") or {}).get("ui")
+    try:
+        if isinstance((tests or {}).get("suites"), list):
+            validate_snapshot_tests(captured, allow_empty=True, include_all=True)
+        ui = P.ui_stress_counts(tests)
+    except ValueError as exc:
+        return Blocked(f"{label}: invalid UI+Stress results ({exc}); retry verification.",
+                       links=links, updates=(evidence,))
     if not valid_counts(ui):
-        return Blocked(f"{label}: missing or invalid non-zero UI results; retry this verification "
+        return Blocked(f"{label}: missing or invalid non-zero UI+Stress results; retry this verification "
                        "after the Test tab is populated. The report cannot evaluate absent data.",
                        links=links, updates=(evidence,))
     return Done(
