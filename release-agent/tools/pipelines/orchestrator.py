@@ -411,10 +411,14 @@ def orchestrator_finalization_status(org, project, release_month, stage_ref, tim
     okf, final_run, final_detail = _pp._az_json(
         ["pipelines", "build", "show", "--org", org, "--project", project,
          "--id", final_mrwp,
-         "--query", "{id:id,status:status,result:result,tags:tags}"], timeout)
+         "--query", "{id:id,definitionId:definition.id,status:status,result:result,tags:tags}"], timeout)
     if not okf:
         return (False, None, final_detail)
-    final_run = final_run or {}
+    if (not isinstance(final_run, Mapping)
+           or _numeric_build_id(final_run.get("id")) != int(final_mrwp)
+           or _numeric_build_id(final_run.get("definitionId")) != MRWP_DEF):
+        return (False, None, f"Final1 must identify MRWP build {final_mrwp} "
+               f"from pipeline {MRWP_DEF}; provider identity is missing or mismatched")
     if final_run.get("status") != "completed":
         return (True, info, f"final MRWP {final_mrwp} is {final_run.get('status') or 'not started'}")
     if final_run.get("result") not in ("succeeded", "partiallySucceeded"):

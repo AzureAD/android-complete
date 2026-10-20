@@ -161,6 +161,21 @@ def test_holds_at_first_hold():
     assert sum(1 for a in actions if a.kind == "ran") == 19
 
 
+def test_bug_bash_posts_progress_before_native_auth_notice():
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="confirmed")
+    _active_phase(st, "bug_bash")
+    orch = Orchestrator(CONFIG, st, mocks=_safe())
+    assert [step.id for step in orch.workflow.phase("bug_bash").steps][6:8] == [
+        "bugbash_updates", "notify_native_auth",
+    ]
+    actions = orch.run_until_gate()
+    assert [a.step for a in actions if a.phase == "bug_bash" and a.kind == "ran"] == [
+        "clone_plans_broker", "clone_plans_auth", "ui_test_status", "distribute_tests",
+        "send_invite", "activate_chat", "bugbash_updates", "notify_native_auth",
+    ]
+    assert actions[-1].kind == "reminder" and actions[-1].step == "ui_failures"
+
+
 
 
 def test_approve_advances():
@@ -1929,7 +1944,7 @@ def test_orchestrator_finalization_resolves_final_mrwp_and_auth_tags(monkeypatch
          "state": "inProgress"},
     ], ""))
     monkeypatch.setattr(P, "_az_json", lambda *a, **k: (True, {
-        "id": 1692575, "status": "completed", "result": "succeeded",
+        "id": 1692575, "definitionId": P.MRWP_DEF, "status": "completed", "result": "succeeded",
         "tags": ["AuthenticatorBuild=181239508", "Authenticator=6.2609.6188"],
     }, ""))
 

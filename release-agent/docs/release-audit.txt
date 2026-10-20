@@ -1,10 +1,47 @@
 RELEASE-AGENT: STAGED AUDIT AND RESUME RECORD
 ==========================================
-Updated: 2026-10-19 (America/Los_Angeles)
+Updated: 2026-10-20 (America/Los_Angeles)
 Project: C:\repos\android-complete\release-agent
 Baseline commit: a1390093aa6ce1b84686906fa68197c651aa31be
-config\phases.yaml SHA256:
+Initial audit config\phases.yaml SHA256 (historical):
 c4b66645eb6350c313372b5730b2d7afff7ec892c39ee644c78981240ac0e451
+
+PHASE 4 LOCAL AUDIT (2026-10-20)
+-------------------------------
+Reviewed all nine Finalize & Publish handlers, exact external approval ownership,
+checked integration/OneAuth writers, publication providers, announcement/email
+composition and automation cleanup. Contracts: docs\finalize-contracts.txt.
+Preserved the pending Phase3 step7/8 swap and full offline rehearsal regression.
+No live approvals, Git pushes/PRs, pipeline launches, M365 sends or adoption.
+
+Six corrected gaps:
+1. Closing-email recipients ignored the invocation's config and selected the
+   canonical production DLs. Engine now reads notifications.yaml beside the actual
+   phases.yaml; missing/empty test recipients do not fall back to production.
+2. RC milestone still referenced removed build_verify.rc_report, leaving an
+   already-completed release marked in progress. It now uses publish/notify/gate.
+3. Final1 accepted any successful final build. Returned ID and configured MRWP
+   definition are now required before publication-gate readiness is accepted.
+4. GitHub verification accepted empty/mismatched/malformed release JSON and
+   classified repository access errors as missing releases. Exact tag, boolean
+   draft state and URL are required; repository errors remain errors.
+5. Announcement CC read/parse failures silently produced a no-CC post; malformed
+   group/member structures could crash. These now hold with an explicit reason.
+6. Missing finalize.verify_pub and finalize.oneauth_common_pr YAML keys caused
+   their fields to overwrite adjacent step help. Restored separate entries and
+   current exact-approval/isolated-Git/checked-command instructions.
+
+Nineteen newly added negatives first reproduced the five code-level gaps.
+Latest focused selection:298passed56.92s, including all Phase4 help contracts and
+selected exact gate, checked-write, notification and cleanup lifecycles.
+An over-broad510-case selection hit the existing900second suite limit after
+additional failures; it is NOT a passing or complete result.
+Independent current/archived-f6daab637 comparison of the two implicated unchanged
+modules:112cases each,94passed/18failed, with IDENTICAL failure identities.
+These existing distribution/Beta-stage/changed-owner-or-CCD notification fixtures
+remain separate work; none were weakened, skipped or reclassified for this audit.
+Connected release state, automation registry and event-log hashes are unchanged.
+No full-repository-suite, live-provider or scheduler certification is claimed.
 
 PURPOSE AND OWNER REQUEST
 -------------------------
@@ -1032,7 +1069,7 @@ Phase 2 / build_verify / 9 / parallel / opens CCD+1:
 
 Phase 3 / bug_bash / 11 / sequential:
   clone_plans_broker, clone_plans_auth, ui_test_status, distribute_tests,
-  send_invite, activate_chat, notify_native_auth, bugbash_updates,
+  send_invite, activate_chat, bugbash_updates, notify_native_auth,
   ui_failures, native_auth_signoff, bugbash_complete.
   Suggested audit batches: plan creation; result fill; distribution;
   invitation/chat binding; progress/triage/sign-offs.

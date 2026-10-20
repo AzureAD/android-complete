@@ -191,15 +191,19 @@ def gh_release_exists(gh_repo: str, tag: str, timeout=60):
          "--json", "tagName,name,isDraft,url"], timeout=timeout)
     if rc != 0:
         msg = (e or out or "").strip()
-        if "release not found" in msg.lower() or "not found" in msg.lower():
+        if "release not found" in msg.lower():
             return (True, False, None, "release not found")
         return (False, False, None, msg or "gh release view failed")
     try:
         d = json.loads(out or "{}")
     except json.JSONDecodeError:
         return (False, False, None, f"unparseable gh output: {out!r}")
+    if (not isinstance(d, dict) or d.get("tagName") != tag
+            or type(d.get("isDraft")) is not bool
+            or not isinstance(d.get("url"), str) or not d["url"].strip()):
+        return (False, False, None, "Malformed or mismatched GitHub release evidence")
     info = {"tag": d.get("tagName"), "name": d.get("name"), "url": d.get("url"),
-            "draft": bool(d.get("isDraft"))}
+            "draft": d["isDraft"]}
     return (True, not info["draft"], info, "draft release" if info["draft"] else "")
 
 

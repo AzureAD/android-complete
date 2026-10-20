@@ -1433,12 +1433,12 @@ finalize.remove_rc_tags_gate:
     The release owner decides (approve / deny). Scout runs the discovery and, on approval, submits
     the ADO approval automatically via the pipeline approvals API — no manual portal click needed.
   how: >
-    Approve with `approve-orchestrator-gate --release <id>` — it submits the ADO 'Remove RC Tags'
-    approval AND records the release-agent gate in one step (a dedicated command that composes the
-    submit with the normal approve; the engine is untouched). Deny with `deny` to HOLD. If the ADO
-    submit fails, the command does NOT record the gate — it stays holding so you can retry. Best-
-    effort and idempotent: if the orchestrator isn't parked (already approved) the command reports
-    there's nothing to approve.
+    Preview `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`.
+    Show the exact approval/build/stage/comment and review hash, obtain the human's decision,
+    then submit with the same comment, --review-hash and --approved-by. Deny with `deny` to HOLD.
+    An interrupted or uncertain owned attempt requires its original --execution-id for read-only
+    reconciliation, never another submission. Only exact approved provider evidence completes it;
+    no pending approval, a completed stage or a newer run cannot fabricate a receipt.
   consequences: >
     Approving the 'Remove RC Tags' gate makes the Release Orchestrator automatically: remove the RC
     tags; publish internal artifacts to the ADO Maven feed; publish MSAL/Common to Maven Central;
@@ -1455,14 +1455,15 @@ finalize.remove_rc_tags_gate:
     - q: "Is it reversible?"
       a: "No — it publishes to Maven Central and GitHub. Treat approval as the point of no return; deny to hold if the RC verification or bug bash left anything unresolved."
     - q: "Nothing is parked — is that an error?"
-      a: "No. If the orchestrator already passed the gate (or isn't waiting), the step reports there's nothing to approve and moves on."
+      a: "Inspect the exact stage. A successful already-completed stage can be shown as nothing to approve, but an owned execution still needs its frozen approval receipt. If the stage has not parked, hold; never infer approval or advance early."
 
 finalize.orchestrator_finalization:
   summary: "Monitor final orchestration until the Publish GitHub Release Notes gate."
   what: >
     After 'Remove RC Tags', this read-only step follows the Release Orchestrator through final MRWP
     generation and release-integration branch creation until it parks at 'Publish GitHub Release
-    Notes'. It resolves Final1 from the orchestrator tags. Authenticator build/version capture
+    Notes'. It resolves Final1 from the orchestrator tags and verifies the returned build ID and
+    configured MRWP pipeline definition before accepting final success. Authenticator build/version capture
     happens later in rollout_start.identify_auth_build.
   trigger: >
     Runs after `remove_rc_tags_gate`. The dedicated Release Orchestrator poller checks every 2 hours
@@ -1540,6 +1541,8 @@ finalize.release_announcement:
     needs the microsoft_teams MCP; WorkIQ only does channel replies. To test, redirect with the `post_to`
     mock knob ({teamId, channelId}) to a test channel — keeps the post real, points it elsewhere.
     The `versions` mock overrides the shown SDK versions.
+    Missing, unreadable or malformed config/announcement_cc.yaml blocks preparation instead of
+    silently dropping the CC members.
   faqs:
     - q: "Where do the versions come from?"
       a: "state.versions — populated at Phase 2 by build_verify.orchestrator_health from the orchestrator run tags. The announcement shows Common/MSAL/Broker (the authenticator branch is stored too but not shown in this SDK table)."
@@ -1562,12 +1565,11 @@ finalize.publish_notes_gate:
     Release Notes' stage — if the orchestrator is parked at any other stage the submit is refused,
     so it can't approve the wrong gate.
   how: >
-    Approve with `approve-orchestrator-gate --release <id>` — the same command as remove_rc_tags_gate; it
-    detects which gate is holding, submits the correct ADO approval, and records the release-agent
-    gate in one step. Deny with `deny` to HOLD. Approving early is safe: the gate verifies the
-    'Publish GitHub Release Notes' stage is the parked one before submitting, so it won't approve
-    prematurely. If the notes stage has already completed, the step reports there's nothing to
-    approve.
+    Preview `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`.
+    Show the exact notes-stage approval/build/comment and review hash, obtain the human's approval,
+    then repeat with the same comment, --review-hash and --approved-by. Deny with `deny` to HOLD.
+    Pending or unknown evidence remains a hold. Recover an owned attempt by its --execution-id;
+    never resubmit an attempted approval or replace it with a newer run's stage completion.
   consequences: >
     Approving publishes the GitHub release notes for MSAL and Common (the orchestrator's final
     publish stage). Make sure the integration PRs are merged first.
@@ -1581,8 +1583,7 @@ finalize.publish_notes_gate:
       a: "Safe — the gate verifies the 'Publish GitHub Release Notes' stage is the parked one before submitting the ADO approval. If a different stage is parked (or none), it refuses to submit and stays holding."
     - q: "Nothing is parked — is that an error?"
       a: "No. If the notes stage already completed, the step reports there's nothing to approve. If it hasn't parked yet, approve once it's waiting."
-
-
+finalize.verify_pub:
   summary: "Verify MSAL / Common / Common4j are live on Maven Central at the release versions."
   what: >
     After the orchestrator's publish stages, confirm the three externally-published artifacts
@@ -1626,8 +1627,9 @@ finalize.verify_release_notes:
     - "Common: github.com/AzureAD/microsoft-authentication-library-common-for-android — v<common>"
   how: >
     Runs automatically and re-checks on a poll. For each repo it runs `gh release view v<version>`;
-    a published (non-draft) release counts, a missing tag is 'not yet' (keep polling), and a draft
-    or an auth/network error is surfaced (Blocked) rather than assumed. The repo slugs are REUSED
+    only a matching tag with a boolean non-draft flag and release URL counts as published.
+    An explicit release-not-found response or a draft stays pending; repository access errors,
+    malformed evidence and mismatched tags block rather than pass. The repo slugs are REUSED
     from integ_prs.CONFIG (the single source for the release repos). Test with the `results` mock
     (repoKey -> published|missing|error) and `versions`.
   faqs:
@@ -1637,8 +1639,8 @@ finalize.verify_release_notes:
       a: "Broker isn't published to Maven Central (it's a private GHE repo), but it DOES get a GitHub Enterprise release. So the GitHub-notes check covers all three libraries; the Maven check covers only the two public artifacts (plus Common4j)."
     - q: "What if a release isn't there yet?"
       a: "It stays in-progress and re-checks — publishing the notes happens right after the publish_notes_gate is approved. A draft release or a gh auth error is surfaced instead of silently passing."
-
-
+finalize.oneauth_common_pr:
+  summary: "Ingest the published final Common version into OneAuth through an exact checked PR plan."
   what: >
     After the release publishes and verify_pub confirms Common is live on Maven Central, update
     OneAuth to consume that final (non-RC) Common version. On the standing
@@ -1648,28 +1650,29 @@ finalize.verify_release_notes:
     'MSAL Android Common' table row, and a new '(Android) Ingest AndroidCommon <ver>' CHANGELOG.md
     bullet — then opens a PR into `dev`.
   who: >
-    Scout does the work (an agent step, PREVIEW-FIRST like integ_prs). The release owner reviews
-    the preview and triggers the write.
+    Scout composes a read-only advisory, then the scheduled checked command executes the
+    release-owned write. Its current exact plan hash, provider identities and single attempt
+    are checkpointed and fenced even when --auto-approve is used.
   where:
     - "repo: OneAuth — office.visualstudio.com/OneAuth/_git/OneAuth (config/coordinates.yaml repos.oneauth)"
     - "branch: android/common-ingestion -> dev"
     - "version: state.versions.common (final non-RC Common) + state.versions.msal (for the changelog line)"
   how: >
-    Preview: `create-oneauth-common-pr --release <id>` prints the plan (merge-needed?, the 4 file
-    edits, existing-vs-new PR) and writes NOTHING. Execute: `create-oneauth-common-pr --release
-    <id> --execute` performs, in order — (1) a SERVER-SIDE merge of dev into android/common-ingestion
-    (a transient dev->ingestion PR that ADO completes; the ingestion branch is diverged from dev, so
-    a merge — not a fast-forward — is required; a merge CONFLICT holds the step for a human, never
-    forced), (2) a single commit bumping the 4 files, (3) open/reuse the android/common-ingestion->dev
-    PR. Idempotent: an existing open PR is reused. OneAuth is a huge monorepo, so ALL git ops go
-    through the ADO REST API (no local clone). Test with the `common`/`msal` mocks.
+    Preview `create-oneauth-common-pr --release <id>` for the complete transient plan without writes.
+    Scheduled execution uses --execute --auto-approve --executor <automation-id>; a manually
+    reviewed execution instead supplies its exact --review-hash and --approved-by. A clean local
+    OneAuth checkout supplies commit-pinned Git objects. The planner computes the dev/ingestion
+    merge and four-file edits in an isolated object database, then the checked writer pushes
+    that exact commit and opens/reuses the ingestion-to-dev PR. No server-side merge is performed.
+    Conflicts or missing objects hold before writing. Interrupted/uncertain attempts retain their
+    ownership and cannot be blindly retried. Test version overrides do not bypass write guards.
   consequences: >
-    A real WRITE to OneAuth: a server-side merge commit on android/common-ingestion, a version-bump
-    commit, and a PR into dev. The merge is non-destructive (preserves the ingestion branch's
-    history); on conflict nothing is forced — the step holds for manual resolution.
+    A real WRITE to OneAuth: the reviewed merge/version-bump commit on android/common-ingestion
+    and a PR into dev. Exact repository/tip/content checks protect the write; conflicts and
+    uncertain results remain held for owner recovery, never a forced merge.
   faqs:
     - q: "Why merge dev into the ingestion branch instead of fast-forwarding?"
-      a: "android/common-ingestion is a long-lived staging branch that's diverged from dev (its ingestion PRs squash-merge, so its own commits never land in dev). A fast-forward would discard its unique history — a real merge is required, done server-side by ADO."
+      a: "android/common-ingestion is a long-lived staging branch that can diverge from dev. The checked planner computes the exact merge in an isolated local Git object database and preserves its history; it never requests an unreviewed server-side merge."
     - q: "What version does it write?"
       a: "state.versions.common — the final non-RC Common version published to Maven Central (verify_pub confirms it first). The changelog line also references state.versions.msal."
     - q: "What if the merge conflicts?"
@@ -1774,8 +1777,9 @@ finalize.final_status_email:
     automation should be torn down so no status emails leak into Phase 5+.
   who: >
     Scout composes it (a scout step) and sends it via WorkIQ to the release DLs
-    (config/notifications.yaml status_email.recipients). A test run redirects to you via the
-    `send_to` mock.
+    (notifications.yaml beside the invocation's phases.yaml, status_email.recipients).
+    An isolated test configuration is respected; the canonical production recipients are not
+    a fallback. The `send_to` mock remains an explicit recipient override.
   where:
     - "recipients: config/notifications.yaml status_email.recipients (authsdkrelease@, androididentity@)"
     - "template: orchestrator/status_email.py (same as the daily email)"
@@ -1785,7 +1789,9 @@ finalize.final_status_email:
     only then does the step complete and close the channel. Always run
     `automation cleanup --release <id> --json`; delete the
     returned daily status automation with `m_delete_automation`, and deregister only after
-    deletion succeeds. To test, set the `send_to` mock to your own address.
+    deletion succeeds. RC milestones use rc_report_publish, rc_report_notify and rc_report_gate,
+    never the removed rc_report step. To test, configure isolated recipients or set the
+    `send_to` mock to your own address.
   faqs:
     - q: "Won't this double-send with the daily automation?"
       a: "The daily automation is idempotent per day (last_status_email_date), and its window ends at Phase 5. The terminal step is the guaranteed CLOSING send; at worst you get a morning daily + the closing email on the last day, which is intended."

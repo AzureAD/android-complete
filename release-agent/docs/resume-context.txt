@@ -1,15 +1,84 @@
 RELEASE-AGENT RESUME CONTEXT
 ==========================
-Saved: 2026-10-19, America/Los_Angeles.
+Saved: 2026-10-20, America/Los_Angeles.
 Repository: C:\repos\android-complete
 Agent root: C:\repos\android-complete\release-agent
 Branch: feature/release-agent-phase3-audit
-Previously published baseline: 81dbc1a15f4adaf8b0d492f998f936c9231a510c.
-Resolve the new local source/test/doc checkpoint with the git-log command below.
+Published baseline: f6daab6372040239e20ed1b1ad6b185b1238a1b9.
+Inspect active local changes with git status --short.
 Resolve the earlier published checkpoint with
   git log -1 --format="%H %s" -- release-agent/docs/resume-context.txt
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
+
+CURRENT REQUEST: COMMIT/PUSH, COMPACT, THEN FIX18 BASELINE FAILURES (2026-10-20)
+----------------------------------------------------------------------------
+Owner requested this order at13:40PDT: commit/push the Phase3/4 checkpoint, compact
+the conversation to avoid errors, THEN fix the18 pre-existing failures. Do not
+start that next code change before publication and compaction. No live release
+execution, provider writes, approvals, notifications or runtime adoption requested.
+The publish destination is public AzureAD/android-complete, branch
+feature/release-agent-phase3-audit. Prior public approval covered f6daab637 only;
+review the exact new checkpoint and obtain its explicit public-content approval.
+Resolve current commit/push state from Git rather than repeating a completed push.
+
+The18 failures were reproduced unchanged on archived f6daab637 and the audit
+working tree. Start with these existing modules and protect current guards:
+  tests/test_ado_write_review.py (16):
+    test_distribution_preview_is_read_only_and_normalizes_inputs
+    test_distribution_hash_binds_live_review[revision,tester,suite,roster,org]
+    test_distribution_invalid_selection_and_revision_reject
+    test_distribution_executor_uses_captured_targets
+    test_distribution_provider_uses_reviewed_tester_ids[True]
+    test_beta_stage_start_requires_exact_release_owner_approval
+    test_beta_stage_definitive_pre_request_failure_is_not_uncertain
+    test_beta_stage_uncertain_failure_keeps_exact_run_link
+    test_beta_stage_verified_failure_is_blocked_not_uncertain
+    test_distribution_final_validation_persists_only_availability
+    test_distribution_partial_write_never_claims_completion
+    test_distribution_stale_hash_zero_writes
+  tests/test_notification_delivery.py (2):
+    test_unclaimed_step_refresh_preserves_audit_and_requires_new_approval[owner_email,ccd]
+Symptoms already isolated: distribution fixture cannot resolve release-point
+Current Tester forB:1; changed owner/CCD notification refresh produces no eligible
+notifications. Diagnose before choosing fixture versus production corrections.
+Preserve point-local Current Tester, exact release-owner approval, readiness/
+capability bindings, single-attempt ownership and explicit send receipts.
+Use focused existing pytest selectors and isolated temporary state. Do not rerun
+the expensive expanded Git suite or raise the900second budget merely to finish.
+
+PRIOR LOCAL CHECKPOINT: PHASE4 AUDIT (2026-10-20)
+----------------------------------------------------------------------------
+Owner stopped the proposed live Phase3 rehearsal and requested auditing Phase4.
+All9 Finalize & Publish steps were reviewed locally; NO live release actions,
+state adoption/advance, notifications, PR creation, pipeline approvals or push.
+Commit f6daab637 was already explicitly approved and publicly pushed; its older
+"pending push" sections below are history, not permission to publish newer work.
+
+Preserved uncommitted Phase3 changes: step7 bugbash_updates before step8
+notify_native_auth, synchronized docs, and tests/test_phase3_full_rehearsal.py
+with4 complete isolated fake-provider lifecycles. Its broader focused selection
+was823passed/2optional-captured-data-skipped. This was NOT the live scenario the
+owner later clarified; no live rehearsal was started or authorized.
+
+Phase4 corrections: invocation-specific closing-email recipients; current RC
+publish/notify/gate milestone; exact Final1 MRWP ID/definition; fail-closed GitHub
+release identity/access handling; explicit invalid-CC-registry holds; restored
+distinct verify_pub/oneauth_common_pr knowledge and current approval/Git guidance.
+Changed orchestrator/engine.py,status_email.py; tools/prs.py,
+tools/pipelines/orchestrator.py; steps/finalize/release_announcement.py;
+config/knowledge.yaml; provider-positive test in test_core.py and new
+tests/test_finalize_contracts.py. Docs/finalize-contracts.txt records all9 contracts.
+
+Latest focused Phase4 result:298passed56.92s. An over-broad510-case run timed out
+at the unchanged900second limit after failures, so it is not claimed as green.
+Current versus archivedHEADf6daab637, identical112-case diagnostic selections:
+94passed/18failed in EACH, identical failure identities. Existing distribution,
+Beta-stage and changed-owner/CCD notification fixtures remain outside this audit.
+No thresholds were raised and no failures were silently omitted or reclassified.
+All3 protected .release-runs state/automation/event files retain original hashes.
+Publishing this checkpoint still requires review of the exact change set and
+explicit destination/content approval; the current request above owns the sequence.
 
 SAVE-PROGRESS CHECKPOINT REQUESTED (2026-10-19 20:29 PDT)
 ----------------------------------------------------------------------------

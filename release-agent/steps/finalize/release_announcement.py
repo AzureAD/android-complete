@@ -106,17 +106,32 @@ def _rows_html(versions: dict) -> str:
 
 def _load_groups(context):
     """Ordered [(group_name, [{name,email}])] from config/announcement_cc.yaml — empty groups
-    skipped, per-group member order preserved. Never raises (missing/broken file -> [])."""
+    skipped, per-group member order preserved. Invalid configuration holds the announcement."""
+    import yaml
     try:
-        import yaml
-        data = yaml.safe_load(context.services.assets.text_file(_CC_PATH)) or {}
-    except Exception:  # noqa: BLE001
-        return []
+        data = yaml.safe_load(context.services.assets.text_file(_CC_PATH))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"Cannot read announcement cc registry: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("groups"), dict):
+        raise ValueError("Announcement cc registry requires a groups mapping")
     out = []
-    for group, members in (data.get("groups") or {}).items():
-        cleaned = [{"name": (m or {}).get("name") or (m or {}).get("email", "").split("@")[0],
-                    "email": (m or {}).get("email")}
-                   for m in (members or []) if (m or {}).get("email")]
+    for group, members in data["groups"].items():
+        if not isinstance(group, str) or not group.strip():
+            raise ValueError("Announcement cc registry has an invalid group name")
+        if members is None:
+            members = []
+        if not isinstance(members, list):
+            raise ValueError(f"Announcement cc registry group {group} requires a member list")
+        cleaned = []
+        for member in members:
+            email = member.get("email") if isinstance(member, dict) else None
+            if (not isinstance(email, str) or "@" not in email
+                    or any(c.isspace() for c in email)):
+                raise ValueError(f"Announcement cc registry group {group} has an invalid member email")
+            name = member.get("name") or email.split("@")[0]
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"Announcement cc registry group {group} has an invalid member name")
+            cleaned.append({"name": name, "email": email})
         if cleaned:
             out.append((group, cleaned))
     return out
@@ -213,7 +228,10 @@ def build(context: StepContext):
             "for testing, or re-run Phase 2 version discovery.")
 
     subject = f"Auth Client Android SDKs {_month_year(context)} Release"
-    cc_line, mentions = _cc(context)
+    try:
+        cc_line, mentions = _cc(context)
+    except ValueError as exc:
+        return Blocked(f"release_announcement: {exc}")
     html = _html(context, versions, cc_line)
     team_id, channel_id, note = _target(context)
 

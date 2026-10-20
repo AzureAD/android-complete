@@ -1,10 +1,12 @@
 """Both current clone handlers feed P3S3; Current Tester stays point-local."""
 from collections import Counter
 from copy import deepcopy
+from pathlib import Path
 import re
 import time
 
 import pytest
+import yaml
 
 from orchestrator import cli_common as C
 from orchestrator.engine import Orchestrator
@@ -149,6 +151,13 @@ def current_layouts(monkeypatch, tmp_path, request):
         "owner: agent, source: scout, write_command: distribute-tests, repeatable: true}\n"
         "      - {id: ui_failures, name: Review failures, kind: human_action, owner: human}\n",
         encoding="utf-8")
+    if options.get("full_phase"):
+        canonical = Path(C.DEFAULT_CONFIG)
+        document = yaml.safe_load(canonical.read_text(encoding="utf-8"))
+        document["phases"] = [p for p in document["phases"] if p["id"] == "bug_bash"]
+        config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        (config.parent / "automations.yaml").write_bytes(
+            canonical.with_name("automations.yaml").read_bytes())
     (config.parent / "readiness.yaml").write_text("items: []\n", encoding="utf-8")
     mocks = {
         "bug_bash.clone_plans_broker": {"name": "TEST ONLY - current Broker"},

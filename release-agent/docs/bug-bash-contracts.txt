@@ -595,28 +595,7 @@ LIFETIME / CONSUMERS:
   Missing permission to send still uses ordinary notification holds and manual progress.
   Terminal stale/different binding requires explicit reopen, never silent replacement.
 
-7. bug_bash.notify_native_auth
--------------------------------
-INPUT:
-  Completed valid Broker plan ID, release/CCD/ship-month/owner metadata and verified
-  Native Auth release-engineer UPN + engineer_source provenance. Inline schedule
-  alias is a hint only; resolve live schedule/directory or ask owner, never guess.
-WORK / OUTBOUND:
-  Exact HTML message asks the verified engineer to run Native Auth tests in this
-  release plan and report back. Owner display text is escaped. Recipient approval
-  precedes normal notification prepare/claim/direct send/result/finalize.
-PERSISTED OUTPUT:
-  Step.data engineer,engineer_source,notification_id,notification_execution_id,
-  gate_preconditions; full exact notification/target/acknowledgement in ledger.
-  Source matches freeze stable plan/target-month/owner identity, not mutable notes.
-SUCCESS / CONSUMERS / RETENTION:
-  notified_engineer validates exact acknowledged terminal direct-user delivery,
-  current sources, message body, UPN, descriptor/attempt identity and completion.
-  Engineer text alone is NOT success; legacy raw-recorder cannot attest delivery.
-  native_auth_signoff consumes that verified recipient and exact receipt identities.
-  Keep the sent proof through sign-off/final gate; changed or partial proof HOLDs.
-
-8. bug_bash.bugbash_updates
+7. bug_bash.bugbash_updates
 ----------------------------
 INPUT:
   Current completed_result and exact acknowledged Broker/Auth failure points;
@@ -659,6 +638,27 @@ LIFETIME / FAILURE / CONSUMERS:
   is an explicit hold, not another chat or guessed mention. Stopped phase/owner
   completion ends polling; it does not infer ui_failures or Native Auth sign-off.
   No actual notification or automation was created in this audit.
+
+8. bug_bash.notify_native_auth
+-------------------------------
+INPUT:
+  Completed valid Broker plan ID, release/CCD/ship-month/owner metadata and verified
+  Native Auth release-engineer UPN + engineer_source provenance. Inline schedule
+  alias is a hint only; resolve live schedule/directory or ask owner, never guess.
+WORK / OUTBOUND:
+  Exact HTML message asks the verified engineer to run Native Auth tests in this
+  release plan and report back. Owner display text is escaped. Recipient approval
+  precedes normal notification prepare/claim/direct send/result/finalize.
+PERSISTED OUTPUT:
+  Step.data engineer,engineer_source,notification_id,notification_execution_id,
+  gate_preconditions; full exact notification/target/acknowledgement in ledger.
+  Source matches freeze stable plan/target-month/owner identity, not mutable notes.
+SUCCESS / CONSUMERS / RETENTION:
+  notified_engineer validates exact acknowledged terminal direct-user delivery,
+  current sources, message body, UPN, descriptor/attempt identity and completion.
+  Engineer text alone is NOT success; legacy raw-recorder cannot attest delivery.
+  native_auth_signoff consumes that verified recipient and exact receipt identities.
+  Keep the sent proof through sign-off/final gate; changed or partial proof HOLDs.
 
 9. bug_bash.ui_failures
 ------------------------
@@ -732,6 +732,27 @@ PRESENTATION:
 
 OFFLINE PROOF AND REMAINING SCOPE
 ---------------------------------
+2026-10-20 complete Phase3 rehearsal:
+  Run from release-agent:
+    python -m pytest -q tests\test_phase3_full_rehearsal.py
+  Uses the canonical eleven-step bug_bash definition, including progress before
+  Native Auth notification, isolated temporary state and real engine/CLI handlers.
+  Reuses the current-layout in-memory ADO fixture; M365/Scout observations and
+  delivery receipts are synthetic. No separate rehearsal runner or live calls.
+  Four end-to-end variants cross native/owner-confirmed chat binding with
+  all-work-complete/final-summary shutdown or explicit owner phase sign-off.
+  Covers current Broker/Auth/Monthly creation and fills, reviewed Current Tester
+  distribution, invitation receipt, exact chat binding, first/periodic progress,
+  human-review holds, Native Auth sign-off, final approval and poller cleanup.
+  Premature activation/approval holds; preview is not delivery; final-summary
+  preparation alone does not stop polling or approve the phase. Shared cases,
+  other-release points, RC evidence and CCD remain unchanged.
+  Focused Phase3/layout/distribution/chat/progress/clone selection:
+  823passed/2skipped in234.74s. Both skips require optional captured-data inputs,
+  not missing phase steps. No live permission, browser activation, delivery,
+  wall-clock scheduler reliability or full-repository-suite claim.
+  Protected connected state/automation/event files retained their original hashes.
+
 Communication selectors:133passed15.27s; live event recipient negative/positive
 selectors27passed0.56s (synthetic Graph only). Parent Auth/human/capability/lifecycle
 selection188passed4.93s; manual-result and human-source selection28passed3.76s.

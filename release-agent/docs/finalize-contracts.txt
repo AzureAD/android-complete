@@ -1,0 +1,120 @@
+PHASE 4: FINALIZE & PUBLISH
+=========================
+Audit scope: canonical sequential Phase 4, nine steps. Local source/contract
+review and isolated provider tests only; never a production release rehearsal.
+
+1. finalize.remove_rc_tags_gate
+-------------------------------
+Human-owned external approval. Discovery identifies the exact Remove RC Tags
+approval, owner build, stage and provider coordinates. The review also binds the
+comment and workflow revision. Only explicit approval of that review authorizes
+one fenced submission. Reservation is not submission.
+Interrupted attempts keep their execution ID; recovery reads the frozen approval
+and requires its exact owner build and approved status. A completed stage or a
+newer run cannot settle an already-owned approval. Generic approve cannot bypass
+this checked lifecycle. This gate publishes real artifacts and is not reversible.
+
+2. finalize.orchestrator_finalization
+--------------------------------------
+Read-only monitor of the release-month orchestrator, using the stable stage ID
+PublishGitHubReleaseNotes. It waits for the publication gate and a valid Final1
+tag. Final1 must identify the exact returned build from the configured MRWP
+pipeline, not merely any completed successful build.
+Final MRWP success permits pipeline_runs.final={orchestrator_run_id,mrwp_run_id,
+resolved_at}. Failure holds; absent/unreadable evidence never produces completion.
+Polling is every two hours, with an owner escalation after more than eight hours.
+The monitor cannot approve gates, create branches or open PRs.
+
+3. finalize.integ_prs
+---------------------
+Read-only advisory followed by create-integration-prs. The checked command
+recomputes a complete transient plan: selected repositories/versions, provider
+identity, clean checkout, remote URI and tips, exact merged tree, gradle reverts,
+PBI, existing/new PR choice, bodies and labels.
+Scheduled auto-approval is command-specific; it still checkpoints an exact review
+hash and one owned attempt under the release lock. Every provider operation
+rechecks its relevant inputs. Four repositories normally yield eight PRs.
+Partial/uncertain operations remain owned, not a fresh automatic retry.
+
+4. finalize.publish_notes_gate
+-------------------------------
+Second human-owned external approval, only for Publish GitHub Release Notes.
+It uses the same exact review/submission/reconciliation lifecycle as step 1.
+The owner must ensure integration PRs are merged. Approving a different parked
+stage, guessing an approval ID, or treating an owned attempt as another send
+is forbidden. Publication-stage completion is not an approval receipt.
+
+5. finalize.verify_pub
+----------------------
+Read-only Maven Central checks for Common4j and Common at versions.common and
+MSAL at versions.msal. A per-version POM HEAD returning 200 proves publication.
+404 remains in progress for propagation; request/HTTP errors block verification.
+Missing versions block. This step writes neither artifacts nor GitHub releases.
+
+6. finalize.verify_release_notes
+--------------------------------
+Read-only gh release view for Broker, MSAL and Common at their exact v<version>
+tags and configured repositories. Successful JSON must be an object with the
+matching tagName, an actual boolean isDraft and a nonempty release URL.
+Malformed/mismatched JSON is not published evidence. Only an explicit release
+not found response is propagation/missing evidence; repository access failures
+remain errors. Draft releases remain pending, never published.
+
+7. finalize.oneauth_common_pr
+------------------------------
+Read-only advisory followed by create-oneauth-common-pr. Final numeric Common
+and MSAL versions, exact OneAuth repository/branches/tips, clean local objects,
+merged content and the existing/new PR decision are bound to its write review.
+The merge is computed in an isolated Git object database, not an unreviewed
+server-side merge. Four files are updated together: libs.versions.toml,
+cgmanifest.json, deps/README.md and CHANGELOG.md. The reviewed commit is pushed
+with tip checks; the PR targets dev. Conflicts and uncertain writes remain held.
+
+8. finalize.release_announcement
+--------------------------------
+Prepared root General-channel post with the stored SDK versions and maintained
+CC groups. Missing/unreadable/malformed announcement_cc.yaml blocks preparation
+instead of silently dropping required mentions. Empty groups may be explicitly
+configured; valid group/member order and existing test redirect modes remain.
+Preparation is not delivery. The exact channel/content/mentions use the normal
+notification claim/result protocol; no generic recorder may invent success.
+
+9. finalize.final_status_email
+-------------------------------
+Prepared closing partner email from the current milestone model. Default
+recipients come from notifications.yaml adjacent to THIS invocation's phases.yaml,
+not the canonical production configuration. An explicit send_to remains a test
+override. RC progress uses the current rc_report_publish, rc_report_notify and
+rc_report_gate steps; the removed rc_report key must not hold it in progress.
+The exact rendered HTML must be sent through the configured native mail transport
+and acknowledged with its matching payload receipt. Only successful delivery
+completes the step. Central cleanup then retires the daily partner-email worker
+through claimed deletion and provider acknowledgement, never just a local flag.
+
+AUDIT CORRECTIONS
+-----------------
+Recipient configuration, obsolete RC milestone, GitHub release evidence/access
+classification, Final1 build/pipeline identity, invalid CC registry handling and
+mis-keyed/stale Phase 4 help entries were corrected locally.
+No shared Git/ADO/M365 state, pipeline approval or production automation changed.
+
+OFFLINE PROOF
+-------------
+tests/test_finalize_contracts.py covers all nine distinct help entries, exact
+recipient isolation/no fallback, current RC milestone completeness, malformed
+GitHub release/access evidence, CC registry holds and Final1 MRWP identity.
+The latest focused Phase4/gate/checked-write/cleanup selection passed298 cases.
+The expanded510-case attempt exceeded the existing900second limit and is not a
+complete/pass result. Separate112-case current-versus-archivedHEAD diagnostics
+both yielded94passed/18failed with identical failure identities in unchanged
+distribution/Beta-stage/notification modules. They remain baseline work, not
+evidence of a green full suite. No validation threshold was increased.
+
+LIMITS
+------
+Offline provider proof is not live access, scheduler, publication or delivery
+certification. Run discovery before an approval is release-month based; exact
+ownership after reservation remains tied to the frozen approval. This audit does
+not claim a new immutable cross-step orchestrator-run pin or automatic PR merges.
+Production execution, runtime adoption and any live rehearsal require their own
+current readiness, exact human gates and outbound-content review.

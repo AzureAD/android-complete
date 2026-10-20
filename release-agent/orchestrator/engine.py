@@ -187,8 +187,7 @@ class Orchestrator(StatusViewMixin):
                     return result
 
                 def status_recipients():
-                    cfg = notifications.load_config(os.path.join(
-                        os.path.dirname(__file__), "..", "config", "phases.yaml")) or {}
+                    cfg = notifications.load_config(self.config_path) or {}
                     recipients = (cfg.get("status_email") or {}).get("recipients")
                     if not isinstance(recipients, list) or not recipients:
                         raise ValueError("Configure status_email.recipients as a non-empty list")
