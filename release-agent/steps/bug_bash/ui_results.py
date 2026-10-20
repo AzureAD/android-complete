@@ -41,7 +41,8 @@ def current_binding(context):
             or _id(build.get("rc")) != _id(rc.get("rc"))):
         raise ValueError(f"UI result source is no longer current/completed; {REFRESH}")
     from tools import auth_partition as A
-    auth_target = A.target(thaw(suite))
+    auth_target = (A.current(context, thaw(suite)) if "monthly_amendment" in suite
+                   else A.target(thaw(suite)))
     binding = {"release": context.release.release_id, "rc": _id(rc.get("rc")),
             "ecs_build": _id(rc["ecs"].get("run_id")), "local_build": _id(rc["local"].get("run_id")),
             "auth_apk_build": _id(build.get("run_id")), "auth_test_build": _id(test.get("run_id")),
@@ -95,6 +96,9 @@ def reminder_preconditions(context):
         if auth.get("layout") == A.MONTHLY_LAYOUT:
             values.extend((["steps", "bug_bash.clone_plans_auth", "data", key], thaw(auth[key]))
                           for key in ("monthly", "monthly_source"))
+        if "monthly_amendment" in auth:
+            values.append((["steps", "bug_bash.clone_plans_auth", "data", "monthly_amendment"],
+                           thaw(auth["monthly_amendment"])))
     field = "automation" if broker.get("source_version") == 4 else "ui_suite_id"
     values.append((["steps", "bug_bash.clone_plans_broker", "data", field], thaw(broker[field])))
     for path in (["ecs"], ["local"], ["auth", "build"], ["auth", "test"]):

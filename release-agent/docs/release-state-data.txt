@@ -18,8 +18,27 @@ MONTHLY V2 ADDENDUM (2026-10-19; local only):
   refreshed exact captured source. Manual resolutions and all prior history remain.
   Distribution/progress/invitations require complete current fill and live owned
   point identities/outcomes/Testers. Old completed/frozen layouts remain untouched;
-  no automatic migration/amendment/adoption or unknown-create reset is supplied.
+  no automatic migration/adoption or unknown-create reset is supplied.
   These fields are engine-owned outputs, never instructions to hand-edit state.
+MONTHLY EXISTING-PARENT AMENDMENT ADDENDUM (2026-10-19; local only):
+  clone_plans_auth.data.monthly_amendment is independent engine-owned command data.
+  Original clone.layout/classification/queries/IDs/create receipts/completion and
+  execution remain byte-value identical. workflow_revision is never adopted.
+  version/command/id/owner/approved_by/approved_at/review_hash bind an independent
+  reviewed claim. plan freezes identity, original workflow binding, explicitly
+  reviewed current command runtime/phase manifest, whole base_clone/base_sha256,
+  native observed categories/configuration_ids, verified source, exact payload and
+  payload_sha256. Review and payload digests are separate SHA256-prefixed values.
+  status is claimed/incomplete/complete/cancelled. monthly is the existing durable
+  owned create/ACK/member/config/point record, not a second lifecycle. completed_at
+  and proof_sha256 seal complete ownership; cancellation preserves reason/time and
+  all existing operations. Persist claim before writes and ACK before readback.
+  Only complete sealed records resolve an effective target with distinct layout
+  auth-manual-automated-monthly-amendment-v1 and compact amendment proof, plus the
+  full Monthly owned target. Partial/cancelled/changed originals block consumers.
+  P3S3/result bindings, reminder preconditions, distribution/progress/invitation/
+  rollout consume this target even though the original persisted layout stays v1.
+  Normal step eligibility/runtime authority is NOT granted by the amendment.
 Scope: central state structure, 13 readiness items, all nine preflight steps,
 all three CCD steps, Phase2 checker/orchestrator captures and RC storage, and
 all eleven Phase3 Bug Bash steps (local/offline integration).

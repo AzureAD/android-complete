@@ -220,13 +220,19 @@ captured current-RC Authenticator evidence. Classification does not use ADO
 Automation Status or a generic Automated tag. The clone freezes RC/APK/test-build
 identities and the mapped set; changed sources hold rather than move cases silently.
 Only the automated child receives canonical E2E fills. Historical/v1 Monthly coverage
-remains report-only. Explicit fresh `auth-manual-automated-monthly-v2` layouts additionally
+remains report-only unless a separately reviewed `amend-auth-monthly` existing-parent
+amendment completes. Explicit fresh `auth-manual-automated-monthly-v2` layouts additionally
 own a STATIC `Monthly UI Failure Triage` sibling, containing only initially unresolved
 distinct failed scenarios after exact-title retries; zero failures creates no folder.
 These are release-owned human investigations, never canonical automation mappings.
 P3S3 alone fills their exact bound points and attempts failed-point Tester assignment;
 manual resolutions and acknowledged histories survive retries. New pass/NA/recovered
 cases are never created. Old/frozen/completed layouts cannot be amended by replay.
+The checked amendment preserves original v1 layout/completion/execution/create
+receipts and workflow pin; it independently reviews/claims only one Monthly leaf
+and its cases/memberships. Partial/cancelled/stale amendments hold P3S3. A complete
+sealed amendment resolves Monthly for fills/downstream without granting later
+workflow eligibility/runtime authority, combining independent states, or adoption.
 This split does not change either gate or any canonical case ID.
 Do not refetch MRWP results in Phase 3, merge historical
 RCs, or recompute retry verdicts. Missing/incomplete evidence, a stale `count_basis`,

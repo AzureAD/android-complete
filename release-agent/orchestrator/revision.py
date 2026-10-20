@@ -267,6 +267,22 @@ def current_revision(orch):
     return _current_revision(orch)[0]
 
 
+def monthly_amendment_runtime(orch):
+    """Review a new command runtime without adopting or reopening the old workflow."""
+    old = orch.state.workflow_revision
+    validate_binding(old)
+    if old is None:
+        raise ValueError("Monthly amendment requires a bound existing workflow")
+    current, imported = _current_revision(orch)
+    if not imported or current["runtime_hash"] != orch._loaded_runtime_hash:
+        raise ValueError("Runtime files changed; restart before reviewing the Monthly amendment")
+    identity = lambda binding: [(p["id"], p["step_keys"]) for p in binding["phases"]]
+    if identity(old) != identity(current):
+        raise ValueError("Monthly amendment cannot change the workflow phase/step inventory; use its original config")
+    return {"original_revision": revision_id(old), "operation_revision": revision_id(current),
+            "runtime_hash": current["runtime_hash"], "phases": current["phases"]}
+
+
 def revision_checked(operation):
     """Reuse one fresh revision check within a single engine operation."""
     @wraps(operation)

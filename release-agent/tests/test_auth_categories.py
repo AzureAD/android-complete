@@ -459,6 +459,24 @@ def test_fill_targets_only_automated_child_and_reuses_receipts(suites, monkeypat
     assert len(writes) == 2 and manual == before
 
 
+@pytest.mark.parametrize("damage", ["missing", "unmapped", "duplicate"])
+def test_current_category_coverage_guards_both_preflight_and_direct_writer(suites, monkeypatch, damage):
+    _, data = created(suites)
+    target = A.target(data)
+    points = category_points()
+    if damage == "missing":
+        points.pop()
+    elif damage == "unmapped":
+        points[0]["testCase"]["id"] = 999
+    else:
+        points.append(deepcopy(points[0]))
+    writes = point_provider(monkeypatch, target, points)
+    assert not T.read_auth_ui_points(target)[0]
+    assert not T.fill_auth_ui_results(
+        T.AUTH_PLAN, target["suite_id"], {2916347: "Failed", 2916524: "Passed"}, target=target)[0]
+    assert not writes
+
+
 @pytest.mark.parametrize("damage", ["case", "config", "point", "target", "replacement"])
 def test_fill_changed_points_or_targets_preserve_human_results(suites, monkeypatch, damage):
     st, data = created(suites)

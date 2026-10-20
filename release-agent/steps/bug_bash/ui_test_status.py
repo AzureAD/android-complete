@@ -1,5 +1,5 @@
 """Step: `ui_test_status` — fill BOTH the Broker + Authenticator UI suites from the RC
-pipelines, and assign failed release-point Testers to the release owner (Phase 3, bug_bash;
+pipelines, and set failed release-point Current Tester to the release owner (Phase 3, bug_bash;
 runs right before `distribute_tests`).
 
 BROKER v3: exact current-RC device scenarios plus additional failure investigations;
@@ -20,7 +20,7 @@ runs). Missing, incomplete or stale evidence for either app blocks BEFORE extern
 Refresh evidence in Phase 2, then re-run this step to fill from the new snapshot.
 
 TRIAGE: only acknowledged FAILED points — Broker AND Authenticator — are
-submitted for release-specific Tester assignment, never shared System.AssignedTo.
+submitted for release-specific Current Tester assignment, never shared System.AssignedTo.
 Assignment errors are nonblocking and
 recorded separately, never treated as successful owner changes. Then the
 downstream `ui_failures` human reminder is forward-populated with the full per-test list.
@@ -111,6 +111,8 @@ def prepare_effect(context):
         context.services.testplans.validate_release_targets(
             context.release.release_id, context.release.ccd, current_binding,
             expected_names=destination_names)
+        if current_binding["auth"].get("layout"):
+            _validate_auth_points(context, current_binding["auth"])
         monthly_projection = None
         if "monthly" in current_binding["auth"]:
             from tools import auth_monthly as M
@@ -161,6 +163,12 @@ def prepare_effect(context):
             "test_plan_project": T.PROJECT,
         },
     }
+
+
+def _validate_auth_points(context, target):
+    ok, _, detail = context.services.testplans.read_auth_ui_points(target)
+    if not ok:
+        raise ValueError("Authenticator automated point coverage unavailable: " + detail)
 
 
 def _freeze_broker_projection(projection):
@@ -335,7 +343,7 @@ def _fill_auth(context, notes, projection, binding, owner, coordinates, prior_po
 
 
 def _assign_failure_points(context, summary, owner, coordinates):
-    """Only applied failure points in this release are eligible for owner triage."""
+    """Set Current Tester only on this release's acknowledged failed test points."""
     failed = [p for p in summary["applied_points"] if p["outcome"] == "Failed"]
     ids = sorted({p["case_id"] for p in failed})
     errors = []
@@ -573,6 +581,7 @@ def _apply_prepared(context, prepared):
         from tools import auth_partition as A
         if A.current(context, thaw(context.evidence.step("bug_bash", "clone_plans_auth").data)) != binding["auth"]:
             return Blocked("Authenticator execution classification changed; no test-plan writes attempted")
+        _validate_auth_points(context, binding["auth"])
     if "monthly" in binding["auth"]:
         from tools import auth_monthly as M, broker_scenarios as S
         monthly = M.current(thaw(latest_rc(context)), binding["auth"]["monthly"])

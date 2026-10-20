@@ -87,6 +87,7 @@ class WriteOperation(str, Enum):
     CREATE_AUTH_QUERY_SUITE = "create_auth_query_suite"
     CREATE_AUTH_SUITE = "create_auth_suite"
     ENSURE_AUTH_MONTHLY = "ensure_auth_monthly"
+    AMEND_AUTH_MONTHLY = "amend_auth_monthly"
     FILL_AUTH_MONTHLY = "fill_auth_monthly"
     FILL_AUTH_UI_RESULTS = "fill_auth_ui_results"
     FILL_UI_AUTOMATION_RESULTS = "fill_ui_automation_results"

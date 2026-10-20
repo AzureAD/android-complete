@@ -796,7 +796,7 @@ def resolve_tester_identity(upn, *, org=ORG, timeout=60):
 def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_testers=None,
                        org=ORG, project=PROJECT, validate=None, expected_identities=None,
                        reviewed_updates=None, expected_points=None):
-    """Write reviewed release-point Testers only; never read/write case AssignedTo."""
+    """Write reviewed release-point Current Tester only; never read/write case AssignedTo."""
     if not assignments:
         return True, ""
     url = f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points"
@@ -817,10 +817,12 @@ def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_t
             return False, "Plan testers changed after review; inspect the fresh ADO corrections"
     if expected_points is not None:
         current_points = {str(p["id"]): {"case_id": str(p["testCase"]["id"]),
-                                       "config_id": str(p["configuration"]["id"])}
+                                       "config_id": str(p["configuration"]["id"]),
+                                       **({"outcome": p.get("outcome") or "Unspecified"}
+                                          if "outcome" in expected_points.get(str(p["id"]), {}) else {})}
                           for p in points if included(p)}
         if current_points != expected_points:
-            return False, "Release point case/configuration identities changed after review"
+            return False, "Release point case/configuration or reviewed outcome changed after review"
     selected = {int(cid): upn.casefold() for cid, upn in assignments.items()}
     if not set(selected) <= {int(p["testCase"]["id"]) for p in points if included(p)}:
         return False, "Assigned cases are missing from the target suite; refresh distribution"
@@ -867,7 +869,11 @@ def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_t
 
 def set_point_testers(plan_id, suite_id, point_ids, upn, *, org=ORG, project=PROJECT, timeout=90,
                       expected_points=None):
-    """Assign only acknowledged failed points to the owner, preserving every outcome."""
+    """Set Current Tester on acknowledged failed release points, preserving every outcome.
+
+    The legacy point API reads this as point.assignedTo and writes it as tester;
+    neither is the shared work item's System.AssignedTo.
+    """
     selected = {int(pid) for pid in point_ids}
     if not selected:
         return True, ""

@@ -62,6 +62,7 @@ class TestPlanReads:
     validate_release_targets: Callable[..., None]
     find_auth_suite: Callable[..., tuple]
     validate_auth_suite: Callable[..., tuple]
+    read_auth_ui_points: Callable[..., tuple]
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,7 @@ class EffectServices:
     create_auth_query_suite: Callable[..., tuple] | None = None
     create_auth_suite: Callable[..., tuple] | None = None
     ensure_auth_monthly: Callable[..., tuple] | None = None
+    amend_auth_monthly: Callable[..., tuple] | None = None
     fill_auth_monthly: Callable[..., tuple] | None = None
     fill_auth_ui_results: Callable[..., tuple] | None = None
     fill_ui_automation_results: Callable[..., tuple] | None = None

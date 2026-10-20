@@ -224,9 +224,13 @@ the owning unacknowledged category. Existing acknowledged IDs must reconcile.
 
 ### Explicit fresh Monthly failure-tracker layout
 
-For an eligible **fresh** clone, the typed build/prepare parameter
-`--param layout=auth-manual-automated-monthly-v2` opts in through the existing
-`step-action --release <id> --phase bug_bash --step clone_plans_auth` lifecycle.
+For an eligible **fresh** isolated clone, declare the reviewed input
+`layout: auth-manual-automated-monthly-v2` alongside its distinct `name` in the
+isolated `bug_bash.clone_plans_auth` mocks entry. This input selects the real
+handler layout; it does not mock completion or provider calls. Run the automatic
+step through `next` with the isolated config, runs root and mocks file.
+`step-action` cannot execute this automatic step. The typed build/prepare
+`layout` parameter remains available to explicit handler callers.
 This is a provider-writing clone, **not a preview command**; do not execute it
 without the exact scope review, engine eligibility and runtime-revision handling.
 `tools.auth_monthly.preview(rc, release, parent_name)` renders source-bound JSON
@@ -243,11 +247,47 @@ Manual resolutions and previously tracked now-recovered rows/history remain.
 Distribution/progress/invitations require completed fill and actual live points.
 
 Existing completed/frozen v1 targets (including TEST ONLY parent3794450) **cannot
-be amended by replay**. No existing-parent amendment/adoption or Monthly
-unknown-create reset command is implemented. Acknowledged IDs reconcile by exact
-readback; unknown POSTs block without replay or same-name adoption. Choose a new
-reviewed v2 clone, never splice state or rerun an old frozen operation as v2.
+be amended by replay**. Use the separate checked amendment below, or an explicitly
+reviewed fresh v2 clone. No Monthly unknown-create reset command is implemented.
+Acknowledged IDs reconcile by exact readback; unknown POSTs block without replay
+or same-name adoption. Never splice state or rerun an old frozen operation as v2.
 Canonical E2E mappings and both source-execution quality gates remain unchanged.
+
+### Checked existing-parent Monthly amendment
+
+From the release-agent directory, use the **original owned state's config and runs
+root**, not the normal release or an independent Broker state:
+
+```powershell
+python -m orchestrator.cli --config "<original-config>\phases.yaml" --runs-root "<owned-runs-root>" amend-auth-monthly --release "<owned-release-id>"
+```
+
+Default is read-only native preflight + exact JSON review. It binds the complete
+original v1 clone/old pin, actual release identity, current source/builds/attempts,
+native category identities/queries/inheritance/config IDs and explicitly reviewed
+new command runtime. Review `review_hash` and separate `payload_sha256`. The only
+prospective writes are one Monthly STATIC leaf (iff failures), new investigation
+cases and memberships. No parent/Manual/Automated creates, results, Testers or sends.
+Case IDs in membership preview are explicit references to the corresponding
+prospective create ACKs; point IDs are server-generated, not fabricated.
+
+After a **new exact explicit external approval**, repeat with:
+`--execute --reserve --review-hash <sha256:hash> --approved-by "<reviewer>" --executor "<executor>"`.
+The independent locked claim and intent ledger are durably checkpointed before
+POST. Resume with the same hash/reviewer/executor (omit `--reserve`); acknowledged
+IDs read back, never recreate. A completed repeat only validates, never resends.
+Partial/source/config/base/runtime/claim drift holds. Unknown creates never repost
+or adopt by name. Cancel an incomplete owned amendment using `--cancel` and the
+same review/owner arguments plus `--reason "<owner reason>"`; history remains and
+cancelled work cannot restart or publish.
+
+Only `clone_plans_auth.data.monthly_amendment` is added. Original clone layout,
+completion/execution/receipts and workflow runtime pin remain unchanged. Only a
+complete sealed amendment resolves Monthly for P3S3/downstream, all of which require
+completed current fill and live points. This compatible command authorizes **only
+the amendment**; normal workflow runtime/eligibility guards are unchanged. In
+particular, the isolated Auth-only state does not become a combined P3S3 context.
+Local implementation/offline previews are **not** external approval or live proof.
 
 Before a live isolated test, review the exact parent/child creation payloads,
 source classification and a distinct TEST ONLY name, then obtain explicit approval.
@@ -682,22 +722,30 @@ and **owner triage** for Blocked-tagged cases and applied automated failures. Sh
 triage case and reason; do not silently leave those cases with excluded/former owners.
 The cross-platform `Automated` tag is not an Android automation exclusion; only the
 completed fill's automated-case set proves that. The owner remains excluded from manual
-work but receives triage. Apply writes only the release plan/suite point Testers,
+work but receives triage. Apply writes only Current Tester on release plan/suite points,
 never shared test-case System.AssignedTo;
 neither outcomes nor Blocked tags are changed. A failed tester update is an incomplete
 apply, not success. Review again if the triage set changes.
 
-**ADO is the sole assignment source.** Validation reads case assignees and release-plan
-testers, checks the distribution rules, and proposes only needed corrections. It does not
+Current Broker failure-only flight/category suites retain separate Stress/UI targets.
+Current Authenticator Manual/Automated/Monthly targets come from the completed fill.
+Monthly investigations, including resolved points, never enter manual balancing.
+A shared Broker case can independently use `B:<id>` for manual work and
+`B:<id>:triage` for failure work; apply must keep their exact point scopes separate.
+
+**ADO is the sole assignment source.** Validation reads live release-point Current
+Tester, never the shared case's Assigned To, checks the distribution rules, and proposes
+only needed corrections. It does not
 silently rebalance. `next` holds when mismatches exist and completes this step when ADO is
 valid. Existing valid manual changes are accepted without restoring any old allocation.
 
 Previews exist only in command output/memory. The returned `review_hash` is an approval
 digest, not an assignment list; only the approved digest/reviewer is saved with execution.
 On `--apply`, live inputs
-must still match the reviewed digest before any correction is written. Changed work items
-also use ADO's native revision check. Read-back must confirm correct assignments and testers
-before completion; tags and outcomes are preserved.
+must still match the reviewed digest before any correction is written. Native writes
+recheck the exact point/case/configuration and Current Tester; Monthly outcome-dependent
+selection is rechecked too so a new resolution stops its assignment. Read-back must
+confirm correct Current Testers before completion; tags and outcomes are preserved.
 
 After partial failure or timeout, read the current ADO values and review remaining
 corrections. Never restore a saved map or roll back earlier successes. If ADO is already

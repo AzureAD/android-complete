@@ -51,13 +51,13 @@ def plan_distribution(args, orch):
         if not any(c["plan_id"] == group["plan_id"] and c["suite_id"] == group["suite_id"]
                    for c in report["point_changes"]):
             continue
-        assignments = {str(p["case_id"]): report["_targets"][f"{group['prefix']}:{p['case_id']}"]
+        assignments = {str(p["case_id"]): report["_targets"][S.point_work_key(group, p)]
                        for p in group["points"]}
         case_identities, updates = {}, {}
         for point in group["points"]:
             key = str(point["case_id"])
             upn = assignments[key]
-            identity = identities.get(upn) or report["_current"][f"{group['prefix']}:{key}"]["identity_id"]
+            identity = identities.get(upn) or report["_current"][S.point_work_key(group, point)]["identity_id"]
             if not identity:
                 raise ValueError(f"Missing reviewed tester identity for {upn}")
             case_identities[key] = identity
@@ -69,7 +69,9 @@ def plan_distribution(args, orch):
              "updates": [{"tester_id": key, "point_ids": sorted(value)}
                          for key, value in sorted(updates.items())]},
             {"testers": {str(p["id"]): p["tester_id"] for p in group["points"]},
-             "points": {str(p["id"]): {"case_id": str(p["case_id"]), "config_id": str(p["config_id"])}
+             "points": {str(p["id"]): {
+                 "case_id": str(p["case_id"]), "config_id": str(p["config_id"]),
+                 **({"outcome": p["outcome"]} if "outcome" in p else {})}
                         for p in group["points"]}}))
     return W.WritePlan(
         S.WRITE_COMMAND,
@@ -172,7 +174,7 @@ def cmd_distribute_tests(args):
 
 
 def register(sub):
-    p = sub.add_parser("distribute-tests", help="Preview/apply checked live ADO assignment corrections")
+    p = sub.add_parser("distribute-tests", help="Preview/apply checked live ADO Current Tester corrections")
     p.add_argument("--release", required=True)
     p.add_argument("--oce", default=None, help="Verified primary on-call UPN")
     p.add_argument("--roster-file", help="Fresh owner-bound workiq.fetch exact group/member observation bundle")

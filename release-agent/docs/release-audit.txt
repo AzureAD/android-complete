@@ -60,6 +60,45 @@ not a new persisted runtime schema.
 
 CURRENT CHECKPOINT
 ------------------
+EXISTING-PARENT MONTHLY AMENDMENT IMPLEMENTED LOCALLY; UNCOMMITTED AFTER81dbc.
+  User changed scope at2026-10-19 15:55:47PDT to existing TEST ONLY parent3794450.
+  amend-auth-monthly separately previews/reviews/claims one Monthly STATIC leaf +
+  NEW failed-scenario investigations/membership. It never reopens/replays the clone,
+  creates another parent/Manual/Automated, changes old layout/pin or adopts/advances.
+  Independent engine-owned monthly_amendment freezes whole completed clone/base,
+  release/context/old revision, explicitly reviewed new command runtime, exact native
+  categories/queries/inheritance/config IDs, verified source and payload. Exact hash/
+  reviewer/executor/reserve + release lock precede durable intent/provider writes.
+  ACKs survive interruption before readback/fencing; unknown creates never repost or
+  adopt by name. Cancel retains history. Partial/cancelled/stale/unowned records hold.
+  Complete sealed amendment resolves target-only amendment-v1 for P3S3/downstream;
+  persisted clone.layout remains v1. Complete current fill/live points are mandatory
+  for distribution/progress/reminders/invitation/rollout. Manual resolutions/history
+  and canonical IDs/gates stay unchanged. Failed-point Tester only, no shared edits.
+  Native inherited NULL configs now traverse only literal true/valid parent chains
+  to actual root configs; malformed/false/truthy/cycle/no-config cases fail closed.
+  Actual synthetic release2026-10-auth-categories-a5a98dd93670b8e4-checked is used,
+  with its original isolated config. This narrow runtime authority does NOT authorize
+  later steps or combine independent Broker/Auth states into runnable P3S3.
+  New session preview:monthly-existing-parent-20261019\existing-parent-external-preview.json
+  under the same session files root below. One leaf+17cases/17config84membership
+  pairs,0other writes; native observations supplied by parent at15:55, NOT new reads.
+  Reviewsha256:ca5ac95709c1f31b93d49fd0cb0134fbf4cba2a4c0f14288acf4f4243115807e.
+  Payloadsha256:7e2cf174c9563f9d32d852f4f4cd6137e6c63264bb6a953393c2a5db1f8c886f.
+  Actual376/359/17Monthlyexecutions,367distinct/17unresolved/0recovered. Gates and
+  E2E26cases/29scenarios unchanged. Owned/normal/Broker/Phase2/capture hashes unchanged.
+  Latest323focused tests passed36.69s; earlier affected720passed before unrelated
+  checked-ADO failure. Additional probe42passed/4failed. All five observed failures
+  reproduce on published81dbc (Tester-UPN fixture + four Beta stale-review fixtures).
+  Final v1 guard1passed2.30s; CLI help/diff-check passed. Cumulative reported pytest
+  600.811s including prior284.621/debug/baseline, within900.
+  Exact commands/proof and protected hashes are in newest resume-context/session JSON.
+  No ADO/M365/pipelines/state mutation/adoption/commit/push or new push approval.
+  Next: NEW exact outward approval, then fresh read-only production preflight.
+  Old fresh-four-suite review is superseded history. No live certification or P3S3.
+
+PREVIOUS CHECKPOINT (FRESH V2 ONLY; SUPERSEDED TARGET, RETAINED HISTORY)
+--------------------------------------------------------------------
 MONTHLY FAILED-SCENARIO TRACKER IMPLEMENTED LOCALLY; NO PROVIDER EXECUTION.
   Owner authorization at2026-10-19 14:12PDT was FAILED SCENARIOS ONLY, not ADO
   writes. Explicit fresh auth-manual-automated-monthly-v2 creates a STATIC sibling

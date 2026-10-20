@@ -912,7 +912,12 @@ bug_bash.clone_plans_auth:
     after exact-title retries, with no empty folder or initial passing/NA/recovered cases.
     Cases use ReleaseMonthlyInvestigation (never ReleaseBugBash), exact source provenance,
     and durable create/membership receipts. Historical/frozen/completed layouts never
-    migrate by replay; no existing-parent amendment/adoption is implemented.
+    migrate by replay. The separate checked amend-auth-monthly command may attach only
+    the Monthly leaf/cases/membership to an intact completed v1 parent, after exact
+    source/base/runtime/config/payload review and independent locked claim. It never
+    reopens the clone, changes its layout/pin or adopts/advances the workflow.
+    Partial/cancelled amendments hold P3S3; only completed sealed amendments resolve
+    the Monthly target. P3S3/downstream still require completed current fill/live points.
     This step stops after creating and validating the hierarchy; no outcomes or Testers.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-suite create API)."
   how: >
@@ -944,7 +949,7 @@ bug_bash.clone_plans_auth:
       a: "No. Historical single-query-suite identities and their frozen recovery inputs remain unchanged. New layouts are explicit and malformed or conflicting identities hold; no automatic migration or replacement."
 
 bug_bash.distribute_tests:
-  summary: "Validate live ADO distribution and apply only reviewed corrections."
+  summary: "Validate live Current Tester distribution and apply only reviewed point corrections."
   what: >
     Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree)
     + Authenticator (actual Manual Tests category points for new layouts; the curated
@@ -961,7 +966,11 @@ bug_bash.distribute_tests:
     'androididentity@microsoft.com' MINUS the always-excluded people (jialh, moghosh,
     veenasoman), the release owner, the current on-call engineer (OCE), and anybody the owner
     says is OOF for this Bug Bash. Ownership and corrections use this release's
-    plan/suite test-point Tester. Shared test-case System.AssignedTo is not changed.
+    plan/suite test-point Current Tester. Shared test-case Assigned To
+    (System.AssignedTo), other copies and historical releases are not changed.
+    Manual Broker points and failed investigation points remain independent even
+    when they reference the same shared case. Monthly investigations are never
+    balanced as manual work, including after their points are resolved.
   who: >
     The release owner supplies availability (never calendar/presence/automatic OOF lookup).
     Scout asks "Is anyone OOF for this Bug Bash?" before the first preview; without an
@@ -1003,6 +1012,15 @@ bug_bash.distribute_tests:
     no redistribution is needed, including after an interrupted local completion.
     Only availability decisions and workflow status are retained internally; legacy
     data.plan is ignored and removed on step execution. Progress reads live ADO.
+    New Broker source-v4 flight/category suites (including separate Stress Tests and
+    UI Automation) use exact completed-fill failure-point identities. New Authenticator
+    layouts use the actual Manual Tests child for manual work, exclude all mapped
+    Automated Tests cases, and keep Monthly UI Failure Triage separate. A resolved
+    Monthly point retains its Current Tester and never enters the manual allocation.
+    Where a Broker case occurs in both workloads, B:<id> is manual work and
+    B:<id>:triage is the independent failure workload; review/apply bind their exact
+    plan/suite/point/configuration identities. An already-reviewed Monthly outcome
+    is rechecked immediately before its Current Tester update to preserve new resolutions.
   links:
     - name: "Broker test-plans doc"
       url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
@@ -1014,14 +1032,16 @@ bug_bash.distribute_tests:
     - q: "How is 'even' decided when counts don't divide evenly?"
       a: "target = total ÷ eligible; the remainder people (those with the most default tests) get one extra, so heavy-default folks keep their preference."
     - q: "Does applying it change the master plan?"
-      a: "No. Corrections change the release plan/suite test-point Tester, not shared test-case System.AssignedTo or another release's assignments."
+      a: "No. Corrections change only Current Tester on the reviewed release plan/suite/test points, not shared test-case Assigned To (System.AssignedTo), other copies, outcomes or historical assignments."
+    - q: "What if one Broker case is both manual work and an automated failure?"
+      a: "The workload scopes remain independent. Keep its manual points in eligible-tester balancing and only its acknowledged failure points in owner triage. A triage correction must not change Current Tester on the manual copy or an untracked configuration."
     - q: "Who is excluded?"
       a: "Always: jialh (Jia Le He), moghosh (Moumita Ghosh), veenasoman (Veena Soman). The release owner and resolved primary OCE are also removed before showing availability choices. Missing OCE means no candidate list until Scout resolves it. Owner-confirmed OOF removes additional eligible people per release; Shahzaib is not a permanent exclusion. Nobody is OOF must be explicitly confirmed too."
     - q: "How do we know which Authenticator cases are automated vs manual?"
       a: "From ui_test_status's completed result API: its recorded automated case IDs are excluded, without reading raw Phase-2 evidence, reprojecting or refetching. Missing/partial/stale receipts block, never yield an empty set. Preview/apply recheck the receipt ID plus release/RC, ECS/Local builds, Auth APK/test builds and both plan/suite identities. A new fill invalidates the preview even with identical source IDs. Refresh the owning clone/verification steps and rerun ui_test_status when needed; historical state is not migrated."
 
 bug_bash.ui_test_status:
-  summary: "Own both plan mappings/writes and publish the completed UI fill result; retain report-only failures."
+  summary: "Fill both current release layouts, set failed-point Current Tester and publish complete result receipts."
   what: >
     Fills the release's UI-automation results from Phase-2's captured runs — for BOTH apps.
     (1) BROKER: new source-v4 plans fill ONLY reconciled current-RC failure investigations,
@@ -1043,7 +1063,9 @@ bug_bash.ui_test_status:
     Failed->Failed; mapped NA-only cases stay in the automated category without an
     invented result or a manual assignment.
     Only cases actually written Failed are submitted for release-owner assignment
-    through this release's point Tester, never shared System.AssignedTo. Assignment errors are nonblocking, explicitly recorded, and never
+    through Current Tester on this release's exact test points, never shared
+    test-case Assigned To (System.AssignedTo). This keeps other copies and historical
+    releases unchanged. Assignment errors are nonblocking, explicitly recorded, and never
     claimed as successful reassignment. Both source projections are validated before any external write; no alternate
     Phase-3 Authenticator refetch or best-effort evidence skip is allowed.
   who: "Scout runs it automatically during `next` (an agent step) — before distribute_tests."
@@ -1057,9 +1079,10 @@ bug_bash.ui_test_status:
     Old LTW outcomes at 294/344 are NEVER auto-cleared: equal outcomes are not ownership;
     cleanup needs provenance receipts, match-before-write and later exact approval.
     For Authenticator, E2E carries canonical case ids; Monthly intentionally has no canonical map.
-    Historical/v1 coverage remains report-only. Fresh explicitly selected Monthly-v2 layouts
-    separately own failure investigations; P3S3 alone fills their bound points, attempts failed-point
-    Tester assignment, preserves manual resolutions/history, and publishes the complete source-bound
+    Historical/v1 coverage stays report-only unless a checked amend-auth-monthly amendment completes.
+    Fresh Monthly-v2 layouts and complete sealed amendments separately own failure investigations;
+    P3S3 alone fills their bound points, attempts failed-point
+    Current Tester assignment, preserves manual resolutions/history, and publishes the complete source-bound
     receipt required by distribution/progress/invitations. Include ALL failures in the owner reminder/report.
     Before ANY external mutation, both MRWP snapshots must be complete,
     have count_basis distinct_tests_pass_any and build_id matching their MRWP run_id, and contain
@@ -1080,13 +1103,19 @@ bug_bash.ui_test_status:
     clone_plans_broker records the source-versioned validated destination: typed automation
     hierarchy for v4, UI suite ID only for historical matrix/v3. Refresh that owning step
     if its destination is missing; never silently migrate it or invent a UI-suite ID.
+    New Authenticator categories must contain the entire frozen mapped-case set, including
+    NA-only cases, and no unmapped or duplicate case/configuration points. Check live
+    coverage during preparation and again before Broker writes; the Authenticator writer
+    also rechecks. Missing coverage blocks the combined step, not a successful partial fill.
   faqs:
     - q: "A test failed for one config but passed for another — what gets written?"
       a: "Per full combination AND flight. Never treat RC MSAL + RC Broker as RC MSAL + PROD Broker. Distinct API/device/parameterized tests stay separate as evidence and use Failed-wins only at their explicitly mapped case/config point."
     - q: "Should Monthly UI Tests get test-plan cases?"
-      a: "Never fabricate canonical Monthly mappings. Historical/v1 coverage stays report-only. Explicit fresh auth-manual-automated-monthly-v2 clones may create separate release-owned investigations for distinct unresolved failures only, never initial pass/NA/recovered cases or an empty folder. P3S3 owns fills; preserve manual resolutions/history. Existing completed layouts cannot be amended by replay. Its source-execution aggregate gate stays independent of Broker."
+      a: "Never fabricate canonical Monthly mappings. Historical/v1 coverage stays report-only unless the separate reviewed amend-auth-monthly command completes an independently owned existing-parent amendment. Fresh auth-manual-automated-monthly-v2 clones also support distinct unresolved-failure investigations only, never initial pass/NA/recovered cases or an empty folder. P3S3 owns fills; preserve manual resolutions/history. No clone replay, workflow adoption or pin change. The source-execution gate stays independent of Broker."
     - q: "What happens to a Firebase E2E test that FAILED?"
-      a: "A matching point is written Failed and owner reassignment is attempted for triage. Missing target points remain explicit investigations, not applied failures. Passed automated cases are marked Passed; both passed and failed automated case IDs are excluded from the manual split. Assignment errors remain visible and do not imply owner changes."
+      a: "A matching point is written Failed and its Current Tester is set to the release owner for triage. New category layouts block before either product is written if any frozen mapped case is missing; historical layouts retain their existing diagnostics. Passed automated cases are marked Passed; both passed and failed automated case IDs are excluded from the manual split. Assignment errors remain visible and do not imply owner changes."
+    - q: "Do assignments change Assigned To or Current Tester?"
+      a: "Current Tester on the exact release plan/suite/test point. The legacy Test Point API returns this as point.assignedTo and accepts tester in the PATCH body; it is not the work item's System.AssignedTo. Shared Assigned To, other release copies and history are not modified."
     - q: "What does a test that failed then passed get?"
       a: "Passed only for retries of that exact title within the same normalized suite and current build. A failed sibling parameter/API suite mapping to the same point still makes the point Failed. Earlier RC successes or failures are irrelevant; recovered titles are not reassigned."
     - q: "What outcome do skipped / not-run tests get?"

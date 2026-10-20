@@ -144,7 +144,7 @@ def _plans(context):
     monthly_links = []
     try:
         A.current(context, thaw(auth.data))
-        if auth.data.get("layout") == A.MONTHLY_LAYOUT:
+        if A.has_monthly(thaw(auth.data)):
             from steps.bug_bash.ui_results import completed_result
             from tools import auth_monthly as M, distribution as D
             result = completed_result(context)
@@ -431,7 +431,8 @@ def _state_matches(context):
         (["target_month"], context.release.target_month),
         (["owner_email"], context.release.owner_email),
     ))
-    if context.evidence.step("bug_bash", "clone_plans_auth").data.get("layout") == "auth-manual-automated-monthly-v2":
+    from tools import auth_partition as A
+    if A.has_monthly(thaw(context.evidence.step("bug_bash", "clone_plans_auth").data)):
         matches.extend((
             (["steps", "bug_bash.ui_test_status"], thaw(asdict(context.evidence.steps["bug_bash.ui_test_status"]))),
             (["pipeline_runs", "rcs", -1, "auth", "test"], runs[-1]["auth"]["test"]),

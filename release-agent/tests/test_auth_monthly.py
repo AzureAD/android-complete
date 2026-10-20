@@ -51,6 +51,8 @@ class Provider(Suites):
             return True, {"id": sid, "name": T.BROKER_UI_SUITE_NAME,
                           "suiteType": "staticTestSuite", "parentSuite": {"id": 899}}, ""
         ok, row, detail = super().get(plan, sid, *args, **kwargs)
+        if ok and row is None:
+            return False, None, "Suite not found"
         if ok:
             row["defaultConfigurations"] = [{"id": 84}]
         return ok, row, detail
@@ -115,6 +117,71 @@ def cloned(provider, rows=None):
     data = st.get_step("bug_bash", C.ID).data
     st.steps["bug_bash." + C.ID]["status"] = "done"
     return st, data, data["monthly"]
+
+
+def test_real_engine_accepts_reviewed_fresh_monthly_layout(provider, tmp_path):
+    from tests._context import fresh_orchestrator
+    from orchestrator.effects import execution_input_is_valid
+
+    config = tmp_path / "phases.yaml"
+    config.write_text(
+        "version: 1\nphases:\n"
+        "  - id: bug_bash\n    name: Fresh Monthly test\n    steps:\n"
+        "      - id: clone_plans_auth\n        name: Create categories\n"
+        "        kind: auto\n        owner: agent\n        effect_mode: transactional\n"
+        "        effect_recovery: frozen\n        effect_retry: true\n",
+        encoding="utf-8")
+    (tmp_path / "readiness.yaml").write_text("items: []\n", encoding="utf-8")
+    st = monthly_state()
+    st.steps = {}
+    checkpoints = []
+    st._checkpoint = lambda: checkpoints.append(deepcopy(st.steps))
+    name = "TEST ONLY - Fresh Monthly real engine"
+    orch = fresh_orchestrator(str(config), st, mocks={
+        "bug_bash.clone_plans_auth": {"name": name, "layout": M.LAYOUT}})
+    orch.run_until_gate()
+    step = st.get_step("bug_bash", C.ID)
+    assert step.status == "done", step.note
+    assert step.data["layout"] == M.LAYOUT
+    assert step.data["suite_name"] == name
+    assert len(provider.posts) == 4
+    assert len(provider.cases) == 2
+    assert len(step.data["monthly"]["bindings"]) == 2
+    assert checkpoints
+    executions = [c["bug_bash.clone_plans_auth"]["execution"] for c in checkpoints
+                  if c.get("bug_bash.clone_plans_auth", {}).get("execution")]
+    assert executions and all(execution_input_is_valid(C.ID, e) for e in executions)
+    writes = deepcopy(provider.writes)
+    orch.run_until_gate()
+    assert provider.writes == writes
+
+
+@pytest.mark.parametrize("value", ["unknown-layout", None, {}, []])
+def test_invalid_engine_layout_input_never_writes(provider, value):
+    from steps.lib import mockctx
+
+    with mockctx.active({"layout": value}):
+        result = invoke(C.build, monthly_state())
+    assert result.kind == "blocked" and "layout" in result.reason
+    assert not provider.writes
+
+
+def test_engine_layout_input_cannot_migrate_frozen_v1_or_override_explicit_parameter(provider):
+    from steps.lib import mockctx
+    from tests._context import context
+    from orchestrator.state import StepState
+
+    st = monthly_state()
+    prepared = C.prepare_effect(context(st))
+    st.set_step("bug_bash", C.ID, StepState(execution={"effect_input": prepared}))
+    with mockctx.active({"layout": M.LAYOUT}):
+        result = C.prepare_effect(context(st))
+    assert result.kind == "blocked" and "Historical" in result.reason
+    st = monthly_state()
+    with mockctx.active({"layout": A.LAYOUT}):
+        result = invoke(C.build, st, layout=M.LAYOUT)
+    assert result.kind == "blocked" and "Conflicting" in result.reason
+    assert not provider.writes
 
 
 def test_failed_only_exact_title_retries_and_canonical_gate_unchanged():

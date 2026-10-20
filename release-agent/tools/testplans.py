@@ -876,6 +876,36 @@ def _fill_ui_suite(plan_id, verdicts, timeout=120, *, suite_id=None, org=ORG, pr
     return (True, summary, "")
 
 
+def _auth_ui_point_error(points, target):
+    if error := _point_validation_error(points, require_config=True):
+        return error
+    expected = set(target["classification"]["mapped_case_ids"])
+    actual = {int(point["testCase"]["id"]) for point in points}
+    if actual - expected:
+        return "Authenticator automated category contains an unmapped case"
+    if expected - actual:
+        return "Authenticator automated category is missing mapped cases: " + ", ".join(
+            map(str, sorted(expected - actual)))
+    return ""
+
+
+def read_auth_ui_points(target, timeout=120, *, org=ORG, project=PROJECT):
+    """Validate complete current-category coverage before either product is filled."""
+    from tools import auth_partition as A
+    try:
+        A.validate_target(target)
+    except (ValueError, TypeError, KeyError) as exc:
+        return False, None, str(exc)
+    ok, points, detail = P._ado_rest_get_all(
+        f"{org}/{project}/_apis/test/Plans/{target['plan_id']}/Suites/{target['suite_id']}"
+        "/points?api-version=5.0", timeout)
+    if not ok:
+        return False, None, detail
+    if error := _auth_ui_point_error(points, target):
+        return False, None, error
+    return True, points, ""
+
+
 def fill_auth_ui_results(
     plan_id,
     suite_id,
@@ -914,9 +944,8 @@ def fill_auth_ui_results(
     error = _point_validation_error(pts, require_config=target is not None)
     if error:
         return False, None, error
-    if target is not None and any(int(p["testCase"]["id"]) not in
-                                 target["classification"]["mapped_case_ids"] for p in pts):
-        return False, None, "Authenticator automated category contains an unmapped case"
+    if target is not None and (error := _auth_ui_point_error(pts, target)):
+        return False, None, error
     if target is not None and prior_points:
         current = {int(p["id"]): p for p in pts}
         if (not isinstance(prior_points, list) or any(

@@ -70,8 +70,10 @@ def main(argv=None):
             args.cmd == "automation"
             and args.action in ("list", "plan", "sync", "obligations", "cleanup"))
         checklist_inspection = args.cmd == "checklist" and not getattr(args, "verify", False)
+        # This one reviewed command fences its own runtime/base without adopting the old clone.
+        monthly_amendment = args.cmd == "amend-auth-monthly"
         if (release and (os.path.isfile(C.state_path(runs_root, release)) or args.cmd == "automation")
-                and args.cmd not in diagnostics
+                and args.cmd not in diagnostics and not monthly_amendment
                 and not pending_deliveries and not automation_inspection and not checklist_inspection):
             from orchestrator.revision import assert_current, assert_automation_recovery_compatible
             try:

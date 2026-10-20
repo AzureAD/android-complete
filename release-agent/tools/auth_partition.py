@@ -3,6 +3,7 @@ from copy import deepcopy
 
 LAYOUT = "auth-manual-automated-v1"
 MONTHLY_LAYOUT = "auth-manual-automated-monthly-v2"
+AMENDMENT_LAYOUT = "auth-manual-automated-monthly-amendment-v1"
 AUTHORITY = "phase2_android_case_mapping_v1"
 FIELDS = {"layout", "manual_suite_id", "automated_suite_id", "classification", "queries"}
 
@@ -53,13 +54,15 @@ def is_partition(data):
     if not isinstance(data, dict):
         raise ValueError("Malformed Authenticator clone record")
     if "layout" not in data:
-        if (FIELDS | {"creations", "parent_suite_id", "monthly", "monthly_source"}).intersection(data):
+        if (FIELDS | {"creations", "parent_suite_id", "monthly", "monthly_source", "monthly_amendment"}).intersection(data):
             raise ValueError("Authenticator categories missing an explicit layout")
         return False
     if data["layout"] not in (LAYOUT, MONTHLY_LAYOUT):
         raise ValueError("Unknown Authenticator category layout")
     if data["layout"] == LAYOUT and {"monthly", "monthly_source"}.intersection(data):
-        raise ValueError("Historical v1 cannot adopt Monthly by replay; use a new reviewed v2 layout")
+        raise ValueError("Historical v1 cannot adopt Monthly by replay; use checked amend-auth-monthly or a reviewed fresh v2 clone")
+    if data["layout"] != LAYOUT and "monthly_amendment" in data:
+        raise ValueError("Monthly amendment belongs only to an unchanged v1 clone")
     return True
 
 
@@ -71,6 +74,18 @@ def target(data):
         if isinstance(value, bool) or not str(value).isascii() or not str(value).isdigit():
             raise ValueError("Invalid legacy Authenticator suite identity")
         return {"plan_id": T.AUTH_PLAN, "suite_id": positive(int(value))}
+    if "monthly_amendment" in data:
+        from orchestrator import auth_monthly_amendment as E
+        receipt = E.completed(data)
+        monthly = receipt["monthly"]
+        base = {**receipt["plan"]["base_clone"]["data"], "layout": MONTHLY_LAYOUT,
+                "monthly": monthly, "monthly_source": monthly["source"]}
+        result = target(base)
+        result["layout"] = AMENDMENT_LAYOUT
+        result["amendment"] = {key: deepcopy(receipt[key]) for key in (
+            "version", "id", "review_hash", "proof_sha256")}
+        result["amendment"]["base_sha256"] = receipt["plan"]["base_sha256"]
+        return result
     source = validate_classification(data.get("classification"))
     if (data.get("queries") != queries(source)
             or positive(data.get("plan_id")) != T.AUTH_PLAN):
@@ -94,6 +109,19 @@ def target(data):
 
 
 def validate_target(value):
+    if isinstance(value, dict) and value.get("layout") == AMENDMENT_LAYOUT:
+        from orchestrator import revision as R
+        proof = value.get("amendment")
+        if (not isinstance(proof, dict) or set(proof) != {
+                "version", "id", "review_hash", "proof_sha256", "base_sha256"}
+                or type(proof.get("version")) is not int or proof["version"] != 1
+                or not isinstance(proof.get("id"), str) or not proof["id"].strip()
+                or not all(R.is_hash(proof.get(k)) for k in ("review_hash", "proof_sha256", "base_sha256"))):
+            raise ValueError("Malformed Monthly amendment target proof")
+        base = {k: deepcopy(v) for k, v in value.items() if k != "amendment"}
+        base["layout"] = MONTHLY_LAYOUT
+        validate_target(base)
+        return
     expected = {
             "layout", "plan_id", "suite_id", "parent_suite_id", "manual_suite_id",
             "classification", "queries"}
@@ -114,6 +142,18 @@ def current(context, data):
     from steps.build_verify._common import latest_rc
     from tools import pipelines as P
     value = target(data)
+    if "monthly_amendment" in data:
+        from orchestrator import auth_monthly_amendment as E
+        from orchestrator.step_context import thaw
+        receipt = E.completed(data)
+        step = context.evidence.step("bug_bash", "clone_plans_auth")
+        # Context step views carry their own metadata, not an engine StepState instance.
+        base = {key: thaw(getattr(step, key)) for key in receipt["plan"]["base_clone"]}
+        base["data"].pop("monthly_amendment", None)
+        if (base != receipt["plan"]["base_clone"] or any(
+                receipt["plan"]["identity"][key] != getattr(context.release, key)
+                for key in ("release_id", "ccd", "target_month", "owner_email"))):
+            raise ValueError("Monthly amendment original completed clone/release identity changed")
     if is_partition(data):
         rc = latest_rc(context)
         ok, projection, detail = P.project_auth_ui_results(rc)
@@ -125,3 +165,7 @@ def current(context, data):
             from tools import auth_monthly as M
             M.current(rc, value["monthly"])
     return value
+
+
+def has_monthly(data):
+    return "monthly" in target(data)

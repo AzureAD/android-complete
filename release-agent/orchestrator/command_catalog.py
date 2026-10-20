@@ -12,6 +12,7 @@ class CommandModule:
 
 # Order is the public --help order. Command modules still own argument semantics.
 COMMAND_MODULES = (
+    CommandModule("auth_monthly_amendment", external_writes=("amend-auth-monthly",)),
     CommandModule("release"),
     CommandModule("workflow_revision"),
     CommandModule("readiness"),

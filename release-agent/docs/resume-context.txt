@@ -4,11 +4,232 @@ Saved: 2026-10-19, America/Los_Angeles.
 Repository: C:\repos\android-complete
 Agent root: C:\repos\android-complete\release-agent
 Branch: feature/release-agent-phase3-audit
-Previous published baseline: 6052bf14e8092cdd22f759ba79d0638e3e9ec848.
-Checkpoint commit: the commit containing this file; resolve it with
+Previously published baseline: 81dbc1a15f4adaf8b0d492f998f936c9231a510c.
+Resolve the new local source/test/doc checkpoint with the git-log command below.
+Resolve the earlier published checkpoint with
   git log -1 --format="%H %s" -- release-agent/docs/resume-context.txt
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
+
+SAVE-PROGRESS CHECKPOINT REQUESTED (2026-10-19 20:29 PDT)
+----------------------------------------------------------------------------
+Owner requested commit, push, then conversation compaction. This checkpoint
+contains the Monthly amendment/clone opt-in, latest-layout P3S3 coverage and
+Current Tester distribution corrections described below. Earlier "UNCOMMITTED"
+labels record their original checkpoint status, not a request to repeat work.
+Runtime states, live evidence, receipts, personal mocks and session artifacts
+remain excluded from Git. Existing protected state hashes are unchanged.
+Origin is https://github.com/AzureAD/android-complete.git; GitHub reports public.
+The new commit must receive explicit public-content approval before publication;
+prior baseline approval is not consent to publish these additional changes.
+This checkpoint does not authorize fills, assignments, workflow adoption/advance,
+new plans/cases, notifications or pipeline runs. Resume with the pending push
+decision, then compact after publication or an explicit owner decision to stop.
+
+LATEST LOCAL CHECKPOINT: DISTRIBUTE_TESTS CURRENT-LAYOUT UPDATE (2026-10-19)
+----------------------------------------------------------------------------
+Owner requested updating distribute_tests after P3S3, using Current Tester on
+release-specific test points, never shared Assigned To. LOCAL work only, no live
+distribution or provider reads/writes, state adoption/advancement, commit or push.
+
+Fixed two reproduced latest-layout defects:
+1. Compact fill metadata exposes Monthly ownership via binding.auth.monthly,
+   not a top-level Monthly result. Resolved Monthly investigations are now always
+   excluded from manual balancing and preserve their Current Tester.
+2. A Broker case shared by manual and failure suites no longer collapses to one
+   owner. Manual B:<id> remains balanced; only a colliding failure workload becomes
+   B:<id>:triage. Exact scoped point keys flow through preview and checked apply,
+   preserving manual copies and untracked configurations.
+Native point preconditions also bind Monthly selection's live outcome; a resolution
+during earlier batches stops before that point's Current Tester write. Partial
+work retains its explicit owned execution, never success or a blind retry.
+
+Changed distribute_tests.py, commands/distribute.py, tools/distribution.py, new
+tests/test_distribution_current_layouts.py, shared current-layout fixture, knowledge,
+contracts and repo skill/reference. Current Tester is explicit in report/help.
+Preserved owner-confirmed OOF/OCE, roster evidence, current-fill binding, exact
+review hash, read-before-write/readback and no persistent assignment-map semantics.
+Both Broker source-v4 flight/category (separate Stress/UI) and Authenticator
+Manual/Automated/Monthly targets are exercised after the real preceding handlers.
+
+Offline combined-engine/native-adapter tests cover exact approved CLI apply,
+resolved Monthly exclusion, same-case workload separation, other configurations,
+shared case/history isolation, no shared Assigned To, stale tester/config/resolution,
+mid-apply resolution, read-only preview and explicit partial failure ownership.
+Final targeted existing runner:589passed/3skipped111.65s across eleven related
+current/historical distribution, clone/fill, point ownership and authority modules.
+Initial regressions reproduced both defects. No full-suite/live-provider claim.
+Known transient Windows sharing errors in the real-disk fixture are retried only
+for local atomic checkpoint saves, with bounded recognized codes, not provider IO.
+Normal and prior completed Auth-only live state hashes remain as recorded below.
+No runtime recovery/adoption or broader release advancement is authorized.
+
+PRIOR LOCAL CHECKPOINT: P3S3 CURRENT-LAYOUT / CURRENT TESTER UPDATE (2026-10-19)
+----------------------------------------------------------------------------
+Owner requested updating P3S3 to match the latest two clone steps, using ADO
+Current Tester going forward, NEVER shared test-case Assigned To because it affects
+other copies/history. This is local code/test/documentation work, NOT live approval.
+
+Existing P3S3 and active distribution/progress paths already use point-local Tester.
+Retain those APIs/semantics; legacy Test Point point.assignedTo means Current Tester,
+and its PATCH body is tester. Neither is shared work-item System.AssignedTo.
+Updated the explicit step/help/skill/contract wording and remembered the preference.
+
+New tests\test_phase3_current_layouts.py exercises BOTH real clone handlers then
+the real fill in one new durable engine fixture with provider fakes only:
+Broker source-v4 policy2 ECS/Local/categories, Stress separate from UI;
+Auth v2 Manual/Automated/Monthly; zero failures/NA-only cases; exact failed points;
+native Current Tester readback; denied/ignored assignments remain visible and
+nonblocking; manual points, shared cases and other-release history stay unchanged.
+No old live states are merged or fabricated; no Auth-only execution bypass added.
+
+Actual coupled defect found: a missing Auth automated point could still produce
+complete P3S3 publication. New tools.testplans.read_auth_ui_points validates the
+entire frozen mapped-case coverage (including NA-only cases), rejects extras and
+duplicate/malformed points, and is wired through TestPlanReads/production_services.
+P3S3 checks during prepare AND before Broker writes; direct Auth writer rechecks.
+Regression covers target loss, preflight/apply drift and no writes on failure.
+Changed ui_test_status.py, testplans.py, services.py, service_adapters.py,
+distribution.py docstring, test_auth_categories.py, new current-layouts test,
+knowledge.yaml, bug-bash-contracts and repo SKILL. All are UNCOMMITTED.
+
+Final existing-runner selection:477passed/2skipped48.88s across current layouts,
+Auth categories/Monthly, UI result ownership, distribution, Broker failure triage,
+point recovery, phase3 result/distribution contracts, authority, handlers/execution.
+The new missing-point test failed before its correction. No full-suite/live claim.
+Normal state SHA stayed52efad6cce6fc118c084cff2e7c8ce587ee29f99d5b6bff8b595e4ae19f6fe96;
+prior completed fresh Auth-only state SHA stayed
+be2cb8af86021a9b3e4988a7ef387d6f840170f95b5951a5451a3e7d473f5a39.
+No provider operations, result/Tester changes, state adoption, workflow advancement,
+predecessors, pipeline runs, notifications, commit or push in this checkpoint.
+Next live test needs a valid combined owned context and exact write/Tester review;
+do not run next on the old Auth-only test or replace its completed runtime binding.
+
+PRIOR LIVE CHECKPOINT: APPROVED FRESH AUTHENTICATOR TEST COMPLETE (2026-10-19)
+----------------------------------------------------------------------------
+Owner explicitly approved the fresh four-suite/17-case creation test at18:37PDT.
+Created through the real engine, independently read back at18:50PDT:
+  Engineering plan714514/root714515; new TEST ONLY parent3794910;
+  Manual3794911:25cases; Automated3794912:26cases;
+  Monthly UI Failure Triage3794913:17NEWcases3794914-3794930/17config84points.
+All new points remain Unspecified. Old3794450/3794454/3794456/3794837 and their
+points/results/assignments matched pre-execution native observations exactly.
+Normal release state SHA remained
+52efad6cce6fc118c084cff2e7c8ce587ee29f99d5b6bff8b595e4ae19f6fe96.
+No results/Testers/pipelines/notifications/normal adoption or advancement/commit/push.
+
+Durable artifacts, OUTSIDE disposable session folders:
+C:\repos\android-complete\.release-agent-isolated\2026-10-auth-monthly-fresh-20261019-1748\
+  fresh-auth-creation-preview.json; fresh-auth-source-capture.json;
+  creation-authorization.json; fresh-test-completion-proof.json;
+  config\{phases,readiness,mocks.local}.yaml;
+  runs\2026-10-auth-monthly-fresh-20261019-1748\release-state.json + evidence/receipts.
+Review-fileSHA51849b91bebb37e7d4483dce09e9a51d4ab5667e6f2a75295ec4944e405c3e30.
+Actual source freshly captured from test186078476/APK186032363/RC2, NOT the
+normal state's older186058198/16-failure source. No predecessors or P3S3 configured.
+Source release owner metadata is not the interactive user's approval identity;
+authorization records that distinction. Never send notifications to the copied owner.
+
+Fresh setup exposed an actual entry-point gap: auto clones reject step-action,
+and next did not carry the typed Monthly opt-in. Added declared local-test layout
+input alongside name; next now freezes it in the real owned execution. V1 remains
+default; malformed/conflicting layouts and frozen-v1 migration block before writes.
+Real-engine replay/nonduplication tests included:207passed/2skipped38.62s.
+Changed clone_plans_auth.py/test_auth_monthly.py/reference commands; UNCOMMITTED.
+The minimal isolated config has no canonical automation definitions: read-only
+obligations lookup reports that limitation; no worker was provisioned. This proves
+creation/population only, not P3S3 fills, assignment, downstream use or later phases.
+Old amendment state/config artifacts are missing; do not reconstruct/replay its
+unknown operations or mistake this NEW instance for recovery of old3794837.
+
+PRIOR LOCAL CHECKPOINT: CHECKED EXISTING-PARENT MONTHLY AMENDMENT (2026-10-19)
+----------------------------------------------------------------------------
+User changed scope at15:55:47PDT to the EXISTING TEST ONLY parent, not a new
+four-suite layout. Implementation is complete locally; NO ADO/provider writes,
+M365 sends, pipeline launches, protected-state mutation/adoption, commit or push.
+Published81dbc consent does not cover these new source changes. Earlier fresh-v2
+review is superseded history, NOT approval of the new one-leaf payload.
+
+Command amend-auth-monthly defaults to read-only preview. It uses the original
+owned release/config/runs root and an intact completed v1 clone. Exact review
+hash + named approved-by/executor + --execute --reserve create a separately locked
+durable claim BEFORE provider intent/POST. Resume uses the same claim/review;
+--cancel + owner reason preserves all ACK/intent history and forbids restart.
+Only one Monthly leaf + NEW cases/membership are authorized by this new typed
+AMEND_AUTH_MONTHLY capability. Original parent/manual/automated are never recreated.
+Freeze full original clone/base hash, release/CCD/month/owner/old workflow binding,
+explicit new command runtime/phase inventory, source/hash, native category/query/
+inheritance/config identities, exact payload and distinct review/payload hashes.
+Receipt: clone_plans_auth.data.monthly_amendment. Original layout remains v1;
+execution/completion/classification/queries/create receipts and workflow pin stay
+unchanged. Partial/cancelled/stale/unowned records hold. Unknown creates NEVER
+repost or adopt same-name work; ACKs recover exact ID/readback. No reset command.
+Only complete sealed amendments resolve target-only layout
+auth-manual-automated-monthly-amendment-v1. P3S3 and distribution/progress/reminder/
+invitation/rollout include Monthly using completed current fill + live owned points.
+Manual resolutions/history survive; Testers only on failed release points, never
+shared System.AssignedTo. Normal workflow runtime/eligibility guards remain intact.
+The isolated Auth-only state has NO Broker/P3S3 inventory; this amendment does not
+combine independent states, manufacture eligibility, advance or adopt the workflow.
+Native NULL/missing/empty inherited configurations now walk literal true/valid
+parents to actual root configs; false/truthy flags, malformed IDs/configs, cycles,
+duplicates or no actual configs hold. No hardcoded/invented config84.
+
+Exact target: Engineering plan714514/root714515, static TEST ONLY parent3794450
+'TEST ONLY - Authenticator Manual Automated RC2 2026-10-18 2259'; existing Manual
+3794454/Automated3794456 unchanged,25+26cases/51Unspecified points/config84 unchanged.
+Actual owned release:2026-10-auth-categories-a5a98dd93670b8e4-checked, NOT2026-10.
+Use its original config\phases.yaml under auth-categories-test-20261018-2259.
+Owned state SHA remains
+6f568ab04f6472566bc72b6fadbddc42f60284e2b63ee102c0b6413c90241292.
+Normal/Broker/Phase2 states and capture hashes also reverified unchanged.
+
+Session-only artifacts (parent-supplied15:55native observations; NO new live reads):
+C:\Users\pedroro\.scout\copilot\session-state\b099e680-aeae-427e-a0f1-d571878c60d2\files\
+monthly-existing-parent-20261019\existing-parent-external-preview.json
+monthly-existing-parent-20261019\existing-parent-exact-payload.json
+monthly-existing-parent-20261019\captured-source-and-state-proof.json
+Preview file SHAd4fe94bc3534d877aacf14e22136b26d3d79d103fb0ace9d78e891183838c3bb.
+Exact canonical payload SHA
+sha256:7e2cf174c9563f9d32d852f4f4cd6137e6c63264bb6a953393c2a5db1f8c886f.
+Command review SHA
+sha256:ca5ac95709c1f31b93d49fd0cb0134fbf4cba2a4c0f14288acf4f4243115807e.
+ONLY1newSTATICMonthlyleaf under3794450 +17newownedcases +17config84membership
+pairs; case/point IDs await real ACKs, represented by exact scenario references.
+ZERO new parent/Manual/Automated, results, Testers, canonical changes or other steps.
+Real RC2/APK186032363/test186078476:376Monthlyexecutions/359Passed/17Failed;
+367distinct reconciled scenarios/17unresolved/0recovered, run695864941.
+26canonicalE2Ecases/29scenarios/22Passed/7Failed;22/29=75.9% gate unchanged.
+
+Latest focused pytest command:
+ python -m pytest -q -x --tb=short -p no:cacheprovider --basetemp <unique-project-owned>\pytest
+  tests\test_auth_monthly_amendment.py tests\test_auth_monthly.py
+  tests\test_auth_categories.py tests\test_phase3_auth_contracts.py
+  tests\test_phase3_results_distribution_contracts.py tests\test_ui_result_ownership.py
+Result323passed36.69s, including actual immutable owned state/capture. Unique
+TEMP/TMP, PYTHONDONTWRITEBYTECODE=1; explicit RELEASE_AGENT_MONTHLY_OWNED_STATE and
+RELEASE_AGENT_MONTHLY_CAPTURE paths above. Broader affected group720passed before
+an unrelated checked-ADO failure (781selected,-x,123.87s). Remaining checked-write
+probe42passed/4failed/15deselected21.40s. All FIVE observed unrelated failures
+reproduced in an isolated published81dbc git archive: missing Tester UPN fixture
+and four Beta stale-review fixtures. They were NOT fixed or called passing.
+Final v1 guidance check1passed2.30s; CLI help/diff-check passed.
+Debug/baseline included:316.190additional reported pytest seconds; previous284.621
+=>600.811cumulative(<900, plus setup overhead). No full-suite/live certification.
+Source/tests/contracts/help/knowledge/repo+installed skill updated surgically.
+Owned validation scratch/archive directories cleaned; protected hashes reverified.
+Next: parent presents this NEW exact one-leaf/17-case payload for explicit external
+approval, then fresh production read-only preflight must reproduce its binding.
+Do NOT run execute/reserve, P3S3, global adoption or normal release advancement now.
+Parent follow-through:95passed31.65s(wall33.647s) for amendment/Monthly selectors,
+actual capture and owned state enabled. Reported cumulative pytest632.461s.
+Production read-only amend-auth-monthly preflight now independently reproduced
+the exact review/payload hashes above using native ADO reads, no injected responses.
+Parent3794450/Manual3794454/Automated3794456/config84 and17newcase/member rows
+matched; owned state hash stayed6f568ab04f6472566bc72b6fadbddc42f60284e2b63ee102c0b6413c90241292.
+Session native-preflight-proof.json and new creation-review.json record this review.
+No claim/reserve/create or other provider write has been performed; owner approval
+for this new ONE-folder exact payload is still pending.
 
 SAVE-PROGRESS CHECKPOINT (2026-10-19 15:32 PDT)
 --------------------------------------------

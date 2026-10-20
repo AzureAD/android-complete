@@ -71,7 +71,7 @@ def _latest_rc(context):
 def source_matches(context, *steps, pipelines=False):
     fields = {"clone_plans_broker": ("plan_id",), "clone_plans_auth": (
         "plan_id", "suite_id", "layout", "manual_suite_id", "automated_suite_id", "classification", "queries",
-        "monthly", "monthly_source"), "ui_test_status": ("result",)}
+        "monthly", "monthly_source", "monthly_amendment"), "ui_test_status": ("result",)}
     sources = []
     for step in steps:
         record = context.evidence.step("bug_bash", step)
@@ -220,7 +220,7 @@ def build(context: StepContext):
     monthly_links = []
     try:
         A.current(context, thaw(auth_step.data))
-        if auth_step.data.get("layout") == A.MONTHLY_LAYOUT:
+        if A.has_monthly(thaw(auth_step.data)):
             from .ui_results import completed_result
             from tools import auth_monthly as M, distribution as D
             result = completed_result(context)
@@ -294,7 +294,7 @@ def build(context: StepContext):
     subject = f"{prefix}{month_year} Release Bug Bash"
 
     sources = source_matches(context, "clone_plans_broker", "clone_plans_auth", pipelines=True)
-    if auth_step.data.get("layout") == A.MONTHLY_LAYOUT:
+    if A.has_monthly(thaw(auth_step.data)):
         sources += source_matches(context, "ui_test_status")
     return NeedsSkill(
         tool="workiq_create_event",

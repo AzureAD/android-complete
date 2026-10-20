@@ -164,18 +164,24 @@ def _configs(record, timeout):
         seen.add(sid)
         ok, parent, detail = T.get_suite(record["plan_id"], sid, timeout)
         require(ok and isinstance(parent, dict) and str(parent.get("id")) == str(sid)
-                and parent.get("suiteType") == "staticTestSuite", "Monthly parent unavailable: " + detail)
+                and parent.get("suiteType") == "staticTestSuite", "Monthly configuration parent unavailable: " + detail)
         configs = parent.get("defaultConfigurations")
-        require(isinstance(configs, list), "Monthly inherited configurations unavailable")
+        require(configs is None or isinstance(configs, list), "Monthly inherited configurations unavailable")
         if configs:
             require(all(isinstance(c, dict) and type(c.get("id")) in (int, str) for c in configs),
                     "Malformed Monthly inherited configuration")
+            require(all(str(c["id"]).isascii() and str(c["id"]).isdigit() for c in configs),
+                    "Malformed Monthly inherited configuration id")
             ids = [positive(int(c["id"])) for c in configs]
             require(len(set(ids)) == len(ids), "Duplicate Monthly inherited configurations")
             return sorted(ids)
         require(parent.get("inheritDefaultConfigurations") is True,
                 "Monthly inherited configurations unavailable")
-        sid = positive(int((parent.get("parentSuite") or {}).get("id", 0)))
+        require(isinstance(parent.get("parentSuite"), dict), "Invalid Monthly configuration parent identity")
+        parent_id = parent["parentSuite"].get("id", 0)
+        require(type(parent_id) in (int, str) and str(parent_id).isascii()
+                and str(parent_id).isdigit(), "Invalid Monthly configuration parent identity")
+        sid = positive(int(parent_id))
     raise ValueError("Monthly configuration inheritance cycle")
 
 

@@ -35,10 +35,18 @@ EFFECT_RECOVERY = "frozen"
 
 
 def prepare_effect(context):
+    from tools import auth_partition as A
+    layout = getattr(context.parameters, "layout", A.LAYOUT)
+    test_layout = context.input("layout", MISSING)
+    if test_layout is not MISSING:
+        if layout != A.LAYOUT and layout != test_layout:
+            return Blocked("Conflicting Authenticator layout selections.")
+        layout = test_layout
+    if layout not in (A.LAYOUT, A.MONTHLY_LAYOUT):
+        return Blocked("Unknown Authenticator layout.")
     execution = context.evidence.step("bug_bash", ID).execution or {}
     if isinstance(execution.get("effect_input"), dict):
-        if (getattr(context.parameters, "layout", "auth-manual-automated-v1")
-                == "auth-manual-automated-monthly-v2"
+        if (layout == A.MONTHLY_LAYOUT
                 and execution["effect_input"].get("layout") != "auth-manual-automated-monthly-v2"):
             return Blocked("Historical frozen layout cannot be amended to Monthly v2 by replay.")
         return dict(execution["effect_input"])
@@ -66,17 +74,16 @@ def prepare_effect(context):
         "name": name,
     }
     data = context.evidence.step("bug_bash", ID).data or {}
-    from tools import auth_partition as A
     from . import auth_categories
     try:
         categories = A.is_partition(data)
     except ValueError as exc:
         return Blocked(f"clone_plans_auth: {exc}")
     if not categories and ("suite_id" in data or "creation" in data):
-        if getattr(context.parameters, "layout", A.LAYOUT) != A.LAYOUT:
+        if layout != A.LAYOUT:
             return Blocked("Historical Authenticator target cannot be amended to Monthly v2 by replay.")
         return {**identity, "query": T.auth_bugbash_query()}
-    return auth_categories.prepare(context, identity, layout=getattr(context.parameters, "layout", A.LAYOUT))
+    return auth_categories.prepare(context, identity, layout=layout)
 
 
 def execute(context: StepContext):
@@ -173,6 +180,7 @@ def authorize_retry(context: StepContext[RetryParameters]):
 
 MOCKABLE = {
     "name": {"kind": "input", "desc": "Override the suite name (e.g. a 'TEST ...' name for a safe live run)."},
+    "layout": {"kind": "input", "desc": "Select an explicitly reviewed fresh Authenticator layout; never migrates a frozen clone."},
     "suite_id": {"kind": "input", "desc": "Pretend the query-suite already exists (this id)."},
     "create_id": {"kind": "input", "desc": "Id the create should return (skip the live create)."},
     "existing": {"kind": "input", "desc": "Id an existing same-named suite the name-scan finds."},

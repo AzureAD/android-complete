@@ -38,6 +38,8 @@ def validate(frozen, context):
 
 def prepare(context, identity, *, layout=A.LAYOUT):
     data = context.evidence.step("bug_bash", STEP_ID).data or {}
+    if "monthly_amendment" in data:
+        return Blocked("Independent Monthly amendment exists; never reopen or replay the original clone")
     if layout not in (A.LAYOUT, A.MONTHLY_LAYOUT):
         return Blocked("Unknown Authenticator layout")
     if data and data.get("layout") != layout:
@@ -70,6 +72,8 @@ def _options(frozen, suite_type, parent):
 
 
 def _record(frozen, data):
+    if "monthly_amendment" in data:
+        raise ValueError("Independent Monthly amendment exists; original clone replay/retry is forbidden")
     if data:
         if not A.is_partition(data):
             raise ValueError("Legacy Authenticator suites cannot migrate to categories")

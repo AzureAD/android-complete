@@ -1,10 +1,11 @@
 """Step: `distribute_tests` - validate manual bug-bash assignments (Phase 3, bug_bash).
 
-ADO release test-point Tester is the ownership source of truth, never case AssignedTo.
+ADO release test-point Current Tester is the ownership source of truth, never case AssignedTo.
 This step READS those values, checks eligibility, workload balance and owner triage,
 and reports only needed corrections. Valid manual changes are preserved, not reset to
 an internal allocation. Availability decisions (OOF/OCE) and workflow status are durable;
-assignment lists, preview baselines, approval digests and replay ledgers are not saved.
+assignment lists, preview baselines and replay ledgers are not saved. The checked
+execution retains its approved digest/reviewer as authorization, not an allocation.
 
 Eligible = roster DL minus always-excluded people, the release owner, the current primary
 on-call engineer (OCE), and people the owner explicitly says are OOF for this Bug Bash.
@@ -15,7 +16,9 @@ answer; repeat the reviewed selection flags on execute, or reuse existing step.d
 Never infer availability from calendars, presence or automatic OOF detection.
 
 The manual set combines the Broker 'Manual Tests (Android Broker)' subtree and the
-Authenticator ReleaseBugBash query. Auth cases automated by this release are excluded
+Authenticator Manual Tests category (the curated query for historical layouts).
+Monthly investigations never become manual work, including after resolution.
+Auth cases automated by this release are excluded
 using ui_test_status's completed result API, NOT raw Phase-2 projections or the shared
 cross-platform 'Automated' tag. Passed automated cases need no manual assignment;
 applied automated failures and Blocked-tagged cases are separate owner-triage work,
@@ -73,6 +76,12 @@ EVIDENCE = (OwnStepData(),)
 ID = "distribute_tests"
 KIND = "scout"
 WRITE_COMMAND = "distribute-tests"
+
+
+def point_work_key(group, point):
+    """A shared case's manual and failure points can have different Current Testers."""
+    return point["work_key"] if "work_key" in point else f"{group['prefix']}:{point['case_id']}"
+
 
 MOCKABLE = {
     "oce": {"kind": "input", "desc": "Verified primary on-call UPN."},
@@ -291,7 +300,7 @@ def _point_sets(context, selected, cfg, broker_manual_ids, triage):
                 found.add(pid)
                 points.append(point)
             if points:
-                groups.append({**group, "prefix": "B", "points": points})
+                groups.append({**group, "prefix": "B", "workload": "triage", "points": points})
     if found != set(expected):
         raise ValueError("Applied Broker failure points missing from the release suites")
     if "monthly" in completed:
@@ -299,7 +308,7 @@ def _point_sets(context, selected, cfg, broker_manual_ids, triage):
             points = [p for p in group["points"] if f"A:{p['case_id']}" in selected
                       and p.get("outcome", "").casefold() not in ("passed", "notapplicable")]
             if points:
-                groups.append({**group, "prefix": "A", "points": points})
+                groups.append({**group, "prefix": "A", "workload": "triage", "points": points})
     return groups
 
 
@@ -315,7 +324,7 @@ def inspect_distribution(context, *, oof=None, oce=None, roster_file=None):
     report = {}
     try:
         _inspect(context, report, oof, data, roster_file)
-        note = (f"Live ADO: {report['broker_total']} Broker + {report['auth_total']} Auth manual cases, "
+        note = (f"Live ADO Current Tester: {report['broker_total']} Broker + {report['auth_total']} Auth manual cases, "
                 f"{len(report['eligible'])} eligible testers; {len(report['owner_triage'])} owner-triage cases.")
         outcome = (Done(note + " Assignments and plan testers are valid.") if report["valid"] else
                    Blocked(note + f" {len(report['case_changes'])} case and {len(report['point_changes'])} "
@@ -385,10 +394,11 @@ def _inspect(context, report, oof, data, roster_file=None):
             raise ValueError(f"couldn't read Broker manual tests: {detail}")
     acases = _auth_cases(context)
     triage = _owner_triage(context, acases, cfg)
-    monthly_ids = {b["case_id"] for b in fill.get("monthly", {}).get("target", {}).get("bindings", [])}
+    monthly = fill.get("binding", {}).get("auth", {}).get("monthly", {})
+    monthly_ids = {b["case_id"] for b in monthly.get("bindings", [])}
     manual_auth = [c for c in acases if int(c["id"]) not in set(automated) | monthly_ids
                    and f"A:{c['id']}" not in triage]
-    manual_broker = [c for c in bcases if f"B:{c['id']}" not in triage]
+    manual_broker = list(bcases)
     keys = sorted([f"B:{c['id']}" for c in manual_broker] + [f"A:{c['id']}" for c in manual_auth])
     if len(keys) != len(set(keys)):
         raise ValueError("Duplicate cases in ADO selection; resolve before distributing.")
@@ -397,12 +407,23 @@ def _inspect(context, report, oof, data, roster_file=None):
         [{**g, "points": sorted(g["points"], key=lambda p: str(p["id"]))}
          for g in _point_sets(context, selected, cfg, {str(c["id"]) for c in bcases}, triage)],
         key=lambda g: (g["prefix"], str(g["plan_id"]), str(g["suite_id"])))
+    collisions = set(keys) & set(triage)
+    if collisions:
+        for group in groups:
+            if group.get("workload") == "triage":
+                for point in group["points"]:
+                    key = f"{group['prefix']}:{point['case_id']}"
+                    if key in collisions:
+                        point["work_key"] = key + ":triage"
+        triage = {key + ":triage" if key in collisions else key: value
+                  for key, value in triage.items()}
+        selected = sorted(set(keys) | set(triage))
     observed, seen, identities = {key: [] for key in selected}, set(), {}
     for group in groups:
         if group.get("prefix") not in ("B", "A"):
             raise ValueError("Unexpected product in release point data.")
         for point in group["points"]:
-            key = f"{group['prefix']}:{point['case_id']}"
+            key = point_work_key(group, point)
             if key not in observed:
                 raise ValueError("Unexpected case in live point-tester data.")
             point_key = (str(group["plan_id"]), str(group["suite_id"]), str(point["id"]))
@@ -411,7 +432,7 @@ def _inspect(context, report, oof, data, roster_file=None):
             seen.add(point_key)
             upn = D._identity(point.get("tester_upn")) or None
             if bool(upn) != bool(point.get("tester_id")):
-                raise ValueError(f"Unresolved release-point Tester for {key}.")
+                raise ValueError(f"Unresolved release-point Current Tester for {key}.")
             if upn:
                 if upn in identities and identities[upn] != point["tester_id"]:
                     raise ValueError(f"Conflicting ADO identities for {upn}")
@@ -433,12 +454,13 @@ def _inspect(context, report, oof, data, roster_file=None):
     point_changes = []
     for group in groups:
         for point in group["points"]:
-            key = f"{group['prefix']}:{point['case_id']}"
+            key = point_work_key(group, point)
             if D._identity(point.get("tester_upn")) != D._identity(targets[key]):
                 point_changes.append({"case": key, "plan_id": group["plan_id"], "suite_id": group["suite_id"],
                                       "point_id": point["id"], "from": point["tester_id"], "to": targets[key]})
     report.update(
         eligible=eligible, owner_excluded=owner, oce_excluded=oce,
+        assignment_field="Current Tester",
         oof_excluded=[m for m in roster if m["upn"] in excluded],
         broker_total=len(manual_broker), auth_total=len(manual_auth),
         auth_excluded_automated=sum(int(c["id"]) in automated for c in acases),

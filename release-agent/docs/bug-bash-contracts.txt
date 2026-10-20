@@ -10,7 +10,8 @@ proof, not live-provider certification. The existing default-suite case-budget
 failure is a separate OPEN blocker; see the final section and release-audit.txt.
 
 MONTHLY FAILURE INVESTIGATIONS: EXPLICIT FRESH V2 CONTRACT (2026-10-19)
-  Default/historical auth-manual-automated-v1 remains unchanged and report-only.
+  Default/historical auth-manual-automated-v1 remains unchanged and report-only
+  unless the separate reviewed existing-parent amendment below completes.
   Public clone build/prepare parameter layout=auth-manual-automated-monthly-v2
   selects a fresh compatible layout: unchanged static parent + Manual/Automated
   dynamic children, plus STATIC sibling leaf Monthly UI Failure Triage iff there
@@ -33,10 +34,47 @@ MONTHLY FAILURE INVESTIGATIONS: EXPLICIT FRESH V2 CONTRACT (2026-10-19)
   Tester only; nonblocking assignment errors remain visible. Distribution/progress/
   invitation/rollout links include Monthly and use actual live outcomes/Testers.
   Canonical E2E IDs and source-execution Firebase quality gates never change.
-  Existing frozen/completed v1 parents cannot add this child by replay. Supported
-  product path is a newly reviewed v2 clone through normal engine eligibility and
-  runtime-revision controls, not handwritten adoption or a generic rehearsal runner.
+  Existing frozen/completed v1 parents cannot add this child by replay. Use the
+  separate checked existing-parent amendment below or a newly reviewed v2 clone
+  through normal engine eligibility/runtime controls, never handwritten adoption.
   Local implementation/proofs do NOT authorize provider execution.
+
+EXISTING-PARENT MONTHLY AMENDMENT V1 (2026-10-19; LOCAL IMPLEMENTATION ONLY)
+  amend-auth-monthly is a separate reviewed command, not clone prepare/build/retry.
+  It requires a done, noninvalidated v1 clone with original ready create ownership,
+  its original workflow phase/step inventory/config and verified current source.
+  Preview performs read-only exact suite/query/inheritance/uniqueness/config checks.
+  Freeze the entire original completed clone, old workflow binding, release/CCD/
+  target-month/owner identity, explicit new command runtime/phase manifest, native
+  categories/config IDs, captured source/hash, and exact create/membership payload.
+  Review hash and external payload hash are distinct. Execution needs both exact
+  review hash and named reviewer/executor, plus --reserve for its independent claim.
+  The existing release lock and durable claim precede any provider intent or POST.
+  Only typed AMEND_AUTH_MONTHLY can reuse the existing Monthly ensure lifecycle.
+  One STATIC Monthly sibling + NEW failed-scenario investigation cases/membership;
+  zero new parent/Manual/Automated suites, results, Testers, notifications or pipelines.
+  Zero initial failures creates no suite/cases. Never reuse same-name foreign work.
+  Independent clone.data.monthly_amendment retains frozen plan, reviewer/claim,
+  intent/ACK/member ledger, completion seal and cancellation history. Original
+  clone fields, layout/execution/receipts/completion, workflow pin and source stay
+  unchanged. No general revision waiver/adoption, workflow progression or clone replay.
+  New operation runtime is explicitly reviewed; phase/step inventory cannot change.
+  Every checkpoint fences base/source/runtime/live category/config/claim changes.
+  ACKs persist before readback/fencing. Windows-only sharing-error checkpoint retry
+  never retries a provider request. Unknown creates stay held without repost/name
+  adoption; acknowledged IDs resume by exact readback. Uncertain membership only
+  reconciles exact live proof. Cancellation retains all work and forbids restart.
+  Only a complete sealed amendment resolves target layout
+  auth-manual-automated-monthly-amendment-v1, leaving persisted clone.layout v1.
+  Partial/cancelled/forged/source-stale amendments hold P3S3/downstream. P3S3 alone
+  fills/publishes the Monthly result; downstream requires that current complete
+  receipt and actual points/Testers, preserving manual resolutions/history.
+  This command grants NO authority to run later workflow steps: their existing
+  eligibility, source, ownership and runtime guards remain in force. The isolated
+  Auth-only test context does not acquire Broker state or become a runnable P3S3.
+  Native NULL/missing/empty defaultConfigurations traverse only literal true
+  inheritance and valid parent IDs to actual configs; malformed values, false
+  inheritance without configs, cycles, duplicates and invalid IDs fail closed.
 
 1. bug_bash.clone_plans_broker
 -------------------------------
@@ -331,8 +369,9 @@ CORRECTIONS / PROOF:
 ---------------------------
 INPUT:
   pipeline_runs.rcs[-1] hydrated Phase2 ECS/Local/Auth snapshots; complete current
-  RC/build identities; clone_plans_broker.data.plan_id/ui_suite_id and
-  clone_plans_auth.data.suite_id; release/CCD/owner; configured provider coordinates.
+  RC/build identities; clone-owned Broker source-v4 plan-root/flight/category
+  hierarchy (historical versions retain plan_id/ui_suite_id) and Authenticator
+  Manual/Automated/Monthly targets; release/CCD/owner; provider coordinates.
   Both product projections must validate BEFORE reserving an effect. Real target
   name/marker/area/iteration/suite parent/query must identify this release, never
   the shared Broker template. Explicit clone-owned test names remain supported.
@@ -342,7 +381,9 @@ GENERATED / FROZEN:
   binding={release,rc,ecs_build,local_build,auth_apk_build,auth_test_build,
     broker:<source-versioned target>,auth:<legacy or typed category target>}.
   NEW auth target={layout,plan_id,suite_id:<AUTOMATED child>,parent_suite_id,
-    manual_suite_id,classification,queries}; not the clone's parent suite_id.
+    manual_suite_id,classification,queries,monthly?}; not the clone's parent suite_id.
+  Monthly layouts additionally freeze monthly_projection and bind its source digest.
+  A complete Monthly clone receipt is required; never splice independent live states.
   LEGACY auth target remains {plan_id,suite_id:<dynamic>}.
   Projections retain mapped verdicts/provenance/failure diagnostics, not full raw
   Unit/Instrumented result arrays. rc carries only IDs needed by generated links.
@@ -370,6 +411,11 @@ PERSISTED OUTPUT:
   the semantic identity of the failures a human reviewed.
   Source-v3 also carries mapping_version=3, suite_targets, scenario_bindings,
   point suite_id/scenario_key and broker_scenarios source digest/suite binding.
+  Source-v4 uses mapping_version=4 with the typed plan-root target and complete
+  failure-only suite/scenario bindings, retaining ECS/Local and Stress/UI identity.
+  Monthly publication includes result.monthly with current source/target binding,
+  applied/preserved points and receipt history. Monthly assignment errors and the
+  acknowledged assigned count are separate from outcome-fill completion.
   Production service checkpoints each outcome batch intent/acknowledgement.
   Both MRWP build IDs remain pinned to the creation source, even within the same
   RC. Changed builds block before any outcome writes; no source-amendment route
@@ -387,9 +433,17 @@ EXTERNAL OUTPUT / RECOVERY:
   Failed outcome batches remain uncertain and cannot authorize replay. Earlier
   acknowledged product/batch receipts remain in existing receipt slots, including
   interruption before either writer returns. No new root ledger is introduced.
-  Only acknowledged Failed points may receive release-specific owner Tester
+  Authenticator category coverage must equal the entire frozen mapped-case set,
+  including NA-only mapped cases. Missing/unmapped/duplicate points hold during
+  preparation and immediately before Broker writes; the Auth writer rechecks too.
+  NA-only cases must have points, but receive no fabricated outcome or assignment.
+  Only acknowledged Failed points may receive release-specific Current Tester
   updates; assignment errors are separate and do not fabricate successful triage.
   No shared test-case System.AssignedTo write is permitted.
+  Legacy point.assignedTo and modern TestPoint.tester mean point-local Current
+  Tester, not the shared work-item field. PATCH only tester on exact release
+  plan/suite/point IDs; preserve case/configuration, outcome, other points/copies
+  and historical results. Distribution and progress also read live Current Tester.
 PUBLICATION / CONSUMERS / RETENTION:
   Invalidate result to incomplete durably BEFORE provider work. Publish complete
   only after both products validate and return acknowledged receipts. Consumers
@@ -414,7 +468,7 @@ INPUT:
   exact next read request; no Azure CLI Graph or people-search fallback.
   Missing current UI receipts/destinations/identities HOLD. Auth failures use only
   acknowledged failed points, not every configuration of a shared case.
-  Source-v3 Broker failure receipts are grouped by their actual suite_id, including
+  Source-v3/v4 Broker failure receipts are grouped by their actual suite_id, including
   sibling category suites. Combined coverage must match every acknowledged failure
   exactly once with unchanged plan/suite/point/case/config/source identities.
   Category investigations remain owner triage, excluded from balanced manual work.
@@ -422,11 +476,18 @@ INPUT:
   the completed fill target, never reprojects Phase 2 or substitutes base WIQL.
   Manual work excludes mapped automation; only acknowledged failed automated
   points join owner triage, bound to exact point/case/configuration identities.
+  Monthly membership comes from completed binding.auth.monthly, not the compact
+  fill's top level. All Monthly investigation IDs are excluded from manual balancing,
+  including resolved points that no longer need owner triage.
+  Broker manual and failure points can share a case ID without sharing a workload:
+  keep B:<id> for manual allocation and B:<id>:triage for the colliding failure work.
+  Group-specific work keys feed both preview and checked apply; no case-level owner
+  target may spill from triage onto the manual copy or an untracked configuration.
 TRANSIENT OUTPUT / AUTHORITY:
   Candidates, eligible roster, observed/proposed workloads, manual totals,
   owner_triage, case_changes, point_changes, _current/_targets/_point_sets and
   _review are generated from live ADO. No persistent assignment list owns truth.
-  "case_changes" describes grouped point-Tester corrections, not case-field PATCH.
+  "case_changes" describes grouped Current Tester corrections, not case-field PATCH.
   Preview makes a checked WritePlan for align_point_testers, exact point identities,
   current Tester IDs, resolved new identities and availability/source conditions.
   Owner reviews its hash; authorization durably reserves the existing command
@@ -440,10 +501,13 @@ PERSISTED OUTPUT:
   Normal preview applies no StepData and saves no availability selection.
   Authoritative final inspection applies availability and step completion.
 EXTERNAL OUTPUT / FAILURE:
-  PATCH only reviewed release point Testers; preserve outcome, tags and shared
+  PATCH only reviewed release point Current Tester; preserve outcome, tags and shared
   case owner. Recheck release destination/source and point/case/config/Tester
   identity before each batch and validate read-back. Partial failure preserves
   active ownership and requires fresh live inspection, not rollback/blind replay.
+  Monthly outcome-dependent selection is a native write precondition too: if a
+  point resolves after approval or during earlier batches, stop before changing
+  that point's Current Tester. Earlier writes remain owned and explicitly partial.
 LIFETIME / CONSUMERS:
   OOF confirmation binds owner/release/CCD; changes require an explicit new answer.
   Re-resolve current OCE/roster on inspection. Preserve valid manual point ownership;
