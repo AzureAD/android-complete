@@ -135,6 +135,12 @@ project(':adal').projectDir = new File('adal/adal')
 include(':msal')
 project(':msal').projectDir = new File('msal/msal')
 
+include(':mfa')
+project(':mfa').projectDir = new File('msal/mfa')
+
+include(':mfaSample')
+project(':mfaSample').projectDir = new File('msal/testapps/mfa')
+
 include(':common')
 project(':common').projectDir = new File('common/common')
 
