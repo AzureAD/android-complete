@@ -145,6 +145,8 @@ def test_claim_and_finalization_validate_captured_step_owner(orch):
 @pytest.mark.parametrize("change", ["owner_email", "ccd"])
 def test_unclaimed_step_refresh_preserves_audit_and_requires_new_approval(
         orch, tmp_path, monkeypatch, capsys, change):
+    from tests.test_m365_capabilities import evidence as capability_evidence
+
     current = datetime.fromisoformat("2026-09-11T12:00:00-07:00")
     monkeypatch.setattr(schedule, "now_local", lambda _tz: current)
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
@@ -157,6 +159,18 @@ def test_unclaimed_step_refresh_preserves_audit_and_requires_new_approval(
     st = C.load_state(str(tmp_path), orch.state.release_id)
     original = copy.deepcopy(st.notification_deliveries[first["id"]])
     setattr(st, change, "new-owner@example.com" if change == "owner_email" else "2026-09-10")
+    C.save_state(st, str(tmp_path), st.release_id)
+    assert cli.main(prepare) == 0
+    blocked = json.loads(capsys.readouterr().out)
+    assert blocked["notifications"] == [] and "readiness" in blocked["reason"].casefold()
+    st, refreshed = C.load_orch(str(tmp_path), st.release_id, C.DEFAULT_CONFIG)
+    assert st.notification_deliveries[first["id"]] == original
+    assert not refreshed.gate.signed
+    result = refreshed.gate.record_check(
+        "m365_access", "pass", "synthetic refreshed connector probes", evidence=capability_evidence(st))
+    assert "error" not in result and not refreshed.gate.signed
+    refreshed.gate.sign(["m365_write_access"], note="synthetic owner write-access confirmation")
+    assert refreshed.gate.signed
     C.save_state(st, str(tmp_path), st.release_id)
     assert cli.main(prepare) == 0
     fresh = json.loads(capsys.readouterr().out)["notifications"][0]

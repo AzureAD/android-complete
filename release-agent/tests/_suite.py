@@ -50,7 +50,7 @@ CORE_CASES = {
     "test_ado_write_review.py": frozenset({
         "test_distribution_preview_is_read_only_and_normalizes_inputs",
         "test_distribution_hash_binds_live_review",
-        "test_distribution_invalid_selection_and_revision_reject",
+        "test_distribution_invalid_selection_and_unresolved_tester_reject",
         "test_distribution_executor_uses_captured_targets",
         "test_distribution_identity_resolution_requires_exact_unique_account",
         "test_distribution_partial_write_never_claims_completion",

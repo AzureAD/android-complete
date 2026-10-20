@@ -19,17 +19,25 @@ from tools import distribution as D, localization as provider
 from tests._harness import _active_step
 
 
-def make_orch(phase, step):
+def make_orch(phase, step, *, now=None):
     state = _active_step(
         ReleaseState(release_id="checked-ado", owner_email="owner@example.com", ccd="2026-09-09"),
         phase, step)
-    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={}, now=now)
     assert state.workflow_revision is not None
     return orch
 
 
 def arguments(command, *flags):
     return build_parser().parse_args([command, "--release", "checked-ado", *flags])
+
+
+@pytest.fixture
+def beta_clock(monkeypatch):
+    now = datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc).astimezone(
+        signoff.schedule.get_tz("America/Los_Angeles"))
+    monkeypatch.setattr(signoff.schedule, "now_local", lambda tz=None: now)
+    return now
 
 
 @pytest.fixture
@@ -56,10 +64,9 @@ def distribution_inputs(monkeypatch):
                    {"name": "Charlie", "upn": "charlie@example.com"}],
         "oce": "oce@example.com", "auth_automated": [],
         "broker_cases": [{"id": "1"}, {"id": "2"}, {"id": "3"}], "auth_cases": [],
-        "case_snapshot": {str(i): {"assignee": "alice@example.com",
-                                  "identity_id": "alice-id", "revision": 7} for i in range(1, 4)},
         "point_sets": [{"prefix": "B", "plan_id": 91, "suite_id": 92,
-                        "points": [{"id": i, "case_id": str(i), "tester_id": "alice-id"}
+                        "points": [{"id": i, "case_id": str(i), "config_id": "293",
+                                    "tester_id": "alice-id", "tester_upn": "alice@example.com"}
                                    for i in range(1, 4)]}],
     }
     monkeypatch.setattr(distribute.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
@@ -76,26 +83,31 @@ def test_distribution_preview_is_read_only_and_normalizes_inputs(distribution_in
     assert distribute.cmd_distribute_tests(args) == 0
     shown = json.loads(capsys.readouterr().out)
     assert shown["permission_to_execute"] is False
-    assert shown["plan"]["parameters"] == {"oof": ["charlie@example.com"], "oce": "oce@example.com"}
+    assert shown["plan"]["parameters"] == {
+        "oof": ["charlie@example.com"], "oce": "oce@example.com", "roster_file": None}
     assert asdict(orch.state) == before
     again = arguments("distribute-tests", "--oof", "CHARLIE@example.com", "--oof", "Charlie",
                       "--oce", "oce@example.com")
     plan = distribute.plan_distribution(again, orch)
     assert W.review_hash(orch, "bug_bash", "distribute_tests", plan) == shown["review_hash"]
-    assert plan.operations[0].preconditions["revision"] == 7
+    assert all(op.kind == "align_point_testers" for op in plan.operations)
+    assert plan.operations[0].as_dict()["preconditions"] == {
+        "testers": {str(i): "alice-id" for i in range(1, 4)},
+        "points": {str(i): {"case_id": str(i), "config_id": "293"} for i in range(1, 4)}}
     assert plan.operations[0].target["org"] == D.ORG
     assert plan.operations[-1].target["suite_id"] == 92
 
 
-@pytest.mark.parametrize("change", ["revision", "tester", "suite", "roster", "org"])
+@pytest.mark.parametrize("change", ["configuration", "tester", "suite", "roster", "org"])
 def test_distribution_hash_binds_live_review(distribution_inputs, monkeypatch, change):
     orch = make_orch("bug_bash", "distribute_tests")
     args = arguments("distribute-tests", "--no-oof")
     before = W.review_hash(orch, "bug_bash", "distribute_tests", distribute.plan_distribution(args, orch))
-    if change == "revision":
-        distribution_inputs["case_snapshot"]["1"]["revision"] += 1
+    if change == "configuration":
+        distribution_inputs["point_sets"][0]["points"][0]["config_id"] = "330"
     elif change == "tester":
-        distribution_inputs["point_sets"][0]["points"][0]["tester_id"] = "new-id"
+        distribution_inputs["point_sets"][0]["points"][0].update(
+            tester_id="bob-id", tester_upn="bob@example.com")
     elif change == "suite":
         distribution_inputs["point_sets"][0]["suite_id"] += 1
     elif change == "roster":
@@ -106,12 +118,12 @@ def test_distribution_hash_binds_live_review(distribution_inputs, monkeypatch, c
     assert before != after
 
 
-def test_distribution_invalid_selection_and_revision_reject(distribution_inputs):
+def test_distribution_invalid_selection_and_unresolved_tester_reject(distribution_inputs):
     orch = make_orch("bug_bash", "distribute_tests")
     with pytest.raises(ValueError, match="Unknown OOF"):
         distribute.plan_distribution(arguments("distribute-tests", "--oof", "Nobody"), orch)
-    distribution_inputs["case_snapshot"]["1"].pop("revision")
-    with pytest.raises(ValueError, match="revisions"):
+    distribution_inputs["point_sets"][0]["points"][0].pop("tester_upn")
+    with pytest.raises(ValueError, match="Unresolved release-point Current Tester"):
         distribute.plan_distribution(arguments("distribute-tests", "--no-oof"), orch)
 
 
@@ -151,7 +163,7 @@ def test_distribution_executor_uses_captured_targets(distribution_inputs, monkey
     monkeypatch.setattr(D, "ORG", "https://dev.azure.com/changed")
     calls = []
     checks = []
-    monkeypatch.setattr(D, "set_assigned_to", lambda *a, **kw: (calls.append((a, kw)) or True, ""))
+    monkeypatch.setattr(D, "set_assigned_to", lambda *a, **kw: pytest.fail("shared case write"))
     monkeypatch.setattr(D, "sync_point_testers", lambda *a, **kw: (calls.append((a, kw)) or True, ""))
     distribute._apply(Namespace(plan=plan, validate=lambda: checks.append(True)))
     assert len(checks) == len(plan.operations)
@@ -161,14 +173,12 @@ def test_distribution_executor_uses_captured_targets(distribution_inputs, monkey
 
 
 @pytest.mark.parametrize("drift", [False, True])
-def test_distribution_provider_uses_reviewed_tester_ids(monkeypatch, drift):
+def test_distribution_provider_uses_reviewed_point_tester_ids(monkeypatch, drift):
     points = [{"id": 1, "testCase": {"id": 10}, "configuration": {"id": 293},
-               "assignedTo": {"id": "old"}, "outcome": "Passed"}]
+               "assignedTo": {"id": "drift" if drift else "old"}, "outcome": "Passed"}]
     calls = []
     monkeypatch.setattr(D.P, "_ado_rest_get_all", lambda *a: (True, deepcopy(points), ""))
-    monkeypatch.setattr(D.P, "_ado_rest_get", lambda *a: (True, {
-        "value": [{"id": 10, "fields": {"System.AssignedTo": {
-            "uniqueName": "alice@example.com", "id": "drift" if drift else "reviewed"}}}]}, ""))
+    monkeypatch.setattr(D.P, "_ado_rest_get", lambda *a: pytest.fail("shared case read"))
 
     def send(url, method, body, timeout):
         calls.append((url, body))
@@ -179,9 +189,10 @@ def test_distribution_provider_uses_reviewed_tester_ids(monkeypatch, drift):
     ok, detail = D.sync_point_testers(
         91, 92, {"10": "alice@example.com"}, org="https://dev.azure.com/reviewed", project="project",
         expected_testers={1: "old"}, expected_identities={"10": "reviewed"},
+        expected_points={"1": {"case_id": "10", "config_id": "293"}},
         reviewed_updates=[{"tester_id": "reviewed", "point_ids": [1]}])
     if drift:
-        assert not ok and not calls and "identities differ" in detail
+        assert not ok and not calls and "testers changed after review" in detail
     else:
         assert ok and calls == [(
             "https://dev.azure.com/reviewed/project/_apis/test/Plans/91/Suites/92/points/1?api-version=5.0",
@@ -374,8 +385,8 @@ def test_stage_start_commands_bind_their_stage(step, stage, command, approver, m
     assert args.review_hash == record.data["last_write_review"]["hash"]
 
 
-def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypatch, capsys):
-    orch = make_orch("rollout_start", beta_play_store.ID)
+def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypatch, capsys, beta_clock):
+    orch = make_orch("rollout_start", beta_play_store.ID, now=beta_clock)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
         True,
@@ -397,10 +408,6 @@ def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypa
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
-
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -452,8 +459,8 @@ def test_beta_stage_execution_rejects_simulated_clock(memory, monkeypatch, capsy
 
 
 def test_beta_stage_rechecks_trusted_date_immediately_before_write(
-        memory, monkeypatch, capsys):
-    orch = make_orch("rollout_start", beta_play_store.ID)
+        memory, monkeypatch, capsys, beta_clock):
+    orch = make_orch("rollout_start", beta_play_store.ID, now=beta_clock)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
         True,
@@ -469,7 +476,7 @@ def test_beta_stage_rechecks_trusted_date_immediately_before_write(
 
     monkeypatch.setattr(
         signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 22, 0, 1, tzinfo=timezone.utc))
+        lambda tz=None: beta_clock.replace(day=22, hour=0, minute=1))
     execute = arguments(
         "start-beta-play-store",
         "--execute",
@@ -482,8 +489,8 @@ def test_beta_stage_rechecks_trusted_date_immediately_before_write(
 
 
 def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
-        memory, monkeypatch, capsys):
-    orch = make_orch("rollout_start", beta_play_store.ID)
+        memory, monkeypatch, capsys, beta_clock):
+    orch = make_orch("rollout_start", beta_play_store.ID, now=beta_clock)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
         True,
@@ -493,9 +500,6 @@ def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -517,8 +521,8 @@ def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
 
 
 def test_beta_stage_uncertain_failure_keeps_exact_run_link(
-        memory, monkeypatch, capsys):
-    orch = make_orch("rollout_start", beta_play_store.ID)
+        memory, monkeypatch, capsys, beta_clock):
+    orch = make_orch("rollout_start", beta_play_store.ID, now=beta_clock)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
         True,
@@ -528,9 +532,6 @@ def test_beta_stage_uncertain_failure_keeps_exact_run_link(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -554,8 +555,8 @@ def test_beta_stage_uncertain_failure_keeps_exact_run_link(
 
 
 def test_beta_stage_verified_failure_is_blocked_not_uncertain(
-        memory, monkeypatch, capsys):
-    orch = make_orch("rollout_start", beta_play_store.ID)
+        memory, monkeypatch, capsys, beta_clock):
+    orch = make_orch("rollout_start", beta_play_store.ID, now=beta_clock)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
         True,
@@ -565,9 +566,6 @@ def test_beta_stage_verified_failure_is_blocked_not_uncertain(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     monkeypatch.setattr(
         signoff.P,
         "start_auth_signoff_stage",
@@ -672,20 +670,15 @@ def test_distribution_final_validation_persists_only_availability(distribution_i
         plan=plan, execution_id="owned", reserved_only=False, validate=lambda: None))
     monkeypatch.setattr(orch, "settle_execution", lambda *a, **kw: stored.append((a, kw)))
 
-    def assign(case_id, upn, **kw):
-        row = distribution_inputs["case_snapshot"][case_id]
-        assert row["revision"] == kw["expected_revision"]
-        row.update(assignee=upn, identity_id=upn, revision=row["revision"] + 1)
-        return True, ""
-
     def sync(plan_id, suite_id, assignments, **kw):
         points = distribution_inputs["point_sets"][0]["points"]
         assert kw["expected_testers"] == {p["id"]: p["tester_id"] for p in points}
         for point in points:
-            point["tester_id"] = distribution_inputs["case_snapshot"][point["case_id"]]["identity_id"]
+            cid = point["case_id"]
+            point.update(tester_id=kw["expected_identities"][cid], tester_upn=assignments[cid])
         return True, ""
 
-    monkeypatch.setattr(D, "set_assigned_to", assign)
+    monkeypatch.setattr(D, "set_assigned_to", lambda *a, **kw: pytest.fail("shared case write"))
     monkeypatch.setattr(D, "sync_point_testers", sync)
     assert distribute.cmd_distribute_tests(args) == 0
     data = stored[-1][1]["data"]
@@ -696,17 +689,32 @@ def test_distribution_final_validation_persists_only_availability(distribution_i
 def test_distribution_partial_write_never_claims_completion(distribution_inputs, monkeypatch):
     orch = make_orch("bug_bash", "distribute_tests")
     args = arguments("distribute-tests", "--apply", "--no-oof")
+    first = distribution_inputs["point_sets"][0]
+    last = first["points"].pop()
+    distribution_inputs["point_sets"].append({**first, "suite_id": 93, "points": [last]})
     plan = distribute.plan_distribution(args, orch)
+    assert len(plan.operations) == 2
     calls, settlements = [], []
     monkeypatch.setattr(C, "load_orch", lambda *_: (orch.state, orch))
     monkeypatch.setattr(C, "save_state", lambda *a: None)
     monkeypatch.setattr(W, "authorize", lambda *a: Namespace(
         plan=plan, execution_id="owned", reserved_only=False, validate=lambda: None))
     monkeypatch.setattr(orch, "settle_execution", lambda *a, **kw: settlements.append((a, kw)))
-    monkeypatch.setattr(D, "set_assigned_to", lambda *a, **kw: (calls.append(a) or len(calls) < 2, "revision changed"))
-    monkeypatch.setattr(D, "sync_point_testers", lambda *a, **kw: pytest.fail("continued after partial failure"))
+    def sync(plan_id, suite_id, assignments, **kw):
+        calls.append((plan_id, suite_id))
+        if len(calls) == 2:
+            return False, "Plan testers changed after review"
+        for point in first["points"]:
+            cid = point["case_id"]
+            point.update(tester_id=kw["expected_identities"][cid], tester_upn=assignments[cid])
+        return True, ""
+
+    monkeypatch.setattr(D, "set_assigned_to", lambda *a, **kw: pytest.fail("shared case write"))
+    monkeypatch.setattr(D, "sync_point_testers", sync)
     assert distribute.cmd_distribute_tests(args) == 2
-    assert len(calls) == 2
+    assert calls == [(91, 92), (91, 93)]
+    assert first["points"][1]["tester_upn"] == "bob@example.com"
+    assert last["tester_upn"] == "alice@example.com"
     assert "Earlier writes may have succeeded" in settlements[0][0][-1].reason
     assert not settlements[0][1]
 
@@ -995,13 +1003,16 @@ def test_launch_missing_receipt_identity_retains_owned_uncertainty(launch_provid
     assert step.status in ("blocked", "in_flight")
 
 
-def test_distribution_stale_hash_zero_writes(distribution_inputs, memory, monkeypatch):
+def test_distribution_stale_hash_zero_writes(distribution_inputs, memory, monkeypatch, capsys):
     orch = make_orch("bug_bash", "distribute_tests")
     memory[0](orch)
     args = arguments("distribute-tests", "--apply", "--no-oof", "--approved-by", "reviewer")
     args.review_hash = W.review_hash(
         orch, "bug_bash", "distribute_tests", distribute.plan_distribution(args, orch))
-    distribution_inputs["case_snapshot"]["1"]["revision"] += 1
+    distribution_inputs["point_sets"][0]["points"][0].update(
+        tester_id="bob-id", tester_upn="bob@example.com")
     monkeypatch.setattr(D, "set_assigned_to", lambda *a, **k: pytest.fail("stale write"))
+    monkeypatch.setattr(D, "sync_point_testers", lambda *a, **k: pytest.fail("stale point write"))
     assert distribute.cmd_distribute_tests(args) == 1
+    assert "review hash is stale" in json.loads(capsys.readouterr().out)["error"]
     assert not orch.state.get_step("bug_bash", "distribute_tests").execution

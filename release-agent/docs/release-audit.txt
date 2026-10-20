@@ -6,7 +6,34 @@ Baseline commit: a1390093aa6ce1b84686906fa68197c651aa31be
 Initial audit config\phases.yaml SHA256 (historical):
 c4b66645eb6350c313372b5730b2d7afff7ec892c39ee644c78981240ac0e451
 
-PHASE 4 LOCAL AUDIT (2026-10-20)
+BASELINE FIXTURE CORRECTIONS (2026-10-20)
+----------------------------------------
+After publication of6b8005b88 and conversation compaction, reproduced the same
+18 failures/94 passes in the original112 offline scenarios. Root causes were
+stale tests following intentional production-contract changes:
+1. Distribution inputs/expectations still relied on shared-case Assigned To and
+   revisions. They now model release-point configuration and coherent Current
+   Tester ID/UPN; stale approvals and unresolved testers reject with zero writes.
+   Provider tests forbid shared-case reads/writes and use reviewed point IDs.
+   Partial apply now exercises two suites: one writes, the second rejects,
+   leaving an explicit failure rather than claiming completion.
+2. Beta previews captured the real current date while execution used a fixed
+   September date. A shared owner-timezone clock now reaches the intended owner
+   approval/provider branches; next-local-day drift still rejects the review.
+3. Notification refresh changed owner/CCD without renewed capability bindings.
+   Tests now prove the readiness hold and unchanged ledger, then record fresh
+   synthetic structured read evidence and synthetic explicit write attestation.
+   Audit supersession, stale-hash rejection and exact refreshed claim remain.
+
+Only the two affected test modules, their renamed core selector and existing
+audit/resume docs changed. No production guard was removed or modified; no case
+was skipped, removed or reclassified. The original112 scenarios plus related
+current-layout/capability regressions passed:128passed129.50s,0skips/0deselections.
+Proof: session files/baseline-fixes-before.xml and baseline-fixes-after.xml.
+Connected release state/automation/event hashes match the saved originals.
+These fixes are local/uncommitted, with no live operations or full-suite claim.
+
+PHASE 4 LOCAL AUDIT (2026-10-20; published as6b8005b88)
 -------------------------------
 Reviewed all nine Finalize & Publish handlers, exact external approval ownership,
 checked integration/OneAuth writers, publication providers, announcement/email

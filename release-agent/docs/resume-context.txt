@@ -4,48 +4,48 @@ Saved: 2026-10-20, America/Los_Angeles.
 Repository: C:\repos\android-complete
 Agent root: C:\repos\android-complete\release-agent
 Branch: feature/release-agent-phase3-audit
-Published baseline: f6daab6372040239e20ed1b1ad6b185b1238a1b9.
+Published baseline: 6b8005b88be681c4e6172f709e81ddcd2b9be965.
 Inspect active local changes with git status --short.
 Resolve the earlier published checkpoint with
   git log -1 --format="%H %s" -- release-agent/docs/resume-context.txt
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
 
-CURRENT REQUEST: COMMIT/PUSH, COMPACT, THEN FIX18 BASELINE FAILURES (2026-10-20)
-----------------------------------------------------------------------------
-Owner requested this order at13:40PDT: commit/push the Phase3/4 checkpoint, compact
-the conversation to avoid errors, THEN fix the18 pre-existing failures. Do not
-start that next code change before publication and compaction. No live release
-execution, provider writes, approvals, notifications or runtime adoption requested.
-The publish destination is public AzureAD/android-complete, branch
-feature/release-agent-phase3-audit. Prior public approval covered f6daab637 only;
-review the exact new checkpoint and obtain its explicit public-content approval.
-Resolve current commit/push state from Git rather than repeating a completed push.
+LATEST LOCAL CHECKPOINT:18 BASELINE FAILURES CORRECTED (2026-10-20)
+----------------------------------------------------------------
+Requested sequence is complete: Phase3/4 checkpoint6b8005b88 was explicitly
+approved and publicly pushed, then the conversation was compacted, then these
+local fixes were made. Do not repeat that push. Approval covered that checkpoint
+only; the new test/documentation corrections are uncommitted and unpublished.
 
-The18 failures were reproduced unchanged on archived f6daab637 and the audit
-working tree. Start with these existing modules and protect current guards:
-  tests/test_ado_write_review.py (16):
-    test_distribution_preview_is_read_only_and_normalizes_inputs
-    test_distribution_hash_binds_live_review[revision,tester,suite,roster,org]
-    test_distribution_invalid_selection_and_revision_reject
-    test_distribution_executor_uses_captured_targets
-    test_distribution_provider_uses_reviewed_tester_ids[True]
-    test_beta_stage_start_requires_exact_release_owner_approval
-    test_beta_stage_definitive_pre_request_failure_is_not_uncertain
-    test_beta_stage_uncertain_failure_keeps_exact_run_link
-    test_beta_stage_verified_failure_is_blocked_not_uncertain
-    test_distribution_final_validation_persists_only_availability
-    test_distribution_partial_write_never_claims_completion
-    test_distribution_stale_hash_zero_writes
-  tests/test_notification_delivery.py (2):
-    test_unclaimed_step_refresh_preserves_audit_and_requires_new_approval[owner_email,ccd]
-Symptoms already isolated: distribution fixture cannot resolve release-point
-Current Tester forB:1; changed owner/CCD notification refresh produces no eligible
-notifications. Diagnose before choosing fixture versus production corrections.
-Preserve point-local Current Tester, exact release-owner approval, readiness/
-capability bindings, single-attempt ownership and explicit send receipts.
-Use focused existing pytest selectors and isolated temporary state. Do not rerun
-the expensive expanded Git suite or raise the900second budget merely to finish.
+Reproduced94passed/18failed in the same112 cases before editing. All failures
+were outdated test contracts, not production defects:
+1. Distribution fixtures now supply each release point's configuration, tester
+   ID and tester UPN. Hash drift covers configuration and coherent point-tester
+   changes, not shared-case revisions. Missing UPN still rejects. Checked apply
+   and final readback use Current Tester only; shared case access is prohibited.
+   The partial-write case now succeeds in one suite and fails in the next,
+   preserving the completed point write without claiming overall completion.
+2. Beta-stage preview and execution share a fixed owner-timezone clock. Existing
+   wrong-owner/identity, next-day stale-hash, definitive pre-request failure,
+   uncertain request and verified provider-failure branches are still exercised.
+3. Owner/CCD notification changes first prove readiness blocks preparation and
+   preserves the original ledger. Fresh synthetic structured capability evidence
+   and explicit synthetic write-access attestation restore readiness; the old
+   payload hash still cannot claim the refreshed notification.
+
+Changed only tests/test_ado_write_review.py,tests/test_notification_delivery.py,
+the renamed core selector in tests/_suite.py, and existing audit/resume docs.
+The obsolete revision-rejection test is now named
+test_distribution_invalid_selection_and_unresolved_tester_reject; the provider
+test is test_distribution_provider_uses_reviewed_point_tester_ids. Core/extended
+classification and all timeout/case budgets are unchanged.
+
+Final focused run:128passed/0skipped/0deselected129.50s across both original
+modules plus test_distribution_current_layouts.py and test_m365_capabilities.py.
+All original112 scenarios remain selected. No production logic, release state,
+automation registry or event log changed. No live provider operations, approvals,
+notifications, adoption or release advancement occurred. No full-suite claim.
 
 PRIOR LOCAL CHECKPOINT: PHASE4 AUDIT (2026-10-20)
 ----------------------------------------------------------------------------
