@@ -39,8 +39,8 @@ Before I start — 4 quick questions (reply with the letters/numbers, or "defaul
 
 **2. How deep?**
    1) Fast     — single pass, ~5-8 min/finding. Triage direction only, NOT a final verdict
-   2) Standard — two passes (investigate + adversarial challenge), ~15-25 min/finding   [default]
-   3) Deep     — two passes + extra sweeps for a cross-module or high-severity finding, 30 min+
+   2) Standard — two passes, ~15-35 min planning range; complex runs can exceed it       [default]
+   3) Deep     — two passes + targeted sweeps, ~35-60+ min planning range
 
 **3. What do you want out of it?**
    1) A verdict — agree with the filed severity, or rebut it
@@ -80,6 +80,12 @@ Before I start — 4 quick questions (reply with the letters/numbers, or "defaul
 | **3** | Artifacts + a **Fix Options** table per kept finding — no code |
 | **4** | Options → engineer picks → implement → diff review → go/no-go → PR |
 
+**Preserve the stop point.** Default intake ends at risk assessment + written reports, not remediation
+planning. Record Must fix / Optional hardening / No fix / Needs review before discussing a solution;
+`Keep` alone does not authorize one. An existing unmerged change remains a candidate until its owner
+confirms intent/completeness and the engineer chooses it. Generated specs are blocked until the source
+report records the required approval and verification fields.
+
 ---
 
 ## Rule 4 — Run the environment preflight, THEN echo the plan
@@ -95,6 +101,7 @@ Never launch agents straight off the menu. Restate the plan and wait for a "go":
 **Env:** preflight PASS  (or: the specific FAILs + exactly what you need to do)
 **Code:** android-complete @ <sha> · broker @ <sha> · common @ <sha> · ESTS @ <sha>
 **ETA:** ~20-30 min before I have verdicts. I'll post progress at each pass boundary.
+**Budget:** <agreed upper bound>; if exceeded, I'll surface the open question and revised ETA.
 **Output:** <absolute path to the shift folder>   <- your report lands here, on disk
 **Then:** I'll show you the verdicts and ask what to do next. Nothing auto-runs.
 
@@ -107,6 +114,10 @@ obvious at the end instead of a week later.
 The **Code** line is mandatory too, and it is not decoration: printing each repo's HEAD proves you
 verified *freshness*, not merely *presence*. A stale checkout and a current one look identical until you
 print the shas.
+
+Use the timing formula in SKILL.md, including Gate 0, queue/tool time, reconciliation and rendering.
+The example ETA is not a promise for every finding. Record actual stage timings and deliver a labelled
+partial report if the engineer declines continuation; untested claims remain OPEN.
 
 ---
 
