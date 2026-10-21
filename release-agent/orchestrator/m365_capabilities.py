@@ -117,14 +117,20 @@ def _tool_available(canonical, resolved):
     return resolved in ("workiq-fetch", "workiq.fetch", "workiq:fetch", "mcp__workiq__fetch")
 
 
+def missing_tools(available):
+    if (not isinstance(available, dict)
+            or any(not isinstance(key, str) or not key.strip()
+                   or not isinstance(value, str) or not value.strip()
+                   for key, value in available.items())):
+        raise ValueError("Record the actual loaded tool inventory, not server registration alone")
+    return [tool for tool in REQUIRED_TOOLS if not _tool_available(tool, available.get(tool))]
+
+
 def validate(state, evidence, *, now=None):
     expected = plan(state)
     if not isinstance(evidence, dict) or evidence.get("binding") != expected["binding"]:
         raise ValueError("M365 capability evidence does not match this release/owner/CCD/target configuration")
-    available = evidence.get("available_tools")
-    if not isinstance(available, dict):
-        raise ValueError("Record the actual loaded tool inventory, not server registration alone")
-    missing = [tool for tool in REQUIRED_TOOLS if not _tool_available(tool, available.get(tool))]
+    missing = missing_tools(evidence.get("available_tools"))
     if missing:
         raise ValueError("Missing loaded connector capabilities: " + ", ".join(missing))
     observations = evidence.get("observations")

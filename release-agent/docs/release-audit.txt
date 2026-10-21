@@ -6,7 +6,81 @@ Baseline commit: a1390093aa6ce1b84686906fa68197c651aa31be
 Initial audit config\phases.yaml SHA256 (historical):
 c4b66645eb6350c313372b5730b2d7afff7ec892c39ee644c78981240ac0e451
 
-BASELINE FIXTURE CORRECTIONS (2026-10-20)
+PORTABLE MCP/SKILL SETUP FOLLOW-UP (2026-10-20; LOCAL REVIEW ONLY)
+---------------------------------------------------------------
+Owner requires per-user path discovery: defaults are candidates; ask for an
+unresolved location rather than assuming an author's clone/install paths.
+MCP registration remains part of bootstrap. Agency executable selection accepts
+an explicit override, PATH, existing configured launchers and declared per-user
+defaults. File presence and --version are checked before new Agency registration.
+Existing valid/custom/PATH-based server commands are preserved; broken entries
+are reported, never silently rewritten. Custom Scout profiles drive both the
+host requirement and the actual config read/write destination.
+
+Infra adds --scout-root/--agency-path and structured path_requests. Optional
+RELEASE_AGENT_SCOUT_ROOT/RELEASE_AGENT_AGENCY_PATH process overrides support later
+readiness calls without assuming a default profile. No persistent environment
+setting is changed. Source skill asks for unresolved paths through Scout.
+
+Bootstrap self-locates the clone, accepts ScoutRoot/ScoutSkillsDir/AgencyPath/
+PythonPath/ScoutExe overrides, validates discovered candidates and asks outside
+Scout. In Scout/headless/NonInteractive mode it exits with explicit path guidance
+instead of waiting on a console prompt. Missing Python no longer silently installs
+a duplicate: -InstallPython is explicit opt-in; -NoAutoInstallPython is a veto.
+Skill installation now copies and hash-verifies SKILL.md AND every reference
+resource, preserving unrelated user files. No author-specific executable paths
+are baked into new shared logic; actual resolved absolute paths belong only to
+the selected machine's generated registration.
+
+Final focused65passed16.18s,0skips/0deselections. Covers custom/spaced profile and
+launcher locations, PATH/env/explicit/default discovery, absent/invalid launchers,
+unchanged existing servers, real isolated PowerShell full skill copying and
+missing-path exits, plus the earlier M365 and workflow-revision fences.
+Proof: session files/setup-portable-path-results.xml.
+M365 hosted entity fetch still requires supported Scout connector setup/sign-in;
+neither a registered/Connected badge nor an installed skill proves live access.
+All changes remain local/uncommitted. No live install/reload, connector edit,
+permission change, pipeline action, release advancement or adoption was performed.
+Protected live release/config/installed-skill hashes remain unchanged; unrelated
+.gitignore conflict remains untouched.
+
+M365 SETUP INTEGRATION CORRECTION (2026-10-20; LOCAL REVIEW ONLY)
+---------------------------------------------------------------
+Owner requested local changes only, with no commit/push or live setup changes.
+Root cause: requirements.yaml documented m365_connectors, but infra/bootstrap
+ignored that section and could report success without hosted WorkIQ entity fetch.
+The installed-skill reload did not configure connectors or prove live sessions.
+
+Infra now consumes the section and requires a fresh version-1 loaded-tool
+inventory (--tools-file) observed inside Scout. Required names/accepted aliases
+and the 15-minute, offset-aware freshness checks are shared with release capability
+validation. Missing or invalid evidence never reports prerequisites satisfied.
+Native WorkIQ wrappers/people search cannot stand in for hosted entity fetch.
+Recovery names the supported hosted endpoint and Scout configuration/sign-in/reload;
+there is no guessed remote-server registration, credential extraction or test write.
+
+Bootstrap forwards -M365ToolsFile safely, including paths with spaces, exits
+nonzero on incomplete prerequisites and no longer tells the owner to initialize.
+Source skill/start guidance performs this check before NEW-release init. Existing
+release-bound authenticated reads and explicit human write attestations remain.
+Tool availability is not session/access proof and never signs release readiness.
+
+Focused coverage also exposed that infra inherited the active release's revision
+guard. Machine setup now avoids release discovery/locking/adoption; release commands
+and new provider work retain their existing workflow guards and ownership fences.
+
+Final focused result:49passed11.54s,0skips/0deselections, covering inventory/CLI,
+two isolated PowerShell bootstrap paths, existing MCP registration/capability
+contracts, and release-revision dispatch guards. Proof: session files/setup-m365-results.xml.
+Initial six new CLI failures identified the setup/release binding defect before
+correction; the intermediate43-case setup/capability selection also passed.
+No real bootstrap, connector registration, permissions change, skill installation,
+notification, automation, pipeline change or workflow adoption was performed.
+Active release state/registry/events, installed skill and Scout config hashes are
+unchanged. The unrelated pre-existing .gitignore merge conflict remains untouched.
+Source changes remain local/uncommitted for review; no full-suite claim.
+
+BASELINE FIXTURE CORRECTIONS (2026-10-20; published as a34a3c303)
 ----------------------------------------
 After publication of6b8005b88 and conversation compaction, reproduced the same
 18 failures/94 passes in the original112 offline scenarios. Root causes were

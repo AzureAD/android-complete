@@ -42,6 +42,8 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | Intent | Command |
 | --- | --- |
 | Discover releases | `python -m orchestrator.cli list --json` |
+| Check setup BEFORE new-release init | `python -m orchestrator.cli infra --no-register --tools-file <fresh-inventory.json> --json` — enforces `m365_connectors` using the actual loaded canonical-to-exposed tool map. Missing inventory/tools blocks setup; available tools do not prove authenticated access or write authorization. |
+| Resolve installation paths | `infra --no-register --scout-root <existing-profile> --agency-path <executable> --json` — validate user-specific locations; ask for returned `path_requests`, never guess or overwrite an existing server. Custom-profile later CLI calls use `RELEASE_AGENT_SCOUT_ROOT`. |
 | Start a new release | `python -m orchestrator.cli init --release <YYYY-MM>` |
 | Preview workflow revision adoption | `python -m orchestrator.cli workflow-adopt --release <id> --json` — old/new identity, conservative invalidations and ownership blockers; no execution. Before asking for approval, show `invalidation.summary`, every completed/blocked step being reset, removed gate decisions/offers, and blockers. |
 | Confirm reviewed workflow adoption | `python -m orchestrator.cli workflow-adopt --release <id> --approve-hash <hash> --by <owner> --reason "<reviewed change>"` — recomputes under locks, rejects stale reviews/owned work, persists atomically without draining |

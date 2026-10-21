@@ -19,6 +19,12 @@ If any item is unsatisfied the gate stays closed. If the engineer can't satisfy 
 
 ## Microsoft 365 capabilities before release entry
 
+Machine setup first checks a fresh actual-tool inventory through
+`infra --no-register --tools-file <inventory.json>`. Its `tools_available` result
+does NOT satisfy `m365_access`, prove a live/authenticated MCP session or authorize
+any write. Keep the release-bound probes below even after setup prerequisites pass.
+If a skill-only reload occurred, do not assume it configured missing connectors.
+
 `m365_access` is an additional scout-assisted auto item; `m365_write_access` is
 an additional human attestation. They belong in the same full checklist and
 engine-generated attestation card as the other readiness items.

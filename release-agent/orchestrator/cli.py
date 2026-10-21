@@ -49,7 +49,9 @@ def main(argv=None):
     # Serialize state read-modify-write per release so parallel CLI invocations
     # (e.g. the skill firing record-step calls at once) can't clobber each other.
     runs_root = getattr(args, "runs_root", None)
-    release = C.effective_release(runs_root, getattr(args, "release", None))
+    # Machine setup must remain usable before init and while old releases are pinned.
+    release = (None if args.cmd == "infra" else
+               C.effective_release(runs_root, getattr(args, "release", None)))
     if args.cmd == "automation":
         if args.action in ("claim-delete", "delete-result") and getattr(args, "id", None):
             from orchestrator.registry import AutomationRegistry

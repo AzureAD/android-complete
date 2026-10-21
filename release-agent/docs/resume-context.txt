@@ -4,14 +4,73 @@ Saved: 2026-10-20, America/Los_Angeles.
 Repository: C:\repos\android-complete
 Agent root: C:\repos\android-complete\release-agent
 Branch: feature/release-agent-phase3-audit
-Published baseline: 6b8005b88be681c4e6172f709e81ddcd2b9be965.
+Published baseline: a34a3c30331293e28f79066510d0921084b6826a.
 Inspect active local changes with git status --short.
 Resolve the earlier published checkpoint with
   git log -1 --format="%H %s" -- release-agent/docs/resume-context.txt
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
 
-LATEST LOCAL CHECKPOINT:18 BASELINE FAILURES CORRECTED (2026-10-20)
+LATEST LOCAL FOLLOW-UP: PORTABLE MCP/SKILL SETUP (2026-10-20)
+----------------------------------------------------------
+The owner asked whether MCP/skill installation was included and required portable
+per-user locations with prompts when defaults are absent. Changes remain LOCAL
+for review: DO NOT commit, push, run live bootstrap, reload installed skill,
+change Scout settings/registrations or adopt/advance the existing release.
+
+Infra now resolves Agency from explicit path, PATH, configured launchers and
+declared default candidates. --scout-root and --agency-path select actual paths;
+path_requests tells Scout what to ask when unresolved. The selected profile is
+used consistently for host checks and MCP config writes. Optional process env
+RELEASE_AGENT_SCOUT_ROOT/RELEASE_AGENT_AGENCY_PATH are shared with readiness helpers.
+Existing valid/custom/PATH commands are preserved and broken entries held.
+No new Agency registration when the selected executable fails --version.
+
+Bootstrap accepts ScoutRoot/ScoutSkillsDir/AgencyPath/PythonPath/ScoutExe overrides,
+self-locates its clone, and validates candidates. Interactive terminals ask for
+missing locations; Scout/headless/NonInteractive returns guidance and exits rather
+than hanging or guessing. Python winget install now needs explicit -InstallPython;
+-NoAutoInstallPython vetoes it. Skill install copies/hash-verifies the complete
+instruction/reference tree, not just SKILL.md. Hosted WorkIQ configuration/auth and
+live read/write proofs remain separate from file installation/registration.
+
+Final focused65passed16.18s,0skips/0deselections, including custom paths, executable
+discovery/refusals, preserved registrations and isolated real PowerShell resource
+installation/missing-path handling. Proof: session files/setup-portable-path-results.xml.
+Earlier M365 implementation details follow. Same protected snapshots apply;
+active state/config/installed skill remain unchanged; .gitignore conflict untouched.
+
+PRIOR LOCAL CHECKPOINT: M365 SETUP INTEGRATION (2026-10-20)
+---------------------------------------------------------
+Owner explicitly requested local changes for review: DO NOT commit or push.
+Do not install/reload the changed skill, run live bootstrap, change Scout connector
+configuration/permissions, create workers or adopt/advance the existing release.
+There is an unrelated pre-existing UU .gitignore conflict; leave it untouched.
+
+Corrected ignored requirements.yaml m365_connectors. Infra now requires a fresh
+observed loaded-tool inventory before reporting setup prerequisites OK; use
+--tools-file with version:1, observed_at and available_tools canonical-to-exposed
+names. Shares required tools/aliases and freshness with m365 capability validation.
+Missing hosted fetch gets explicit supported connector setup/auth/reload guidance;
+native tools and registrations are not substitutes. No guessed remote config.
+Bootstrap forwards -M365ToolsFile, handles spaces and exits1 while incomplete.
+Source skill/README/reference docs check this before NEW-release initialization.
+Actual owner/target-bound read probes and human write authorization stay separate.
+
+Machine infra is now release-independent: an old workflow pin must not prevent
+setup diagnostics or cause setup to load/lock/adopt a release. Normal release and
+provider operations retain all revision/approval/ownership guards.
+
+Changed orchestrator/infra.py,commands/infra_cmd.py,cli.py,m365.py,
+m365_capabilities.py; config/requirements.yaml; setup/bootstrap.ps1; source skill
+and related README/reference/audit/resume docs; added tests/test_setup_m365.py.
+Final focused49passed11.54s,0skips/0deselections. Real PowerShell subprocess tests
+use temporary fake CLI/package/config and disable skill install/Scout restart.
+Protected release/config/installed-skill hashes match their pre-change snapshots.
+Proof: session files/setup-m365-results.xml,setup-fix-protected-before.json,
+setup-fix-installed-before.json. No live connector fix or full-suite claim.
+
+PRIOR CHECKPOINT:18 BASELINE FAILURES CORRECTED (published as a34a3c303)
 ----------------------------------------------------------------
 Requested sequence is complete: Phase3/4 checkpoint6b8005b88 was explicitly
 approved and publicly pushed, then the conversation was compacted, then these

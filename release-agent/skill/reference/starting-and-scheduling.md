@@ -4,13 +4,28 @@ _Loaded on demand. Covers `init`, the push-reminder automation, CCD anchoring/co
 
 ## Starting a release (don't make the user type a date format)
 
+Before choosing/initializing a NEW release, complete SKILL.md's setup prerequisite
+check with `infra --no-register --tools-file <fresh-inventory.json> --json`.
+If `path_requests` is nonempty, ask for each unresolved installation location and
+rerun with the returned path flag. Default per-user folders and PATH are candidates
+only. Bootstrap accepts ScoutRoot/AgencyPath/PythonPath/ScoutExe/ScoutSkillsDir
+overrides, installs all skill references and never creates an assumed Scout profile.
+Inside Scout/headless, let Scout prompt rather than waiting on console input.
+Observe actual loaded tools in Scout; missing/stale/malformed inventories or missing
+hosted WorkIQ fetch keep setup held before `init`. `bootstrap.ps1 -M365ToolsFile`
+forwards the same inventory and exits nonzero while setup is incomplete.
+No remote connector entry or authentication is inferred from native WorkIQ tools.
+Configure/sign in through Scout's supported hosted connector setup, then reload and
+observe again. This proves availability only: owner/target-bound read probes and
+human write authorization still belong to release entry. Preserve existing releases.
+
 The release id is just `YYYY-MM`. **You compute it — never ask the user to type the format.** Work out the current month from today (e.g. today 2026-07 → `2026-07`).
 
 When no release is active (or the user says "start a release"), call **`m_ask_user`** with clickable options:
 - **"Current month (`<YYYY-MM>`)"** ← recommended
 - **"A different month"**
 
-Pick current → `init --release <id>` immediately. Pick different → follow-up `m_ask_user` free-text (hint: "e.g. next month, or 2026-08"); accept natural answers ("this month", "August") and do the date math yourself. Runs are real — for test runs the engineer keeps a `mocks.local.yaml` (skip/redirect/inject per step; see `mock-spec`).
+Pick current → `init --release <id>` after the setup prerequisite check passes. Pick different → follow-up `m_ask_user` free-text (hint: "e.g. next month, or 2026-08"); accept natural answers ("this month", "August") and do the date math yourself. Runs are real — for test runs the engineer keeps a `mocks.local.yaml` (skip/redirect/inject per step; see `mock-spec`).
 
 `init` records the **release owner** (the engineer running it) from the signed-in `az` user; reminders email that address. Pass `--owner-email`/`--owner-name` for a richer profile (e.g. from `workiq_get_my_profile`), or change later with `set-owner`. Never hardcode a recipient.
 

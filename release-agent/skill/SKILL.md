@@ -29,6 +29,39 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
 - **Reference docs (this skill's detail):** **`<AGENT_ROOT>\skill\reference\`** — read the relevant one on demand (routing table below). The core stays lean; the details live there.
 - `setup/bootstrap.ps1` only prepares the machine (infra preflight + installs this skill). If an infra check fails (an MCP server isn't registered, or Scout wasn't restarted), run `python -m orchestrator.cli infra` and tell the user to restart Scout; manifest is `config/requirements.yaml`.
 
+## Setup prerequisite check BEFORE a new release
+
+After discovery, but BEFORE `preview-release`/`init`, inspect `infra --no-register --json`.
+Handle every `path_requests` entry first: ask the user for that path with a free-text
+`m_ask_user`, stop, then validate the supplied location with the returned flag.
+Defaults are candidates, not mandatory installation locations. Use `--scout-root`
+for the actual existing Scout profile and `--agency-path` for a custom Agency
+executable. For a custom profile, set the process `RELEASE_AGENT_SCOUT_ROOT` on
+subsequent CLI shell calls too so readiness reads the same configuration; never
+change persistent environment settings silently. Remember only confirmed paths.
+If Python is not discovered, ask for its actual executable rather than assuming
+an author-specific location or automatically installing a duplicate.
+
+Its `m365_connectors` section is enforced, not documentation-only. In Scout, observe
+the actual loaded tools and write a fresh temporary inventory outside release state:
+`{version:1, observed_at:<actual offset-aware observation time>,
+available_tools:{<canonical required name>:<actual exposed name>}}`.
+Use its `required_tools` and the SAME names/aliases as `m365-capabilities`; include
+only tools actually exposed, never names copied from a config or a template.
+Rerun `infra --no-register --tools-file <inventory.json> --json`. Stop before `init`
+unless `ok:true`; show missing tools, the supported hosted WorkIQ endpoint and
+configuration/sign-in/reload guidance. Native WorkIQ wrappers or Ask cannot stand
+in for hosted entity `fetch`. Use Scout's supported connector setup; do not invent
+a command-server registration, acquire Graph tokens, change permissions or test-write.
+Delete the temporary inventory after reporting its result. A skill reload copies
+instructions, not connectors, and must not be described as completed machine setup.
+
+`tools_available` proves only tool availability, not working sessions, authenticated
+reads or send/upload grants. Keep the existing release-bound capability probes and
+owner attestations after initialization; never record `m365_access` from this check.
+For an existing release, preserve its state and surface setup/readiness holds rather
+than recreating it or adopting another runtime.
+
 ## GOLDEN RULES (always apply — the deduped essentials)
 1. **Discover first, always.** On ANY release request, run `python -m orchestrator.cli list --json` and branch on `resolution`: `none` → offer to start (via `m_ask_user`); `one` → use `release.release_id`; `ambiguous` → list `all`, let the user pick; `explicit` → use it. Never run `status`/`next`/`approve` against an unconfirmed id.
 2. **Render CLI output as LIVE MARKDOWN — never fenced.** `checklist`, `status`, `next`, etc. print finished markdown tables. Reproduce their stdout **verbatim as normal message content** so Scout renders the table — do NOT wrap in a ``` code fence, and do NOT rebuild/re-order/re-type from memory (you'll introduce stale icons / broken URLs). A sentence before/after is fine; the block must match. Use `--json` only for your own branching. **Running the command is NOT the same as showing it** — the CLI auto-logs, but the user only sees what YOU paste into your reply. If you ran `checklist`/`status` and didn't paste its table, the user saw nothing.
@@ -220,7 +253,7 @@ Never switch transports or repeat an upload/send after an unknown outcome.
   label correction is not a prerequisite for a fresh, separately identified test plan;
   never clear/reuse its receipt, retry its rename or silently adopt an existing release.
 - **"status" / "where are we":** discover. If the entry gate isn't cleared (`readiness_gate`/not signed, or `blocked`) → the useful answer IS the checklist: run `checklist --release <id> --verify` and show that table (don't ask permission). Otherwise show `status`. No release → say so, offer to start.
-- **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before anything.)* **Confirm which release in ONE prompt** — run `python -m orchestrator.cli preview-release --json` (returns candidates, each with `release_id`, `ship_label`, `ccd_pretty` — the release is NAMED for its **ship month** = code-complete month + 1). Lead with candidate[0] (the current month's release) and `m_ask_user`: recommended chip **"Yes — start the `<ship_label>` release (code-complete `<ccd_pretty>`)"**, plus a **"A different month"** chip. Show the ship name and the CCD date TOGETHER so there's no month-mismatch surprise (never make the user pick a bare month, then tell them it's a different one). If they pick "A different month" → a second `m_ask_user` offering candidates[1..3] as chips (each **"`<ship_label>` (CC `<ccd_pretty>`)"**) plus a free-text "another month" fallback. → `init --release <chosen release_id>` (this stores + prints the confirmed ship-name; do NOT re-ask it) → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
+- **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before anything.)* After discovery, complete **Setup prerequisite check BEFORE a new release** above; do not initialize through a missing/unverified connector hold. **Confirm which release in ONE prompt** — run `python -m orchestrator.cli preview-release --json` (returns candidates, each with `release_id`, `ship_label`, `ccd_pretty` — the release is NAMED for its **ship month** = code-complete month + 1). Lead with candidate[0] (the current month's release) and `m_ask_user`: recommended chip **"Yes — start the `<ship_label>` release (code-complete `<ccd_pretty>`)"**, plus a **"A different month"** chip. Show the ship name and the CCD date TOGETHER so there's no month-mismatch surprise (never make the user pick a bare month, then tell them it's a different one). If they pick "A different month" → a second `m_ask_user` offering candidates[1..3] as chips (each **"`<ship_label>` (CC `<ccd_pretty>`)"**) plus a free-text "another month" fallback. → `init --release <chosen release_id>` (this stores + prints the confirmed ship-name; do NOT re-ask it) → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
 - **Engine HOLDS at a gate:** present fresh status. For an external gate, first run its `approval_command --preview --comment "<comment>"` and show the exact request/hash alongside the table; then `m_ask_user` Approve/Deny. On approval repeat the reviewed comment, hash and human reviewer through that command (see the lifecycle above); for a local gate use `approve`. On denial run `deny --comment` with their reason. An already-owned external attempt needs exact-ID read recovery, not another approval prompt/submission. Never substitute generic `approve` for an externally-backed gate; the CLI rejects that bypass. Present new status.
 - **Phase 3 `distribute_tests` needs owner input:** this is NOT a technical failure to skip or mark done. Follow **reference/commands.md → Bug Bash availability**: first resolve the current primary OCE from ICM and pass its verified UPN with `--oce`. Show only the returned filtered candidates (owner, OCE, Jia Le He, Moumita Ghosh and Veena Soman are already removed), never the raw DL roster. Then ask "Is anyone OOF for this Bug Bash?", stop and wait, and record the owner's explicit answer with `distribute-tests`. Never infer availability from calendars, presence, O365 OOF, or silence. The confirmation is for this release's Bug Bash only.
 - **Phase 3 Broker plan recovery:** follow **reference/commands.md → Broker plan recovery**. Never reopen creation or clear IDs to fix missing metadata. Present candidate IDs/areas/results and ask which existing plan to retain; bind only the owner's explicit choice. An uncertain create is not permission to retry. Partial plans are repaired in place, not automatically deleted/replaced.

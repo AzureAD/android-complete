@@ -795,7 +795,7 @@ using PowerShell 7 (`pwsh`):
 
 ```powershell
 # one-time — from the release-agent folder
-cd C:\repos\android-complete\release-agent    # adjust to your clone location
+Set-Location "<your clone>\release-agent"
 pwsh .\setup\bootstrap.ps1
 ```
 
@@ -807,15 +807,56 @@ anything missing, then **registers any required MCP servers into Scout's config*
 `requirements.yaml` up to date whenever a new dependency (CLI, package, or MCP
 server) is introduced.
 
+MCP and skill installation are explicit parts of bootstrap: it registers the
+declared command-based servers and copies **SKILL.md plus all reference resources**,
+verifying each copied file. Existing unrelated servers and user resources stay intact.
+Registration is not proof of a healthy authenticated MCP session.
+
+Paths are discovered per installation, not fixed to the author's machine.
+Agency uses an explicit path, PATH, existing configured launchers, then its
+per-user default as candidates. The clone comes from the script location.
+Use `-ScoutRoot <existing-profile>`, `-AgencyPath <executable>`,
+`-PythonPath <executable>`, `-ScoutExe <executable>` or `-ScoutSkillsDir <folder>`
+for custom locations. The default skill destination is `<ScoutRoot>\m-skills`.
+Missing paths prompt interactively; inside Scout or with `-NonInteractive`,
+bootstrap exits with a path request so Scout can ask the user instead of hanging.
+It never creates a guessed profile or installs a second Python silently:
+`-InstallPython` explicitly opts into winget; `-NoAutoInstallPython` vetoes it.
+
+Infra accepts `--scout-root` and `--agency-path` too, returning `path_requests`
+for unresolved locations. `RELEASE_AGENT_SCOUT_ROOT` and
+`RELEASE_AGENT_AGENCY_PATH` are optional process-environment overrides shared by
+the adapters; when using a custom Scout profile, supply its environment override
+on later CLI calls as well. Setup does not silently change persistent environment
+or application settings.
+
+The `m365_connectors` section is also enforced. A headless bootstrap cannot see
+Scout's loaded tools and therefore reports **setup incomplete**, not success, until
+you provide `-M365ToolsFile <inventory.json>`. Configure/sign in to the supported
+hosted WorkIQ connector (`https://workiq.svc.cloud.microsoft/mcp`) in Scout, reload,
+and observe the actual tool inventory. Do not infer entity `fetch` from native
+`workiq_*` tools, use Ask as a group lookup, or invent a command-server registration.
+
+The temporary inventory contains
+`{"version":1,"observed_at":"<actual offset-aware read time>","available_tools":{"<canonical required name>":"<actual exposed name>"}}`.
+`infra --no-register --json` lists the required names and inventory format.
+Inventories expire after 15 minutes; missing, malformed or future-dated evidence
+does not pass. Do not include tokens, prompts or private read responses.
+The Scout conductor checks this before initializing a new release. Bootstrap
+exits nonzero while incomplete and no longer suggests proceeding to release init.
+This checks tool availability only: live sessions, release-owner/target-bound
+M365 read probes and explicit send/upload attestations remain required at entry.
+
 You can run the preflight any time on its own:
 
 ```powershell
 python -m orchestrator.cli infra              # check + auto-register MCP servers (restart Scout after)
 python -m orchestrator.cli infra --no-register  # report only
+python -m orchestrator.cli infra --no-register --tools-file <inventory.json> --json
 ```
 
 ```powershell
-# drive a release (runs are real; keep a mocks.local.yaml for safe testing)
+# drive a release AFTER setup prerequisites pass (runs are real)
 cd release-agent
 python -m orchestrator.cli init   --release 2026-07
 python -m orchestrator.cli next   --release 2026-07     # runs until the first gate

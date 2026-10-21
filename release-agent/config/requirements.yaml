@@ -21,8 +21,8 @@ requirements:
     name: "Microsoft Scout (host app)"
     type: host
     required_by: [everything — the skill runs inside Scout]
-    # Detected by the presence of the Scout profile dir (~/.scout). This is a soft
-    # check surfaced by `infra`; if absent, the engineer must install Scout FIRST
+    # Detected by the selected Scout profile dir (per-user ~/.scout by default).
+    # If absent, ask for the actual profile or install Scout FIRST
     # (MCP servers can't be registered without it).
     check: "cmd /c \"if exist \"%USERPROFILE%\\.scout\" (exit 0) else (exit 1)\""
     install: "Install Microsoft Scout first, then re-run bootstrap. (Get it from your team's Scout distribution / the internal Scout install page.)"
@@ -81,7 +81,7 @@ requirements:
     type: cli
     required_by: [readiness.oncall_now, mcp.icm]
     check: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
-    install: "Install the Agency platform: https://aka.ms/agency (provides agency.exe under %APPDATA%\\agency)"
+    install: "Install the Agency platform: https://aka.ms/agency, or supply its existing executable with --agency-path. PATH and per-user default locations are candidates, not required install paths."
 
 # MCP servers the skill needs inside Scout. Unlike CLIs these live in Scout's own
 # config (~/.scout/m-mcp-servers.json) and load at startup — so `bootstrap.ps1`
@@ -93,12 +93,15 @@ requirements:
 #   provider    a shell check that the launcher exists (so we don't register a broken server)
 #   command     absolute launcher path (supports %APPDATA% etc.; expanded at register time)
 #   args        launcher args
+#   launcher    "agency": discover explicit path, PATH, existing entries, then
+#               the per-user command default; ask for a path when none exists
 #   required_by which part(s) of the tool need it
 #   note        guidance
 mcp_servers:
   - id: icm
     name: "ICM MCP server (on-call / incidents)"
     scout_key: icm
+    launcher: agency
     provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
     command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
     args: ["mcp", "icm"]
@@ -150,6 +153,7 @@ mcp_servers:
   - id: kusto
     name: "Kusto / ADX MCP server (query telemetry)"
     scout_key: kusto
+    launcher: agency
     provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
     command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
     args: ["mcp", "kusto"]
@@ -180,6 +184,7 @@ mcp_servers:
   - id: teams
     name: "Microsoft Teams MCP server (Agency — group chats + rich messaging)"
     scout_key: teams
+    launcher: agency
     provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
     command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
     args: ["mcp", "teams"]
@@ -230,6 +235,7 @@ mcp_servers:
   - id: ecs
     name: "ECS MCP server (Experimentation & Configuration Service)"
     scout_key: ecs
+    launcher: agency
     provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
     command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
     args: ["mcp", "ecs"]
@@ -314,8 +320,11 @@ kusto_clusters:
     default_database: "d496be22d62a46b0a3cf67ea2e736fd8"
     description: "ID shared EastUS2 (idsharedeus2) — Android release telemetry"
 
-# Built-in tools and hosted entity tools are discovered in the actual Scout tool
-# inventory, not assumed from a local command-server registration. No tokens belong here.
+# Enforced by infra/bootstrap: setup remains incomplete without a fresh loaded-tool
+# inventory (--tools-file). Required names/aliases share m365_capabilities.REQUIRED_TOOLS
+# with release entry; this section is not documentation-only. No tokens belong here.
+# Hosted connector registration/authentication uses Scout's supported UI, not an
+# invented command-server entry. Inventory is not proof of authenticated read/write access.
 m365_connectors:
   calendar_mail_files: "Scout structured workiq_* tools"
   teams: "Agency Microsoft Teams MCP"

@@ -12,17 +12,35 @@ def cmd_infra(args):
     MCP servers the skill needs in Scout. Run before the tool-level requirements.
     Registers missing MCP servers into Scout's config (backup first) unless
     --no-register; --json for machine output."""
-    report = infra.run(C.REQUIREMENTS_CONFIG, register=not getattr(args, "no_register", False))
+    try:
+        inventory = None
+        if getattr(args, "tools_file", None):
+            with open(args.tools_file, encoding="utf-8-sig") as stream:
+                inventory = _json.load(stream)
+            if not isinstance(inventory, dict):
+                raise ValueError("--tools-file must contain a version-1 loaded-tool inventory object")
+        report = infra.run(
+            C.REQUIREMENTS_CONFIG, register=not getattr(args, "no_register", False),
+            tool_inventory=inventory, scout_root=getattr(args, "scout_root", None),
+            agency_path=getattr(args, "agency_path", None))
+    except (OSError, ValueError) as exc:
+        if getattr(args, "json", False):
+            print(_json.dumps({"ok": False, "error": str(exc)}))
+        else:
+            print(f"Infrastructure preflight failed: {exc}")
+        return 1
     if getattr(args, "json", False):
         print(_json.dumps(report, indent=2))
         return 0 if report["ok"] else 1
     print("Infrastructure preflight")
     if not report.get("scout_present", True):
-        print("  ⛔ Microsoft Scout not detected (~/.scout missing).")
+        print(f"  Microsoft Scout profile not found: {report['scout_root']}")
         scout_req = next((r for r in report["requirements"] if r["id"] == "scout"), None)
         if scout_req and scout_req.get("install"):
             print(f"      install: {scout_req['install']}")
         print("      Install Scout FIRST, then re-run — MCP servers can't be registered without it.")
+    for request in report["path_requests"]:
+        print(f"  [PATH REQUIRED] {request['question']} Supply {request['flag']}.")
     print("  CLIs / host:")
     for r in report["requirements"]:
         mark = "OK" if r["ok"] else "MISSING"
@@ -37,17 +55,25 @@ def cmd_infra(args):
                  "provider_missing": "PROVIDER MISSING", "launcher_missing": "LAUNCHER MISSING",
                  "scout_missing": "SCOUT NOT INSTALLED"}.get(m["status"], m["status"].upper())
         print(f"    [{label}] {m['name']} — {m['detail']}")
+    connectors = report["m365_connectors"]
+    if connectors is not None:
+        print("  M365 connectors (loaded Scout tools):")
+        print(f"    [{connectors['status'].upper()}] {connectors['detail']}")
+        print(f"      Hosted WorkIQ endpoint: {connectors['hosted_endpoint']}")
     if report["restart_needed"]:
         print("\n  ⚠ RESTART Scout to load newly-registered MCP server(s).")
     if not report["ok"]:
-        print("\n  Some infrastructure is missing — resolve the items above, then re-run.")
+        print("\n  Setup incomplete — resolve the items above before initializing a release.")
     else:
-        print("\n  Infrastructure OK.")
+        print("\n  Setup prerequisites OK. Release-specific readiness checks are still required.")
     return 0 if report["ok"] else 1
 
 
 def register(sub):
     inf = sub.add_parser("infra", help="Infrastructure preflight: check CLIs + register/verify MCP servers in Scout")
     inf.add_argument("--no-register", action="store_true", help="Only report; don't register missing MCP servers")
+    inf.add_argument("--tools-file", help="Fresh version-1 observed_at/available_tools inventory from inside Scout")
+    inf.add_argument("--scout-root", help="Existing Scout profile directory (default: per-user .scout)")
+    inf.add_argument("--agency-path", help="Agency executable; otherwise discover PATH, configured launchers and defaults")
     inf.add_argument("--json", action="store_true")
     inf.set_defaults(func=cmd_infra)

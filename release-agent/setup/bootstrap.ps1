@@ -8,9 +8,9 @@
   Steps:
     1. Infrastructure preflight — check CLIs/host deps AND register + verify the
        MCP servers the skill needs inside Scout (from config/requirements.yaml).
-       If Python 3.9+ is missing it is installed automatically via winget
-       (per-user, no admin); PyYAML is then installed via pip. Pass
-       -NoAutoInstallPython to opt out of the Python auto-install.
+       If Python 3.9+ is not discovered, ask for its actual path. -InstallPython
+       explicitly opts into winget installation (per-user, no admin);
+       -NoAutoInstallPython prevents it. PyYAML is installed via pip if missing.
     2. Install the /release-agent skill into the Scout skills folder — only if
        Microsoft Scout is detected (~/.scout present); the copy is then verified.
     3. Print next steps. By default the script closes and relaunches Scout so the
@@ -25,29 +25,37 @@
       cd <path-to>\android-complete\release-agent
       pwsh .\setup\bootstrap.ps1
 
-    Example (default clone location):
-
-      cd C:\repos\android-complete\release-agent
-      pwsh .\setup\bootstrap.ps1
-
     You can launch it from any working directory as long as you give the full
-    path to the script (the script locates its own folder), e.g.:
-
-      pwsh C:\repos\android-complete\release-agent\setup\bootstrap.ps1
+    path to the script. The script locates its own clone from $PSScriptRoot.
 
 .EXAMPLE
-  cd C:\repos\android-complete\release-agent
+  cd <your-clone>\release-agent
   pwsh .\setup\bootstrap.ps1
+  M365 CONNECTORS
+    Setup cannot finish from MCP registrations alone. Configure/sign in to the
+    hosted WorkIQ connector in Scout and supply a fresh loaded-tool inventory
+    with -M365ToolsFile. Release-specific read probes and write attestations
+    remain separate; bootstrap never performs test sends or uploads.
 #>
 [CmdletBinding()]
 param(
-  [string]$ScoutSkillsDir = "$env:USERPROFILE\.scout\m-skills",
+  [string]$ScoutSkillsDir,
+  [string]$ScoutRoot,
+  [string]$AgencyPath,
+  [string]$PythonPath,
+  [string]$ScoutExe,
+  [switch]$NonInteractive,
+  [switch]$InstallPython,
   [switch]$SkipSkillInstall,
-  [switch]$NoAutoInstallPython,  # by default, if Python is missing we install it via winget
+  [string]$M365ToolsFile,
+  [switch]$NoAutoInstallPython,  # compatibility veto for -InstallPython
   [switch]$NoRestartScout        # by default we restart Scout so new skill/MCP servers load
 )
 
 $ErrorActionPreference = "Stop"
+if ($M365ToolsFile) {
+  $M365ToolsFile = (Resolve-Path -LiteralPath $M365ToolsFile).Path
+}
 
 # The Python engine prints UTF-8 (em-dashes, etc.). Make sure this console reads/writes
 # UTF-8 so echoed output doesn't turn into mojibake like "ΓÇö".
@@ -76,16 +84,76 @@ if (-not (Test-Path (Join-Path $AgentRoot 'setup\bootstrap.ps1'))) {
 # True when THIS script was launched from a shell inside a Scout session — Scout sets
 # these env vars for its child processes. Restarting Scout from there would kill us.
 $InsideScout = [bool]($env:COPILOT_AGENT_SESSION_ID -or $env:COPILOT_CLI)
+$CanPromptForPaths = -not ($InsideScout -or $NonInteractive -or [Console]::IsInputRedirected)
+
+function Resolve-SetupPath {
+  param([string]$Value, [string[]]$Candidates, [string]$Label,
+        [string]$Parameter, [ValidateSet('Leaf', 'Container')][string]$Kind = 'Leaf')
+  $choices = if ($Value) { @($Value) } else { @($Candidates) }
+  foreach ($candidate in $choices) {
+    if ($candidate) {
+      $expanded = [Environment]::ExpandEnvironmentVariables($candidate)
+      if (Test-Path -LiteralPath $expanded -PathType $Kind) {
+        return (Resolve-Path -LiteralPath $expanded).Path
+      }
+    }
+  }
+  Write-Host "  [PATH REQUIRED] $Label was not found. Supply -$Parameter with its actual location." -ForegroundColor Yellow
+  if ($CanPromptForPaths) {
+    $entered = Read-Host "  Path to $Label (leave blank to keep setup incomplete)"
+    if ($entered -and (Test-Path -LiteralPath $entered -PathType $Kind)) {
+      return (Resolve-Path -LiteralPath $entered).Path
+    }
+    Write-Host "  No valid $Label path supplied; setup remains incomplete." -ForegroundColor Yellow
+  } else {
+    Write-Host "  In Scout, ask the user for this path and rerun; never guess or wait on a console prompt." -ForegroundColor Yellow
+  }
+  return $null
+}
+
+if (-not $ScoutRoot) {
+  $ScoutRoot = if ($env:RELEASE_AGENT_SCOUT_ROOT) { $env:RELEASE_AGENT_SCOUT_ROOT }
+               elseif ($ScoutSkillsDir) { Split-Path -Parent $ScoutSkillsDir }
+               else { Join-Path $env:USERPROFILE '.scout' }
+}
+$ScoutRoot = Resolve-SetupPath -Value $ScoutRoot -Label 'existing Scout profile directory' -Parameter ScoutRoot -Kind Container
+if (-not $ScoutRoot) { exit 1 }
+if (-not $ScoutSkillsDir) { $ScoutSkillsDir = Join-Path $ScoutRoot 'm-skills' }
+$ScoutSkillsDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ScoutSkillsDir)
+$env:RELEASE_AGENT_SCOUT_ROOT = $ScoutRoot
+
+$agencyCandidates = @()
+foreach ($name in @('agency', 'agency.exe')) {
+  $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($command) { $agencyCandidates += $command.Source }
+}
+$mcpConfig = Join-Path $ScoutRoot 'm-mcp-servers.json'
+if (Test-Path -LiteralPath $mcpConfig -PathType Leaf) {
+  $servers = (Get-Content -LiteralPath $mcpConfig -Raw | ConvertFrom-Json).servers
+  foreach ($entry in $servers.PSObject.Properties.Value) {
+    $command = $entry.config.command
+    if ($command -and ([IO.Path]::GetFileName($command) -match '^agency(\.exe)?$')) {
+      $agencyCandidates += $command
+    }
+  }
+}
+if ($env:APPDATA) { $agencyCandidates += Join-Path $env:APPDATA 'agency\CurrentVersion\agency.exe' }
+if (-not $AgencyPath) { $AgencyPath = $env:RELEASE_AGENT_AGENCY_PATH }
+$AgencyPath = Resolve-SetupPath -Value $AgencyPath -Candidates $agencyCandidates -Label 'Agency CLI executable' -Parameter AgencyPath
+if (-not $AgencyPath) { exit 1 }
 
 # Stop all Scout processes and relaunch the app. Returns $true if it relaunched.
 function Restart-Scout {
   $procs = @(Get-Process -Name 'scout' -ErrorAction SilentlyContinue)
-  $exe = ($procs | Where-Object { $_.Path } | Select-Object -First 1).Path
-  if (-not $exe) { $exe = Join-Path $env:LOCALAPPDATA 'Programs\Microsoft Scout\scout.exe' }
-  if (-not (Test-Path $exe)) {
-    Write-Host "  Could not locate scout.exe to relaunch." -ForegroundColor Yellow
-    return $false
+  $candidates = @($procs | Where-Object { $_.Path } | Select-Object -ExpandProperty Path)
+  foreach ($name in @('scout', 'scout.exe')) {
+    $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($command) { $candidates += $command.Source }
   }
+  if ($env:LOCALAPPDATA) { $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Microsoft Scout\scout.exe' }
+  if ($env:ProgramFiles) { $candidates += Join-Path $env:ProgramFiles 'Microsoft Scout\scout.exe' }
+  $exe = Resolve-SetupPath -Value $ScoutExe -Candidates $candidates -Label 'Scout executable' -Parameter ScoutExe
+  if (-not $exe) { return $false }
   if ($procs.Count) {
     Write-Host "  Closing Scout ($($procs.Count) process(es)) ..." -ForegroundColor DarkYellow
     $procs | ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {} }
@@ -121,6 +189,13 @@ if (-not (Test-Path $ReqFile)) { Write-Host "  requirements.yaml not found at $R
 # Resolve a working Python (3.9+). Prefer `python`/`python3`, fall back to `py -3`,
 # then probe well-known winget/python.org install dirs (PATH may be stale in this session).
 function Resolve-Python {
+  if ($PythonPath) {
+    $candidate = Resolve-SetupPath -Value $PythonPath -Label 'Python executable' -Parameter PythonPath
+    if (-not $candidate) { return $null }
+    & $candidate -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3,9) else 1)"
+    if ($LASTEXITCODE -ne 0) { throw "The selected Python executable must support Python 3.9 or newer." }
+    return "`"$candidate`""
+  }
   foreach ($cand in @('python','python3')) {
     try { & $cand -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3,9) else 1)" 2>$null; if ($LASTEXITCODE -eq 0) { return $cand } } catch {}
   }
@@ -140,9 +215,13 @@ function Resolve-Python {
 }
 
 $PyExe = Resolve-Python
+if (-not $PyExe -and -not $PythonPath -and (-not $InstallPython -or $NoAutoInstallPython)) {
+  $PythonPath = Resolve-SetupPath -Label 'Python 3.9+ executable' -Parameter PythonPath
+  if ($PythonPath) { $PyExe = Resolve-Python }
+}
 
-# If Python is missing, install it for the user via winget (per-user, no admin), then re-resolve.
-if (-not $PyExe -and -not $NoAutoInstallPython) {
+# Explicit opt-in avoids installing a second copy when a custom Python was not discovered.
+if (-not $PyExe -and $InstallPython -and -not $NoAutoInstallPython -and -not $PythonPath) {
   $winget = (Get-Command winget -ErrorAction SilentlyContinue)
   if ($winget) {
     Write-Host "  [ ] Python 3.9+ not found - installing Python 3.12 via winget (no admin needed) ..." -ForegroundColor DarkYellow
@@ -191,7 +270,15 @@ if (-not $haveInfra) {
 } else {
   Push-Location $AgentRoot
   try {
-    $out = & cmd /c "$PyExe -m orchestrator.cli infra 2>&1"
+    $infraArgs = @("-m", "orchestrator.cli", "infra", "--scout-root", $ScoutRoot, "--agency-path", $AgencyPath)
+    if ($M365ToolsFile) {
+      $infraArgs += @("--tools-file", $M365ToolsFile)
+    }
+    if ($PyExe -eq 'py -3') {
+      $out = & py -3 @infraArgs 2>&1
+    } else {
+      $out = & ($PyExe.Trim('"')) @infraArgs 2>&1
+    }
     $out | ForEach-Object { Write-Host "  $_" }
     if ($LASTEXITCODE -ne 0) { $ok = $false }
     if ($out -match "RESTART Scout") { $restartNeeded = $true }
@@ -213,8 +300,8 @@ Write-Host "`n2. Skill install"
 if ($SkipSkillInstall) {
   Write-Host "  Skipped (--SkipSkillInstall)."
 } else {
-  $src       = Join-Path $AgentRoot "skill\SKILL.md"
-  $ScoutRoot = Split-Path -Parent $ScoutSkillsDir     # ~/.scout
+  $srcDir    = Join-Path $AgentRoot "skill"
+  $src       = Join-Path $srcDir "SKILL.md"
   $destDir   = Join-Path $ScoutSkillsDir "release-agent"
   $destFile  = Join-Path $destDir "SKILL.md"
 
@@ -232,16 +319,18 @@ if ($SkipSkillInstall) {
   }
   else {
     New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-    Copy-Item $src $destFile -Force
-    # Verify the skill actually landed (exists + non-empty + size matches source).
-    $srcLen = (Get-Item $src).Length
-    if ((Test-Path $destFile) -and ((Get-Item $destFile).Length -eq $srcLen) -and ($srcLen -gt 0)) {
-      Write-Host "  [x] Installed /release-agent skill -> $destFile ($srcLen bytes)" -ForegroundColor Green
-      $skillInstalled = $true
-    } else {
-      Write-Host "  [ ] Skill copy could not be verified at $destFile" -ForegroundColor Red
-      $ok = $false
+    foreach ($file in Get-ChildItem -LiteralPath $srcDir -Recurse -File) {
+      $relative = [IO.Path]::GetRelativePath($srcDir, $file.FullName)
+      $target = Join-Path $destDir $relative
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+      Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+      if ((Get-FileHash -LiteralPath $file.FullName).Hash -ne (Get-FileHash -LiteralPath $target).Hash) {
+        throw "Installed skill resource differs from its source: $relative"
+      }
     }
+    if ((Get-Item -LiteralPath $destFile).Length -eq 0) { throw "Installed skill instructions are empty." }
+    Write-Host "  [x] Installed /release-agent and reference resources -> $destDir" -ForegroundColor Green
+    $skillInstalled = $true
   }
 
   # Report every release-agent skill Scout can currently see.
@@ -269,5 +358,12 @@ if ($needsReload) {
 }
 
 Write-Host "`n3. Next steps" -ForegroundColor Cyan
+if (-not $ok) {
+  Write-Host "  Setup is INCOMPLETE. Do not initialize a release yet." -ForegroundColor Yellow
+  Write-Host "  Resolve the reported dependencies/connectors. In Scout, observe the loaded"
+  Write-Host "  tools and rerun infra --no-register --tools-file <inventory.json>."
+  Write-Host "  For bootstrap, pass the same fresh inventory with -M365ToolsFile."
+  exit 1
+}
 Write-Host "  * Open Scout and run:  /release-agent"
-Write-Host "  * The agent drives the whole release from inside Scout - just follow its prompts.`n"
+Write-Host "  * Setup prerequisites are ready; release-specific read probes and attestations still follow.`n"

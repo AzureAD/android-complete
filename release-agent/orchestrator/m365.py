@@ -42,6 +42,16 @@ def profile_matches(profile, owner):
                for key in ("userPrincipalName", "mail", "email"))
 
 
+def validate_freshness(observed_at, *, now=None, max_age_seconds=900):
+    if type(max_age_seconds) is not int or max_age_seconds < 1:
+        raise ValueError("Connector observation lifetime must be a positive number of seconds")
+    observed = _instant(observed_at)
+    clock = _instant(now) if now is not None else datetime.now(timezone.utc)
+    age = (clock - observed).total_seconds()
+    if age < 0 or age > max_age_seconds:
+        raise ValueError("Connector observation is stale or future-dated; rerun the exact read")
+
+
 def validate_observation(value, *, tool, arguments, owner, now=None, max_age_seconds=900,
                          allow_text=False):
     """Validate host-recorded provenance, not independently authenticate its author."""
@@ -56,13 +66,7 @@ def validate_observation(value, *, tool, arguments, owner, now=None, max_age_sec
             or not isinstance(account, str) or account != account.strip()
             or account.casefold() != owner.casefold()):
         raise ValueError("Connector observation account differs from the release owner")
-    if type(max_age_seconds) is not int or max_age_seconds < 1:
-        raise ValueError("Connector observation lifetime must be a positive number of seconds")
-    observed = _instant(value.get("observed_at"))
-    clock = _instant(now) if now is not None else datetime.now(timezone.utc)
-    age = (clock - observed).total_seconds()
-    if age < 0 or age > max_age_seconds:
-        raise ValueError("Connector observation is stale or future-dated; rerun the exact read")
+    validate_freshness(value.get("observed_at"), now=now, max_age_seconds=max_age_seconds)
     result = value.get("result")
     result_types = (dict, list, str) if allow_text and tool == "workiq_download_file" else (dict, list)
     if (not isinstance(result, result_types)
