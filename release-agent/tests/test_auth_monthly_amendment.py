@@ -341,8 +341,7 @@ def test_cli_execute_is_separate_reviewed_capability_and_persists_complete_recei
     from orchestrator.state import ReleaseState
     loaded = ReleaseState.load(str(path))
     assert E.base_receipt(loaded)["status"] == "complete" and loaded.workflow_revision == original_pin
-    with pytest.raises(ValueError):
-        R.assert_current(CC.load_orch(root, release, CC.DEFAULT_CONFIG)[1])
+    assert R.assert_current(CC.load_orch(root, release, CC.DEFAULT_CONFIG)[1]) == R.revision_id(original_pin)
 
 
 def test_checkpoint_retries_only_windows_sharing_errors_not_provider_writes(monkeypatch):

@@ -14,6 +14,7 @@ from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState, StepState
 from orchestrator import delivery, revision
 from orchestrator.revision import (
+    CURRENT_EXECUTION_CONTRACT, StaticRevisionProvider,
     adopt, adoption_preview, assert_current, bind_initial, current_revision,
     digest, phase_manifest, revision_id, runtime_hash,
 )
@@ -61,7 +62,7 @@ def _save(state, tmp_path):
 def test_unbound_is_diagnostic_only_and_never_silently_bound(tmp_path):
     state, orch = _orch(tmp_path, bind=False)
     _complete(state)
-    assert state.schema_version == 3
+    assert state.schema_version == 4
     assert orch.scheduling().status == "blocked"
     assert not orch.scheduling().runnable
     assert orch.status_report()["done"] == 0
@@ -77,8 +78,12 @@ def test_unbound_is_diagnostic_only_and_never_silently_bound(tmp_path):
         bind_initial(loaded_orch)
 
 
-def test_schema3_exact_binding_and_review_shapes(tmp_path):
+def test_schema4_exact_binding_and_review_shapes(tmp_path):
     state, orch = _orch(tmp_path)
+    assert set(state.workflow_revision) == {
+        "runtime_hash", "phases", "last_adoption", "execution_contract",
+    }
+    assert state.workflow_revision["execution_contract"] == CURRENT_EXECUTION_CONTRACT
     review = {"execution_id": "exec", "hash": digest("input"), "approved_by": "owner",
               "approved_at": "2026-07-01T00:00:00Z", "workflow_revision": revision_id(state.workflow_revision)}
     state.set_step("first", "work", StepState(data={"last_write_review": review}))
@@ -87,7 +92,7 @@ def test_schema3_exact_binding_and_review_shapes(tmp_path):
     pristine = json.loads(path.read_text(encoding="utf-8"))
     changes = [
         lambda value: value.update(schema_version=2),
-        lambda value: value.update(schema_version=3.0),
+        lambda value: value.update(schema_version=4.0),
         lambda value: value["workflow_revision"].update(id=digest("redundant")),
         lambda value: value["workflow_revision"]["phases"][0].update(step_keys=["wrong.step"]),
         lambda value: value["workflow_revision"].update(runtime_hash="sha256:no"),
@@ -104,7 +109,7 @@ def test_schema3_exact_binding_and_review_shapes(tmp_path):
         assert "--force" not in str(error.value)
     value = deepcopy(pristine)
     value["steps"]["first.work"].update(
-        status="running", execution={"id": "owned", "owner": "owner",
+        status="in_flight", execution={"id": "owned", "owner": "owner",
                                     "started_at": "now", "write_review": {"hash": digest(1), "approved_by": "owner"}})
     path.write_text(json.dumps(value), encoding="utf-8")
     ReleaseState.load(str(path))
@@ -112,6 +117,48 @@ def test_schema3_exact_binding_and_review_shapes(tmp_path):
     path.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(ValueError, match="execution write review"):
         ReleaseState.load(str(path))
+
+
+@pytest.mark.parametrize("contract", ["missing", None, True, False, 0, 2, 1.0, "1", {}, []])
+def test_unsupported_execution_contract_is_rejected_without_migration(tmp_path, contract):
+    state, orch = _orch(tmp_path)
+    if contract == "missing":
+        del state.workflow_revision["execution_contract"]
+    else:
+        state.workflow_revision["execution_contract"] = contract
+    path = _save(state, tmp_path)
+    before, disk = deepcopy(asdict(state)), path.read_bytes()
+    checks = (
+        lambda: ReleaseState.load(str(path)),
+        lambda: revision_id(state.workflow_revision),
+        lambda: assert_current(orch),
+        lambda: revision.monthly_amendment_runtime(orch),
+        lambda: adoption_preview(orch),
+        lambda: adopt(orch, digest("review"), by="owner", reason="No migration"),
+    )
+    for check in checks:
+        with pytest.raises(ValueError, match="new version.*execution_contract"):
+            check()
+        assert asdict(state) == before
+        assert path.read_bytes() == disk
+
+
+@pytest.mark.parametrize("command", ["next", "workflow-adopt"])
+def test_previous_version_run_files_are_rejected_and_untouched(tmp_path, capsys, command):
+    from orchestrator.cli import main
+    state, orch = _orch(tmp_path)
+    root = tmp_path / "runs"
+    path = root / state.release_id / "release-state.json"
+    state.save(str(path))
+    old = json.loads(path.read_text(encoding="utf-8"))
+    old["schema_version"] = 3
+    del old["workflow_revision"]["execution_contract"]
+    path.write_text(json.dumps(old), encoding="utf-8")
+    before = path.read_bytes()
+    assert main(["--config", orch.config_path, "--runs-root", str(root),
+                 command, "--release", state.release_id, "--json"]) == 1
+    assert "schema" in capsys.readouterr().out
+    assert path.read_bytes() == before
 
 
 def test_semantic_phase_identity_ignores_labels_and_resolves_defaults(tmp_path):
@@ -245,6 +292,22 @@ def test_new_orchestrator_cannot_adopt_code_imported_before_a_runtime_edit(tmp_p
         adopt(current, plan["hash"], by="owner", reason="reviewed")
 
 
+@pytest.mark.parametrize("source_changed", [False, True])
+def test_runtime_drift_in_process_requires_restart_even_with_same_contract(
+        tmp_path, source_changed):
+    state, orch = _orch(tmp_path)
+    sources = revision._IMPORTED_SOURCE_HASH
+    orch._revision_provider = StaticRevisionProvider(digest("runtime before"), sources)
+    orch._loaded_runtime_hash = digest("runtime before")
+    bound_id = assert_current(orch)
+    orch._revision_provider = StaticRevisionProvider(
+        digest("runtime after"), digest("edited source") if source_changed else sources)
+    assert revision_id(current_revision(orch)) == bound_id
+    with pytest.raises(ValueError, match="restart"):
+        assert_current(orch)
+    assert any("restart" in blocker for blocker in adoption_preview(orch)["blockers"])
+
+
 def test_adoption_invalidates_earliest_change_and_later_preserving_evidence(tmp_path):
     state, orch = _orch(tmp_path)
     _complete(state)
@@ -298,19 +361,38 @@ def test_adoption_invalidates_earliest_change_and_later_preserving_evidence(tmp_
     assert state.resources["known"]["id"] == 123
     assert [item["step"] for item in state.gate_decisions] == ["first.approve"]
     assert state.workflow_revision["last_adoption"]["from_revision"] == old
+    assert state.workflow_revision["execution_contract"] == CURRENT_EXECUTION_CONTRACT
     assert_current(orch)
     identity = revision_id(state.workflow_revision)
     state.workflow_revision["last_adoption"]["reason"] = "Different audit wording"
     assert revision_id(state.workflow_revision) == identity
 
 
-def test_runtime_only_change_adopts_without_resetting_release_progress(tmp_path):
+@pytest.mark.parametrize("update", ["source", "dependency"])
+def test_fresh_compatible_runtime_needs_no_adoption_or_state_rewrite(tmp_path, monkeypatch, update):
     state, orch = _orch(tmp_path)
     _complete(state)
     state.set_step("removed", "old", StepState(status="done", data={"proof": 12}))
-    state.workflow_revision["runtime_hash"] = digest("old runtime")
-    plan = adoption_preview(orch)
+    original = revision_id(state.workflow_revision)
+    owned = state.get_step("second", "work")
+    owned.status = "in_flight"
+    owned.execution = {"id": "owned", "owner": "original", "started_at": "then",
+                       "write_review": {"hash": digest("approved plan"), "approved_by": "owner"}}
+    state.set_step("second", "work", owned)
+    path = _save(state, tmp_path)
+    before, disk = deepcopy(asdict(state)), path.read_bytes()
+    sources = digest("newly imported compatible sources") if update == "source" else revision._IMPORTED_SOURCE_HASH
+    monkeypatch.setattr(revision, "_IMPORTED_SOURCE_HASH", sources)
+    loaded = ReleaseState.load(str(path))
+    current = Orchestrator(
+        orch.config_path, loaded, mocks={},
+        revision_provider=StaticRevisionProvider(digest(f"compatible {update} patch"), sources),
+    )
+    assert assert_current(current) == original
+    assert revision_id(current_revision(current)) == original
+    plan = adoption_preview(current)
     assert plan["runtime_changed"]
+    assert plan["old_revision"] == plan["new_revision"] == original
     assert plan["invalidation"]["step_keys"] == []
     assert plan["invalidation"]["summary"] == {
         "affected": 0,
@@ -319,15 +401,13 @@ def test_runtime_only_change_adopts_without_resetting_release_progress(tmp_path)
         "gate_decisions_removed": 0,
         "notification_offers_removed": 0,
     }
-    state._checkpoint = lambda: None
-    adopt(orch, plan["hash"], by="owner", reason="Reviewed runtime")
-    assert state.get_step("first", "work").status == "done"
-    assert state.get_step("second", "approve").status == "done"
-    assert state.get_step("removed", "old").status == "done"
-    assert state.get_step("removed", "old").data == {"proof": 12}
+    assert loaded.get_step("second", "work").execution == owned.execution
+    assert loaded.workflow_revision["last_adoption"] is None
+    assert asdict(loaded) == before
+    assert path.read_bytes() == disk
 
 
-def test_status_preserves_bound_progress_during_runtime_mismatch(tmp_path):
+def test_status_preserves_bound_progress_across_compatible_runtime_patch(tmp_path):
     state, orch = _orch(tmp_path)
     _complete(state)
     state.set_step("third", "approve", StepState(status="pending", note="still waiting"))
@@ -335,14 +415,56 @@ def test_status_preserves_bound_progress_during_runtime_mismatch(tmp_path):
 
     report = orch.status_report()
 
-    assert report["workflow_revision_problem"]
-    assert report["status"] == "blocked"
+    assert not report["workflow_revision_problem"]
     assert report["done"] == 5 and report["total"] == 6
     assert report["current_phase"] == "third"
     assert report["phases"][0]["state"] == "done"
     assert report["phases"][1]["state"] == "done"
     assert report["phases"][2]["state"] == "current"
-    assert not orch.scheduling().runnable
+    assert_current(orch)
+
+
+def test_compatible_runtime_preserves_exact_write_review_and_attempt_owner(tmp_path):
+    from orchestrator import write_review as W
+    from orchestrator.transitions import OutcomePermit, TransitionResult
+    state, _ = _orch(tmp_path, bind=False)
+    config = {"phases": [{
+        "id": "rollout_start", "name": "Rollout Start", "steps": [{
+            "id": "wiki_payload", "name": "Payload", "kind": "external",
+            "write_command": "create-payload-wiki",
+        }],
+    }]}
+    path = tmp_path / "phases.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    original = Orchestrator(str(path), state, mocks={})
+    bind_initial(original)
+    plan = W.WritePlan("create-payload-wiki", {"mode": "update"}, (
+        W.WriteOperation("wiki.update", {"path": "/payload"}, {"body": "exact approved content"}),
+    ))
+    reviewed_hash = W.review_hash(original, "rollout_start", "wiki_payload", plan)
+    review = {"hash": reviewed_hash, "approved_by": "reviewer"}
+    permit = original._transition_kernel().start_reviewed_write(
+        "rollout_start", "wiki_payload", "original-owner", write_review=review)
+    assert isinstance(permit, OutcomePermit)
+    assert state.get_step("rollout_start", "wiki_payload").status == "in_flight"
+    execution = deepcopy(original.step_execution("rollout_start", "wiki_payload"))
+    state_path = _save(state, tmp_path)
+    before = state_path.read_bytes()
+    loaded = ReleaseState.load(str(state_path))
+    current = Orchestrator(
+        str(path), loaded, mocks={},
+        revision_provider=StaticRevisionProvider(digest("compatible patch"), revision._IMPORTED_SOURCE_HASH),
+    )
+    assert_current(current)
+    assert W.review_hash(current, "rollout_start", "wiki_payload", plan) == reviewed_hash
+    assert current.step_execution("rollout_start", "wiki_payload") == execution
+    assert adoption_preview(current)["blockers"]
+    assert state_path.read_bytes() == before
+    result = current._transition_kernel().start_reviewed_write(
+        "rollout_start", "wiki_payload", "new-owner", write_review=review)
+    assert isinstance(result, TransitionResult) and not result.changed
+    assert current.step_execution("rollout_start", "wiki_payload") == execution
+    assert state_path.read_bytes() == before
 
 
 def test_reordering_and_removed_steps_have_conservative_invalidations(tmp_path):
@@ -633,7 +755,7 @@ def _pending_automation_recovery(tmp_path, action):
 
 
 @pytest.mark.parametrize("action", ["create-result", "delete-result", "confirm-absent"])
-def test_runtime_patch_can_recover_registry_then_adopt_without_reset(tmp_path, capsys, action):
+def test_runtime_patch_can_recover_current_registry_receipts_without_adoption(tmp_path, capsys, action):
     from orchestrator.cli import main
     state, orch, path, reg, entry, base, args = _pending_automation_recovery(tmp_path, action)
     before = path.read_bytes()
@@ -647,18 +769,18 @@ def test_runtime_patch_can_recover_registry_then_adopt_without_reset(tmp_path, c
     assert main(preview_args) == 0
     reviewed = json.loads(capsys.readouterr().out)
     assert reviewed["blockers"] == [] and reviewed["invalidation"]["step_keys"] == []
+    assert reviewed["old_revision"] == reviewed["new_revision"]
     assert main(preview_args + ["--approve-hash", reviewed["hash"], "--by", "owner",
-                               "--reason", "Reviewed runtime-only patch"]) == 0
-    capsys.readouterr()
+                               "--reason", "Unnecessary runtime-only adoption"]) == 1
+    assert "already current" in json.loads(capsys.readouterr().out)["error"]
     loaded = ReleaseState.load(str(path))
-    for field, value in asdict(state).items():
-        if field not in ("workflow_revision", "updated_at"):
-            assert getattr(loaded, field) == value
-    assert loaded.workflow_revision["last_adoption"]["from_revision"] == reviewed["old_revision"]
+    assert asdict(loaded) == asdict(state)
+    assert path.read_bytes() == before
+    assert loaded.workflow_revision["last_adoption"] is None
 
 
 @pytest.mark.parametrize("action", ["create-result", "delete-result", "confirm-absent"])
-@pytest.mark.parametrize("change", ["unbound", "workflow", "wrong_proof"])
+@pytest.mark.parametrize("change", ["unbound", "workflow", "contract", "wrong_proof"])
 def test_patch_recovery_still_requires_compatible_binding_and_owning_proof(
         tmp_path, capsys, action, change):
     from orchestrator.cli import main
@@ -671,6 +793,9 @@ def test_patch_recovery_still_requires_compatible_binding_and_owning_proof(
         config["phases"][0]["execution"] = "parallel"
         with open(orch.config_path, "w", encoding="utf-8") as stream:
             yaml.safe_dump(config, stream)
+    elif change == "contract":
+        state.workflow_revision["execution_contract"] = CURRENT_EXECUTION_CONTRACT + 1
+        state.save(str(path))
     elif action == "confirm-absent":
         args.remove("--confirm-no-inflight")
     else:
@@ -681,11 +806,18 @@ def test_patch_recovery_still_requires_compatible_binding_and_owning_proof(
     assert path.read_bytes() == before and reg.get(key=entry["key"]) == registry
 
 
-def test_runtime_patch_recovery_does_not_authorize_new_provider_work(tmp_path, capsys):
+def test_compatible_runtime_patch_never_reclaims_unresolved_automation(tmp_path, capsys):
     from orchestrator.cli import main
+    from tests._automation import observed
     state, orch, path, reg, entry, base, args = _pending_automation_recovery(tmp_path, "create-result")
-    before = reg.get(key=entry["key"])
-    for action in ("prepare", "reconcile-create", "claim-delete"):
-        assert main(base + ["automation", action, "--release", state.release_id, "--json"]) == 1
-        assert json.loads(capsys.readouterr().out)["permission_to_execute"] is False
+    before, disk = reg.get(key=entry["key"]), path.read_bytes()
+    assert main(base + [
+        "automation", "reconcile-create", "--release", state.release_id, "--json",
+        "--slug", "worker", "--spec-file", str(tmp_path / "spec.json"),
+        "--observed-json", json.dumps(observed()), "--executor", "new-owner", "--claim",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "creating"
+    assert result["permission_to_create"] is False
     assert reg.get(key=entry["key"]) == before
+    assert path.read_bytes() == disk

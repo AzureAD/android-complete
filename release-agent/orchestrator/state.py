@@ -11,7 +11,7 @@ from orchestrator.effects import execution_input_is_valid
 from orchestrator import evidence_store
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _now() -> str:
@@ -115,8 +115,8 @@ class ReleaseState:
         if type(data.get("schema_version")) is not int or data.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(
                 f"Unsupported release-state schema {data.get('schema_version')!r}; "
-                f"expected {SCHEMA_VERSION}. Automatic migration is not supported; "
-                "preserve this record and recover it using its original supported runtime."
+                f"this version requires schema {SCHEMA_VERSION}. "
+                "Older runs are not supported or automatically migrated; the file is unchanged."
             )
         known = {f.name for f in fields(cls)}
         unknown = set(data) - known

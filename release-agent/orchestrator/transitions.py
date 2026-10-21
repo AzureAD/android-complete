@@ -921,7 +921,27 @@ class TransitionKernel:
             tuple(step.key for step in affected),
         )
 
-    def reserve(
+    def start_reviewed_write(self, phase_id, step_id, executor, *, write_review):
+        """Prepare ownership and invocation together; the caller persists one attempt."""
+        previous = self.state.get_step(phase_id, step_id)
+        result = self._reserve(phase_id, step_id, executor, write_review=write_review)
+        if not result.changed:
+            return result
+        permit = self._begin_reviewed_write(
+            phase_id, step_id, self.state.get_step(phase_id, step_id).execution["id"])
+        if isinstance(permit, TransitionResult):
+            self.state.set_step(phase_id, step_id, previous)
+        return permit
+
+    def reserve(self, phase_id, step_id, executor):
+        definition = self.workflow.step(phase_id, step_id)
+        if definition and definition.write_command:
+            return self._reject(
+                f"Use {definition.write_command} with an exact --review-hash and --approved-by; "
+                "reserve-only writes are not supported.", phase_id, step_id)
+        return self._reserve(phase_id, step_id, executor)
+
+    def _reserve(
         self, phase_id: str, step_id: str, executor: str, *, write_review: dict | None = None,
     ) -> TransitionResult:
         if rejected := self._invalid():
@@ -975,7 +995,7 @@ class TransitionKernel:
             step_id,
         )
 
-    def begin_reviewed_write(self, phase_id: str, step_id: str, execution_id: str):
+    def _begin_reviewed_write(self, phase_id: str, step_id: str, execution_id: str):
         """Fence an attempt before mutation; only this process receives its live permit."""
         permit = self.authorize_outcome(
             TransitionIntent.WRITE, phase_id, step_id, execution_id=execution_id)

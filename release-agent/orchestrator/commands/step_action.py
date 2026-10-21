@@ -204,7 +204,7 @@ def prepare_step(args, st, orch):
                         raise ValueError(
                             f"Use {definition.write_command} --execute --auto-approve --executor <automation-id>; "
                             "step-action --reserve cannot authorize provider writes")
-                    raise ValueError(f"Use {definition.write_command} --reserve with its exact reviewed hash")
+                    raise ValueError(f"Use {definition.write_command} --execute with its exact reviewed hash")
                 return out
             if getattr(args, "reserve", False):
                 outcome = orch.reserve_step(
@@ -241,7 +241,7 @@ def cmd_reserve_step(args):
                     f"Use {definition.write_command} --execute --auto-approve --executor <automation-id>; "
                     "reserve-step cannot authorize provider writes.")
             raise ValueError(
-                f"Use {definition.write_command} --reserve --review-hash <hash> --approved-by <reviewer> "
+                f"Use {definition.write_command} --execute --review-hash <hash> --approved-by <reviewer> "
                 "with the reviewed command parameters; reserve-step cannot authorize provider writes.")
         args.param = []
         args.reserve = True

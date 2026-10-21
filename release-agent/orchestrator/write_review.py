@@ -95,8 +95,6 @@ def add_arguments(parser):
     parser.add_argument("--review-hash", help="Exact sha256 digest of the approved write preview")
     parser.add_argument("--approved-by", help="Reviewer who approved this exact write plan")
     parser.add_argument("--executor", help="Claiming session identity (defaults to reviewer)")
-    parser.add_argument("--reserve", action="store_true",
-                        help="Approve and reserve only; do not start provider operations")
 
 
 def add_auto_approve_argument(parser, *, help_text=None):
@@ -109,67 +107,24 @@ def add_auto_approve_argument(parser, *, help_text=None):
     )
 
 
-def apply_auto_approval(
-    args,
-    orch,
-    phase: str,
-    step: str,
-    planner: Callable[[], WritePlan],
-    *,
-    approved_by: str,
-) -> None:
-    """Populate review arguments for allowlisted scheduled agent-owned writers.
-
-    The command still uses authorize(), so the write is revision-bound, hash-bound,
-    checkpointed, fenced, and single-attempt. This only removes the human prompt for
-    specific release-owned automation work.
-    """
-    if not getattr(args, "auto_approve", False):
-        return
-    if not getattr(args, "execute", False) or getattr(args, "reserve", False):
-        raise ValueError("--auto-approve requires a fresh --execute and cannot be combined with --reserve")
-    if getattr(args, "dry_run", False) or getattr(args, "execution_id", None):
-        raise ValueError("--auto-approve cannot be combined with --dry-run or --execution-id")
-    if getattr(args, "review_hash", None) or getattr(args, "approved_by", None):
-        raise ValueError("--auto-approve cannot be combined with --review-hash or --approved-by")
-    reviewer = approved_by.strip()
-    if not reviewer:
-        raise ValueError("Auto-approved writes require a fixed approver identity")
-    args.review_hash = review_hash(orch, phase, step, planner())
-    args.approved_by = reviewer
-    args.executor = getattr(args, "executor", None) or reviewer
-
-
-def _checkpoint(orch, before):
-    try:
-        orch.state.checkpoint()
-    except BaseException:
-        for name, value in before.items():
-            setattr(orch.state, name, value)
-        raise
-
-
 @dataclass(frozen=True)
 class WriteAuthorization:
     plan: WritePlan
     execution_id: str
-    reserved_only: bool
     _orch: object = field(repr=False)
     _permit: object = field(repr=False)
 
     def validate(self):
-        if self.reserved_only:
-            raise ValueError("Reservation is not permission to execute")
         self._orch.validate_outcome_permit(self._permit)
 
 
 def authorize(
     args, orch, phase: str, step: str, planner: Callable[[], WritePlan],
+    *, auto_approved_by: str | None = None,
 ) -> WriteAuthorization:
-    """Replan under the release lock, checkpoint review, replan and fence one attempt.
+    """Plan once, then atomically persist review and attempt before any provider work.
 
-    Payloads are never stored. An in-flight attempt cannot be replayed, even with
-    the same review hash; the owner must resolve uncertain provider results first.
+    Failed planning leaves the step untouched; uncertain attempts are never replayed.
     """
     from orchestrator import cli_common as C
 
@@ -180,55 +135,48 @@ def authorize(
         raise ValueError("Write authorization requires the existing release transaction lock")
     if args.release != orch.state.release_id:
         raise ValueError("Write review release identity mismatch")
+    if getattr(args, "reserve", False):
+        raise ValueError("Reserve-only writes are not supported; preview then execute")
+    if getattr(args, "execution_id", None):
+        raise ValueError("An existing execution cannot authorize another write; reconcile its result")
     expected = getattr(args, "review_hash", None)
     reviewer = getattr(args, "approved_by", None)
-    if not revision.is_hash(expected) or not isinstance(reviewer, str) or not reviewer.strip():
+    automatic = getattr(args, "auto_approve", False)
+    if automatic:
+        if not getattr(args, "execute", False) or getattr(args, "dry_run", False):
+            raise ValueError("--auto-approve requires --execute without --dry-run")
+        if expected or reviewer:
+            raise ValueError("--auto-approve cannot be combined with --review-hash or --approved-by")
+        if not isinstance(auto_approved_by, str) or not auto_approved_by.strip():
+            raise ValueError("This writer does not permit automatic approval")
+        reviewer = auto_approved_by
+    elif not revision.is_hash(expected) or not isinstance(reviewer, str) or not reviewer.strip():
         raise ValueError("An exact --review-hash and nonempty --approved-by are required; no writes")
     reviewer = reviewer.strip()
     current = planner()
-    if review_hash(orch, phase, step, current) != expected:
+    actual_hash = review_hash(orch, phase, step, current)
+    if automatic:
+        expected = args.review_hash = actual_hash
+        args.approved_by = reviewer
+        args.executor = getattr(args, "executor", None) or reviewer
+    elif actual_hash != expected:
         raise ValueError("Write review hash is stale; review the fresh plan; no writes")
-    execution_id = getattr(args, "execution_id", None)
-    record = orch.state.get_step(phase, step)
-    if execution_id:
-        if ((record.execution or {}).get("id") != execution_id
-                or (record.execution or {}).get("write_review") !=
-                {"hash": expected, "approved_by": reviewer}):
-            raise ValueError("Write review does not belong to this execution/reviewer")
-        if record.status != "running":
-            raise ValueError("Write attempt is already started or uncertain; owner resolution required")
-    else:
-        before = deepcopy(asdict(orch.state))
-        result = orch._transition_kernel().reserve(
-            phase, step, getattr(args, "executor", None) or reviewer,
-            write_review={"hash": expected, "approved_by": reviewer})
-        if not result.changed:
-            raise ValueError(result.message)
-        _checkpoint(orch, before)
-        execution_id = orch.step_execution(phase, step)["id"]
-    args.execution_id = execution_id
-    if getattr(args, "reserve", False):
-        return WriteAuthorization(current, execution_id, True, orch, None)
-
-    current = planner()
-    if review_hash(orch, phase, step, current) != expected:
-        raise ValueError("Write plan changed after reservation; owner retained; no provider writes")
     revision.assert_current(orch)
     before = deepcopy(asdict(orch.state))
-    permit = orch._transition_kernel().begin_reviewed_write(phase, step, execution_id)
-    if isinstance(permit, TransitionResult):
-        raise ValueError(permit.message)
+    permit = None
     try:
-        _checkpoint(orch, before)
+        permit = orch._transition_kernel().start_reviewed_write(
+            phase, step, getattr(args, "executor", None) or reviewer,
+            write_review={"hash": expected, "approved_by": reviewer})
+        if isinstance(permit, TransitionResult):
+            raise ValueError(permit.message)
+        orch.state.checkpoint()
     except BaseException:
-        orch._transition_kernel()._outcome_permits.pop(permit, None)
+        for name, value in before.items():
+            setattr(orch.state, name, value)
+        if permit is not None and not isinstance(permit, TransitionResult):
+            orch._transition_kernel()._outcome_permits.pop(permit, None)
         raise
-    return WriteAuthorization(current, execution_id, False, orch, permit)
-
-
-def print_reservation(authorization):
-    print(json.dumps({
-        "kind": "reserved", "execution_id": authorization.execution_id,
-        "permission_to_execute": False,
-        "note": "Re-run the same checked command with --execute and --execution-id; omit --reserve.",
-    }))
+    execution_id = orch.step_execution(phase, step)["id"]
+    args.execution_id = execution_id
+    return WriteAuthorization(current, execution_id, orch, permit)

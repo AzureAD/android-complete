@@ -24,6 +24,31 @@ runs each step's agent, and **holds at gates** for the release engineer to decid
 - **Engine = the brain.** Selects eligible work, invokes catalog-validated handlers, holds at gates, and persists execution ownership and outcomes. Recovery follows each capability's protocol; uncertain writes are not blindly replayed.
 - **Skill = the mouth & ears.** Presents the gate, collects your decision, relays it. Never decides the flow.
 
+**Simple write lifecycle:** plan and validate once, obtain any required human approval,
+save one durable attempt, execute, and verify the receipt. Failed preflight leaves no
+execution to unlock. All configured checked writers use this same path; there is no
+reserve-only mode, cancellation command, or extra recovery descriptor.
+
+**New version boundary:** release-state schema 4 requires the current execution
+contract. Older run files are rejected without modification or automatic migration.
+Compatible implementation updates in a fresh process do not invalidate same-contract
+workflow approvals. Changed workflows and unsupported contracts still stop execution;
+source changes within a running process require a restart.
+
+Other ownership types retain their own evidence requirements:
+
+| Ownership | Supported recovery |
+| --- | --- |
+| Checked writer | Check the recorded attempt's provider result; never repeat an uncertain write |
+| Engine-owned effect | `next` reconciliation; supported verified `retry-effect` / `supersede-effect` |
+| Notification delivery | Exact `notification result` / `finalize`; no resend after lost acknowledgement |
+| External approval | Exact `approve-orchestrator-gate --execution-id`; no second submission after an attempt |
+| Automation worker | Owning create/delete result and verified quiescent absence recovery |
+| Monthly amendment | Its own reviewed `amend-auth-monthly --cancel` / receipt protocol |
+
+There is no universal unlock, expiry-based ownership stealing, automatic workflow
+adoption, or conversion of an unknown provider outcome into an unattempted operation.
+
 ## Layout
 
 ```
@@ -51,7 +76,7 @@ release-agent/                     COMMITTED (distributed with android-complete)
 │  ├─ knowledge.py                 step knowledge resolver (config/knowledge.yaml + module KNOWLEDGE overlay)
 │  ├─ infra.py                     infra preflight: check CLIs + register/verify MCP servers into Scout config
 │  ├─ render.py                    presentation only: structured data → text/markdown (swap for other UIs)
-│  ├─ state.py                     schema-v3 Release State Record: facts, evidence, execution ownership
+│  ├─ state.py                     schema-v4 Release State Record: facts, evidence, execution ownership
 │  ├─ evidence_store.py            immutable RC evidence files, compact summaries and verified hydration
 │  ├─ revision.py                  compact runtime/phase identity and reviewed workflow adoption
 │  ├─ discovery.py                 find releases (none / one / many)
@@ -387,9 +412,9 @@ gate are unchanged.
 - **Frozen RC evidence** → `.release-runs/<id>/evidence/rc<N>/`: immutable `mrwp-ecs-<sha256>.json`, `mrwp-local-<sha256>.json`, and `auth-ecs-<sha256>.json`. The corresponding `pipeline_runs.rcs[]` lanes in the main JSON contain compact counts/identities and `evidence_ref` (relative path, SHA-256, artifact schema version), not test attempts. Status JSON is compact too. Save writes/flushed evidence before replacing state; load verifies hash, schema, release/RC/lane identity and summary, then hydrates the original logical inputs for reports, telemetry and Phase 3. ADO is not silently refetched. Identical MRWP failure structures are stored once and reconstructed losslessly.
 - **Tool config** → `release-agent/config/*.yaml` (not release-specific; committed): `phases.yaml`, `readiness.yaml`, `schedule.yaml`, `requirements.yaml`.
 
-Existing schema-v3 inline RC snapshots migrate on the next normal state save, without
+Inline RC observations are externalized on state save, without
 rerunning capture, changing step/gate decisions, upgrading count policies or invalidating
-source/delivery fingerprints. Reads do not rewrite state. Incomplete historical observations
+source/delivery fingerprints. Reads do not rewrite state. Incomplete observations
 without a valid RC number use `evidence/unresolved/`; their RC stays unchanged and normal
 consumers still reject missing/invalid source identities. No evidence is fabricated.
 The Python in-memory record remains hydrated; this separates persisted/presented data,
@@ -403,7 +428,7 @@ files are retained (no automatic cleanup), including after failed state replacem
 
 ## Architecture — three layers (so it adapts to other interfaces)
 
-1. **Logic** (`workflow.py`, `handlers.py`, `effects.py`, `projection.py`, `transitions.py`, `invariants.py`, `engine.py`, `readiness.py`, `schedule.py`, `state.py`, `revision.py`) — compiled workflow and handler catalog, bound effect capabilities, pure lifecycle projections, one generic transition kernel, and schema-v3 persisted facts. A gate is complete only when its step is `done` and its latest decision is approved.
+1. **Logic** (`workflow.py`, `handlers.py`, `effects.py`, `projection.py`, `transitions.py`, `invariants.py`, `engine.py`, `readiness.py`, `schedule.py`, `state.py`, `revision.py`) — compiled workflow and handler catalog, bound effect capabilities, pure lifecycle projections, one generic transition kernel, and schema-v4 persisted facts. A gate is complete only when its step is `done` and its latest decision is approved.
 2. **Presentation** (`render.py`) — pure functions: structured data → text/markdown. A different interface (web UI, TUI) swaps this layer and reuses everything else.
 3. **Interface** (`cli.py` + `cli_common.py` + `commands/` + `skill/SKILL.md`) — the CLI is a thin assembler: `cli.py` builds the parser from the self-registering modules in `commands/` (one per domain), and shared plumbing lives in `cli_common.py`. Adding a command is a localized change to one module.
 
@@ -420,16 +445,17 @@ IO lives in `tools/` and `phases/` (pluggable). Config is data in `config/`.
 
 The conductor is **stateless**: on each invocation it loads the record, (later) reconciles against live systems, decides, acts, writes back. That's what lets a release resume across days/sessions.
 
-`release-state.json` is **schema v3** and intentionally breaking. Older schema versions are
+`release-state.json` is **schema v4** and intentionally breaking. Older schema versions are
 rejected, never migrated or reinitialized to bypass ownership. Preserve the record
 and recover old work with its original supported runtime.
 
 ### Workflow revision and adoption
 
-`init` explicitly binds a new release to `workflow_revision`: a `runtime_hash`, ordered
+`init` explicitly binds a new release to `workflow_revision`: an `execution_contract`,
+`runtime_hash`, ordered
 `phases` containing `{id, definition_hash, step_keys}`, and `last_adoption` (initially
 null). Hashes use `sha256:<64 lowercase hex>`. The overall revision ID is derived from
-the runtime hash and ordered manifest, excluding the adoption receipt; no redundant
+the execution contract and ordered manifest, excluding runtime provenance and the adoption receipt; no redundant
 ID, source snapshot, payload or revision journal is stored.
 
 Runtime identity reads production core, handlers, providers, command code, execution
@@ -447,10 +473,11 @@ assets are excluded. Custom workflow directories contribute their sibling execut
 YAML files and the selected readiness file, never the selected workflow YAML itself.
 Relative names and SHA-256 content digests are combined with Python implementation/
 full version and installed PyYAML/tzdata versions (explicit absence included).
-No provider calls, persisted cache or historical code loader are involved. This is
-compatibility identity, not reproducible live ADO state or reconstruction of old source.
+No provider calls, persisted cache or historical code loader are involved. Source hashes
+detect in-process changes and record provenance; they are not an upgrade approval gate.
+The execution contract must be bumped for incompatible implementation changes.
 
-Unbound schema-v3 state remains inspectable but cannot dispatch, reserve, approve,
+Unbound schema-v4 state remains inspectable but cannot dispatch, reserve, approve,
 write or claim notifications. Loading never binds a record. Tests creating fresh
 state explicitly call `revision.bind_initial(orch)`; loaded records cannot use that
 helper. Status on a mismatch reports a block, not stale completion.
@@ -462,8 +489,8 @@ python -m orchestrator.cli workflow-adopt --release <id> --approve-hash <reviewe
 
 The preview lists old/new revision IDs, exact conservative invalidations and ownership
 blockers. Confirmation recomputes the review under the release lock, then the automation
-registry lock, and rejects stale hashes. Runtime-only changes update the reviewed binding
-without resetting release progress; phase changes/reordering invalidate the earliest
+registry lock, and rejects stale hashes. Same-contract implementation changes need no
+adoption in a fresh process; phase changes/reordering invalidate the earliest
 changed phase and all later phases. New steps are pending and removed-step history,
 evidence, resources and terminal write-review receipts are retained. Affected gate
 decisions are cleared. Never-claimed notification offers (including release-scoped offers)
@@ -479,7 +506,7 @@ fallback/plaintext/manual email as if the templated claimed payload was sent.
 
 Any stored execution—even under a removed step—unresolved resource creation, active or
 uncertain delivery/automation claim, or unfinished sent-notification completion blocks
-adoption. Restore the pinned runtime for code-dependent recovery; never force-clear
+adoption. Use a compatible supported runtime for recovery; never force-clear
 ownership. Adoption saves the binding, bounded `{from_revision, at, by, reason}` receipt
 and invalidations atomically, rolls back on save failure, and never drains or calls a provider.
 Reconcile changed automation provider specs through the existing reviewed registry
@@ -487,15 +514,14 @@ protocol before resuming their schedules; adoption does not update old worker pr
 
 ### Exact write reviews
 
-The five checked commands are `distribute-tests`, `create-integration-prs`,
-`create-oneauth-common-pr`, `create-payload-wiki` and `launch-localization`.
+All ten configured checked writers, including test distribution, report publication,
+PR creation, localization and rollout-stage starts, use the same authority.
 Their default read-only preview prints a versioned transient operation plan and
 `review_hash`. `distribute-tests` remains human-reviewed because it applies live ADO assignment changes:
 repeat selection flags with `--apply --review-hash <approved hash> --approved-by
 <reviewer>`. `--executor <session>` optionally identifies the claiming runner.
-`--reserve` accepts the review without executing; subsequently repeat the same
-command/flags/hash/reviewer with `--execute` and its `--execution-id`, omitting
-`--reserve`.
+Preview does not change state. Execute the reviewed command directly; no reserve-only
+mode, cancellation, or extra reset approval is needed.
 
 The scheduled release writers `launch-localization`, `create-integration-prs`,
 `create-oneauth-common-pr`, and `create-payload-wiki` run with
@@ -507,9 +533,9 @@ alternatives.
 
 The envelope binds release, qualified step, generation, workflow revision, command,
 normalized actual parameters, exact targets/content/ordered operations and concurrency
-preconditions. Under the existing release lock the adapter replans before accepting
-the review, saves `execution.write_review = {hash, approved_by}`, then replans again
-before durably fencing one attempt as `in_flight`. Only the captured operation
+preconditions. Under the existing release lock the adapter builds and validates one
+current plan, then atomically saves `execution.write_review = {hash, approved_by}`
+with the `in_flight` attempt. Only the captured operation
 sequence executes. Save failure returns no permission; interruption or uncertain
 results retain ownership, never authorize automatic compound replay.
 Adapters construct immutable `write_review.WritePlan` / `WriteOperation` values,
@@ -569,7 +595,7 @@ To submit that **unattempted** reservation, omit `--reserve` and supply its `--e
 with the original hash/reviewer/comment. `--as-of` affects scheduling checks only; ownership,
 attempt and receipt timestamps always use the trusted current clock.
 
-Core checkpoints this exact nested authorization in the existing schema-v3 step record;
+Core checkpoints this exact nested authorization in the schema-v4 step record;
 there are **no new top-level fields**:
 
 ```json

@@ -93,62 +93,87 @@ def test_generic_reservation_cannot_bypass_review(reviewed):
     assert not orch.step_execution("rollout_start", "wiki_payload")
 
 
-@pytest.mark.parametrize("failure_checkpoint", [1, 2])
-def test_failed_persistence_never_returns_write_permission(reviewed, failure_checkpoint):
+def test_failed_persistence_never_returns_write_permission(reviewed):
     args, orch, _, path = reviewed
-    actual = orch.state._checkpoint
-    snapshots = []
-
     def checkpoint():
-        snapshots.append(deepcopy(asdict(orch.state)))
-        if len(snapshots) == failure_checkpoint:
-            raise OSError("disk unavailable")
-        actual()
+        raise OSError("disk unavailable")
 
     orch.state._checkpoint = checkpoint
     with pytest.raises(OSError, match="disk unavailable"):
         authorize(reviewed)
     saved = ReleaseState.load(path).get_step("rollout_start", "wiki_payload")
-    assert saved.status == ("pending" if failure_checkpoint == 1 else "running")
+    assert saved.status == "pending"
     assert orch.state.get_step("rollout_start", "wiki_payload") == saved
     assert not orch._transition_kernel()._outcome_permits
 
 
-def test_reservation_and_attempt_are_separate_durable_boundaries(reviewed):
-    args, orch, plan, path = reviewed
+def test_reserve_only_is_not_a_supported_write_lifecycle(reviewed):
+    args, orch, _, path = reviewed
+    before = open(path, "rb").read()
     args.reserve = True
-    reserved = authorize(reviewed)
-    record = ReleaseState.load(path).get_step("rollout_start", "wiki_payload")
-    assert record.status == "running"
-    assert record.execution["write_review"] == {
-        "hash": args.review_hash, "approved_by": "reviewer",
-    }
-    assert set(record.execution) == {
-        "id", "owner", "started_at", "refresh", "previous_status", "write_review",
-    }
-    assert "exact reviewed content" not in json.dumps(asdict(ReleaseState.load(path)))
-    with pytest.raises(ValueError, match="not permission"):
-        reserved.validate()
-    args.reserve = False
-    live = authorize(reviewed)
-    assert live.execution_id == reserved.execution_id
-    assert ReleaseState.load(path).get_step("rollout_start", "wiki_payload").status == "in_flight"
-    live.validate()
-    assert live.plan == plan
-    with pytest.raises(ValueError, match="already started"):
+    with pytest.raises(ValueError, match="not supported"):
         authorize(reviewed)
+    assert not orch.state.get_step("rollout_start", "wiki_payload").execution
+    assert open(path, "rb").read() == before
 
 
-def test_replan_after_reservation_prevents_provider_mutation(reviewed):
+def test_changed_plan_is_rejected_before_creating_an_attempt(reviewed):
     _, orch, plan, path = reviewed
     second = W.WritePlan(plan.command, plan.parameters, (
         W.WriteOperation("wiki.update", {"wiki": "different"}, {"body": "different"}),
     ), plan.preconditions)
-    calls = iter([plan, second])
-    with pytest.raises(ValueError, match="changed after reservation"):
-        authorize(reviewed, lambda: next(calls))
-    assert ReleaseState.load(path).get_step("rollout_start", "wiki_payload").status == "running"
-    assert orch.state.get_step("rollout_start", "wiki_payload").execution["write_review"]
+    with pytest.raises(ValueError, match="stale"):
+        authorize(reviewed, lambda: second)
+    assert ReleaseState.load(path).get_step("rollout_start", "wiki_payload").status == "pending"
+    assert not orch.state.get_step("rollout_start", "wiki_payload").execution
+
+
+def test_missing_local_inputs_during_fresh_preflight_do_not_reserve(reviewed):
+    _, orch, plan, path = reviewed
+    calls = []
+
+    def planner():
+        calls.append(True)
+        raise FileNotFoundError("reviewed checkout no longer exists")
+
+    with pytest.raises(FileNotFoundError, match="checkout"):
+        authorize(reviewed, planner)
+    assert ReleaseState.load(path).get_step("rollout_start", "wiki_payload").status == "pending"
+    assert not orch.state.get_step("rollout_start", "wiki_payload").execution
+    assert len(calls) == 1
+
+
+def test_immediate_write_has_one_plan_and_one_durable_attempt(reviewed):
+    _, orch, plan, path = reviewed
+    actual = orch.state._checkpoint
+    snapshots, calls = [], []
+
+    def checkpoint():
+        snapshots.append(deepcopy(asdict(orch.state)))
+        actual()
+
+    def planner():
+        calls.append(True)
+        return plan
+
+    orch.state._checkpoint = checkpoint
+    live = authorize(reviewed, planner)
+    assert calls == [True] and len(snapshots) == 1
+    assert snapshots[0]["steps"]["rollout_start.wiki_payload"]["status"] == "in_flight"
+    assert ReleaseState.load(path).get_step("rollout_start", "wiki_payload").status == "in_flight"
+    live.validate()
+
+
+def test_failed_attempt_transition_does_not_leave_a_reservation(reviewed, monkeypatch):
+    from orchestrator.transitions import TransitionResult
+    _, orch, _, path = reviewed
+    before = deepcopy(asdict(orch.state))
+    disk = open(path, "rb").read()
+    monkeypatch.setattr(orch._transition_kernel(), "start_reviewed_write",
+                        lambda *a, **kw: TransitionResult("blocked", "Eligibility changed"))
+    with pytest.raises(ValueError, match="Eligibility changed"):
+        authorize(reviewed)
+    assert asdict(orch.state) == before and open(path, "rb").read() == disk
 
 
 def test_partial_uncertain_write_keeps_owner_until_explicit_resolution(reviewed):

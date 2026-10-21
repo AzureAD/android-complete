@@ -1182,12 +1182,11 @@ def test_localization_block_requires_reopen_and_preserves_run_history(
         orch, target, {"id": "localization-repository", "type": "TfsGit"},
         7, "refs/heads/main", "a" * 40, cfg["variables"], {})
     kernel = orch._transition_kernel()
-    assert kernel.reserve(
+    kernel.start_reviewed_write(
         "ccd", "localization", "worker",
         write_review={"hash": W.review_hash(orch, "ccd", "localization", plan),
-                      "approved_by": "test-reviewer"}).changed
+                      "approved_by": "test-reviewer"})
     new_execution = st.get_step("ccd", "localization").execution["id"]
-    kernel.begin_reviewed_write("ccd", "localization", new_execution)
     assert st.get_step("ccd", "localization").status == "in_flight"
     started_data = dict(st.get_step("ccd", "localization").data)
     build = dict(plan.as_dict()["operations"][0]["content"])

@@ -22,23 +22,19 @@ def cmd_create_integration_prs(args):
 
     authorization = None
     try:
-        if not args.execute and not getattr(args, "reserve", False):
+        if not args.execute:
             print(json.dumps(W.preview(orch, "finalize", S.ID, planner()), indent=2))
             return 0
-        W.apply_auto_approval(
+        authorization = W.authorize(
             args, orch, "finalize", S.ID, planner,
-            approved_by="integration-pr-automation")
-        authorization = W.authorize(args, orch, "finalize", S.ID, planner)
-        if authorization.reserved_only:
-            W.print_reservation(authorization)
-            return 0
+            auto_approved_by="integration-pr-automation")
         summary = execute_integration(authorization)
     except Exception as exc:
         summary = f"integ_prs: {exc}"
-        if authorization is not None and not authorization.reserved_only:
+        if authorization is not None:
             summary += " Earlier operations may have succeeded; resolve the owned execution before retrying."
         print(json.dumps({"error": summary, "permission_to_execute": False}))
-        if authorization is None or authorization.reserved_only:
+        if authorization is None:
             return 1
         orch.record_scout_step("finalize", S.ID, "attention", summary,
                                execution_id=authorization.execution_id)
@@ -63,7 +59,6 @@ def register(sub):
                    help="Limit to these repo keys (common msal broker authenticator)")
     p.add_argument("--pbi", default=None, help="Reuse this PBI id instead of creating one")
     p.add_argument("--pbi-title", default=None, help="Title for the created PBI")
-    p.add_argument("--execution-id", help="Active reviewed reservation execution id")
     W.add_auto_approve_argument(
         p,
         help_text="Integration-PR automation only: compute/checkpoint the current plan "

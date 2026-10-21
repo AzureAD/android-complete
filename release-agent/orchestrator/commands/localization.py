@@ -122,22 +122,18 @@ def _attach_run(args, orch, build, *, authorization=None):
 def cmd_launch_localization(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     try:
-        if args.dry_run and (args.execute or args.reserve):
-            raise ValueError("--dry-run cannot be combined with --execute/--reserve")
-        if not (args.execute or args.reserve):
+        if args.dry_run and args.execute:
+            raise ValueError("--dry-run cannot be combined with --execute")
+        if not args.execute:
             print(_json.dumps(W.preview(orch, "ccd", L.ID, plan_localization(args, orch)), indent=2))
             return 0
-        W.apply_auto_approval(
+        authorization = W.authorize(
             args, orch, "ccd", L.ID,
             lambda: plan_localization(args, orch),
-            approved_by="localization-automation")
-        authorization = W.authorize(args, orch, "ccd", L.ID, lambda: plan_localization(args, orch))
+            auto_approved_by="localization-automation")
     except ValueError as exc:
         print(_json.dumps({"error": str(exc), "permission_to_execute": False}))
         return 1
-    if authorization.reserved_only:
-        W.print_reservation(authorization)
-        return 0
     try:
         authorization.validate()
         build = provider.trigger(authorization.plan.operations[0])

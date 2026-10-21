@@ -364,7 +364,7 @@ def _receipt_binding(handoff):
 def _result(args, orch):
     if not args.execution_id:
         raise ValueError("Receipt recovery requires the exact --execution-id")
-    if args.execute or args.reserve or args.auto_approve or args.upload_request_file:
+    if args.execute or args.auto_approve or args.upload_request_file:
         raise ValueError("--receipt-file is a result-only action; do not combine it with upload authorization")
     step = orch.state.get_step(PHASE, S.ID)
     handoff = step.data.get(HANDOFF)
@@ -448,7 +448,7 @@ def cmd_publish_rc_report(args):
     try:
         if args.receipt_file:
             return _result(args, orch)
-        if not args.execute and not args.reserve:
+        if not args.execute:
             plan = plan_rc_report_publish(orch)
             if args.upload_request_file:
                 action = _upload_action(_read_json(args.upload_request_file),
@@ -466,13 +466,9 @@ def cmd_publish_rc_report(args):
         action = (_upload_action(request, plan.operations[0], owner)
                   if request is not None else None)
         planner = lambda: plan_rc_report_publish(orch, action)
-        W.apply_auto_approval(
+        authorization = W.authorize(
             args, orch, PHASE, S.ID, planner,
-            approved_by="rc-report-publish-automation")
-        authorization = W.authorize(args, orch, PHASE, S.ID, planner)
-        if authorization.reserved_only:
-            W.print_reservation(authorization)
-            return 0
+            auto_approved_by="rc-report-publish-automation")
         authorization.validate()
         _require_current_plan(orch, authorization)
         if action and _upload_action(request, authorization.plan.operations[0], owner) != action:
@@ -520,14 +516,14 @@ def cmd_publish_rc_report(args):
     except (ValueError, TypeError, KeyError, OSError) as exc:
         summary = f"rc_report_publish: {exc}"
         recovery_error = None
-        if authorization is not None and not authorization.reserved_only:
+        if authorization is not None:
             try:
                 _record(orch, args, authorization.execution_id, "attention", summary)
             except ValueError as record_error:
                 recovery_error = str(record_error)
         print(json.dumps({"error": summary, "permission_to_execute": False,
                           **({"recovery_error": recovery_error} if recovery_error else {})}))
-        return 2 if authorization is not None and not authorization.reserved_only else 1
+        return 2 if authorization is not None else 1
 
 
 def register(sub):

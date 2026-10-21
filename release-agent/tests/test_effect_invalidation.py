@@ -336,9 +336,8 @@ def test_reviewed_write_finalization_preflights_before_evidence(tmp_path):
     ))
     review = {"hash": W.review_hash(orch, "p", "source", plan), "approved_by": "test-reviewer"}
     kernel = orch._transition_kernel()
-    assert kernel.reserve("p", "source", "worker", write_review=review).changed
+    kernel.start_reviewed_write("p", "source", "worker", write_review=review)
     execution_id = orch.step_execution("p", "source")["id"]
-    kernel.begin_reviewed_write("p", "source", execution_id)
     assert orch.state.get_step("p", "source").status == "in_flight"
     before = deepcopy(orch.state)
     with pytest.raises(ValueError, match="Cannot invalidate active engine-owned"):

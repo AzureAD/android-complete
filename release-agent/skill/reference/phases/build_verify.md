@@ -163,8 +163,8 @@ Detailed snapshots live under the release directory's `evidence\rc<N>\` in immut
 State loading verifies each reference and restores the same logical inputs for reports,
 telemetry and Phase 3; do not manually splice files or replace missing evidence with a
 fresh ADO read. Surface the recovery error and restore the original bundle.
-Legacy inline schema-v3 captures are extracted on the next normal save without step
-reruns or changing decisions/source fingerprints; this is not a count-policy upgrade.
+Inline captures are extracted on normal save without step reruns or changing
+decisions/source fingerprints; this is storage separation, not state-version migration.
 Preserve the whole release directory when copying test inputs or backups. Historical
 and unreferenced files are not automatically deleted. This is storage separation, not
 another rehearsal runner.

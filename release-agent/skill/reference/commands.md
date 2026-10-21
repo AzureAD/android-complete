@@ -181,7 +181,7 @@ the gate before preview/submission/reconciliation, including legacy `submit: ski
 BUILD `approval`/`stage_state` previews still work. Offline lifecycle tests inject fake
 provider ports directly; mock evidence is never a production authorization shortcut.
 
-The existing schema-v3 step stores only the approved nested envelope:
+The schema-v4 step stores only the approved nested envelope:
 `execution = {id, owner, started_at, approval}` where `approval` is exactly
 `{request, request_hash, workflow_revision, approved_by, submission_started_at, receipt}`.
 The request is `{org, project, build_id, stage, approval_id, comment}`.
@@ -453,20 +453,25 @@ Authenticator's Monthly UI Tests intentionally has no case map. All failures rem
 the standard report and release-owner `ui_failures` reminder, by exact title and source
 link. No case creation, forced mapping, new notification lifecycle, or automatic attestation.
 
-## Runtime-only patch recovery
+## Runtime updates and recovery
 
 Keep the owner's canonical run directory and stop competing release runners before
 installing a patch. Never copy a diagnostic run back over their live progress.
-Preview `workflow-adopt --release <id> --json`: a runtime-only patch has unchanged
-phase definitions and zero step/gate resets. Unresolved automation attempts still block
-adoption; do not delete registry entries, change hashes by hand, reinitialize, or claim a
-second provider operation to clear them.
+Same-contract implementation updates in a fresh process do not need adoption.
+Only changed workflow phases need `workflow-adopt` impact review. Unsupported contracts
+and old release-state schemas stop clearly; this new version has no migration adapter.
+Do not delete entries, rewrite receipts or reinitialize an old live run to clear a hold.
 
 For unchanged phase definitions, three existing **local registry recovery** commands
 remain available before adoption: `automation create-result`, `automation delete-result`,
 and `automation confirm-absent`. They do not call Scout's create/delete APIs or update
 release-state. Missing/unbound state, changed phase definitions, wrong attempt IDs,
 changed create specs and incomplete/stale absence evidence still reject.
+
+Checked writes have no durable preflight reservation. Fix missing inputs and rerun
+preflight; this is not an owner approval/reset gate. After an attempt is saved, inspect
+the exact provider outcome and acknowledge its receipt. Never execute again with that
+ID or treat a missing local receipt as proof nothing happened.
 
 On the original machine, inspect `automation list --release <id> --json` and the actual
 Scout provider evidence. For a creating/uncertain entry, recover the original exact
@@ -487,11 +492,9 @@ and a fresh exhaustive provider list proves absence, use `confirm-absent --relea
 If an automation exists but its exact original create spec cannot be recovered, stop for
 owner recovery; never adopt by name alone or rewrite its intent hash.
 
-After settling every blocker, preview adoption again (the old hash is stale), show its
-exact impact and obtain owner approval. Apply that hash without advancing the release.
-Only then resume normal operation. New prepares, create claims and delete claims still
-require the current runtime. Step effects, external approvals and notification ownership
-retain their existing pinned-runtime recovery rules.
+If workflow phases changed, settle owned work before reviewing adoption, then apply
+only the displayed impact with owner approval. Otherwise continue on the same execution
+contract without a code-update gate. Preserve each protocol's receipt/no-replay rules.
 
 ## Bug Bash invite and exact chat identity
 
@@ -657,6 +660,18 @@ that SMTP/local-part similarity identifies a member.
 
 ## Checked finalization and rollout writes
 
+The lifecycle is project-wide: localization, report publication, test distribution,
+integration/OneAuth PRs, payload wiki and all checked pipeline-stage starts share
+`write_review.authorize`: one complete plan/validation and one atomic durable attempt
+before execution. There are no reserve-only writes, cancellation commands, extra
+recovery descriptors or step-specific unlocks. Read-only policy checks belong in plan
+validation. Provider-specific preconditions still get checked before each real write.
+
+Effects, notifications, external approvals, automation registry operations and the
+independent Monthly amendment retain their specialized evidence/receipt recovery.
+Never translate their owned/unknown outcomes into permission for another write.
+Generic skip/reopen is not an ownership recovery protocol.
+
 Use the full JSON plan from the corresponding command, not a step-action summary.
 The scheduled finalize/rollout writers run with auto-approval, so they recompute and checkpoint
 the current plan hash at execution time:
@@ -686,6 +701,10 @@ An uncertain or partial attempt keeps that owner; inspect provider evidence and 
 `done --note`, `skip --reason` or `reopen --reason` as appropriate. Never simply
 retry a compound create. The latest `last_write_review` is retained authorization
 evidence, not a provider-success receipt or permission to execute again.
+
+Keep necessary checkouts/resolution inputs in durable owner-selected storage, not a
+session/temp directory. A failed preview owns nothing. Once execution starts, recover
+the original provider outcome instead of rebuilding a plan and replaying the write.
 
 ## Bug Bash availability
 

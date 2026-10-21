@@ -1,7 +1,8 @@
 """Workflow identity and deliberate, ownership-safe revision adoption.
 
-Only the compact phase manifest is durable. Source and contract inputs are read
-afresh; hashing never invokes a handler or a provider.
+Execution compatibility uses an explicit protocol and semantic phase manifest.
+Raw runtime provenance is checked afresh for in-process drift; hashing never
+invokes a handler or a provider.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from typing import get_args, get_origin
 
 
 ROOT = Path(__file__).resolve().parent.parent
+CURRENT_EXECUTION_CONTRACT = 1
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _ID = re.compile(r"[\w-]+\Z")
 _REVISION_CHECK_SCOPES = ContextVar("revision_check_scopes", default=())
@@ -47,8 +49,16 @@ def digest(value):
 def validate_binding(binding):
     if binding is None:
         return
-    if (not isinstance(binding, dict)
-            or set(binding) != {"runtime_hash", "phases", "last_adoption"}
+    if not isinstance(binding, dict):
+        raise ValueError("Invalid workflow revision binding")
+    if (type(binding.get("execution_contract")) is not int
+            or binding["execution_contract"] != CURRENT_EXECUTION_CONTRACT):
+        raise ValueError(
+            "Unsupported workflow execution contract; this new version requires "
+            f"execution_contract={CURRENT_EXECUTION_CONTRACT}. "
+            "Existing run files are not migrated or modified."
+        )
+    if (set(binding) != {"runtime_hash", "phases", "last_adoption", "execution_contract"}
             or not is_hash(binding["runtime_hash"])
             or not isinstance(binding["phases"], list) or not binding["phases"]):
         raise ValueError("Invalid workflow revision binding")
@@ -76,11 +86,11 @@ def validate_binding(binding):
 
 
 def revision_id(binding):
-    """Derive the identity; last_adoption is audit metadata, not identity."""
+    """Identify execution semantics, not runtime provenance or adoption metadata."""
     validate_binding(binding)
     if binding is None:
         return None
-    return digest({key: binding[key] for key in ("runtime_hash", "phases")})
+    return digest({key: binding[key] for key in ("execution_contract", "phases")})
 
 
 def _runtime_identity(root=None, *, config_path=None, readiness_path=None):
@@ -258,6 +268,7 @@ def _current_revision(orch):
         config_path=orch.config_path, readiness_path=orch.readiness_path)
     return {
         "runtime_hash": runtime,
+        "execution_contract": CURRENT_EXECUTION_CONTRACT,
         "phases": phase_manifest(workflow, orch.handlers),
         "last_adoption": None,
     }, sources == _IMPORTED_SOURCE_HASH
@@ -323,9 +334,9 @@ def mismatch_reason(orch):
         current, imported_sources_match = _current_revision(orch)
         if revision_id(orch.state.workflow_revision) != revision_id(current):
             reason = ("Workflow revision mismatch; preview workflow-adopt. Existing owned work "
-                      "requires restoring its pinned runtime before recovery.")
+                      "requires restoring its bound workflow before recovery.")
         elif not imported_sources_match or current["runtime_hash"] != orch._loaded_runtime_hash:
-            reason = "Runtime files changed during this process; restart on the pinned runtime before executing."
+            reason = "Runtime files changed during this process; restart before executing."
         else:
             reason = ""
     if cache is not None:
@@ -338,19 +349,6 @@ def assert_current(orch):
     if reason:
         raise ValueError(reason)
     return revision_id(orch.state.workflow_revision)
-
-
-def assert_automation_recovery_compatible(orch):
-    """Permit registry receipts, never provider work, across a runtime-only patch."""
-    old = orch.state.workflow_revision
-    if old is None:
-        raise ValueError("Workflow revision is unbound; only diagnostics are permitted.")
-    validate_binding(old)
-    current, imported_sources_match = _current_revision(orch)
-    if old["phases"] != current["phases"]:
-        raise ValueError("Workflow definition changed; restore the pinned runtime for automation recovery.")
-    if not imported_sources_match or current["runtime_hash"] != orch._loaded_runtime_hash:
-        raise ValueError("Runtime files changed during this process; restart before automation recovery.")
 
 
 def _resource_blockers(value, path="resources"):
@@ -499,6 +497,7 @@ def adopt(orch, reviewed_hash, *, by, reason, registry_entries=(), persist=None)
             "from_revision": plan["old_revision"], "at": stamp,
             "by": by.strip(), "reason": reason.strip(),
         }
+        validate_binding(new)
         orch.state.workflow_revision = new
         (persist or orch.state.checkpoint)()
     except BaseException:

@@ -17,6 +17,10 @@ next?”**—the response must be actionable, not informational only. Handle one
   status table, then use `m_ask_user` choices **Completed**, **Not yet**, **Need help**.
   Completed authorizes `done` with a specific confirmation note; Not yet leaves the
   hold unchanged; Need help routes through `step-info` and then repeats the choices.
+- **Owned work:** check the original provider result using its receipt protocol.
+  Say what Scout is checking and whether the owner needs to decide anything.
+  Do not show hashes, execution IDs, or reset commands as tasks for the owner.
+  Never repeat an unknown write, message or approval just to make progress.
 - **Blocked check:** show the reason, then offer **Fixed — rerun**, **Override**,
   **Keep blocked**. Override requires a separate free-text reason before `skip`.
 

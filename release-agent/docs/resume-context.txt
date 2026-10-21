@@ -11,23 +11,122 @@ Resolve the earlier published checkpoint with
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
 
-CHECKPOINT / PUBLICATION STATUS (2026-10-21 10:17 PDT)
+CHECKPOINT / PUBLICATION STATUS (2026-10-21 12:26 PDT)
 -----------------------------------------------------
-Owner requested commit, push, saved context and conversation compaction.
-This checkpoint includes the complete pending release-agent setup/onboarding and
-per-user structured-fetch routing correction, including tests and skill guidance.
+Owner requested commit and push of the simplified clean-version implementation.
+This checkpoint includes atomic checked-write attempts, execution-contract identity,
+schema 4, plain owner guidance and corresponding tests. It follows the local
+e80974780b routing checkpoint. Resolve this checkpoint's commit using git log below.
 Resolve its local commit with the git-log command above; do not rely on older
 "uncommitted" wording in the historical entries below.
 Origin is PUBLIC https://github.com/AzureAD/android-complete.git on branch
 feature/release-agent-phase3-audit. Do not publish internal release configuration
 or operational notes there. Push requires an appropriate approved private/internal
-destination. No public push was performed for this checkpoint.
+destination. Origin visibility was reconfirmed public at this request. No public push was performed:
+this checkpoint and its unpublished ancestor contain internal operational material.
 Unrelated root .gitignore is unmerged; preserve its content/index stages. A scoped
 temporary index isolates this project commit; do not resolve or commit that conflict.
 At this handoff microsoft_teams-GetChat and microsoft_teams-ListChatMembers are no
 longer exposed. Do not invoke absent tools. Rediscover the user's actual tools;
 do not interpret missing Teams tools as missing native structured WorkIQ fetch.
 No release execution, state/adoption, notification, permissions or auth changes.
+
+LATEST: SIMPLIFIED NEW VERSION (2026-10-21 11:54 PDT)
+---------------------------------------------------
+User authorized simplification, then explicitly removed all legacy compatibility
+requirements: this is a new version. This supersedes the cancellation/reservation
+design documented historically below.
+
+Checked writers now have one plan/validation, one atomic durable attempt, execution
+and verified receipt. Removed reserve-only flags, reserved-only authorization,
+cancellation CLI/receipt/validators, duplicated recovery descriptors and extra
+auto-approval planning. Plan failure leaves no owned state. Attempt/checkpoint failure
+restores memory and grants no permission; uncertain writes never replay.
+All ten configured checked writers use the same authority. Other effect/message/
+approval/automation receipt protocols retain their own no-replay safeguards.
+
+New release-state schema is 4; workflow execution_contract is 1. No legacy adapter or
+automatic migration exists. Old records remain unchanged and are explicitly reported
+as blocked, not hidden as "no release". Fresh-process compatible implementation
+updates preserve same-contract phase identities and approvals; changed semantic
+workflows need deliberate adoption, and source drift within a process still stops.
+
+One renderer now explains held work in plain language. The conductor handles hashes/
+execution IDs internally and asks the owner only for real decisions or missing input.
+Source skill/README updated. Validation: 673 passed/1 skipped in the broad affected
+surface run; an intentionally changed runtime-identity expectation was corrected and
+passed in follow-up. One unrelated CCD readiness test fails identically at untouched
+HEAD; temporary baseline removed and that pre-existing issue left unchanged.
+Git/OneAuth writer suite: 83 passed. Cross-protocol/workflow/discovery follow-up:
+120 passed, including the updated amendment expectation. Four installed resources
+updated with backup at session files\release-agent-skill-before-clean-version;
+all ten installed files match source. See the current checkpoint/publication status
+above for commit and push handling; earlier uncommitted wording is historical.
+No provider writes, release activity, workflow adoption, worker/auth/connection changes,
+or live mutation. Provided sample run is schema 3, intentionally unsupported by this new
+version and never modified, migrated or copied over the owner's live run.
+
+PRIOR FOLLOW-UP: PROJECT-WIDE OWNERSHIP RECOVERY (2026-10-21 11:10 PDT; SUPERSEDED)
+--------------------------------------------------------------------
+User requires an integral shared lifecycle correction, not an integration-PR patch.
+Audited all ten configured checked writers and the distinct effect, notification,
+external approval, automation-registry and Monthly-amendment ownership protocols.
+All checked adapters reach shared write_review.authorize. It owns fresh preflight,
+durable reservation/attempt separation, cancellation and fresh-review generation.
+Additional read-only execution policies now use its preflight callback before
+ownership; stage-start policy is wired to that same contract, not a new bypass.
+
+write_reservations.recovery derives exact recovery coordinates for every configured
+checked writer. All status rows/active-phase rows/focused holds and step-action
+expose the same write_recovery descriptor, always without execution permission.
+The renderer routes effect/notification/approval ownership to its own protocol
+instead of recommending generic done/reopen. There is no universal unlock or
+reclassification of an uncertain external outcome as unattempted.
+
+New catalog-derived matrix tests every configured writer's real command adapter,
+fresh preflight failures, policy failures, scoped cancellation, old-hash rejection,
+attempted/uncertain ownership retention, and consistent actionable recovery surfaces.
+New writers are automatically collected; new adapters must satisfy the same contract.
+Final targeted selection: 391 passed, including independent effect, notification,
+approval and automation checkpoint/replay/recovery boundaries. No live operations.
+Source skill/reference/README updated. All ten installed skill resources match
+source; the three changed resources were backed up in session artifacts under
+files\release-agent-skill-before-projectwide-recovery. Final descriptor-only
+follow-up covered all ten writers successfully. No new dependencies, commits or pushes.
+The example's state/events/automation-registry hashes remain unchanged.
+Original owner-runtime/receipt compatibility cautions below still apply.
+
+PRIOR INVESTIGATION: UNATTEMPTED INTEGRATION RESERVATION (2026-10-21)
+-------------------------------------------------------------------
+User supplied a diagnostic run under .release-runs\.release-runs\2026-10.
+Its finalize.integ_prs is running with an exact reviewed reservation, not
+in_flight/attempted. Latest journal records owner-approved local input rebuild;
+the saved note still refers to older upstream chat invalidation. No release
+state, original reservation, provider resource or automation has been changed.
+The copied state's closed-approval receipt format is incompatible with this
+clone's validator; do not edit it, infer a live pass or copy it back to its owner.
+
+Implemented locally: finish fresh planning before reservation; narrow,
+preview/hash/owner-confirmed cancel-write-reservation restores only unattempted
+ownership, including before runtime-only adoption with identical phase definitions.
+Cancellation invalidates the old approval hash; its engine-owned receipt survives
+typed evidence/result replacement. Attempted/uncertain writes stay fenced.
+Status distinguishes a reservation from a provider attempt. Source skill requires
+immediate supported recovery and durable inputs, not repeated waits or broad resets.
+The two changed installed skill resources were backed up in the session artifacts;
+all ten installed resources now match source. No Scout connection/auth changes.
+
+Read-only replay of the actual reservation confirms its classification and actionable
+rendering. State, journal and automation-registry hashes are unchanged.
+Expanded shared writer/revision/status/evidence regression run: 309 passed.
+Three unrelated test_step_context failures reproduced identically on untouched HEAD;
+temporary baseline removed. Initial existing Git writer cases passed as well.
+No release creation/advance, reservation cancellation, provider write, automation
+change, workflow adoption, commit or push performed. Local changes are uncommitted.
+The example differs from this clone in the bug_bash phase manifest and the externally
+verified approval receipt format. Integrate this repair into the OWNER'S matching
+runtime, preserving that runtime's other fixes; never replace it with this clone or
+edit the diagnostic run to make a validator accept it.
 
 LATEST FOLLOW-UP: PER-USER STRUCTURED FETCH ROUTING (2026-10-21)
 ---------------------------------------------------------------

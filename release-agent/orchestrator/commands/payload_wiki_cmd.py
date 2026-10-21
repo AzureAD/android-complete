@@ -64,22 +64,18 @@ def plan_payload_wiki(orch):
 def cmd_create_payload_wiki(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     try:
-        if args.dry_run and (args.execute or args.reserve):
-            raise ValueError("--dry-run cannot be combined with --execute/--reserve.")
-        if not (args.execute or args.reserve):
+        if args.dry_run and args.execute:
+            raise ValueError("--dry-run cannot be combined with --execute.")
+        if not args.execute:
             print(json.dumps(W.preview(orch, PHASE, S.ID, plan_payload_wiki(orch)), indent=2))
             return 0
-        W.apply_auto_approval(
+        authorization = W.authorize(
             args, orch, PHASE, S.ID,
             lambda: plan_payload_wiki(orch),
-            approved_by="payload-wiki-automation")
-        authorization = W.authorize(args, orch, PHASE, S.ID, lambda: plan_payload_wiki(orch))
+            auto_approved_by="payload-wiki-automation")
     except ValueError as exc:
         print(json.dumps({"error": str(exc), "permission_to_execute": False}))
         return 1
-    if authorization.reserved_only:
-        W.print_reservation(authorization)
-        return 0
     operation = authorization.plan.operations[0]
     target = operation.target
     args.execution_id = authorization.execution_id
@@ -118,7 +114,6 @@ def register(sub):
     p.add_argument("--dry-run", action="store_true", help="Preview only (default behavior)")
     p.add_argument("--execute", action="store_true",
                    help="Perform the create-or-update write. Default is dry-run.")
-    p.add_argument("--execution-id", help="Active reserve-step execution id")
     W.add_auto_approve_argument(
         p,
         help_text="Payload-wiki automation only: compute/checkpoint the current plan "

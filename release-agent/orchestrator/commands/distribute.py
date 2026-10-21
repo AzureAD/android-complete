@@ -126,9 +126,7 @@ def _apply(authorization):
 def cmd_distribute_tests(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config)
     try:
-        if args.validate and args.reserve:
-            raise ValueError("--validate is read-only and cannot reserve a write.")
-        if not (args.apply or args.reserve):
+        if not args.apply:
             plan = plan_distribution(args, orch)
             print(json.dumps(W.preview(orch, "bug_bash", S.ID, plan), indent=2))
             return int(args.validate and bool(plan.operations))
@@ -140,9 +138,6 @@ def cmd_distribute_tests(args):
     except ValueError as exc:
         print(json.dumps({"error": str(exc), "permission_to_execute": False}))
         return 1
-    if authorization.reserved_only:
-        W.print_reservation(authorization)
-        return 0
 
     try:
         _apply(authorization)
@@ -184,7 +179,6 @@ def register(sub):
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--apply", "--execute", dest="apply", action="store_true")
     mode.add_argument("--validate", action="store_true", help="Read only; nonzero if corrections remain")
-    p.add_argument("--execution-id", help="Active reviewed execution id")
     p.add_argument("--json", action="store_true")
     W.add_arguments(p)
     p.set_defaults(func=cmd_distribute_tests)

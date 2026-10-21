@@ -255,10 +255,10 @@ def test_wiki_executor_never_rereads_etag_for_write(wiki_inputs, monkeypatch, ex
     args = arguments("create-payload-wiki", "--execute")
     monkeypatch.setattr(C, "load_orch", lambda *_: (orch.state, orch))
 
-    def authorize(*a):
+    def authorize(*a, **kw):
         monkeypatch.setitem(wiki.S.CONFIG, "wiki", "late.wiki")
         wiki_inputs["etag"] = '"newer-etag"'
-        return Namespace(plan=plan, execution_id="owned", reserved_only=False,
+        return Namespace(plan=plan, execution_id="owned",
                          validate=lambda: validations.append(True))
 
     def write(**kw):
@@ -488,6 +488,31 @@ def test_beta_stage_rechecks_trusted_date_immediately_before_write(
     assert orch.state.get_step("rollout_start", beta_play_store.ID).execution is None
 
 
+def test_stage_policy_failure_uses_shared_preflight_before_reservation(
+        memory, monkeypatch, capsys, beta_clock):
+    orch = make_orch("rollout_start", beta_play_store.ID, now=beta_clock)
+    memory[0](orch)
+    monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
+        True, _signoff_info(stage_name=beta_play_store.STAGE_NAME, stage_ref="BetaPlayStore"), ""))
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    assert signoff._cmd_start_stage(arguments("start-beta-play-store"), beta_play_store) == 0
+    preview = json.loads(capsys.readouterr().out)
+    before = deepcopy(asdict(orch.state))
+
+    def expired_policy(*args):
+        raise ValueError("Execution policy changed during preflight")
+
+    monkeypatch.setattr(signoff, "_validate_owner_execution_policy", expired_policy)
+    monkeypatch.setattr(signoff.P, "start_auth_signoff_stage",
+                        lambda *a: pytest.fail("Preflight failure must never reach the provider"))
+    args = arguments("start-beta-play-store", "--execute",
+                     "--review-hash", preview["review_hash"], "--approved-by", "owner@example.com")
+    assert signoff._cmd_start_stage(args, beta_play_store) == 1
+    assert "Execution policy changed" in json.loads(capsys.readouterr().out)["error"]
+    assert asdict(orch.state) == before
+    assert orch.state.get_step("rollout_start", beta_play_store.ID).execution is None
+
+
 def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
         memory, monkeypatch, capsys, beta_clock):
     orch = make_orch("rollout_start", beta_play_store.ID, now=beta_clock)
@@ -667,7 +692,7 @@ def test_distribution_final_validation_persists_only_availability(distribution_i
     monkeypatch.setattr(C, "load_orch", lambda *_: (orch.state, orch))
     monkeypatch.setattr(C, "save_state", lambda *a: None)
     monkeypatch.setattr(W, "authorize", lambda *a: Namespace(
-        plan=plan, execution_id="owned", reserved_only=False, validate=lambda: None))
+        plan=plan, execution_id="owned", validate=lambda: None))
     monkeypatch.setattr(orch, "settle_execution", lambda *a, **kw: stored.append((a, kw)))
 
     def sync(plan_id, suite_id, assignments, **kw):
@@ -698,7 +723,7 @@ def test_distribution_partial_write_never_claims_completion(distribution_inputs,
     monkeypatch.setattr(C, "load_orch", lambda *_: (orch.state, orch))
     monkeypatch.setattr(C, "save_state", lambda *a: None)
     monkeypatch.setattr(W, "authorize", lambda *a: Namespace(
-        plan=plan, execution_id="owned", reserved_only=False, validate=lambda: None))
+        plan=plan, execution_id="owned", validate=lambda: None))
     monkeypatch.setattr(orch, "settle_execution", lambda *a, **kw: settlements.append((a, kw)))
     def sync(plan_id, suite_id, assignments, **kw):
         calls.append((plan_id, suite_id))

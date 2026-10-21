@@ -20,14 +20,21 @@ def _cell(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).replace("|", "\\|").strip()
 
 
-def _execution_guidance(execution: dict) -> str:
+def _execution_guidance(execution: dict, status=None) -> str:
+    if execution.get("notification_id"):
+        return ("Scout needs to check whether the previous notification was delivered. "
+                "It will not resend a message whose outcome is unknown.")
+    if execution.get("effect_mode"):
+        return ("Scout needs to reconcile the previous automatic action. "
+                "It will retry only when the action's recovery rules prove that safe.")
     if execution.get("approval"):
-        return (f"External approval owned by {execution['owner']} (execution {execution['id']}). "
-                "Use approve-orchestrator-gate --execution-id with this identity to reconcile; "
-                "never resend an attempted approval or clear it with done/reopen.")
-    return (f"Reserved by {execution['owner']} (execution {execution['id']}). Do not repeat the action. "
-            "Wait if active; if interrupted, stop the original runner and review the outcome "
-            "with the owner before telling Scout to mark done or reopen.")
+        return ("Scout needs to check the existing pipeline approval. "
+                "It will recover that decision rather than submit another approval.")
+    if execution.get("write_review"):
+        return ("Scout is checking the previous write's outcome before another attempt. "
+                "An unknown result will not be repeated.")
+    return ("Another release session owns this action. Scout needs to check its outcome "
+            "before starting another attempt.")
 
 
 def step_detail(s: dict, limit: int = 160) -> str:
@@ -41,7 +48,7 @@ def step_detail(s: dict, limit: int = 160) -> str:
     """
     note = s.get("note")
     if s.get("execution"):
-        note = _execution_guidance(s["execution"])
+        note = _execution_guidance(s["execution"], s.get("state", s.get("status")))
     links = s.get("links") or []
     if not note and not links:
         state = s.get("state")

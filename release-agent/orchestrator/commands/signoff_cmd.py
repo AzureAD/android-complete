@@ -182,7 +182,7 @@ def _validate_owner_execution_policy(state, step, plan):
 def _cmd_start_stage(args, step):
     if (
         getattr(step, "REQUIRES_OWNER_APPROVAL", False)
-        and (args.execute or args.reserve)
+        and args.execute
         and getattr(args, "as_of", None)
     ):
         print(json.dumps({
@@ -202,19 +202,22 @@ def _cmd_start_stage(args, step):
             schedule.now_local(schedule.get_tz(state.timezone))
             if (
                 getattr(step, "REQUIRES_OWNER_APPROVAL", False)
-                and (args.execute or args.reserve)
+                and args.execute
             )
             else orch.now_local
         )
-        return _plan_stage_start(
+        plan = _plan_stage_start(
             orch, step,
             manager_approved_by=getattr(args, "manager_approved_by", None),
             policy_now=policy_now,
         )
+        if args.execute:
+            _validate_owner_execution_policy(state, step, plan)
+        return plan
     try:
-        if args.dry_run and (args.execute or args.reserve):
-            raise ValueError("--dry-run cannot be combined with --execute/--reserve.")
-        if not (args.execute or args.reserve):
+        if args.dry_run and args.execute:
+            raise ValueError("--dry-run cannot be combined with --execute.")
+        if not args.execute:
             print(json.dumps(W.preview(orch, PHASE, step.ID, planner()), indent=2))
             return 0
         if getattr(step, "REQUIRES_OWNER_APPROVAL", False):
@@ -231,14 +234,10 @@ def _cmd_start_stage(args, step):
                 raise ValueError(
                     f"{step.STAGE_NAME} execution requires the release owner to be signed "
                     f"in to Azure CLI ({state.owner_email})")
-        else:
-            W.apply_auto_approval(
-                args, orch, PHASE, step.ID, planner,
-                approved_by=f"{step.AUTOMATION_LABEL}-automation")
-        authorization = W.authorize(args, orch, PHASE, step.ID, planner)
-        if authorization.reserved_only:
-            W.print_reservation(authorization)
-            return 0
+        authorization = W.authorize(
+            args, orch, PHASE, step.ID, planner,
+            auto_approved_by=(None if getattr(step, "REQUIRES_OWNER_APPROVAL", False)
+                              else f"{step.AUTOMATION_LABEL}-automation"))
         args.execution_id = authorization.execution_id
         authorization.validate()
         _validate_owner_execution_policy(state, step, authorization.plan)
@@ -250,7 +249,7 @@ def _cmd_start_stage(args, step):
             provider_attempted = exc.may_have_written
         message = f"{step.ID}: {exc}"
         print(json.dumps({"error": message, "permission_to_execute": False}))
-        if authorization is None or authorization.reserved_only:
+        if authorization is None:
             return 1
         if isinstance(exc, VerifiedStageFailure):
             _record(
@@ -289,7 +288,6 @@ def register(sub):
         p.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
         p.add_argument("--dry-run", action="store_true", help="Preview only (default behavior)")
         p.add_argument("--execute", action="store_true", help="Execute the approved, checked stage start")
-        p.add_argument("--execution-id", help="Active reviewed reservation execution id")
         if getattr(step, "REQUIRES_OWNER_APPROVAL", False):
             p.add_argument(
                 "--manager-approved-by",

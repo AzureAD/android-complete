@@ -106,6 +106,8 @@ not a connection or permission.
       `done --phase <p> --step <s> --note "Owner confirmed: <specific action>"`;
       `Not yet` leaves it held; `Need help` runs `step-info`, explains it, then presents
       the choices again. Never infer completion from “what’s next,” silence, or discussion.
+    - For owned work, check the previous provider outcome; do not repeat it or offer
+      a generic override. Explain what Scout is checking, not command/hash mechanics.
     - For a blocked check, show its exact reason and call `m_ask_user` with
       **Fixed — rerun**, **Override**, and **Keep blocked**. Fixed reruns the owning check;
       Override first asks for a free-text reason and only then runs `skip`; Keep blocked
@@ -132,11 +134,16 @@ not a connection or permission.
     and all blockers. Ask whether to accept **that exact reset scope**; a generic “new
     version” approval without the displayed impact is insufficient. Apply only the reviewed
     hash/reviewer/reason, then show the resulting status.
-    For a runtime-only patch blocked by unfinished automation attempts, follow
-    **reference/commands.md → Runtime-only patch recovery** on the release owner's machine.
-    Exact registry receipts can be reconciled before adoption; this does not authorize
-    provider operations or clear step/delivery ownership. Never use another machine's
-    automation list to resolve a copied registry.
+    Same-contract implementation updates with unchanged phases need no adoption in a
+    fresh process. Do not ask the owner to approve a code-only update. Changed workflows
+    still need the exact impact review above. Schema 4 is a clean version boundary:
+    never migrate or edit an older run to make it load.
+    Checked writers plan once and save one attempt immediately before execution.
+    Preflight failure needs a corrected input, not a reservation-reset ceremony.
+    Unknown outcomes require checking the original provider result, never another write.
+    Scout handles command IDs and hashes internally; ask the owner only for a real
+    decision or missing information. For distinct notification/effect/approval/worker
+    recovery, use **reference/commands.md → Runtime updates and recovery**.
 3e. **Email notification acknowledgement requires exact payload proof.** Send only the
     claimed tool/payload through the direct MCP mail tool (`workiq_send_email`), never
     browser/OWA/Outlook/manual compose. For `workiq_send_email`, generate a receipt file
@@ -212,8 +219,8 @@ release writers (`launch-localization`, `create-integration-prs`, `create-oneaut
 `create-payload-wiki`, `start-release-signoff`, `start-upload-whats-new`,
 `start-upload-alpha`) run with `--execute --auto-approve --executor <automation-id>`;
 each command recomputes and checkpoints the current plan hash before its single fenced
-provider request. Optional `--reserve` only saves authorization for human-reviewed writers;
-execution additionally needs the returned `--execution-id`, with `--reserve` omitted.
+provider request. Checked writers do not accept `--reserve`; a preview does not own
+work, and only execution saves an attempt. Existing execution IDs are receipt-only.
 Never replace this with generic reserve-step, raw provider calls or record-step.
 Changed plans need fresh approval. Interrupted/uncertain attempts stay owned: inspect
 provider evidence and resolve explicitly before another attempt. `last_write_review`

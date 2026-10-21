@@ -200,9 +200,9 @@ def test_exact_reserved_receipt_settles_while_suspended_but_new_writes_cannot(co
     review = {"hash": W.review_hash(
         SimpleNamespace(state=state, workflow=kernel.workflow), "p", "write", plan),
         "approved_by": "test-reviewer"}
-    assert kernel.reserve("p", "write", "worker", write_review=review).changed
+    assert isinstance(kernel.start_reviewed_write(
+        "p", "write", "worker", write_review=review), OutcomePermit)
     execution_id = state.get_step("p", "write").execution["id"]
-    assert isinstance(kernel.begin_reviewed_write("p", "write", execution_id), OutcomePermit)
     _suspend(state, settings, reason)
     assert isinstance(kernel.authorize_outcome(I.WRITE, "p", "write", execution_id=execution_id), TransitionResult)
     assert kernel.settle_execution("p", "write", execution_id, Done("receipt")).changed

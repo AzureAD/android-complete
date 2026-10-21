@@ -338,11 +338,10 @@ def test_engine_holds_until_actual_assignments_and_testers_are_valid(state, inpu
     with mockctx.active(inputs):
         outcome = _invoke(step.build, state, oof=[])
     assert isinstance(outcome, Done)
-    assert orch._transition_kernel().reserve(
+    orch._transition_kernel().start_reviewed_write(
         "bug_bash", step.ID, "test-executor",
-        write_review={"hash": _review_hash(state, inputs), "approved_by": "test-reviewer"}).changed
+        write_review={"hash": _review_hash(state, inputs), "approved_by": "test-reviewer"})
     execution_id = orch.step_execution("bug_bash", step.ID)["id"]
-    orch._transition_kernel().begin_reviewed_write("bug_bash", step.ID, execution_id)
     assert orch.record_scout_step(
         "bug_bash", step.ID, "pass", outcome.note,
         execution_id=execution_id).kind == "ran"
