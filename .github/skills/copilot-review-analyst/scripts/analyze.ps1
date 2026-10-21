@@ -11,6 +11,8 @@ param(
     [string]$EndDate = (Get-Date).ToString("yyyy-MM-dd")
 )
 
+. (Join-Path $PSScriptRoot "rule-attribution.ps1")
+
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
@@ -180,6 +182,7 @@ foreach ($repo in $repos) {
             foreach ($cc in $copilotComments) {
                 $commentId = $cc.id
                 $commentBody = $cc.body
+                $attribution = Get-MemoryStorageReviewMetadata -Body $commentBody
                 $commentPath = $cc.path
                 $commentLine = $cc.line
 
@@ -235,6 +238,8 @@ foreach ($repo in $repos) {
                     PRTitle          = $prTitle
                     PRState          = $pr.state
                     CommentId        = $commentId
+                    ReviewId         = $cc.pull_request_review_id
+                    RuleId           = $attribution.RuleId
                     FilePath         = $commentPath
                     Line             = $commentLine
                     CommentBody      = $commentBody
@@ -257,8 +262,8 @@ foreach ($repo in $repos) {
         
         # Also check the review-level summary comments from copilot
         try {
-            $reviewsRaw = gh api "$apiRepo/pulls/$prNum/reviews" 2>&1
-            $reviews = $reviewsRaw | ConvertFrom-Json
+            $reviewsRaw = gh api "$apiRepo/pulls/$prNum/reviews" --paginate --slurp 2>&1
+            $reviews = @($reviewsRaw | ConvertFrom-Json | ForEach-Object { $_ })
             # Coverage: a PR counts as "reviewed by Copilot" if Copilot posted ANY review
             # (even a body-less APPROVED/COMMENTED), not only ones with a summary body.
             $anyCopilotReview = $reviews | Where-Object { $_.user.login -in $COPILOT_USERS }
@@ -269,6 +274,7 @@ foreach ($repo in $repos) {
             $copilotReviews = $reviews | Where-Object { $_.user.login -in $COPILOT_USERS -and $_.body.Length -gt 0 }
             
             foreach ($rev in $copilotReviews) {
+                $attribution = Get-MemoryStorageReviewMetadata -Body $rev.body
                 $reviewSummaries += [PSCustomObject]@{
                     Repo       = $label
                     PRNumber   = $prNum
@@ -276,6 +282,9 @@ foreach ($repo in $repos) {
                     PRTitle    = $prTitle
                     ReviewId   = $rev.id
                     State      = $rev.state
+                    CommitId   = $rev.commit_id
+                    MemoryStorageScreened = $attribution.MemoryStorageScreened
+                    GuidanceRevision = $attribution.GuidanceRevision
                     BodyExcerpt = if ($rev.body.Length -gt 300) { $rev.body.Substring(0, 300) + "..." } else { $rev.body }
                 }
             }
@@ -295,8 +304,8 @@ foreach ($repo in $repos) {
 }
 
 # Save raw results
-$allResults | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\raw_results.json" -Encoding utf8
-$reviewSummaries | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\review_summaries.json" -Encoding utf8
+ConvertTo-Json -InputObject @($allResults) -Depth 5 | Out-File "$OutputDir\raw_results.json" -Encoding utf8
+ConvertTo-Json -InputObject @($reviewSummaries) -Depth 5 | Out-File "$OutputDir\review_summaries.json" -Encoding utf8
 
 # ========================================
 # COVERAGE (Tier 2.4): reviewed vs with-feedback vs no-feedback, per repo + overall.
@@ -368,9 +377,11 @@ foreach ($repoLabel in @("common", "msal", "broker")) {
 # Reply rate
 $replied = ($allResults | Where-Object { $_.HasReply -eq $true }).Count
 $noReply = ($allResults | Where-Object { $_.HasReply -eq $false }).Count
+$repliedPct = if ($totalComments -gt 0) { [math]::Round($replied/$totalComments*100,1) } else { 0 }
+$noReplyPct = if ($totalComments -gt 0) { [math]::Round($noReply/$totalComments*100,1) } else { 0 }
 Write-Host "`n--- REPLY BREAKDOWN ---" -ForegroundColor Cyan
-Write-Host "  Replied:    $replied ($([math]::Round($replied/$totalComments*100,1))%)" -ForegroundColor Green
-Write-Host "  No reply:   $noReply ($([math]::Round($noReply/$totalComments*100,1))%)" -ForegroundColor DarkGray
+Write-Host "  Replied:    $replied ($repliedPct%)" -ForegroundColor Green
+Write-Host "  No reply:   $noReply ($noReplyPct%)" -ForegroundColor DarkGray
 
 # Force-push / stale-snapshot fingerprint (reviewed commit rewritten away)
 $rewritten = ($allResults | Where-Object { $_.ReviewedCommitRewritten -eq $true }).Count
