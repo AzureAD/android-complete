@@ -12,7 +12,7 @@ from tools.distribution import set_assigned_to as set_assigned_to_request
 from tests.test_distribution import inputs, state, inspect, data, cli, observe, fake_writes
 from tests._context import fresh_orchestrator
 from orchestrator import cli_common as C
-from orchestrator import m365, write_review as W
+from orchestrator import write_review as W
 from orchestrator.commands import distribute as command
 from steps.bug_bash import distribute_tests as S
 
@@ -53,31 +53,29 @@ def test_roster_connector_primary_path_never_uses_az_and_retains_source(monkeypa
     assert not hasattr(D, "_graph_get") and not hasattr(D, "_graph_token")
 
 
-def test_missing_roster_requests_exact_mail_entity_not_people_search(monkeypatch):
+def test_missing_roster_requests_exact_read_via_discovered_route(monkeypatch):
     monkeypatch.setattr(D.subprocess, "run", lambda *a, **kw: pytest.fail("No az roster fallback"))
     mail = "test'roster@example.test"
     with pytest.raises(D.ConnectorObservationRequired) as failure:
         D.resolve_roster(mail, owner="owner@example.test")
-    request = failure.value
-    assert request.tool == "workiq.fetch"
-    assert request.arguments == {"entityUrls": [D.roster_lookup_path(mail)]}
-    assert request.requests == [m365.observation_request("workiq.fetch", request.arguments, "owner@example.test")]
-    assert "If the required" in str(request) and "people search" in str(request)
+    assert failure.value.tool == "workiq.fetch"
+    assert failure.value.arguments == {"entityUrls": [D.roster_lookup_path(mail)]}
+    assert "verified native WorkIQ CLI" in str(failure.value)
+    assert "workiq-read" in failure.value.requests[0]["routing"]
 
 
-def test_missing_roster_step_and_preview_request_connector_without_ado_writes(
+def test_missing_roster_step_and_preview_request_reads_without_ado_writes(
         monkeypatch, state, inputs, capsys):
     inputs.pop("roster")
     orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
     context = orch.context("bug_bash", S.ID, parameters={"oof": [], "oce": "oce@example.com"},
                            inputs=inputs)
     outcome = S.build(context)
-    assert outcome.kind == "needs_skill" and not outcome.outbound and outcome.tool == "workiq.fetch"
-    assert outcome.payload["_connector_reads"] and "--roster-file" in outcome.payload["_followup"]
+    assert outcome.kind == "needs_skill" and outcome.tool == "workiq.fetch" and not outcome.outbound
     result, saved = cli(monkeypatch, state, inputs, "--no-oof")
     report = json.loads(capsys.readouterr().out)
     assert result == 1 and not saved and not report["permission_to_execute"]
-    assert report["connector_reads"] and "If the required" in report["error"]
+    assert report["connector_reads"] and "verified native WorkIQ CLI" in report["error"]
 
 
 @pytest.mark.parametrize("change", [

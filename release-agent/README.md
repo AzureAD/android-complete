@@ -808,7 +808,8 @@ anything missing, then **registers any required MCP servers into Scout's config*
 server) is introduced.
 
 MCP and skill installation are explicit parts of bootstrap: it registers the
-declared command-based servers and copies **SKILL.md plus all reference resources**,
+declared command-based servers and copies
+**SKILL.md plus all reference resources**,
 verifying each copied file. Existing unrelated servers and user resources stay intact.
 Registration is not proof of a healthy authenticated MCP session.
 
@@ -830,22 +831,89 @@ the adapters; when using a custom Scout profile, supply its environment override
 on later CLI calls as well. Setup does not silently change persistent environment
 or application settings.
 
-The `m365_connectors` section is also enforced. A headless bootstrap cannot see
-Scout's loaded tools and therefore reports **setup incomplete**, not success, until
-you provide `-M365ToolsFile <inventory.json>`. Configure/sign in to the supported
-hosted WorkIQ connector (`https://workiq.svc.cloud.microsoft/mcp`) in Scout, reload,
-and observe the actual tool inventory. Do not infer entity `fetch` from native
-`workiq_*` tools, use Ask as a group lookup, or invent a command-server registration.
+After bootstrap, **open Scout and enter `/release-agent check setup`**.
+The terminal has installed the skill and registered the required MCP servers;
+Scout performs the remaining tool check. You do not need to create files or run
+more terminal commands. **No release is started by a setup check.**
 
-The temporary inventory contains
+Guided onboarding follows one deterministic action at a time: discover valid
+installation paths, register missing declared MCPs automatically, repair approved
+existing configuration when necessary, load tools/sign in, then verify read access.
+Scout performs the diagnostics and keeps its temporary evidence internally.
+Known valid paths are reused; only absent/ambiguous paths need a user question.
+Hosted WorkIQ's remote connection is removed; setup never registers or requires it.
+Scout's native WorkIQ tools and the Agency integrations remain in use. Structured
+WorkIQ fetch is a required logical capability, satisfied by an actually exposed
+MCP fetch tool OR the selected user's existing native WorkIQ CLI. Removing the
+custom remote registration does not make native CLI fetch unavailable.
+Existing matching connections and authentication are preserved; conflicting or
+disabled entries are not overwritten. Sign-in/consent or a Scout reopen may still
+need user interaction. Unsupported hosts, policy denials or a failed recovery stop
+with a concrete administrator handoff instead of repeating a check-again loop.
+
+The internal `onboarding --json` planner never writes configuration, acquires
+tokens, signs readiness or starts a release. Setup completion requires fresh
+account/target-bound reads of the profile/calendar, exact configured roster and
+all member pages, Teams, and report site/library, plus ICM/Kusto connectivity.
+Release-time eligibility and write approvals remain
+separate and are not cached as reusable onboarding permission.
+
+The `m365_connectors` section remains enforced. When the terminal cannot see
+Scout's loaded tools, it says **"Installation complete. One check remains in
+Scout"**, not that infrastructure is missing. This is an expected handoff; its
+exit code remains nonzero until prerequisites are verified, so scripts cannot
+treat an unverified setup as ready to start a release.
+
+Inspect each user's actual Scout tools first; load `agency-workiq-workiq`
+instructions when useful for discovery. If MCP fetch is absent, inspect the
+selected profile's native WorkIQ CLI and its `fetch --help`, not semantic
+`workiq ask`. `infra --json` and `onboarding --json` expose `structured_fetch`:
+`kind:mcp` identifies the actual tool; `kind:cli` supplies command argv,
+`observed_at` and `fetch_help`. CLI help proves syntax support, not live access.
+No supported launcher/version produces a diagnostic and `--workiq-path` guidance,
+not a global claim that the capability is impossible.
+
+The machine-only, read-only adapter executes an exact Graph-relative URL:
+
+```powershell
+python -m orchestrator.cli workiq-read --scout-root '<selected-existing-profile>' --account '<verified-owner>' --entity-url '/groups?$filter=mail eq ''<configured-email>''&$select=id,displayName,mail&$top=100'
+```
+
+Optionally pass `--workiq-path '<existing-workiq-launcher>'`. Discovery uses the
+selected profile's `bin\workiq.cmd` or actual PATH executable, never an author's
+fixed path. The adapter preserves the verified Scout wrapper/runner execution
+chain without shell interpolation or a raw-binary bypass. Its canonical
+`workiq.fetch` observation records the actual `structured_fetch` route; it does
+not pretend a CLI is an exposed MCP tool.
+
+Resolve the exact configured mail group (currently `androididentity@microsoft.com`),
+then `/groups/<returned-id>/members?$select=id,displayName,userPrincipalName,mail&$top=100`
+and every returned page. Follow planned report reads using observed site/drive IDs.
+Do not replace current targets with the historical `androidauth` example.
+People search, WorkIQ Ask and Azure CLI Graph tokens are not evidence routes.
+Authentication/denial is a stop, never a reason to try another identity/transport.
+Native report link resolution/downloads and guarded browser publication stay unchanged.
+Built-in SharePoint list tools are auxiliary metadata reads with their own actual
+arguments/responses, not proof of all canonical Graph site/drive checks.
+
+**Advanced Scout/automation handoff (not a user task):** `-M365ToolsFile` forwards a
+temporary inventory generated by Scout. It contains
 `{"version":1,"observed_at":"<actual offset-aware read time>","available_tools":{"<canonical required name>":"<actual exposed name>"}}`.
+For CLI fetch, include the discovered `structured_fetch` descriptor separately;
+do not put a command in `available_tools`. Both routes use canonical observations
+`{version:1,tool:"workiq.fetch",arguments:{entityUrls:[<exactPath>]},account,observed_at,result}`
+and record the actual transport route where available.
 `infra --no-register --json` lists the required names and inventory format.
 Inventories expire after 15 minutes; missing, malformed or future-dated evidence
 does not pass. Do not include tokens, prompts or private read responses.
-The Scout conductor checks this before initializing a new release. Bootstrap
-exits nonzero while incomplete and no longer suggests proceeding to release init.
+The Scout conductor checks this before initializing a new release.
 This checks tool availability only: live sessions, release-owner/target-bound
 M365 read probes and explicit send/upload attestations remain required at entry.
+On onboarding completion the conductor saves only compact `routing` JSON under
+the selected Scout profile: verified account, configured targets, actual route
+and how-to. Never save tokens, raw private responses or roster contents there or
+in release state. This is a recipe, not a durable permission/pass: rediscover
+capabilities and rerun live reads for each future setup and release readiness.
 
 You can run the preflight any time on its own:
 
@@ -1034,8 +1102,9 @@ live release execution. `docs/release-audit.txt` also records the open default
 case-budget overflow; targeted passes do not certify that guard as passing.
 
 Microsoft 365 routing is independent of Azure DevOps authentication. Calendar,
-mail and supported files use structured native WorkIQ tools; directory groups
-use hosted WorkIQ entity reads; exact Teams chat/member operations use the Agency
+mail and supported files use structured native WorkIQ tools; exact directory/group
+and report site/library reads use logical `workiq.fetch` through the discovered
+actual MCP or existing native CLI route. Exact Teams chat/member operations use the Agency
 Teams MCP. WorkIQ Ask is for discovery/synthesis, not exact release identities or
 delivery proof. M365 paths must not obtain Graph tokens through Azure CLI.
 ADO pipeline/Test Plans/repository/wiki operations retain their existing ADO
@@ -1046,10 +1115,11 @@ owner/target-bound read probes) from `m365_write_access` (explicit owner confirm
 of send/upload grants). `m365-capabilities --release <id>` prints the read-only
 probe plan. `record-check --item m365_access --status pass --evidence-file <file>`
 validates the structured observations; registration, `az login`, raw pasted results
-and bare passes are insufficient. Missing hosted entity tools or denied group
-paths block setup early, not during distribution. No test send/upload is authorized.
+and bare passes are insufficient. Exact directory/group reads with complete member
+pagination and report site/library enumeration must succeed, not be skipped as
+unavailable. Missing evidence holds entry. No test send/upload is authorized.
 Actual destination access is rechecked when used, especially future Bug Bash chats.
-Hosted WorkIQ new-file upload is unavailable; native `workiq_upload_file` only
+Native `workiq_upload_file` only
 replaces an existing item. New immutable report creation therefore uses a checked
 SharePoint browser upload with its owning receipt, not a fictitious upload API.
 

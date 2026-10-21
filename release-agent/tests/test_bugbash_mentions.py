@@ -157,7 +157,7 @@ def test_upn_smtp_difference_holds_for_explicit_directory_evidence_without_raw_g
         B.resolve_mention_people(CHAT, owners, member_observation=observation, owner=OWNER)
     assert failure.value.tool == "workiq.fetch"
     assert failure.value.arguments == {"entityUrls": [B.mention_directory_path("a@example.test")]}
-    assert "directory_observations" in str(failure.value)
+    assert "verified native CLI" in str(failure.value)
 
 
 @pytest.mark.parametrize("missing_email", [False, True])
@@ -234,7 +234,6 @@ def test_initial_and_periodic_directory_evidence_fail_closed_with_actionable_mis
     if failure == "missing":
         assert initial.kind == "needs_skill" and not initial.outbound and initial.tool == "workiq.fetch"
         assert initial.payload["entityUrls"] == [B.mention_directory_path("a@example.test")]
-        assert "directory_observations" in initial.payload["_followup"]
     else:
         assert initial.kind == "blocked" and initial.reason
     C.save_state(st, str(tmp_path), st.release_id)

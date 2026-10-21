@@ -80,17 +80,27 @@ the existing execution only if every byte matches. Do not rename or widen sharin
 
 Native `workiq_upload_file` can replace only a proven existing exact item;
 `route:"existing_item"` requires fresh native resolve/download observations proving
-the same immutable bytes. Hosted WorkIQ new-file upload is not released. Do not
+the same immutable bytes. Do not
 invent an uploader or use the existing-item API to create a filename.
 
 After acknowledgement, collect `workiq_resolve_m365_link` and
 `workiq_download_file` observations with exact arguments/account/time and complete
-provider metadata/bytes. Canonical link resolution may return only drive/item IDs:
-the result action then requests an exact ID-bound hosted WorkIQ DriveItem metadata
-read; place its envelope in `metadata`. Native download text/base64 output is
+provider metadata/bytes. If native link resolution returns only drive/item IDs
+without required metadata, follow the returned exact read request through the
+discovered structured fetch route (actual exposed MCP tool OR existing native
+WorkIQ CLI via `workiq-read`):
+`/drives/<exact-id>/items/<exact-id>?$select=id,name,size,webUrl,eTag,parentReference,file,folder`.
+Use only the IDs returned by resolution, not a title search. Save its canonical
+`workiq.fetch` envelope under `metadata`, recording the actual transport route
+where available; CLI use does not claim a loaded MCP tool. The removed custom
+remote registration stays removed. Auxiliary built-in SharePoint metadata reads
+keep their actual tool/arguments/response shape; do not fabricate a fetch envelope
+or generically remap them to satisfy the current canonical validator.
+Missing/denied metadata keeps receipt verification held. Preserve the original
+execution; never upload again to bypass verification. Native download text/base64 output is
 accepted only when its bytes match the frozen SHA/size. Save
 `{receipt_binding:<returned unchanged>,item_url,resolve:<envelope>,
-metadata:<requested envelope when needed>,download:<envelope>}` and run
+metadata:<exact fetch envelope when needed>,download:<envelope>}` and run
 `publish-rc-report --release <id> --execution-id <owning id> --receipt-file <file>`.
 This is result-only and never issues another upload. Unknown outcomes retain the
 original execution; inspect/read the exact target rather than repeating execute.

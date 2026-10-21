@@ -750,11 +750,13 @@ def test_all_command_mcps_ship_nonempty_tool_allowlists():
     """GUARDRAIL: every command-based MCP in requirements.yaml must ship a NON-EMPTY
     `tools` allowlist — an empty list risks Scout silently dropping the server on a
     first-load hiccup. (Builtins auto-discover and are exempt, but requirements.yaml
-    only lists command servers.)"""
+    also lists HTTP servers, which use host discovery instead.)"""
     from orchestrator import infra
     root = os.path.dirname(os.path.abspath(__file__))
     req = infra.load_requirements(os.path.join(os.path.dirname(root), "config", "requirements.yaml"))
     for m in req.get("mcp_servers", []):
+        if m.get("type", "command") != "command":
+            continue
         tools = m.get("tools") or []
         assert len(tools) >= 1, f"MCP '{m.get('scout_key')}' has an empty tools allowlist"
     # spot-check the ones we care about

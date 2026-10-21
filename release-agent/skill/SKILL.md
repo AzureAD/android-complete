@@ -1,6 +1,6 @@
 ---
 name: release-agent
-description: Drive an Android release end-to-end using the Release Orchestrator backbone. Use when the user invokes /release-agent, says "start a release", "continue the release", "advance the release", "approve the gate", "release status", or asks about release run-state. The engine is deterministic and does the real work; this skill is the conversation layer that discovers releases, presents gate briefs and status, and relays the human decision.
+description: Onboard the release engineer and drive an Android release using the Release Orchestrator. Use for /release-agent, "set up release agent", "onboard", "check setup", "finish setup", "start a release", "continue the release", "advance the release", "approve the gate", "release status", or release run-state. Guided onboarding handles portable installation paths, supported connections and read checks without starting a release. The engine owns release sequencing and human gates.
 ---
 
 # /release-agent — Release Orchestrator conductor
@@ -13,13 +13,13 @@ You are the conversation layer over the **Release Orchestrator engine** (determi
 **This is the very first thing you do on any release request — before Discover, before any `python -m orchestrator.cli` command.** The engine is portable (it self-locates from its own file), but YOU must know which folder to `cd` into to run it. **Do NOT assume `C:\repos\android-complete` — that is only this author's layout; other users clone elsewhere.**
 
 1. **Recall.** `m_recall` for the clone path (e.g. "android-complete release-agent path"). If a confirmed path comes back **and still exists** (quick `Test-Path <path>\orchestrator\cli.py`), use it as `<AGENT_ROOT>` and skip straight to the normal flow. Only do the steps below when nothing is remembered or the remembered path is gone.
-2. **Auto-detect a candidate** — the `release-agent` folder of an `android-complete` clone (a folder qualifies only if `<X>\release-agent\orchestrator\cli.py` exists). First hit wins as the *candidate*:
+2. **Discover candidates** — the `release-agent` folder of an `android-complete` clone (a folder qualifies only if `<X>\release-agent\orchestrator\cli.py` exists):
    - the Scout execution working directory and its ancestors (you may already be inside the clone);
    - common roots: `C:\repos\android-complete`, `~\repos\android-complete`, `~\source\repos\android-complete`, `~\git\android-complete`, `~\src\android-complete`;
    - a bounded fallback search for `…\android-complete\release-agent\orchestrator\cli.py` under the user's home / source dirs (`Get-ChildItem -Recurse -Filter cli.py -ErrorAction SilentlyContinue`, don't scan the whole disk).
 3. **Canonicalize.** From the candidate's `release-agent` folder, run `python -m orchestrator.cli paths --json` → `{agent_root, repo_root, runs_root}`. Take `agent_root` as the authoritative `<AGENT_ROOT>` (absolute, normalized).
-4. **ALWAYS confirm with the user — even on a single unambiguous hit.** `m_ask_user` (free-text, pre-fill the detected `agent_root`): ask whether that is their `android-complete\release-agent` folder. If they correct it, re-run `paths --json` from their path to canonicalize; if auto-detect found nothing, ask them to paste the path.
-5. **Persist.** Once confirmed, `m_remember` it (e.g. "release-agent clone path on this machine: `<AGENT_ROOT>`") so every later session skips this. Then continue to the normal flow.
+4. **Ask only when unresolved.** Reuse a remembered valid path without asking again. One unambiguous discovered candidate corroborated by `paths --json` is usable; report it once, without a confirmation card. Multiple different valid clones require a choice. No valid candidate requires one free-text `m_ask_user` for the folder. Validate any supplied path; do not silently fall back from an invalid explicit path.
+5. **Persist provenance.** `m_remember` the canonical path as user-confirmed or auto-discovered, as applicable. Never describe an inferred path as user-confirmed. Continue without repeating path confirmation on later setup attempts.
 
 Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folder and **`<REPO_ROOT>`** = its parent (the android-complete clone). Run every `python -m orchestrator.cli …` from `<AGENT_ROOT>`; `paths --json` prints all three roots any time. Never hardcode `C:\repos`.
 
@@ -27,43 +27,74 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
 - Engine + config: **`<AGENT_ROOT>`** (the confirmed `release-agent` folder — see FIRST RUN) — **run all `python -m orchestrator.cli …` commands from here.**
 - Run-state: **`<REPO_ROOT>\.release-runs\<release>\release-state.json`** (gitignored; one per month, e.g. `2026-08`). `python -m orchestrator.cli paths --json` prints `agent_root` / `repo_root` / `runs_root`.
 - **Reference docs (this skill's detail):** **`<AGENT_ROOT>\skill\reference\`** — read the relevant one on demand (routing table below). The core stays lean; the details live there.
-- `setup/bootstrap.ps1` only prepares the machine (infra preflight + installs this skill). If an infra check fails (an MCP server isn't registered, or Scout wasn't restarted), run `python -m orchestrator.cli infra` and tell the user to restart Scout; manifest is `config/requirements.yaml`.
+- `setup/bootstrap.ps1` prepares the machine (infra preflight + installs this skill). Its normal final handoff is `/release-agent check setup` inside Scout. The terminal cannot inspect loaded tools; that alone is not a missing connector. Inspect the actual failure before recommending configuration or a restart. Manifest: `config/requirements.yaml`.
+
+## Check setup only (no release activity)
+
+For setup/onboarding requests, read **reference/starting-and-scheduling.md →
+Guided onboarding** and run `onboarding --json` from the resolved clone.
+Follow its single `action`; Scout handles observations and follow-up reads
+internally. No `list`, `init`, `next`, release readiness changes, notifications or
+workers. Do not treat setup as a request to start a release.
+
+Use one short introduction, perform automatic diagnostics silently, then show
+only the next required human action. Never repeat summaries before/after a card,
+ask for tool inventories/JSON, or ask the user what the assistant should do next.
+Register missing declared MCP connections automatically as part of requested
+setup, just like bootstrap. A `register_mcp` action runs `infra` with registration
+enabled at the resolved Scout profile; no extra "Guide connection" question,
+Add Server form task or host-capability question. The custom remote Hosted WorkIQ
+registration was removed: never restore or reconnect it. Keep Scout's native
+`workiq_*` tools and Agency MCPs. Logical `workiq.fetch` remains required, through
+an actual exposed MCP fetch tool OR the selected profile's existing native CLI.
+Inspect actual tools first; load `agency-workiq-workiq` instructions if useful.
+If MCP fetch is absent, use `infra --json`/`onboarding --json` native CLI discovery
+and `fetch --help`, then the machine-only `workiq-read` adapter (see references).
+Do not infer unavailability from failed semantic WorkIQ Ask or absent MCP fetch.
+Preserve existing connections, tokens and permission settings.
+The planner remains read-only; the existing infra installer owns backed-up
+create-if-absent writes. Never turn a check-only technical plan into broad write
+permission, edit a conflicting existing entry or change access approvals.
+Ask only for unresolved paths, an actual repair to existing configuration, or
+sign-in/consent the user must complete. If a reload is required, use an exposed
+refresh control; otherwise ask the user to reopen Scout once. Do not claim a
+desktop action happened when no such host-control tool is available.
+
+After registration and one reload/sign-in/reconnect, inspect fresh tools and retry the
+failed read once. Record the planner's action_id in the temporary observations.
+If still unsuccessful, follow `support` and STOP. A denial/unsupported host is
+not a retry prompt. No alternate transport, raw token, fabricated success or
+silent weakening of required capabilities is allowed.
+
+`ready` requires fresh account/target-bound profile/calendar, complete exact
+configured roster, Teams and report site/library reads plus ICM/ADX connectivity.
+Help output/tool availability alone cannot pass setup. Missing or failed evidence
+holds; never replace membership with people search or WorkIQ Ask. Use configured
+targets (currently androididentity@microsoft.com), never historical examples.
+On completion use `onboarding --record-routing` with the same fresh evidence and
+selected profile to save its compact `routing` JSON to
+`<selected-profile>\release-agent-routing.json` (not release state):
+account/targets/actual route/how-to only, no
+tokens, roster contents or raw private responses. It is a recipe, not a durable
+grant; rediscover and rerun live reads next time. Say no release
+was started, preserve the configured account/targets, and end. Release-bound
+capability evidence, current on-call eligibility and human write attestations
+still run separately when the owner later starts a release.
 
 ## Setup prerequisite check BEFORE a new release
 
-After discovery, but BEFORE `preview-release`/`init`, inspect `infra --no-register --json`.
-Handle every `path_requests` entry first: ask the user for that path with a free-text
-`m_ask_user`, stop, then validate the supplied location with the returned flag.
-Defaults are candidates, not mandatory installation locations. Use `--scout-root`
-for the actual existing Scout profile and `--agency-path` for a custom Agency
-executable. For a custom profile, set the process `RELEASE_AGENT_SCOUT_ROOT` on
-subsequent CLI shell calls too so readiness reads the same configuration; never
-change persistent environment settings silently. Remember only confirmed paths.
-If Python is not discovered, ask for its actual executable rather than assuming
-an author-specific location or automatically installing a duplicate.
-
-Its `m365_connectors` section is enforced, not documentation-only. In Scout, observe
-the actual loaded tools and write a fresh temporary inventory outside release state:
-`{version:1, observed_at:<actual offset-aware observation time>,
-available_tools:{<canonical required name>:<actual exposed name>}}`.
-Use its `required_tools` and the SAME names/aliases as `m365-capabilities`; include
-only tools actually exposed, never names copied from a config or a template.
-Rerun `infra --no-register --tools-file <inventory.json> --json`. Stop before `init`
-unless `ok:true`; show missing tools, the supported hosted WorkIQ endpoint and
-configuration/sign-in/reload guidance. Native WorkIQ wrappers or Ask cannot stand
-in for hosted entity `fetch`. Use Scout's supported connector setup; do not invent
-a command-server registration, acquire Graph tokens, change permissions or test-write.
-Delete the temporary inventory after reporting its result. A skill reload copies
-instructions, not connectors, and must not be described as completed machine setup.
-
-`tools_available` proves only tool availability, not working sessions, authenticated
-reads or send/upload grants. Keep the existing release-bound capability probes and
-owner attestations after initialization; never record `m365_access` from this check.
-For an existing release, preserve its state and surface setup/readiness holds rather
-than recreating it or adopting another runtime.
+On a release start, complete guided onboarding before `preview-release`/`init`.
+`infra` retains the low-level registration/inventory diagnostic for bootstrap;
+`onboarding` adds actionable connections, auth/session recovery and read checks.
+Neither creates a release or changes its pin. Use actual resolved per-user paths;
+`--scout-root`/`--agency-path` and the process environment override
+`RELEASE_AGENT_SCOUT_ROOT` must refer to the same selected installation.
+An earlier successful check is not a durable grant: use fresh observations and
+run release-bound readiness after init. A skill reload installs text/resources,
+not a connection or permission.
 
 ## GOLDEN RULES (always apply — the deduped essentials)
-1. **Discover first, always.** On ANY release request, run `python -m orchestrator.cli list --json` and branch on `resolution`: `none` → offer to start (via `m_ask_user`); `one` → use `release.release_id`; `ambiguous` → list `all`, let the user pick; `explicit` → use it. Never run `status`/`next`/`approve` against an unconfirmed id.
+1. **Discover first for release activity.** Run `python -m orchestrator.cli list --json` and branch on `resolution`: `none` → offer to start (via `m_ask_user`); `one` → use `release.release_id`; `ambiguous` → list `all`, let the user pick; `explicit` → use it. Never run `status`/`next`/`approve` against an unconfirmed id. **Setup-only requests are the exception:** follow Check setup only above, without release discovery or actions.
 2. **Render CLI output as LIVE MARKDOWN — never fenced.** `checklist`, `status`, `next`, etc. print finished markdown tables. Reproduce their stdout **verbatim as normal message content** so Scout renders the table — do NOT wrap in a ``` code fence, and do NOT rebuild/re-order/re-type from memory (you'll introduce stale icons / broken URLs). A sentence before/after is fine; the block must match. Use `--json` only for your own branching. **Running the command is NOT the same as showing it** — the CLI auto-logs, but the user only sees what YOU paste into your reply. If you ran `checklist`/`status` and didn't paste its table, the user saw nothing.
 2b. **NEVER ask for a gate decision or attestation in a message that doesn't contain the freshly-rendered table.** Before any `m_ask_user` for attestations (entry gate) or Approve/Deny (a gate), the SAME assistant message must first show the current `checklist`/`status` table pasted verbatim. A bare list of items is not acceptable — the table is the context. If you're about to ask and haven't pasted the table in this message, run the command and paste it first.
 2c. **Every focused user action gets an actionable prompt, not a prose dead end.**
@@ -211,16 +242,19 @@ Discover → (if no gate cleared, run the entry gate) → `next --json` to advan
 
 Use structured native WorkIQ for calendar/mail/supported file operations and
 Agency Teams MCP for exact chat/member reads, direct-user notices and channel
-posts. Use hosted WorkIQ entity fetch for exact directory groups/users when the
-tool and paths are actually available. Resolve its real loaded tool name; never
-invent `workiq.fetch` as an exposed tool. WorkIQ Ask is for synthesis, not identities,
+posts. Exact directory group/user and report site/library reads use logical
+`workiq.fetch` via the actual exposed MCP tool OR selected-profile native CLI
+`workiq-read` route. The custom remote registration stays removed; an absent MCP
+fetch tool alone is not unavailability. Require exact fresh evidence and all
+pages; never ask to restore that registration. WorkIQ Ask is for synthesis, not identities,
 assignments, approvals or delivery proof. Do not acquire M365 Graph tokens through
 Azure CLI. Azure DevOps/Git operations retain their existing provider adapters.
 
 Before entry, run `m365-capabilities --release <id>` and perform its actual
-owner/target-bound read probes with the loaded tool inventory. Record
+owner/target-bound profile/calendar/complete-roster/Teams/site/library read probes
+with the loaded tool inventory and discovered structured-fetch route. Record
 `m365_access` only with the validated structured evidence file, not a bare pass.
-Missing/disabled tools and denied paths hold setup early; read
+Missing required tools/routes or failed/denied reads hold setup early; read
 reference/readiness-gate.md. The owner separately confirms `m365_write_access`;
 reads/tool discovery do not prove send/upload permission, and no test write is
 authorized by readiness. Recheck actual future event/chat destinations when used.

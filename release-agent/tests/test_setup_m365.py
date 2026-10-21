@@ -41,7 +41,7 @@ def setup_manifest(tmp_path, monkeypatch):
     req = {
         "requirements": [],
         "mcp_servers": [{"id": "teams", "tools": ["GetChat", "ListChatMembers"]}],
-        "m365_connectors": {"hosted_endpoint": "https://workiq.svc.cloud.microsoft/mcp"},
+        "m365_connectors": {"calendar_mail_files": "native WorkIQ", "teams": "Agency Teams"},
     }
     path = tmp_path / "requirements.yaml"
     path.write_text(yaml.safe_dump(req), encoding="utf-8")
@@ -60,38 +60,34 @@ def test_declared_connectors_without_inventory_fail_before_init(setup_manifest):
     assert checks["status"] == "inventory_required"
     assert set(checks["required_tools"]) == set(M.REQUIRED_TOOLS)
     assert "before release initialization" in checks["detail"]
+    assert "does not mean a connector is missing" in checks["detail"]
+    assert report["setup_status"] == "needs_scout_check"
+    assert "/release-agent check setup" in report["next_action"]
     assert config.read_bytes() == before
 
 
-@pytest.mark.parametrize("replace_fetch", [False, True])
-def test_native_wrappers_do_not_replace_hosted_fetch(setup_manifest, replace_fetch):
+def test_native_tools_complete_setup_without_a_hosted_endpoint(setup_manifest):
     path, config, _ = setup_manifest
     before = config.read_bytes()
     tools = inventory()
-    tools["available_tools"].pop("workiq.fetch")
     tools["available_tools"]["workiq_search_people"] = "workiq_search_people"
-    if replace_fetch:
-        tools["available_tools"]["workiq.fetch"] = "workiq_search_people"
     report = infra.run(str(path), register=False, tool_inventory=tools)
-    assert report["infrastructure_ok"] and not report["ok"]
+    assert report["infrastructure_ok"] and report["ok"]
     checks = report["m365_connectors"]
-    assert checks["status"] == "missing_tools"
-    assert checks["missing_tools"] == ["workiq.fetch"]
-    assert checks["hosted_endpoint"] == "https://workiq.svc.cloud.microsoft/mcp"
-    assert "Configure and sign in" in checks["detail"]
+    assert checks["status"] == "tools_available"
+    assert not checks["missing_tools"]
+    assert "hosted_endpoint" not in checks and "workiq.fetch" in checks["required_tools"]
+    assert report["setup_status"] == "ready"
     assert config.read_bytes() == before
 
 
-@pytest.mark.parametrize("alias", [
-    "workiq.fetch", "workiq-fetch", "workiq:fetch", "mcp__workiq__fetch",
-])
-def test_fresh_tools_satisfy_setup_but_never_authorize_access(setup_manifest, alias):
+def test_fresh_tools_satisfy_setup_but_never_authorize_access(setup_manifest):
     path, config, _ = setup_manifest
     before = config.read_bytes()
     tools = inventory()
-    tools["available_tools"]["workiq.fetch"] = alias
     report = infra.run(str(path), register=False, tool_inventory=tools)
     assert report["ok"]
+    assert report["setup_status"] == "ready"
     checks = report["m365_connectors"]
     assert checks["status"] == "tools_available" and not checks["missing_tools"]
     assert checks["read_probes_required"]
@@ -121,7 +117,7 @@ def test_invalid_inventory_cannot_register_servers(setup_manifest, monkeypatch, 
     elif change == "non_mapping":
         tools["available_tools"] = list(M.REQUIRED_TOOLS)
     elif change == "invalid_name":
-        tools["available_tools"]["workiq.fetch"] = {}
+        tools["available_tools"]["workiq_get_my_profile"] = {}
     monkeypatch.setattr(infra, "ensure_mcp_servers",
                         lambda *a: pytest.fail("invalid input reached registration"))
     with pytest.raises(ValueError):
@@ -134,6 +130,7 @@ def test_legacy_manifest_without_m365_section_keeps_existing_contract(setup_mani
     path.write_text(yaml.safe_dump(req), encoding="utf-8")
     report = infra.run(str(path), register=False)
     assert report["ok"] and report["m365_connectors"] is None
+    assert report["setup_status"] == "ready"
 
 
 @pytest.mark.parametrize("section", [None, {}, {"hosted_endpoint": "http://example.test/mcp"}])
@@ -172,9 +169,43 @@ def test_infra_cli_rejects_bad_inventory_files(setup_manifest, tmp_path, capsys,
 def test_infra_human_output_does_not_announce_success_when_unverified(setup_manifest, capsys):
     assert cli.main(["infra", "--no-register"]) == 1
     output = capsys.readouterr().out
-    assert "M365 connectors (loaded Scout tools)" in output
-    assert "INVENTORY_REQUIRED" in output and "Setup incomplete" in output
+    assert "Microsoft 365: [CHECK IN SCOUT]" in output
+    assert "One check remains in Scout" in output
+    assert "/release-agent check setup" in output
+    assert "does not mean a connector is missing" in output
     assert "Infrastructure OK" not in output and "Setup prerequisites OK" not in output
+    assert "<inventory.json>" not in output and "--tools-file" not in output
+    assert "Hosted WorkIQ endpoint:" not in output and "INVENTORY_REQUIRED" not in output
+    assert "Configure" not in output
+
+
+@pytest.mark.parametrize("tool,integration", [
+    ("workiq_get_my_profile", "Microsoft 365 calendar/mail/files"),
+    ("microsoft_teams-GetChat", "Microsoft Teams"),
+    ("playwright-browser_snapshot", "Browser"),
+])
+def test_missing_tool_gets_specific_recovery_not_an_inventory_handoff(
+        setup_manifest, tmp_path, capsys, tool, integration):
+    tools = inventory()
+    tools["available_tools"].pop(tool)
+    path = tmp_path / "tools.json"
+    path.write_text(json.dumps(tools), encoding="utf-8")
+    assert cli.main(["infra", "--no-register", "--tools-file", str(path)]) == 1
+    output = capsys.readouterr().out
+    assert "ACTION NEEDED" in output and integration in output
+    assert "Setup needs attention" in output
+    assert "/release-agent check setup" in output
+    assert "--tools-file" not in output and "<inventory.json>" not in output
+    assert "https://workiq.svc.cloud.microsoft/mcp" not in output
+
+
+def test_inventory_pending_does_not_hide_a_real_installation_failure(setup_manifest, monkeypatch):
+    path, _, _ = setup_manifest
+    monkeypatch.setattr(infra, "check_requirements", lambda *a, **kw: [
+        {"id": "python", "name": "Python", "ok": False, "install": "Install Python"}])
+    report = infra.run(str(path), register=False)
+    assert report["setup_status"] == "blocked" and not report["infrastructure_ok"]
+    assert report["next_action"] == "Fix the reported installation items, then rerun setup."
 
 
 def test_machine_setup_does_not_discover_lock_or_adopt_an_existing_release(
@@ -192,9 +223,11 @@ def test_repo_manifest_declares_enforced_connector_contract():
     checks = infra.check_m365_connectors(req)
     assert checks["status"] == "inventory_required"
     assert "workiq.fetch" in checks["required_tools"]
+    assert not any(server["id"] == "workiq" for server in req["mcp_servers"])
 
 
-def bootstrap_case(tmp_path, infra_exit=0, *, install_skill=False, missing=None):
+def bootstrap_case(tmp_path, infra_exit=0, *, install_skill=False, missing=None,
+                   connector_status=None, with_inventory=True, invalid_report=None):
     pwsh = shutil.which("pwsh")
     if not pwsh:
         pytest.skip("PowerShell 7 is required to execute the Windows bootstrap")
@@ -212,27 +245,45 @@ def bootstrap_case(tmp_path, infra_exit=0, *, install_skill=False, missing=None)
     (agent / "skill" / "SKILL.md").write_text("# Test skill\n", encoding="utf-8")
     (agent / "skill" / "reference" / "commands.txt").write_text("reference content", encoding="utf-8")
     (agent / "orchestrator" / "__init__.py").write_text("", encoding="utf-8")
+    connectors = infra.check_m365_connectors(
+        {"m365_connectors": {"calendar_mail_files": "native WorkIQ", "teams": "Agency Teams"}},
+        None if connector_status == "inventory_required" else
+        {**inventory(), "available_tools": {}} if connector_status == "missing_tools" else inventory())
+    report = {
+        "ok": infra_exit == 0, "infrastructure_ok": connector_status is not None or infra_exit == 0,
+        "setup_status": ("ready" if infra_exit == 0 else
+                         "needs_scout_check" if connector_status == "inventory_required" else "blocked"),
+        "next_action": connectors["next_action"], "m365_connectors": connectors,
+        "requirements": [], "mcp_servers": [], "path_requests": [], "restart_needed": False,
+    }
+    if invalid_report is not None:
+        report = invalid_report
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
     (agent / "orchestrator" / "cli.py").write_text(
         "import json, os, sys\n"
         "from pathlib import Path\n"
         "Path(os.environ['BOOTSTRAP_CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
-        "print('M365 connector prerequisite check')\n"
+        "print(Path(os.environ['BOOTSTRAP_REPORT']).read_text())\n"
         "sys.exit(int(os.environ['BOOTSTRAP_INFRA_EXIT']))\n", encoding="utf-8")
     capture = tmp_path / "captured.json"
     tools = tmp_path / "loaded tools.json"
     tools.write_text(json.dumps(inventory()), encoding="utf-8")
     flags = [
         pwsh, "-NoProfile", "-File", str(script), "-NonInteractive",
-        "-NoAutoInstallPython", "-NoRestartScout", "-M365ToolsFile", str(tools),
+        "-NoAutoInstallPython", "-NoRestartScout",
         "-ScoutRoot", str(tmp_path / "missing profile" if missing == "profile" else profile),
         "-AgencyPath", str(tmp_path / "missing agency.exe" if missing == "agency" else sys.executable),
         "-PythonPath", str(tmp_path / "missing python.exe" if missing == "python" else sys.executable),
     ]
+    if with_inventory:
+        flags += ["-M365ToolsFile", str(tools)]
     if not install_skill:
         flags.append("-SkipSkillInstall")
     result = subprocess.run(flags, capture_output=True, text=True, timeout=60, env={
         **os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
         "PYTHONPATH": str(agent), "BOOTSTRAP_CAPTURE": str(capture),
+        "BOOTSTRAP_REPORT": str(report_path),
         "BOOTSTRAP_INFRA_EXIT": str(infra_exit), "PIP_NO_INDEX": "1",
     })
     return result, capture, tools, profile, agent
@@ -243,10 +294,11 @@ def test_bootstrap_forwards_inventory_and_propagates_incomplete_setup(tmp_path, 
     result, capture, tools, profile, agent = bootstrap_case(
         tmp_path, infra_exit, install_skill=install_skill)
     assert json.loads(capture.read_text()) == [
-        "infra", "--scout-root", str(profile), "--agency-path", sys.executable, "--tools-file", str(tools)]
+        "infra", "--scout-root", str(profile), "--agency-path", sys.executable,
+        "--json", "--tools-file", str(tools)]
     assert result.returncode == infra_exit, result.stdout + result.stderr
     if infra_exit:
-        assert "Setup is INCOMPLETE" in result.stdout
+        assert "Installation needs attention" in result.stdout
         assert "* Open Scout and run:" not in result.stdout
     else:
         assert "Setup prerequisites are ready" in result.stdout
@@ -255,6 +307,37 @@ def test_bootstrap_forwards_inventory_and_propagates_incomplete_setup(tmp_path, 
         for source in (agent / "skill").rglob("*"):
             if source.is_file():
                 assert (installed / source.relative_to(agent / "skill")).read_bytes() == source.read_bytes()
+
+
+@pytest.mark.parametrize("status", ["inventory_required", "missing_tools"])
+def test_bootstrap_has_one_actionable_scout_handoff_without_manual_files(tmp_path, status):
+    result, _, _, profile, _ = bootstrap_case(
+        tmp_path, 1, connector_status=status, with_inventory=False, install_skill=True)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "/release-agent check setup" in result.stdout
+    assert result.stdout.count("/release-agent check setup") == 1
+    assert "No release has been started by setup." in result.stdout
+    assert "Some infrastructure is missing" not in result.stdout
+    assert "<inventory.json>" not in result.stdout and "--tools-file" not in result.stdout
+    assert "-M365ToolsFile" not in result.stdout and "Setup is INCOMPLETE" not in result.stdout
+    assert (profile / "m-skills" / "release-agent" / "SKILL.md").exists()
+    if status == "inventory_required":
+        assert "Installation complete. One check remains in Scout." in result.stdout
+        assert "This does not mean a connector is missing." in result.stdout
+        assert "https://workiq.svc.cloud.microsoft/mcp" not in result.stdout
+        assert "needs attention" not in result.stdout
+    else:
+        assert "A Microsoft 365 connection needs attention" in result.stdout
+        assert "enable or reconnect" in result.stdout
+        assert "Hosted WorkIQ" not in result.stdout
+
+
+@pytest.mark.parametrize("bad_report", [{"ok": True}, {"ok": False, "error": "Cannot read setup config"}])
+def test_bootstrap_cannot_treat_an_invalid_or_error_report_as_complete(tmp_path, bad_report):
+    result, _, _, _, _ = bootstrap_case(tmp_path, 1, invalid_report=bad_report)
+    assert result.returncode != 0
+    assert "Installation complete." not in result.stdout
+    assert "Setup prerequisites are ready" not in result.stdout
 
 
 @pytest.mark.parametrize("missing", ["profile", "agency", "python"])

@@ -1,17 +1,211 @@
 RELEASE-AGENT RESUME CONTEXT
 ==========================
-Saved: 2026-10-20, America/Los_Angeles.
+Saved: 2026-10-21, America/Los_Angeles.
 Repository: C:\repos\android-complete
 Agent root: C:\repos\android-complete\release-agent
 Branch: feature/release-agent-phase3-audit
-Published baseline: a34a3c30331293e28f79066510d0921084b6826a.
+Published baseline: 7d9066e0b19154491a1dcf40008adf70a82ab591.
 Inspect active local changes with git status --short.
 Resolve the earlier published checkpoint with
   git log -1 --format="%H %s" -- release-agent/docs/resume-context.txt
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
 
-LATEST LOCAL FOLLOW-UP: PORTABLE MCP/SKILL SETUP (2026-10-20)
+CHECKPOINT / PUBLICATION STATUS (2026-10-21 10:17 PDT)
+-----------------------------------------------------
+Owner requested commit, push, saved context and conversation compaction.
+This checkpoint includes the complete pending release-agent setup/onboarding and
+per-user structured-fetch routing correction, including tests and skill guidance.
+Resolve its local commit with the git-log command above; do not rely on older
+"uncommitted" wording in the historical entries below.
+Origin is PUBLIC https://github.com/AzureAD/android-complete.git on branch
+feature/release-agent-phase3-audit. Do not publish internal release configuration
+or operational notes there. Push requires an appropriate approved private/internal
+destination. No public push was performed for this checkpoint.
+Unrelated root .gitignore is unmerged; preserve its content/index stages. A scoped
+temporary index isolates this project commit; do not resolve or commit that conflict.
+At this handoff microsoft_teams-GetChat and microsoft_teams-ListChatMembers are no
+longer exposed. Do not invoke absent tools. Rediscover the user's actual tools;
+do not interpret missing Teams tools as missing native structured WorkIQ fetch.
+No release execution, state/adoption, notification, permissions or auth changes.
+
+LATEST FOLLOW-UP: PER-USER STRUCTURED FETCH ROUTING (2026-10-21)
+---------------------------------------------------------------
+Implemented locally and synchronized all ten installed skill/resource files with
+a session backup. Native live reads verified profile, exact user identity,
+configured roster (16 direct members), exact report site and Documents library.
+Compact route/usage/hash proof: session files/verified-native-routing.json;
+no raw roster saved. Full onboarding was NOT passed: live Agency Teams and ICM
+returned "Session not found"; ADX print 1 succeeded. No reconnect was attempted.
+onboarding --record-routing saves the per-profile recipe only after ALL reads pass.
+
+Focused routing/setup/distribution/mention/publication run: 275 passed.
+Final routing/setup/readiness/poller run: 232 passed. A broader core run found
+nine unrelated failures; the same nine reproduced against an untouched HEAD
+archive. Do not fix those unrelated failures as part of capability routing.
+No release state/adoption/signature/provider write/notification/worker changes,
+MCP registration/auth/permission edits, commit or push.
+
+Supersedes Oct20's GLOBAL unavailable/impossible claims, not removal of the custom
+remote Hosted WorkIQ registration. That registration/endpoint stays removed.
+The "get membership" conversation failed through semantic WorkIQ Ask, then succeeded
+with structured exact mail-group lookup and complete members fetch. Oct21 session
+evidence also proves this Scout's native WorkIQ CLI fetch can read exact groups/
+members and report site/drives; built-in workiq_list_sharepoint_lists lists Documents.
+These are current-host observations, not proof every user's Scout has the same
+tools, access or launcher. Keep configured androididentity@microsoft.com; historical
+androidauth is not permission to change a target.
+
+Inspect each user's actual tools first; agency-workiq-workiq instructions may help
+discovery. infra/onboarding --json expose structured_fetch for actual MCP fetch OR
+the selected existing Scout profile's native CLI. CLI discovery uses bin\workiq.cmd
+or actual PATH, verifies fetch --help and records command argv/observed_at/fetch_help.
+Help proves syntax support, never access. Missing launcher/version support holds
+with diagnostic and --workiq-path guidance, not a global unavailable assertion.
+Use the machine-only read adapter from the resolved agent root:
+  python -m orchestrator.cli workiq-read --scout-root <selected-existing-profile> [--workiq-path <existing-workiq-launcher>] --account <verified-owner> --entity-url '<exact Graph-relative URL>'
+Preserve the Scout node-runner/node/workiq-wrapper/binary argv chain; no raw-binary
+bypass, cmd shell URL interpolation, author-specific paths or Azure CLI Graph tokens.
+Authentication/denial is terminal; never try another identity/transport after it.
+
+Both routes provide logical canonical workiq.fetch observations with exact
+arguments.entityUrls/account/observed_at/result and actual transport route where
+available. CLI descriptors remain separate from available_tools; no fake exposed tool.
+Read /groups?$filter=mail eq '<configured-email>'&$select=id,displayName,mail&$top=100,
+then /groups/<returned-id>/members?$select=id,displayName,userPrincipalName,mail&$top=100
+and every actual next page. Replan roster_next/report_library from observed IDs.
+Fresh profile/calendar/roster-all-pages/Teams/site/library reads are required for
+setup ready and release readiness. Neither cached recipes nor help/inventory pass.
+On completion conductor stores compact routing JSON under the selected profile:
+account/targets/actual route/how-to only, not release state, secrets, private responses
+or roster contents. Rediscover and repeat live checks next time.
+
+Distribution accepts the fresh exact roster bundle via --roster-file. Mentions use
+exact /users/<verified-UPN> directory reads for SMTP/UPN differences and bind the
+returned Entra GUID to this exact meeting's member GUID. Never infer membership.
+Immutable report metadata missing from link resolution uses the exact returned
+/drives/<exact-id>/items/<exact-id>?$select=id,name,size,webUrl,eTag,parentReference,file,folder
+read under receipt.metadata. Built-in SharePoint reads are auxiliary, with actual
+tool/arguments/evidence, not generic fake fetch envelopes or proof of all site/drives.
+Existing guarded upload/exact-byte receipt flow remains; never repeat an uncertain upload.
+
+This entry documents the implemented routing contract; installation/test results
+are recorded above. See the checkpoint/publication status for current commit/push
+handling. Preserve unrelated dirty work; do not start/adopt a release or change
+notifications, permissions, authentication or registrations during this handoff.
+
+PRIOR FOLLOW-UP: REMOVE UNSUPPORTED HOSTED WORKIQ (2026-10-20; ROUTING CLAIMS SUPERSEDED)
+-------------------------------------------------------------
+Owner reports the remote Hosted WorkIQ connector cannot be added and requested
+its removal. This supersedes ALL earlier hosted registration/setup requirements.
+Native Scout workiq_* tools and Agency MCPs remain. No remote WorkIQ entry exists
+in this machine's Scout MCP profile; other connections/auth/permissions stay intact.
+
+Removed the declaration/endpoint, required fetch inventory entry, hosted read probes
+and onboarding reload/reconnect branch. Supported setup checks profile/calendar,
+Teams membership and ICM/ADX connectivity. Explicit unavailable_checks/limitations
+report exact directory/group reads and report-library enumeration as unavailable,
+not passed. Missing exact roster/mention evidence blocks its owning operation
+without requesting the removed server or substituting people search/WorkIQ Ask.
+Missing native report metadata blocks receipt verification; never repeat an upload.
+Existing exact evidence parsers remain for recovery, not a live fetch handoff.
+
+Source and all ten installed skill/resource files now match this removal. The
+previous installed skill is backed up in the task's session files. MCP config
+was unchanged during installation. Targeted setup/capability/publication,
+directory-hold, release-entry and periodic Bug Bash regressions passed.
+No release state,
+workflow adoption, readiness signature, provider write, notification or worker
+change is authorized. Changes remain local/uncommitted; preserve unrelated
+UU .gitignore and untracked tools/.
+
+PRIOR LOCAL FOLLOW-UP: AUTOMATIC HOSTED REGISTRATION (2026-10-20; SUPERSEDED)
+-----------------------------------------------------------------
+Owner wants Hosted WorkIQ registered like other MCPs, not host-capability and
+manual form questions. Implemented LOCALLY; no commit/push/install/live config
+change or release advance. Preserve unrelated UU .gitignore and tools/.
+
+Added requirements.yaml workiq HTTP entry and safe installer support using the
+actual verified Scout persisted schema (not a guessed command launcher):
+{builtin:false,config:{name:"workiq",type:"http",url:<endpoint>},tools:[]}.
+Scout owns discovery/auth. Existing matching endpoints/keys/names/auth/settings
+stay intact; duplicates, disabled/mismatched entries hold. No secrets or permission
+changes. HTTPS endpoint validation, backups and detected-concurrent-edit guard.
+
+onboarding now returns register_mcp automatically when only missing declared
+registrations remain; skill executes infra at the resolved actual profile.
+No inspect_host/connect/manual form cards. Registered-but-unloaded fetch requests
+one reload, then support if still missing. Real auth/consent may need the user;
+denied/unsupported outcomes remain held. Portable paths and release guards stay.
+Source bootstrap/skill/reference/README updated; existing command allowlist guard
+excludes HTTP discovery entries without weakening command requirements.
+
+Final focused236passed78.47s,0skips/0deselections. New tests/test_hosted_workiq_setup.py
+covers auto HTTP registration/idempotency/backups, preserved custom/auth entries,
+conflicts/invalid endpoints/concurrent writes and no-form planner/CLI dispatch.
+Proof automatic-hosted-registration-results.xml. Protected current live config/
+installed-skill/conflict snapshot: hosted-registration-before.json. No deployment.
+Earlier manual-registration guidance below is historical/superseded.
+
+PRIOR LOCAL FOLLOW-UP: COMPLETE GUIDED ONBOARDING (2026-10-20)
+--------------------------------------------------------------
+Owner requested a complete onboarding flow after the message-only correction.
+Local review only: no commit/push, installed-skill refresh, host config changes,
+auth action, release creation/adoption/advance, notifications or worker creation.
+Preserve unrelated UU .gitignore and untracked tools/.
+
+New orchestrator/onboarding.py and commands/onboarding_cmd.py implement a read-only
+one-action planner: paths/install repair -> tools -> observed host support ->
+exact connector consent/form -> account/target read probes -> ready or explicit
+recovery/support. Host setting changes always require user consent and a real
+supported host control, otherwise precise user UI guidance. No guessed config
+or auth transport, token extraction or secret entry. Unsupported/denied results
+stop; a completed connection/sign-in/reconnect can be checked once, not looped.
+
+Actual installed Scout Add Server UI was inspected read-only and has Remote /
+Local URL, name/URL and HTTP default. That is current-host evidence, not proof
+all hosts support it or that the endpoint accepts this account. User sign-in may
+still be required and policy/unsupported endpoints need administrator assistance.
+
+Shares M365.read_plan/validate_reads with release readiness; verifies exact roster/
+pages, site/library, profile/calendar, Teams membership plus configured ICM and
+ADX print1, using temporary fresh bound observations. No synthetic release state.
+CLI paths/onboarding never discover/load/lock an existing run. Skill first-run
+logic now reuses remembered valid or unique canonical paths, asking only for
+missing/ambiguous locations. One brief intro and one human action at a time.
+
+Combined focused158passed60.69s,0skips/0deselections; proof onboarding-results.xml.
+Includes full CLI completion, bounded failure modes and existing setup, M365,
+notification and release-revision guards. No full-suite/live claim.
+MCP config/.gitignore stage/bytes unchanged. Installed-skill hash differs from
+the earlier clarity snapshot because of the user's17:38 refresh; this task did
+not update that installed copy. New code/skill guidance remains uninstalled.
+
+PRIOR LOCAL FOLLOW-UP: CLEAR SETUP HANDOFF (2026-10-20)
+------------------------------------------------------
+Owner asked to simplify confusing bootstrap instructions for new users.
+Changed locally only; no commit/push, live install/reload, connector settings
+changes or release actions. Preserve unrelated UU .gitignore and untracked tools/.
+The owner ran published bootstrap after the prior work; use the current snapshot
+session files/setup-clarity-before.json, not stale installed-skill hashes.
+
+Infra reports setup_status ready/needs_scout_check/blocked and next_action.
+No terminal inventory means a pending Scout check, not a missing connector.
+Human output directs /release-agent check setup without asking for JSON or
+--tools-file. Actual absent tools get relevant integration connection guidance;
+missing hosted WorkIQ gets the configured endpoint/sign-in/reload and admin fallback.
+Bootstrap consumes JSON internally and gives one clear handoff while maintaining
+nonzero unverified/failure exits; host/invalid report failures do not claim success.
+Source skill explicitly makes check setup diagnostics-only, handling its own
+temporary inventory and never discovering/creating/advancing a release, signing
+readiness, sending messages or creating workers. Read/write proofs stay separate.
+
+Focused69passed26.41s,0skips/0deselections; session files/setup-clarity-results.xml.
+Prior portability/installation/M365 implementation is already published7d9066e0b;
+older local-only/pending wording below is historical. This new UX change remains
+uncommitted/uninstalled for review. No full-suite or live capability claim.
+
+PRIOR FOLLOW-UP: PORTABLE MCP/SKILL SETUP (published as7d9066e0b)
 ----------------------------------------------------------
 The owner asked whether MCP/skill installation was included and required portable
 per-user locations with prompts when defaults are absent. Changes remain LOCAL

@@ -2,7 +2,7 @@
 
 _Loaded on demand by the core skill. The entry gate runs right after `init`, before Phase 0._
 
-> **User asks ABOUT a gate item** ("what does build_access check?", "why do I need YubiKey?", "how do I get Play Console access?", "who fixes this?", "what if I'm the primary on-call?"): run `gate-info --item <id>` and answer from it — do NOT guess. It returns the item's what/who/where/how/links/FAQs (curated in `config/knowledge.yaml` under `readiness.<id>`). If it says "no knowledge entry yet", say so rather than inventing. Item ids: build_access, mcp_servers, ccd_confirmed, silent_perms, teams_notify, adx_access, oncall_now, play_console_access, oncall_window, saw_ame, yubikey.
+> **User asks ABOUT a gate item** ("what does build_access check?", "why do I need YubiKey?", "how do I get Play Console access?", "who fixes this?", "what if I'm the primary on-call?"): run `gate-info --item <id>` and answer from it — do NOT guess. It returns the item's what/who/where/how/links/FAQs (curated in `config/knowledge.yaml` under `readiness.<id>`). If it says "no knowledge entry yet", say so rather than inventing. Item ids: build_access, mcp_servers, m365_access, m365_write_access, ccd_confirmed, silent_perms, teams_notify, adx_access, oncall_now, play_console_access, oncall_window, saw_ame, yubikey.
 
 Immediately after `init`, the very first thing is the **readiness checklist** — the entry gate. The engine's `next` refuses to run any step (reports `readiness_gate`) until it's cleared. **Every item is equally required** — there is no priority or "hard vs soft" distinction. The only difference between items is **who resolves them**:
 
@@ -20,7 +20,8 @@ If any item is unsatisfied the gate stays closed. If the engineer can't satisfy 
 ## Microsoft 365 capabilities before release entry
 
 Machine setup first checks a fresh actual-tool inventory through
-`infra --no-register --tools-file <inventory.json>`. Its `tools_available` result
+`infra --no-register --tools-file <inventory.json> --json`, including the discovered
+`structured_fetch` descriptor separately when CLI fetch is used. Its `tools_available` result
 does NOT satisfy `m365_access`, prove a live/authenticated MCP session or authorize
 any write. Keep the release-bound probes below even after setup prerequisites pass.
 If a skill-only reload occurred, do not assume it configured missing connectors.
@@ -35,18 +36,36 @@ and obtain the next card's separate answer. Do not start Phase 0 until signed.
 
 Run `m365-capabilities --release <id>` and inspect the actual loaded tool
 inventory, not registered server names or `az login`. Execute its exact read-only
-requests for owner/profile, calendar, configured distribution group and complete
-membership, representative Teams chat/owner membership, and report site/library.
-Resolve logical `workiq.fetch` to a real loaded hosted WorkIQ entity fetch tool;
-native `workiq_*` wrappers and WorkIQ Ask are not substitutes for group reads.
-Use returned group/site IDs verbatim for the declared follow-up reads.
+requests for owner/profile, calendar, exact configured roster and complete member
+pagination, representative Teams chat/owner membership, and report site/library.
+The custom remote Hosted WorkIQ registration stays removed; logical `workiq.fetch`
+is still required through an actual exposed MCP tool OR the selected existing
+profile's native WorkIQ CLI. Inspect actual tools first; load
+`agency-workiq-workiq` instructions if useful. If fetch is absent from MCP tools,
+use `infra --json`/`onboarding --json` per-profile CLI discovery and `fetch --help`.
+CLI help is syntax proof, never live access proof. Execute exact planned URLs
+with `workiq-read --scout-root <selected-existing-profile>
+[--workiq-path <existing-workiq-launcher>] --account <verified-owner>
+--entity-url '<exact Graph-relative URL>'`; preserve wrapper argv, never shell
+interpolate or bypass its runner. Missing launcher/version support holds with
+diagnostic/explicit-launcher guidance, not an unconditional unavailable claim.
+Replan after exact group/site reads for `roster_next` and `report_library` requests
+using observed IDs. Current configured roster is androididentity@microsoft.com;
+do not substitute historical targets. People search and WorkIQ Ask are not
+substitutes for group membership or verified mention identities.
 
 For each call save `{version:1,tool:<canonical requested name>,arguments:<exact
 requested arguments>,account:<verified owner>,observed_at:<actual offset-aware
 observation time>,result:<complete structured response>}`. The final temporary
 evidence is `{binding:<plan binding>,available_tools:{<canonical>:<actual loaded
-tool name>},observations:{profile,calendar,roster:<ordered list of group/member page envelopes>,chat,members,
-sharepoint,report_library}}`. Run `record-check --release <id> --item m365_access
+tool name>},structured_fetch:<actual descriptor when needed>,
+observations:{profile,calendar,roster:[<group/member page envelopes>],chat,members,sharepoint,report_library:[<library page envelopes>]}}`.
+Use the planner's actual observation keys and page requests. Both fetch routes
+record `tool:"workiq.fetch",arguments:{entityUrls:[<exactPath>]}` and the actual
+transport route where available. A CLI descriptor is not an `available_tools`
+mapping. Auxiliary built-in SharePoint reads retain their own tool/arguments
+and response shape; listing Documents alone cannot pass every Graph site/drive check.
+Run `record-check --release <id> --item m365_access
 --status pass --evidence-file <file> --detail "exact structured reads verified"`.
 The engine rejects bare passes, missing tools, wrong account/targets, partial or
 failed reads, and observations older than 15 minutes or future-dated. Keep only
@@ -54,15 +73,20 @@ compact summaries/digests; remove temporary private responses after acknowledgem
 
 Missing or denied capabilities record `fail` and hold entry until setup/consent is
 corrected. Never invent an endpoint, switch accounts or use raw Azure CLI Graph
-as a workaround. The host may need its supported hosted WorkIQ connection enabled
-(`https://workiq.svc.cloud.microsoft/mcp`); never put tokens in files.
+as a workaround. Setup registers only declared supported MCP connections through
+`infra`. Existing conflicts or disabled entries require review; do not overwrite them. Registration/reload is
+not authenticated access proof; sign-in/consent remains host-owned, never tokens
+written into a file. Do not ask the owner to inspect or fill out Add Server.
 Future invitation/chat destinations are verified again when created.
+The compact account/targets/route/how-to recipe saved under the selected profile
+after onboarding is not permission or fresh evidence. Rediscover and reread;
+never import a cached setup pass into release readiness.
 
 Reads do not prove write permission. Show that limitation and exact configured
 destinations in the normal `m365_write_access` owner attestation. Do not send a
 test message/invitation or upload a test file during readiness without separately
 previewing it and obtaining explicit approval. Native `workiq_upload_file` only
-replaces existing items; hosted WorkIQ new-file upload is not released.
+replaces existing items.
 New immutable report creation uses the checked SharePoint browser upload and its
 exact owning receipt, never an invented uploader.
 

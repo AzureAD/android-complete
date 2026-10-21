@@ -72,8 +72,8 @@ items:
 
   - id: m365_access
     label: "M365 connector capabilities"
-    text: "Loaded connectors can read the owner's calendar, exact release roster, Teams membership and report library"
-    detail: "Scout runs m365-capabilities and records fresh, account/target-bound structured read observations. Registration or az login alone is not proof. Missing hosted WorkIQ entity tools or denied paths are identified before Phase 0. Future meeting/chat access and actual sends/uploads are checked again at their owning steps."
+    text: "Scout can read the owner's profile/calendar, complete configured roster, Teams membership and report site/library"
+    detail: "Scout discovers each user's actual tools and structured fetch route (exposed MCP OR existing native WorkIQ CLI), then runs m365-capabilities with fresh account/target-bound profile/calendar, exact roster/all member pages, Teams and report site/library observations. Registration, CLI fetch help, az login or a saved routing recipe alone is not access proof. Missing/failed evidence holds; never substitute people search or WorkIQ Ask. The removed custom remote Hosted WorkIQ registration stays removed. Future meeting/chat access and actual sends/uploads are checked at their owning steps."
     verify: auto
     source: scout
     verifier: m365_capabilities
@@ -115,7 +115,7 @@ items:
   - id: m365_write_access
     label: "M365 send/upload authorization"
     text: "You are authorized to send the release emails, calendar invitations and Teams posts, and upload reports to the configured SharePoint library"
-    detail: "Read probes do not establish write permissions. Confirm the required send/upload grants and the planned destinations. Scout will not send test messages or upload test files without separately previewed approval. New immutable report files use the checked SharePoint browser upload because hosted WorkIQ does not currently provide new-file upload; every actual write still needs its own authorization and receipt."
+    detail: "Read probes do not establish write permissions. Confirm the required send/upload grants and the planned destinations. Scout will not send test messages or upload test files without separately previewed approval. New immutable report files use the checked SharePoint browser upload; every actual write still needs its own authorization and receipt."
     verify: attest
 
   - id: adx_access

@@ -32,10 +32,10 @@
   cd <your-clone>\release-agent
   pwsh .\setup\bootstrap.ps1
   M365 CONNECTORS
-    Setup cannot finish from MCP registrations alone. Configure/sign in to the
-    hosted WorkIQ connector in Scout and supply a fresh loaded-tool inventory
-    with -M365ToolsFile. Release-specific read probes and write attestations
-    remain separate; bootstrap never performs test sends or uploads.
+    The terminal installs the skill and registers command-based MCP servers.
+    Finish guided onboarding in Scout with: /release-agent check setup
+    Scout handles connection guidance and read checks; users do not create JSON files.
+    -M365ToolsFile is an advanced automation handoff, not a normal user step.
 #>
 [CmdletBinding()]
 param(
@@ -254,6 +254,8 @@ if ($PyExe) {
 }
 
 $ok = $true
+$infraReport = $null
+$setupReady = $false
 $restartNeeded = $false
 if (-not $haveInfra) {
   if (-not $PyExe) {
@@ -270,18 +272,43 @@ if (-not $haveInfra) {
 } else {
   Push-Location $AgentRoot
   try {
-    $infraArgs = @("-m", "orchestrator.cli", "infra", "--scout-root", $ScoutRoot, "--agency-path", $AgencyPath)
+    $infraArgs = @("-m", "orchestrator.cli", "infra", "--scout-root", $ScoutRoot, "--agency-path", $AgencyPath, "--json")
     if ($M365ToolsFile) {
       $infraArgs += @("--tools-file", $M365ToolsFile)
     }
     if ($PyExe -eq 'py -3') {
-      $out = & py -3 @infraArgs 2>&1
+      $out = & py -3 @infraArgs
     } else {
-      $out = & ($PyExe.Trim('"')) @infraArgs 2>&1
+      $out = & ($PyExe.Trim('"')) @infraArgs
     }
-    $out | ForEach-Object { Write-Host "  $_" }
-    if ($LASTEXITCODE -ne 0) { $ok = $false }
-    if ($out -match "RESTART Scout") { $restartNeeded = $true }
+    $infraExit = $LASTEXITCODE
+    $infraReport = ($out -join "`n") | ConvertFrom-Json
+    if ($infraReport.error) {
+      Write-Host "  Setup check failed: $($infraReport.error)" -ForegroundColor Red
+      $ok = $false
+    } elseif ($infraReport.ok -isnot [bool] -or $infraReport.infrastructure_ok -isnot [bool] -or
+              $infraReport.setup_status -notin @('ready', 'needs_scout_check', 'blocked') -or
+              [string]::IsNullOrWhiteSpace($infraReport.next_action) -or
+              $infraExit -ne $(if ($infraReport.ok) { 0 } else { 1 })) {
+      throw "Setup check returned an invalid result. No setup completion was assumed."
+    } else {
+      $setupReady = $infraReport.ok
+      $ok = $infraReport.infrastructure_ok
+      $restartNeeded = $infraReport.restart_needed
+      $missingDeps = @($infraReport.requirements | Where-Object { -not $_.ok })
+      if ($missingDeps.Count -eq 0) { Write-Host "  [OK] Command-line dependencies" -ForegroundColor Green }
+      foreach ($item in $missingDeps) {
+        Write-Host "  [MISSING] $($item.name) - $($item.install)" -ForegroundColor Yellow
+      }
+      $missingServers = @($infraReport.mcp_servers | Where-Object { $_.status -notin @('present', 'registered') })
+      if ($missingServers.Count -eq 0) { Write-Host "  [OK] Required MCP servers are registered" -ForegroundColor Green }
+      foreach ($item in $missingServers) {
+        Write-Host "  [ACTION NEEDED] $($item.name) - $($item.detail)" -ForegroundColor Yellow
+      }
+      foreach ($request in $infraReport.path_requests) {
+        Write-Host "  [PATH REQUIRED] $($request.question)" -ForegroundColor Yellow
+      }
+    }
   } finally { Pop-Location }
 
   # engine config presence (cheap local sanity check)
@@ -290,10 +317,6 @@ if (-not $haveInfra) {
   } else {
     Write-Host "  [MISSING] engine config (phases.yaml)" -ForegroundColor Yellow; $ok = $false
   }
-}
-
-if (-not $ok) {
-  Write-Host "`nSome infrastructure is missing — resolve the items above, then re-run." -ForegroundColor Yellow
 }
 
 Write-Host "`n2. Skill install"
@@ -359,11 +382,22 @@ if ($needsReload) {
 
 Write-Host "`n3. Next steps" -ForegroundColor Cyan
 if (-not $ok) {
-  Write-Host "  Setup is INCOMPLETE. Do not initialize a release yet." -ForegroundColor Yellow
-  Write-Host "  Resolve the reported dependencies/connectors. In Scout, observe the loaded"
-  Write-Host "  tools and rerun infra --no-register --tools-file <inventory.json>."
-  Write-Host "  For bootstrap, pass the same fresh inventory with -M365ToolsFile."
+  Write-Host "  Installation needs attention. Fix the reported items, then rerun setup." -ForegroundColor Yellow
+  Write-Host "  No release has been started by setup."
   exit 1
 }
-Write-Host "  * Open Scout and run:  /release-agent"
-Write-Host "  * Setup prerequisites are ready; release-specific read probes and attestations still follow.`n"
+if (-not $setupReady) {
+  if ($infraReport.setup_status -eq 'needs_scout_check') {
+    Write-Host "  Installation complete. One check remains in Scout." -ForegroundColor Cyan
+    Write-Host "  The terminal cannot check Scout's Microsoft 365 connections."
+    Write-Host "  This does not mean a connector is missing."
+  } else {
+    Write-Host "  Installation complete. A Microsoft 365 connection needs attention." -ForegroundColor Yellow
+    Write-Host "  $($infraReport.m365_connectors.detail)"
+  }
+  Write-Host "  $($infraReport.next_action)"
+  Write-Host "  No release has been started by setup."
+  exit 1
+}
+Write-Host "  Setup prerequisites are ready; release-specific readiness checks still follow."
+Write-Host "  $($infraReport.next_action)`n"

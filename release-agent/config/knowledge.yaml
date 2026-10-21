@@ -118,28 +118,38 @@ readiness.m365_access:
   summary: "Verify the actual M365 connectors and read capabilities before Phase 0."
   what: >
     Confirms the current loaded tool inventory and fresh structured reads for the
-    release owner's profile/calendar, exact configured distribution group and its
-    complete members, representative Teams chat/membership, and report site/library.
+    release owner's profile/calendar, exact configured roster and all member pages,
+    representative Teams chat/membership, and report site/library. Structured fetch
+    is required through an actual exposed MCP tool OR the user's existing native CLI.
     Azure CLI login and MCP registration alone do not prove these capabilities.
   who: >
     Scout runs the read-only tools from m365-capabilities and records their exact
     responses. Only validated account/argument/time/target-bound evidence can pass.
   how: >
-    Run m365-capabilities --release <id>; resolve workiq.fetch to the actual loaded
-    hosted WorkIQ fetch tool, not WorkIQ Ask. Execute the exact reads, including the
-    returned group/site IDs for member/library reads. Save the listed envelope and
-    actual available_tools mapping in a temporary evidence file, then record-check
+    Run m365-capabilities --release <id>. Execute the exact supported native WorkIQ
+    and Agency Teams reads. Inspect actual tools first; load agency-workiq-workiq
+    instructions if useful. If MCP fetch is absent, use infra/onboarding --json
+    discovery of the selected profile's existing WorkIQ launcher and fetch --help.
+    Execute exact planned Graph-relative URLs with workiq-read --scout-root
+    <selected-existing-profile> [--workiq-path <existing-workiq-launcher>]
+    --account <verified-owner> --entity-url '<exact URL>'. Preserve the Scout wrapper
+    argv, never shell-interpolate a URL or bypass its runner. Help is syntax proof,
+    not access proof. Save the listed canonical observations and actual available_tools
+    mapping, with the CLI structured_fetch descriptor separate, in a temporary file, then record-check
     --item m365_access --status pass --evidence-file <file>. Missing/disabled tools,
     denied paths, partial results, wrong accounts or stale observations hold before
     the release starts. Never invent an absent tool or use another identity/path to
     evade a policy denial. Correct host authentication/connector setup and rerun.
     Future Bug Bash event/chat access must still be verified when those resources
-    exist; initial read probes do not grant send/upload permission.
+    exist; initial read probes do not grant send/upload permission. A compact routing
+    recipe saved under the selected profile records account/targets/actual route/how-to
+    only, no secrets/private responses/roster. Rediscover and reread on future setup;
+    that cache is never a durable permission or pass.
   faqs:
     - q: "Does a successful read prove I can send or upload?"
       a: "No. Write grants need explicit owner confirmation and every actual checked write needs its own authorization and provider receipt."
-    - q: "Hosted WorkIQ fetch is missing but native workiq tools exist?"
-      a: "Those are different capabilities. The release requires the hosted structured entity tool for group reads. Configure the supported hosted WorkIQ connector and reload Scout; do not replace group membership with a people search or raw Azure CLI Graph token."
+    - q: "Do I need to add Hosted WorkIQ?"
+      a: "No. The custom remote registration stays removed. Exact structured fetch can use an actual exposed MCP tool or the selected profile's existing native WorkIQ CLI. Discover that user's capability and verify live exact reads; absent MCP fetch or failed WorkIQ Ask does not prove CLI fetch unavailable. Missing launcher/version support holds with --workiq-path guidance. Never switch identity/transport after authentication failure or denial, replace membership with people search, or use Azure CLI Graph tokens."
 
 readiness.m365_write_access:
   summary: "Confirm M365 send/upload authorization separately from read access."
@@ -152,8 +162,8 @@ readiness.m365_write_access:
   how: >
     Show the configured destinations and limitations before the readiness
     attestation. No test send/upload is authorized merely by running readiness.
-    Hosted WorkIQ new-file upload is not available; new immutable report creation
-    uses a checked SharePoint browser upload, with its owning execution and receipt.
+    New immutable report creation uses a checked SharePoint browser upload,
+    with its owning execution and receipt.
     The native file tool may replace only a proven existing target, never create
     an invented item. Actual write denials still hold the owning step and require
     explicit recovery; never switch transports after an unknown outcome.
@@ -985,8 +995,15 @@ bug_bash.distribute_tests:
   how: >
     First resolve the current primary OCE using the ICM team configured in readiness.yaml,
     then run `distribute-tests --release <id> --oce <verified-upn> --json` to expose filtered
-    candidates. Missing directory evidence prints exact hosted WorkIQ entity requests;
-    supply complete fresh owner-bound group/member pages with --roster-file <path>.
+    candidates. For missing roster evidence, use the discovered structured fetch
+    route (actual MCP OR native CLI/workiq-read) for
+    /groups?$filter=mail eq '<configured-email>'&$select=id,displayName,mail&$top=100,
+    then /groups/<returned-id>/members?$select=id,displayName,userPrincipalName,mail&$top=100
+    and every returned page. The configured group is androididentity@microsoft.com,
+    not the historical androidauth example. Supply the complete fresh owner-bound
+    canonical workiq.fetch observation bundle with --roster-file; no raw roster
+    or guessed identities are accepted. Missing/denied evidence holds, never restore
+    the removed remote registration or try another identity/transport after denial.
     No Azure CLI Graph or people-search substitution. Never guess the on-call UPN
     or silently omit that exclusion. Ask the owner
     with m_ask_user: "Is anyone OOF for this Bug Bash?" with "Nobody is OOF" or "Exclude people";
@@ -1295,7 +1312,10 @@ bug_bash.bugbash_updates:
     Scout supplies a fresh account/argument-bound Teams ListChatMembers or native
     workiq_get_chat observation envelope for the exact chat; raw legacy member JSON
     is not proof. Optional directory_observations link actual assigned UPNs to member
-    GUIDs when SMTP differs. Missing input prints exact read requests and never
+    GUIDs when SMTP differs: use the discovered structured fetch route for the exact
+    /users/<verified-UPN> lookup requested by the command, not people search/Ask.
+    Bind the returned immutable GUID to the exact meeting member GUID; never infer
+    membership from an address or use a membership-record ID. Missing input prints exact read requests and never
     authorizes delivery. First-post notification prepare uses
     --param members_file=<path>, and the periodic command uses --members-file <path>.
     The chat identity is validated; never synthesize user IDs or use an unrelated chat.

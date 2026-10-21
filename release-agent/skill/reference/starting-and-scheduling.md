@@ -2,22 +2,165 @@
 
 _Loaded on demand. Covers `init`, the push-reminder automation, CCD anchoring/conflicts, and the daily digest._
 
+## Guided onboarding
+
+Entry points: `/release-agent check setup`, "finish setup", "onboard" and the
+pre-init check for a new release. The conductor executes the deterministic
+`onboarding --json` planner. It does not discover or mutate releases, create
+workers, send messages, upload reports or grant release readiness.
+All Python/Scout/Agency/clone paths are resolved per user. Reuse remembered valid
+paths; a unique canonical discovered clone needs no repeated confirmation.
+Ask once only if no path or multiple plausible installations remain.
+
+### 1. Discover and repair the installation
+
+Run `onboarding --json` from the resolved `<AGENT_ROOT>`; optional
+`--scout-root <actual-profile>` and `--agency-path <actual-executable>` select
+custom paths; `--workiq-path <actual-launcher>` selects an existing custom WorkIQ
+installation when profile/PATH discovery is unresolved.
+`path` supplies the exact question/flag; use a free-text prompt.
+`repair_installation` supplies failed dependencies/registrations. Explain the
+exact repair first; obtain permission before running the existing bootstrap
+with resolved paths and `-NoRestartScout -NonInteractive`. Do not automatically
+install Python, overwrite existing servers, restart the host or change permissions.
+`register_mcp` is different: only declared missing registrations are needed and
+all launchers/prerequisites are present. Run `infra --json` with the resolved
+profile/path flags immediately as part of setup; no user form/confirmation
+question. It performs the existing backed-up create-if-absent installation.
+The JSON report may remain `ok:false` solely for the pending tool check: confirm
+actual registration outcomes before moving on, not the overall exit code alone.
+Run onboarding again afterward. Never overwrite conflicts, disabled entries or
+existing authentication. Bootstrap registers the declared command-based servers
+and copies complete skill resources. The custom remote Hosted WorkIQ registration
+was removed; do not add or reconnect it. Logical structured fetch is still required
+through an actually exposed MCP tool or the selected profile's existing native CLI.
+
+### 2. Observe tools inside Scout
+
+`observe_tools` lists required canonical tool names, including ICM and Kusto
+health reads. Inspect actual tools first; load `agency-workiq-workiq` instructions
+if useful for discovery. Map only actually exposed native WorkIQ and Agency tool names.
+Do not infer tools from a Connected badge or
+from native WorkIQ Ask/search. Scout maintains a temporary JSON object outside
+release state and never asks the user to create or populate it:
+
+`{version:1, observed_at:<actual offset-aware time>, available_tools:{canonical:actual}}`.
+
+`infra --json` and `onboarding --json` also return `structured_fetch`.
+For `kind:mcp`, use only the actual canonical mapping (`workiq-fetch`,
+`workiq.fetch`, `workiq:fetch` or `mcp__workiq__fetch`). If no MCP fetch is exposed,
+discover the selected existing profile's `bin\workiq.cmd` or actual PATH launcher
+and verify `fetch --help`; the `kind:cli` descriptor records command argv,
+`observed_at` and `fetch_help`. An absent tool is not proof the CLI is absent.
+Keep that descriptor separately in temporary evidence instead of pretending the
+CLI is in `available_tools`. Missing launcher/version support returns a diagnostic
+with `--workiq-path` guidance. Help proves support, not authentication/access.
+
+Execute CLI reads only through the machine-only read adapter:
+`python -m orchestrator.cli workiq-read --scout-root <selected-existing-profile>
+[--workiq-path <existing-workiq-launcher>] --account <verified-owner>
+--entity-url '<exact Graph-relative URL>'`.
+It preserves the known Scout wrapper's executable argv, including its
+node-runner/node/workiq-wrapper/binary chain. Never hardcode an author's launcher,
+invoke a raw binary to bypass the wrapper, or interpolate Graph URLs through
+`cmd` (including `&`, `$`, `%` or quotes). Use literal arguments.
+
+Pass it as `onboarding --observation-file <temporary.json> --json`.
+Each new tool/UI/read observation needs its actual timestamp (15-minute lifetime).
+An invalid/stale observation requests recollection, not success. Recollect once;
+if repeated validation fails, surface the exact failure and stop, not a retry loop.
+Remove the temporary private observations when done or when leaving setup held.
+No raw responses, prompts, credentials or capability claims go into release state.
+
+### 3. Load supported connections
+
+Use the supported host tool-refresh control if exposed after registration;
+otherwise ask only for a single Scout reopen. Never kill/restart Scout from its
+own active session or pretend a browser tool controls the desktop.
+Keep `completed_actions:[<actual completed action_id>...]` in temporary observations
+after actual sign-in/reconnect completion. Observe fresh tools once. Sign-in and
+consent remain host-owned. Do not inspect Add Server or request Hosted WorkIQ:
+that remote connection is no longer part of setup.
+
+### 4. Verify the signed-in account and read connections
+
+`read` returns exact read-only requests. Execute them, not a synthesis query.
+The first read resolves `workiq_get_my_profile`; use its actual signed-in UPN/mail,
+never a guessed address. Subsequent requests verify bounded calendar reads,
+the exact configured roster and every member page, configured Teams chat/owner
+membership, report site/library, ICM schedule access and Kusto `print 1`.
+These are setup reads, not evidence the owner is free
+of on-call duty or has write permission.
+
+Store responses under `observations` in the standard
+`{version:1,tool,arguments,account,observed_at,result}` envelope.
+Use fresh real responses only. Both structured-fetch routes use logical canonical
+`tool:"workiq.fetch"` and `arguments:{entityUrls:[<exactPath>]}`; include the actual
+`structured_fetch` execution route where returned. This logical envelope is not
+a claim that a CLI command was a loaded MCP call.
+
+For the roster use `/groups?$filter=mail eq '<configured-email>'&$select=id,displayName,mail&$top=100`
+and then `/groups/<returned-id>/members?$select=id,displayName,userPrincipalName,mail&$top=100`.
+Use the configured `androididentity@microsoft.com`, not historical `androidauth`.
+Replan with observations to obtain `roster_next` for actual returned pagination
+and `report_library` requests from observed IDs; collect all pages. Fresh exact
+profile/calendar/roster/Teams/site/library evidence is required before ready.
+Built-in `workiq_list_sharepoint_lists` can list Documents as auxiliary metadata
+using its own actual arguments/response; do not relabel its result as Graph fetch
+or claim it proves every planned site/drive read. Missing evidence holds.
+Never reconstruct a directory identity, replace membership with people search,
+or use WorkIQ Ask as identity evidence.
+Use canonical names for supported mappings, calling the actual mapped tool or
+the discovered CLI adapter; never generically remap unrelated response shapes.
+Repeat the planner with these observations; it validates the same M365 reads as
+release readiness, without inventing a release or storing a reusable approval.
+
+A failed call is not a successful empty response. Keep it out of `observations`;
+record `issues:{<requested-key>:{kind,tool,arguments,account,observed_at}}`.
+Allowed `kind`: authentication, session, access_denied, unsupported, connection_failed.
+Classify from the actual error; do not save tokens or echo raw sensitive failures.
+Missing profile can record an unauthenticated profile issue without an account.
+For later reads the account/tool/arguments must match the exact request.
+
+### 5. Recover once or explain why setup cannot finish
+
+`sign_in`/`reconnect` supplies one named integration and action ID. For native M365,
+check the actual sign-in status and use the supported `m_m365_sign_in` flow only
+when that tool is exposed and with user consent, explaining its browser window
+first. If no supported auth control exists, give the administrator handoff and
+stop. Other connections use
+the actual host's supported sign-in/reconnect UI, not native M365 sign-in as a
+substitute. After explicit completion, record that action ID, remove its failed
+issue and rerun the failed read once with a fresh timestamp.
+If still failing, retain the issue and completed ID: planner returns `support`.
+Access denied/unsupported is immediately a support stop; do not offer an override,
+alternative identity, Azure CLI Graph token or another transport.
+Do not modify a denied/unsupported registration to try another identity/transport.
+Setup may add only the declared missing connections through infra. Its read-only
+plan never authorizes edits to existing entries, auth secrets or permissions.
+
+### 6. Finish without starting a release
+
+On `complete`/`status:ready`, rerun the same fresh evidence with
+`onboarding --observation-file <temporary.json> --scout-root <selected-profile>
+--record-routing --json` (preserving any explicit path flags).
+This saves only the compact returned `routing` JSON as
+`<selected-profile>\release-agent-routing.json`, outside release state: verified account,
+configured targets, actual selected route and how-to. No tokens, roster contents
+or raw private responses. The cache is a recipe, never reusable permission/readiness:
+rerun discovery and live reads on future setup and release entry.
+Show the concise completion message and verified account/route. Explain that
+release-specific checks/approvals still apply. End. Never
+run `init`/`next`, sign readiness or provision workers. Only a later separate
+"start a release" request begins release selection.
+On `support`, state the actual integration and limitation, preserve all release
+state and end without asking another retry question.
+
 ## Starting a release (don't make the user type a date format)
 
-Before choosing/initializing a NEW release, complete SKILL.md's setup prerequisite
-check with `infra --no-register --tools-file <fresh-inventory.json> --json`.
-If `path_requests` is nonempty, ask for each unresolved installation location and
-rerun with the returned path flag. Default per-user folders and PATH are candidates
-only. Bootstrap accepts ScoutRoot/AgencyPath/PythonPath/ScoutExe/ScoutSkillsDir
-overrides, installs all skill references and never creates an assumed Scout profile.
-Inside Scout/headless, let Scout prompt rather than waiting on console input.
-Observe actual loaded tools in Scout; missing/stale/malformed inventories or missing
-hosted WorkIQ fetch keep setup held before `init`. `bootstrap.ps1 -M365ToolsFile`
-forwards the same inventory and exits nonzero while setup is incomplete.
-No remote connector entry or authentication is inferred from native WorkIQ tools.
-Configure/sign in through Scout's supported hosted connector setup, then reload and
-observe again. This proves availability only: owner/target-bound read probes and
-human write authorization still belong to release entry. Preserve existing releases.
+Complete guided onboarding above before choosing/initializing a NEW release.
+Then use the normal release-specific entry gate after init; machine onboarding
+never stands in for current owner/CCD bindings or human send/upload attestation.
 
 The release id is just `YYYY-MM`. **You compute it — never ask the user to type the format.** Work out the current month from today (e.g. today 2026-07 → `2026-07`).
 

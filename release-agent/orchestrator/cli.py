@@ -50,7 +50,7 @@ def main(argv=None):
     # (e.g. the skill firing record-step calls at once) can't clobber each other.
     runs_root = getattr(args, "runs_root", None)
     # Machine setup must remain usable before init and while old releases are pinned.
-    release = (None if args.cmd == "infra" else
+    release = (None if args.cmd in ("infra", "onboarding", "paths", "workiq-read") else
                C.effective_release(runs_root, getattr(args, "release", None)))
     if args.cmd == "automation":
         if args.action in ("claim-delete", "delete-result") and getattr(args, "id", None):

@@ -197,7 +197,7 @@ def test_publish_rc_report_command_records_sharepoint_link(ready, tmp_path, monk
 
 
 @pytest.mark.parametrize("encoding", ["text", "base64"])
-def test_canonical_resolution_requests_metadata_and_accepts_native_download(
+def test_missing_native_metadata_requests_exact_structured_fetch(
         ready, tmp_path, capsys, encoding):
     import base64
     st, _ = ready
@@ -211,13 +211,11 @@ def test_canonical_resolution_requests_metadata_and_accepts_native_download(
     before = (tmp_path / st.release_id / "release-state.json").read_bytes()
     assert cli.main(receipt_arguments(tmp_path, handoff, path)) == 0
     request = json.loads(capsys.readouterr().out)
+    assert not request["permission_to_execute"]
     assert request["kind"] == "needs-connector-evidence"
-    assert not request["permission_to_execute"] and not request["completed"]
-    assert request["observation_key"] == "metadata"
-    assert (tmp_path / st.release_id / "release-state.json").read_bytes() == before
     read = request["requests"][0]
-    assert read["tool"] == "workiq.fetch"
-    assert read["arguments"]["entityUrls"][0].startswith("/drives/drive/items/item?")
+    assert read["tool"] == "workiq.fetch" and "workiq-read" in read["routing"]
+    assert (tmp_path / st.release_id / "release-state.json").read_bytes() == before
     value["metadata"] = publication_observation(read["tool"], read["arguments"], metadata)
     path.write_text(json.dumps(value), encoding="utf-8")
     assert cli.main(receipt_arguments(tmp_path, handoff, path)) == 0

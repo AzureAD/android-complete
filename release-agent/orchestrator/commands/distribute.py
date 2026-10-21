@@ -177,7 +177,7 @@ def register(sub):
     p = sub.add_parser("distribute-tests", help="Preview/apply checked live ADO Current Tester corrections")
     p.add_argument("--release", required=True)
     p.add_argument("--oce", default=None, help="Verified primary on-call UPN")
-    p.add_argument("--roster-file", help="Fresh owner-bound workiq.fetch exact group/member observation bundle")
+    p.add_argument("--roster-file", help="Fresh owner-bound exact group/member observations from verified structured WorkIQ fetch")
     choice = p.add_mutually_exclusive_group()
     choice.add_argument("--oof", action="append", metavar="UPN", help="Owner-confirmed OOF tester")
     choice.add_argument("--no-oof", action="store_true", help="Confirm nobody is OOF")

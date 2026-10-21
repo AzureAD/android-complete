@@ -124,9 +124,13 @@ def cmd_post_bugbash_update(args):
         print(_json.dumps({
             "decision": "error", "chatId": chat_id, "detail": detail, "notifications": [],
             "permission_to_send": False,
-            "connector_reads": [BB.mention_read_request(chat_id, context.release.owner_email)],
-            "followup": "Save the complete raw response in the requested fresh owner-bound "
-                        "M365 observation envelope; rerun with --members-file <path>.",
+            "connector_reads": ([] if context.parameters.members_file else
+                                [BB.mention_read_request(chat_id, context.release.owner_email)]),
+            "followup": (
+                "Resolve the reported evidence limitation before retrying; no notification is prepared."
+                if context.parameters.members_file else
+                "Save the complete raw response in the requested fresh owner-bound "
+                "M365 observation envelope; rerun with --members-file <path>."),
         }))
         return 0
 

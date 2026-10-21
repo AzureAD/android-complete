@@ -4,14 +4,14 @@ back MCP servers, and the MCP servers themselves registered into Scout's config.
 
 Design:
   * CLI/host/python deps ("requirements") → shell-checked (same as before).
-  * MCP servers ("mcp_servers") → live in Scout's own config file
+  * MCP servers ("mcp_servers"), both command and HTTP, live in Scout's config
     (~/.scout/m-mcp-servers.json), which loads at startup. We can't "install" them,
     but we CAN register a missing one into that file (backing it up first) so it
     loads on the next Scout restart. Each entry names its `provider` (a shell check
     that the launcher exists) so we never register a server whose launcher is absent.
   * M365 connectors ("m365_connectors") -> require a fresh inventory from inside
-    Scout. Configured servers and native WorkIQ tools do not prove hosted entity
-    fetch is loaded. Setup reports a hold until the required tools are observed.
+    Scout. Configured servers do not prove native WorkIQ/Agency tools are loaded.
+    Setup reports a hold until the required tools are observed.
 
 This module is pure-Python and import-light so bootstrap.ps1 can call it via the
 CLI (`python -m orchestrator.cli infra`). It only touches Scout's MCP config when
@@ -23,6 +23,8 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+from urllib.parse import urlsplit
 from datetime import datetime
 
 import yaml
@@ -106,16 +108,15 @@ def _load_scout_config(path: str) -> dict:
 
 
 def _backup(path: str) -> str:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     dst = f"{path}.bak-{stamp}"
     shutil.copy2(path, dst)
     return dst
 
 
 def ensure_mcp_servers(req: dict, register: bool, *, scout_root=None, agency_path=None) -> list:
-    """Check each required MCP server against Scout's config. When `register` is
-    True, add any that are missing (whose provider launcher exists), backing up
-    the config once before the first write.
+    """Check required MCPs; register absent command/HTTP entries with one backup.
+    HTTP discovery/auth remains host-owned; matching existing entries are preserved.
 
     Returns [{id,name,scout_key,status,detail}] where status is one of:
       present | registered | would_register | provider_missing | launcher_missing
@@ -125,6 +126,10 @@ def ensure_mcp_servers(req: dict, register: bool, *, scout_root=None, agency_pat
         return []
     cfg_path = (scout_mcp_config_path() if scout_root is None else
                 os.path.join(scout_profile_root(scout_root), "m-mcp-servers.json"))
+    before = None
+    if os.path.exists(cfg_path):
+        with open(cfg_path, "rb") as stream:
+            before = stream.read()
     cfg = _load_scout_config(cfg_path)
     existing = cfg.get("servers", {})
     agency = resolve_agency_path(req, existing, agency_path)
@@ -133,7 +138,60 @@ def ensure_mcp_servers(req: dict, register: bool, *, scout_root=None, agency_pat
     for m in servers:
         key = m.get("scout_key") or m.get("id")
         name = m.get("name", key)
-        rec = {"id": m.get("id"), "name": name, "scout_key": key}
+        transport = m.get("type", "command")
+        rec = {"id": m.get("id"), "name": name, "scout_key": key, "transport": transport}
+        if transport == "http":
+            url = m.get("url")
+            parsed = urlsplit(url) if isinstance(url, str) else None
+            if (parsed is None or parsed.scheme != "https" or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.query or parsed.fragment):
+                raise ValueError(f"HTTP MCP {key} requires a credential-free HTTPS endpoint")
+            matches = []
+            for existing_key, entry in existing.items():
+                config = entry.get("config") if isinstance(entry, dict) else None
+                if (existing_key == key or isinstance(config, dict) and (
+                        config.get("name") == m.get("server_name", key)
+                        or isinstance(config.get("url"), str)
+                        and config["url"].rstrip("/") == url.rstrip("/"))):
+                    matches.append((existing_key, entry))
+            if len(matches) > 1:
+                results.append({**rec, "status": "configuration_conflict",
+                                "detail": "Multiple registrations match this HTTP connection; preserve them "
+                                          "and review the duplicates before setup continues."})
+                continue
+            if matches:
+                existing_key, entry = matches[0]
+                config = entry.get("config") if isinstance(entry, dict) else None
+                if (not isinstance(config, dict) or entry.get("builtin") is not False
+                        or entry.get("enabled") is False or config.get("enabled") is False
+                        or config.get("type", "http") != "http"
+                        or not isinstance(config.get("url"), str)
+                        or config["url"].rstrip("/") != url.rstrip("/")):
+                    results.append({**rec, "status": "configuration_conflict",
+                                    "detail": "Existing connection is disabled or differs from the required HTTP "
+                                              "endpoint. It was not overwritten or duplicated."})
+                else:
+                    results.append({**rec, "scout_key": existing_key, "status": "present",
+                                    "detail": "HTTP connection already registered; Scout owns discovery and sign-in."})
+                continue
+            if not register:
+                results.append({**rec, "status": "would_register",
+                                "detail": "Setup will register this HTTP connection automatically; no form entry needed."})
+                continue
+            if not backed_up and os.path.exists(cfg_path):
+                backed_up = _backup(cfg_path)
+            existing[key] = {
+                "builtin": False,
+                "config": {"name": m.get("server_name", key), "type": "http", "url": url},
+                "tools": [],
+            }
+            dirty = True
+            results.append({**rec, "status": "registered",
+                            "detail": "HTTP connection registered automatically - RESTART Scout for tool discovery "
+                                      "and complete a supported sign-in prompt if required."})
+            continue
+        if transport != "command":
+            raise ValueError(f"Unsupported setup MCP transport: {transport}")
         if key in existing:
             entry = existing[key]
             required = set(m.get("readiness_tools", m.get("tools", [])) or [])
@@ -216,35 +274,49 @@ def ensure_mcp_servers(req: dict, register: bool, *, scout_root=None, agency_pat
 
     if dirty:
         os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
-        tmp = cfg_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=os.path.dirname(cfg_path),
+                prefix=".mcp-setup-", suffix=".tmp", delete=False) as fh:
+            tmp = fh.name
             json.dump(cfg, fh, indent=2, ensure_ascii=False)
-        os.replace(tmp, cfg_path)
+        try:
+            current = None
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "rb") as stream:
+                    current = stream.read()
+            if current != before:
+                raise ValueError("Scout MCP configuration changed during setup; reload it before retrying. "
+                                 "No connection was overwritten.")
+            os.replace(tmp, cfg_path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
     return results
 
 
-def check_m365_connectors(req: dict, tool_inventory=None, *, now=None):
+def check_m365_connectors(req: dict, tool_inventory=None, *, now=None, structured_fetch=None):
     if "m365_connectors" not in req:
         return None
-    from . import m365, m365_capabilities
+    from . import m365, m365_capabilities, structured_fetch as F
 
     config = req["m365_connectors"]
-    if not isinstance(config, dict):
-        raise ValueError("m365_connectors must declare the hosted WorkIQ endpoint")
-    endpoint = config.get("hosted_endpoint")
-    if not isinstance(endpoint, str):
-        raise ValueError("m365_connectors must declare the hosted WorkIQ endpoint")
-    m365_capabilities.site_path(endpoint)
+    if (not isinstance(config, dict)
+            or any(not isinstance(config.get(key), str) or not config[key].strip()
+                   for key in ("calendar_mail_files", "teams"))):
+        raise ValueError("m365_connectors must declare native calendar/mail/files and Teams integrations")
     report = {
         "status": "inventory_required",
         "required_tools": list(m365_capabilities.REQUIRED_TOOLS),
         "missing_tools": [],
-        "hosted_endpoint": endpoint,
+        "structured_fetch": structured_fetch,
         "detail": (
-            "Loaded Scout tool inventory is required before release initialization. "
-            "Configure and sign in to the supported hosted WorkIQ connector in Scout, "
-            "reload its tools, then rerun infra --no-register --tools-file <inventory.json>. "
-            "Native workiq_* wrappers and MCP registration are not hosted entity access."
+            "The terminal cannot see which Microsoft 365 tools Scout has loaded. "
+            "This check must happen inside Scout before release initialization; "
+            "it does not mean a connector is missing."
+        ),
+        "next_action": (
+            "In Scout, run: /release-agent check setup. "
+            "Scout performs the check; you do not need to create files or run terminal commands."
         ),
         "inventory_format": {
             "version": 1, "observed_at": "<actual offset-aware observation time>",
@@ -259,11 +331,28 @@ def check_m365_connectors(req: dict, tool_inventory=None, *, now=None):
             or type(tool_inventory.get("version")) is not int or tool_inventory["version"] != 1):
         raise ValueError("M365 setup requires a version-1 loaded-tool inventory")
     m365.validate_freshness(tool_inventory.get("observed_at"), now=now)
-    missing = m365_capabilities.missing_tools(tool_inventory.get("available_tools"))
+    missing = m365_capabilities.missing_tools(
+        tool_inventory.get("available_tools"),
+        structured_fetch=structured_fetch or tool_inventory.get("structured_fetch"), now=now)
+    report["structured_fetch"] = F.route(
+        tool_inventory["available_tools"],
+        structured_fetch or tool_inventory.get("structured_fetch"), now=now) or structured_fetch
     report["missing_tools"] = missing
     if missing:
         report["status"] = "missing_tools"
-        report["detail"] = "Missing loaded connector capabilities: " + ", ".join(missing) + ". " + report["detail"]
+        integrations = []
+        for label, needed in (
+                ("WorkIQ structured fetch (MCP or native CLI)", lambda tool: tool == "workiq.fetch"),
+                ("Microsoft 365 calendar/mail/files", lambda tool: tool.startswith("workiq_")),
+                ("Microsoft Teams", lambda tool: tool.startswith("microsoft_teams-")),
+                ("Browser", lambda tool: tool.startswith("playwright-"))):
+            if any(needed(tool) for tool in missing):
+                integrations.append(label)
+        report["detail"] = "Required tools are not available in Scout: " + ", ".join(integrations) + "."
+        report["next_action"] = (
+            "In Scout, run: /release-agent check setup. "
+            "Scout will identify which integration to enable or reconnect."
+        )
     else:
         report["status"] = "tools_available"
         report["detail"] = (
@@ -271,11 +360,12 @@ def check_m365_connectors(req: dict, tool_inventory=None, *, now=None):
             "release entry still requires fresh owner/target-bound m365-capabilities reads "
             "and separate human send/upload authorization."
         )
+        report["next_action"] = "Setup prerequisites are ready. In Scout, run: /release-agent start a release."
     return report
 
 
 def run(req_path: str, register: bool = True, *, tool_inventory=None,
-        scout_root=None, agency_path=None) -> dict:
+        scout_root=None, agency_path=None, workiq_path=None) -> dict:
     """Full infra preflight. Returns a structured report.
 
     If Scout itself isn't present (~/.scout missing), MCP registration is skipped
@@ -283,8 +373,10 @@ def run(req_path: str, register: bool = True, *, tool_inventory=None,
     first, then re-run.
     """
     req = load_requirements(req_path)
-    connectors = check_m365_connectors(req, tool_inventory)
     profile = scout_profile_root(scout_root)
+    from .structured_fetch import discover_cli
+    fetch = discover_cli(profile, workiq_path) if "m365_connectors" in req else None
+    connectors = check_m365_connectors(req, tool_inventory, structured_fetch=fetch)
     cfg_path = (scout_mcp_config_path() if scout_root is None else
                 os.path.join(profile, "m-mcp-servers.json"))
     needs_agency = (any(r.get("id") == "agency-cli" for r in req.get("requirements", []))
@@ -305,6 +397,14 @@ def run(req_path: str, register: bool = True, *, tool_inventory=None,
     infrastructure_ok = (scout_present and all(r["ok"] for r in reqs)
                          and all(m["status"] in ("present", "registered") for m in mcps))
     ok = infrastructure_ok and (connectors is None or connectors["status"] == "tools_available")
+    if not infrastructure_ok:
+        setup_status = "blocked"
+        next_action = "Fix the reported installation items, then rerun setup."
+    else:
+        setup_status = ("ready" if ok else "needs_scout_check"
+                        if connectors["status"] == "inventory_required" else "blocked")
+        next_action = (connectors["next_action"] if connectors else
+                       "Setup prerequisites are ready. In Scout, run: /release-agent start a release.")
     path_requests = []
     if not scout_present:
         path_requests.append({
@@ -318,6 +418,7 @@ def run(req_path: str, register: bool = True, *, tool_inventory=None,
         })
     return {"requirements": reqs, "mcp_servers": mcps, "m365_connectors": connectors,
             "infrastructure_ok": infrastructure_ok,
+            "setup_status": setup_status, "next_action": next_action,
             "scout_present": scout_present,
             "ok": ok, "restart_needed": restart_needed,
             "scout_root": profile, "scout_mcp_config": cfg_path,

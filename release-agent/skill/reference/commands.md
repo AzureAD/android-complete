@@ -41,8 +41,11 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 
 | Intent | Command |
 | --- | --- |
+| Guided onboarding (user-facing Scout prompt) | `/release-agent check setup` — automatically register declared missing MCPs through `infra`, load tools and handle required sign-in, then verify reads. No host-form/capability questions. Existing entries/auth/permissions are preserved; conflicts, repeated failures and denied access stop. No release discovery/init/advance. |
+| Plan/resume onboarding internally | `python -m orchestrator.cli onboarding [--observation-file <temporary-scout-observations.json>] [--scout-root <existing-profile>] [--agency-path <executable>] --json` — read-only planner, no release state. `structured_fetch` discovers actual MCP or existing native CLI capability. `ready` requires fresh exact profile/calendar/roster/all pages/Teams/report site/library proofs; the user never creates this file. Conductor saves only compact profile-local routing/how-to, never a cached pass. |
 | Discover releases | `python -m orchestrator.cli list --json` |
-| Check setup BEFORE new-release init | `python -m orchestrator.cli infra --no-register --tools-file <fresh-inventory.json> --json` — enforces `m365_connectors` using the actual loaded canonical-to-exposed tool map. Missing inventory/tools blocks setup; available tools do not prove authenticated access or write authorization. |
+| Check setup BEFORE new-release init | `python -m orchestrator.cli infra --no-register --tools-file <fresh-inventory.json> --json` — enforces `m365_connectors` using the actual loaded canonical-to-exposed tool map and separate discovered `structured_fetch` MCP/CLI route. CLI help is not live access proof; missing required evidence blocks setup. |
+| Exact native WorkIQ structured read (machine-only) | `python -m orchestrator.cli workiq-read --scout-root <selected-existing-profile> [--workiq-path <existing-workiq-launcher>] --account <verified-owner> --entity-url '<exact Graph-relative URL>'` — discovers the profile's existing `bin\workiq.cmd` or actual PATH launcher, verifies `fetch --help`, preserves Scout wrapper argv and prints the canonical `workiq.fetch` observation with actual route. No release state, tokens, raw-binary bypass or shell URL interpolation. Missing launcher/version support returns diagnostic/`--workiq-path` guidance; auth/denial stops, no alternate transport/identity. |
 | Resolve installation paths | `infra --no-register --scout-root <existing-profile> --agency-path <executable> --json` — validate user-specific locations; ask for returned `path_requests`, never guess or overwrite an existing server. Custom-profile later CLI calls use `RELEASE_AGENT_SCOUT_ROOT`. |
 | Start a new release | `python -m orchestrator.cli init --release <YYYY-MM>` |
 | Preview workflow revision adoption | `python -m orchestrator.cli workflow-adopt --release <id> --json` — old/new identity, conservative invalidations and ownership blockers; no execution. Before asking for approval, show `invalidation.summary`, every completed/blocked step being reset, removed gate decisions/offers, and blockers. |
@@ -645,6 +648,12 @@ Re-prepare with `--param members_file=<path>` or rerun the poller with
 `--members-file <path>`. Missing evidence returns a read-only connector request;
 it never authorizes a send or step completion. UPN/SMTP differences require
 explicit structured directory identity evidence, never a guessed mention.
+Follow the returned exact `/users/<verified-UPN>` request through the discovered
+MCP fetch or native CLI `workiq-read` route. Supply its canonical `workiq.fetch`
+envelope in `directory_observations` alongside the member observation. Bind its
+returned Entra GUID to an actual member GUID of this exact meeting; a directory
+hit alone is not membership proof. Never use people search or WorkIQ Ask, or infer
+that SMTP/local-part similarity identifies a member.
 
 ## Checked finalization and rollout writes
 
@@ -682,19 +691,30 @@ evidence, not a provider-success receipt or permission to execute again.
 
 Before `distribute_tests` computes the first manual-test preview, the **release owner**
 must supply availability for **this release's Bug Bash**. Do not query calendars,
-Teams presence, O365 automatic replies/OOF, or infer dates. Structured hosted WorkIQ
-entity reads resolve the exact configured group and verified directory members,
-not availability. `distribute-tests` prints the exact next group/member request
-until `--roster-file <path>` supplies `{observations:[<fresh owner-bound envelopes>]}`.
-Follow only actual returned pagination for that same group. Missing entity tools
-or policy-denied paths hold setup; no people-search or Azure CLI Graph fallback.
+Teams presence, O365 automatic replies/OOF, or infer dates. Inspect actual Scout
+tools and the selected profile's existing native CLI capability; logical structured
+fetch can use either discovered route without restoring the removed custom remote
+Hosted WorkIQ registration. Missing roster evidence returns an exact read handoff:
+`/groups?$filter=mail eq '<configured-email>'&$select=id,displayName,mail&$top=100`,
+then `/groups/<returned-id>/members?$select=id,displayName,userPrincipalName,mail&$top=100`
+and every returned next page. Use the configured androididentity@microsoft.com;
+the historical androidauth example is not a target change.
+Call the actual exposed fetch tool or machine-only `workiq-read` with the exact
+URL as a literal argument. Save `--roster-file <path>` as
+`{observations:[<fresh owner-bound canonical workiq.fetch envelopes>]}` with
+complete exact group/member evidence and actual pagination, recording the actual
+route where available. No people-search, WorkIQ Ask or Azure CLI Graph fallback
+is allowed. Authentication/denial stops; do not try another identity/transport.
+The same complete roster evidence is required during setup/readiness, not waived.
 Repeat the same roster file in preview/apply; source and membership participate
 in the reviewed hash and are revalidated before each ADO Tester write.
 
 1. Resolve the **current primary** on-call engineer using ICM
    `get_on_call_schedule_by_team_id` for the team in `readiness.yaml`'s `oncall_now`
    (currently 78848). Resolve the returned contact to a verified UPN; never guess it.
-   Run `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-upn> --json`.
+   Run `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-upn> --json`;
+   if it requests roster evidence, collect the exact fetch handoff above and repeat
+   with `--roster-file <path>`. Retain that same fresh file for preview/apply.
    Its blocked JSON includes filtered `candidates` (`name`, `upn`). Display only that list,
    not the raw DL membership: the release owner, OCE, Jia Le He, Moumita Ghosh and Veena
    Soman have already been removed. Missing OCE blocks without showing candidates; resolve

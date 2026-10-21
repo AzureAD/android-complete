@@ -34,7 +34,7 @@ from uuid import UUID
 
 import yaml
 
-from orchestrator import m365
+from orchestrator import m365, structured_fetch as F
 from tools import pipelines as P
 from tools import testplans as T
 
@@ -223,7 +223,9 @@ class ConnectorObservationRequired(ValueError):
     def __init__(self, message, *, tool, arguments, owner, additional_requests=()):
         super().__init__(message)
         self.tool, self.arguments = tool, arguments
-        self.requests = [m365.observation_request(tool, arguments, owner), *additional_requests]
+        request = (F.request(arguments["entityUrls"], owner) if tool == F.FETCH_TOOL else
+                   m365.observation_request(tool, arguments, owner))
+        self.requests = [request, *additional_requests]
 
 
 def roster_lookup_path(group_mail):
@@ -235,9 +237,7 @@ def roster_lookup_path(group_mail):
 
 
 def roster_read_request(group_mail, owner):
-    """Initial exact-DL connector request, shared by readiness and distribution."""
-    return m365.observation_request(
-        "workiq.fetch", {"entityUrls": [roster_lookup_path(group_mail)]}, owner)
+    return F.request([roster_lookup_path(group_mail)], owner)
 
 
 def _mail_identity(value):
@@ -280,11 +280,10 @@ def roster_observed(group_mail, observation, owner, *, now=None):
         arguments = {"entityUrls": [path]}
         if len(used) == len(envelopes):
             raise ConnectorObservationRequired(
-                "Roster requires an exact structured WorkIQ entity read. If the required "
-                "workiq.fetch entity tool is not loaded, configure the installed M365 connector. Collect "
-                "the requested raw structured response (not people search or another group), "
-                "and append its fresh owner-bound envelope to --roster-file.",
-                tool="workiq.fetch", arguments=arguments, owner=owner)
+                "Read this exact roster group/member page through the discovered WorkIQ MCP fetch "
+                "or this user's verified native WorkIQ CLI. Supply its fresh owner-bound envelope "
+                "in --roster-file; never substitute Ask, people search or an unverified roster.",
+                tool=F.FETCH_TOOL, arguments=arguments, owner=owner)
         envelope = envelopes[len(used)]
         result = m365.validate_observation(
             envelope, tool="workiq.fetch", arguments=arguments, owner=owner, now=now)

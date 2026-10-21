@@ -15,8 +15,9 @@ real page snapshot; only the frozen local file may be uploaded, once, without ov
 contains the returned receipt_binding plus item_url, resolve, optional requested
 metadata and download observations.
 It cannot issue another upload, including after interrupted or stale completion.
-Resolution supplies canonical drive/item IDs. Missing DriveItem metadata triggers
-an exact structured metadata-read handoff. Downloads may be native text/base64 or
+Resolution supplies canonical drive/item IDs. Missing metadata requests an exact
+structured fetch via the discovered MCP or native WorkIQ CLI route.
+Downloads may be native text/base64 or
 structured content with explicit encoding; only the exact frozen bytes are accepted.
 """
 from __future__ import annotations
@@ -30,7 +31,7 @@ from pathlib import Path
 import re
 from urllib.parse import quote, unquote, urlparse
 
-from orchestrator import cli_common as C, m365, revision, write_review as W
+from orchestrator import cli_common as C, m365, revision, structured_fetch as F, write_review as W
 from orchestrator.step_context import thaw
 from steps.build_verify import rc_report as R
 from steps.build_verify import rc_report_publish as S
@@ -164,8 +165,7 @@ def _observed_item(value, target, owner, digest, size, *, not_before=None):
     elif isinstance(item, dict) and all(key in item for key in ("name", "size", "webUrl")):
         provider = resolved
     else:
-        raise PublicationReadRequired(
-            "metadata", m365.observation_request("workiq.fetch", metadata_args, owner))
+        raise PublicationReadRequired("metadata", F.request(metadata_args["entityUrls"], owner))
     receipt = _provider_item(provider, target, item_url)
     download_args = {
         "fileId": f"{receipt['drive_id']},{receipt['item_id']}",

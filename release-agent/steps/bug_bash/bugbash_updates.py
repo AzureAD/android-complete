@@ -47,8 +47,8 @@ Blocks if the chat hasn't been activated or the completed fill is missing/stale.
 Missing member evidence requests a read-only Teams ListChatMembers call before preparing
 any notification. members_file must contain its fresh owner-bound M365 observation envelope
 (or the native workiq_get_chat envelope for this exact meeting), never bare legacy JSON.
-If assigned UPNs differ from member emails, append fresh exact-user workiq.fetch envelopes
-as directory_observations on that member envelope; bind their GUIDs to actual members.
+If assigned UPNs differ from member emails, fetch the exact directory users through
+the discovered MCP or verified native WorkIQ CLI; bind GUIDs to actual members.
 
 Mock knobs (mocks.local.yaml / tests):
   progress : inject the gathered progress dict (skip the live ADO reads); include every
@@ -279,9 +279,10 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"complete response in a version:1 observation envelope with the exact tool/arguments, "
         f"account equal to the release owner, and an offset observed_at timestamp; rerun "
         f"with --members-file <path> within 15 minutes. Bare legacy member JSON is not fresh evidence. "
-        f"If an assigned UPN differs from the member email (or email is missing), use the printed "
-        f"exact workiq.fetch directory requests and append their envelopes as directory_observations "
-        f"on that same member envelope. Hosted fetch must actually be available; otherwise hold. "
+        f"If an assigned UPN differs from the member email (or email is missing), execute the exact "
+        f"directory requests through the verified structured fetch route and append their fresh "
+        f"envelopes as directory_observations. Discover the current user's MCP/native CLI; "
+        f"do not use Ask or assume a removed custom remote registration removed all fetch support. "
         f"Never invent member identities or omit mentions to bypass a resolution failure.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
         f"--text \"bugbash-poller: <decision>\"`.")

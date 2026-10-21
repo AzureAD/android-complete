@@ -572,11 +572,10 @@ def resolve_mention_people(chat_id, owners, timeout=90, *, member_observation=No
         missing.append({"entityUrls": [mention_directory_path(upn)]})
     if missing:
         raise D.ConnectorObservationRequired(
-            "Missing explicit directory evidence linking pending tester UPNs to this meeting's "
-            "member userId values. If the required workiq.fetch entity tool is not loaded, configure "
-            "the installed M365 entity connector; collect the exact requested reads. Append "
-            "fresh owner-bound envelopes as directory_observations on the members-file envelope, "
-            "then rerun with --members-file <path>. Never guess mappings or omit mentions.",
+            "Read exact pending tester UPNs using the discovered structured WorkIQ fetch route "
+            "(exposed MCP or verified native CLI). Append fresh owner-bound envelopes as "
+            "directory_observations on the members-file envelope; match their GUIDs to actual "
+            "meeting members. Never guess mappings or omit mentions.",
             tool="workiq.fetch", arguments=missing[0], owner=owner,
             additional_requests=[m365.observation_request("workiq.fetch", args, owner)
                                  for args in missing[1:]])

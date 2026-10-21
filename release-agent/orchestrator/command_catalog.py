@@ -47,6 +47,8 @@ COMMAND_MODULES = (
     CommandModule("logs"),
     CommandModule("automation"),
     CommandModule("infra_cmd"),
+    CommandModule("onboarding_cmd"),
+    CommandModule("structured_read_cmd"),
     CommandModule("paths_cmd"),
     CommandModule("preview_cmd"),
 )

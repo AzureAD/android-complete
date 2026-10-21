@@ -32,23 +32,13 @@ def evidence(state):
         key: observation(item["tool"], item["arguments"], results[key], state.owner_email)
         for key, item in expected["requests"].items() if key != "roster"
     }
-    group = "11111111-1111-1111-1111-111111111111"
-    lookup = expected["requests"]["roster"]
-    probes["roster"] = [
-        observation(lookup["tool"], lookup["arguments"], {"value": [{
-            "id": group, "displayName": "Release roster", "mail": target["roster_group"],
-        }]}, state.owner_email),
-        observation("workiq.fetch", {
-            "entityUrls": [f"/groups/{group}/members?$select=id,displayName,userPrincipalName,mail&$top=100"],
-        }, {"value": [{
-            "id": "22222222-2222-2222-2222-222222222222", "displayName": "Member",
-            "userPrincipalName": "member@example.test", "mail": "member@example.test",
-            "@odata.type": "#microsoft.graph.user",
-        }]}, state.owner_email),
-    ]
-    probes["report_library"] = observation("workiq.fetch", {
-        "entityUrls": ["/sites/site-guid/drives"]}, {"value": [
-            {"id": "drive-guid", "name": target["report_library"]}]}, state.owner_email)
+    from tests.test_distribution_live import roster_bundle
+    probes["roster"] = roster_bundle(
+        [{"name": "Member", "upn": "member@example.test"}],
+        group_mail=target["roster_group"], owner=state.owner_email)["observations"]
+    probes["report_library"] = observation("workiq.fetch", {"entityUrls": ["/sites/site-guid/drives"]},
+                                         {"value": [{"id": "drive-guid", "name": target["report_library"]}]},
+                                         state.owner_email)
     return {
         "binding": expected["binding"], "available_tools": {tool: tool for tool in M.REQUIRED_TOOLS},
         "observations": probes,
@@ -88,6 +78,8 @@ def test_capability_plan_is_read_only_and_uses_correct_tools(tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert not out["permission_to_send"] and not out["permission_to_upload"]
     assert "workiq.fetch" in out["required_tools"]
+    assert set(out["requests"]) == {"profile", "calendar", "chat", "members", "roster", "sharepoint"}
+    assert "unavailable_checks" not in out
     assert out["requests"]["members"]["tool"] == "microsoft_teams-ListChatMembers"
     assert "Azure" not in json.dumps(out["requests"])
     assert path.read_bytes() == before
@@ -117,6 +109,9 @@ def test_fresh_capabilities_store_summary_not_private_observations_and_need_writ
     assert items["m365_access"]["satisfied"]
     assert not items["m365_write_access"]["satisfied"]
     assert "do not prove permission" in stored["limitations"]
+    assert {check["name"] for check in stored["checks"]} == {
+        "owner/calendar", "Teams chat/members", "distribution roster", "SharePoint library"}
+    assert stored["structured_fetch"] == {"kind": "mcp", "tool": "workiq.fetch"}
 
 
 def test_capabilities_reject_missing_tools_partial_wrong_targets_and_unreadable_results():
@@ -124,28 +119,33 @@ def test_capabilities_reject_missing_tools_partial_wrong_targets_and_unreadable_
     good = evidence(st)
     changes = (
         ("missing_tool", None), ("wrong_alias", None), ("wrong_account", None),
-        ("partial_roster", None), ("wrong_group", None), ("wrong_chat", None),
-        ("wrong_site", None), ("missing_library", None), ("failed_read", None),
+        ("partial_members", None), ("wrong_member", None), ("wrong_chat", None),
+        ("failed_read", None),
+        ("missing_roster", None), ("wrong_group", None), ("missing_library", None), ("wrong_site", None),
     )
     for change, _ in changes:
         value = deepcopy(good)
         probes = value["observations"]
         if change == "missing_tool":
-            value["available_tools"].pop("workiq.fetch")
+            value["available_tools"].pop("workiq_get_my_profile")
         elif change == "wrong_alias":
-            value["available_tools"]["workiq.fetch"] = "random-fetch"
+            value["available_tools"]["workiq_get_my_profile"] = "workiq_search_people"
         elif change == "wrong_account":
             probes["profile"]["account"] = "other@example.test"
-        elif change == "partial_roster":
-            probes["roster"][1]["result"]["@odata.nextLink"] = "more"
-        elif change == "wrong_group":
-            probes["roster"][0]["result"]["value"][0]["mail"] = "other@example.test"
+        elif change == "partial_members":
+            probes["members"]["result"] = {"members": [], "hasMoreResults": True}
+        elif change == "wrong_member":
+            probes["members"]["result"] = [{"userId": "another-guid"}]
         elif change == "wrong_chat":
             probes["chat"]["result"]["id"] = "other-chat"
-        elif change == "wrong_site":
-            probes["sharepoint"]["result"]["webUrl"] = "https://example.test/other"
+        elif change == "missing_roster":
+            probes.pop("roster")
+        elif change == "wrong_group":
+            probes["roster"][0]["result"]["value"][0]["mail"] = "other@example.test"
         elif change == "missing_library":
             probes["report_library"]["result"]["value"] = []
+        elif change == "wrong_site":
+            probes["sharepoint"]["result"]["webUrl"] = "https://example.test/other"
         else:
             probes["calendar"]["result"] = {"error": "403 Forbidden"}
         with pytest.raises(ValueError):
