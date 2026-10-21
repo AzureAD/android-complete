@@ -41,6 +41,40 @@ Assert-True ($metadata.GuidanceRevision -eq "unknown") "Invalid revision was acc
 $metadata = Get-MemoryStorageReviewMetadata -Body ('```text' + "`nReview screen: memory-storage/v1`n" + '```')
 Assert-True (-not $metadata.MemoryStorageScreened) "Quoted screen was counted as coverage"
 
+$markers = "$tag`nReview screen: memory-storage/v1`nGuidance revision: local-uncommitted"
+$quotedExamples = @(
+    "> Example:`n$tag",
+    "> Example:`nReview screen: memory-storage/v1",
+    "> Example:`nGuidance revision: local-uncommitted",
+    "> Example:`n$markers",
+    "> > Nested example:`n$markers",
+    "> - List example:`n$markers",
+    "   > Indented quote:`n$markers",
+    ("> Example:`r`n" + $markers.Replace("`n", "`r`n"))
+)
+foreach ($body in $quotedExamples) {
+    $metadata = Get-MemoryStorageReviewMetadata -Body $body
+    Assert-True ($null -eq $metadata.RuleId) "Lazy quoted rule was attributed: $body"
+    Assert-True (-not $metadata.MemoryStorageScreened) "Lazy quoted screen was counted: $body"
+    Assert-True ($metadata.GuidanceRevision -eq "unknown") "Lazy quoted revision was accepted: $body"
+}
+$quoteEndings = @(
+    "> Example:`n$markers`n`n",
+    "> Example:`n>`n",
+    "> # Quoted heading`n",
+    "> Example:`n# Top-level heading`n",
+    "> Example:`n---`n",
+    ('> ```text' + "`n> Code example`n" + '> ```' + "`n"),
+    ('> ```text' + "`n> Code example`n"),
+    ("> Example:`n" + '```text' + "`nCode example`n" + '```' + "`n")
+)
+foreach ($prefix in $quoteEndings) {
+    $metadata = Get-MemoryStorageReviewMetadata -Body ($prefix + $markers)
+    Assert-True ($metadata.RuleId -eq "memory-storage/v1") "Top-level rule after quote was lost: $prefix"
+    Assert-True $metadata.MemoryStorageScreened "Top-level screen after quote was lost: $prefix"
+    Assert-True ($metadata.GuidanceRevision -eq "local-uncommitted") "Top-level revision after quote was lost: $prefix"
+}
+
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("review-rule-tests-" + [guid]::NewGuid())
 $originalTemp = $env:TEMP
 New-Item -ItemType Directory -Path $testRoot | Out-Null
@@ -53,7 +87,7 @@ try {
     $raw = @(
         @{ Repo = "common"; PRNumber = 1; PRAuthor = "fixture-author"; CommentId = 11; ReviewId = 101; FilePath = "Cache.kt"; HasReply = $true; CommentBody = "Issue`n$tag" },
         @{ Repo = "common"; PRNumber = 1; PRAuthor = "fixture-author"; CommentId = 12; ReviewId = 101; FilePath = "Store.kt"; HasReply = $false; CommentBody = "Issue`n$tag`n$tag" },
-        @{ Repo = "common"; PRNumber = 1; PRAuthor = "fixture-author"; CommentId = 13; ReviewId = 101; FilePath = "Other.kt"; HasReply = $false; CommentBody = "> $tag" },
+        @{ Repo = "common"; PRNumber = 1; PRAuthor = "fixture-author"; CommentId = 13; ReviewId = 101; FilePath = "Other.kt"; HasReply = $false; CommentBody = "> Example:`n$tag" },
         @{ Repo = "msal"; PRNumber = 1; PRAuthor = "fixture-author"; CommentId = 21; ReviewId = 201; FilePath = "Client.kt"; HasReply = $true; CommentBody = "Issue`n$tag" },
         @{ Repo = "broker"; PRNumber = 1; PRAuthor = "fixture-author"; CommentId = 31; ReviewId = 301; FilePath = "Broker.kt"; HasReply = $true; CommentBody = "Issue`n$tag" },
         @{ Repo = "broker"; PRNumber = 1; PRAuthor = "fixture-author"; CommentId = 32; ReviewId = 301; FilePath = "Broker.kt"; HasReply = $true; CommentBody = "Issue`n$tag" },
@@ -110,7 +144,7 @@ try {
     $emptyCollectorComments = $false
     $collectorComments = @(
         @{ id = 500; body = "Issue`n$tag"; path = "Cache.kt"; line = 10; pull_request_review_id = 1001; user = @{ login = "Copilot" } },
-        @{ id = 501; body = ('```suggestion' + "`n$tag`n" + '```'); path = "Other.kt"; line = 20; pull_request_review_id = 1001; user = @{ login = "copilot-pull-request-reviewer[bot]" } },
+        @{ id = 501; body = "> Example:`n$markers"; path = "Other.kt"; line = 20; pull_request_review_id = 1001; user = @{ login = "copilot-pull-request-reviewer[bot]" } },
         @{ id = 502; body = $tag; in_reply_to_id = 500; user = @{ login = "fixture-author" } }
     )
     $collectorFirstReviewPage = @(
