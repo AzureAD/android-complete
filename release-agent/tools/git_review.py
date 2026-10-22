@@ -392,7 +392,6 @@ def push_reviewed(root, remote, name, expected_tip, content, validate):
         if oid != content["commit_id"]:
             raise ValueError("Reviewed commit mismatch")
         clean_repository(root, scratch_dir=work)
-        validate()
         if remote_tip(root, remote, name) != expected_tip:
             raise ValueError("Head drift immediately before push")
         ref = "refs/heads/" + branch(name)
@@ -400,6 +399,7 @@ def push_reviewed(root, remote, name, expected_tip, content, validate):
         # the new commit's first parent is exactly expected_tip.
         transport = _environment(isolated=False)
         transport.update({key: env[key] for key in ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_INDEX_FILE")})
+        validate()
         _git(work, "push", "--porcelain", f"--force-with-lease={ref}:{expected_tip}",
              remote, f"{oid}:{ref}", env=transport)
     if remote_tip(root, remote, name) != oid:

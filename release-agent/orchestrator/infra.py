@@ -357,8 +357,8 @@ def check_m365_connectors(req: dict, tool_inventory=None, *, now=None, structure
         report["status"] = "tools_available"
         report["detail"] = (
             "Required tools were observed in Scout. This is not authenticated access proof: "
-            "release entry still requires fresh owner/target-bound m365-capabilities reads "
-            "and separate human send/upload authorization."
+            "release entry still requires fresh owner/target-bound m365-capabilities reads. "
+            "Send/upload access and authorization are checked at each owning write step."
         )
         report["next_action"] = "Setup prerequisites are ready. In Scout, run: /release-agent start a release."
     return report

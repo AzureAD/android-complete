@@ -74,6 +74,12 @@ def validate_step(state: ReleaseState, workflow: WorkflowDefinition, key: str):
             validate_closed_approval(raw["data"]["last_approval"])
         except (ValueError, TypeError) as exc:
             add("invalid_closed_approval", f"has malformed closed approval evidence: {exc}")
+    if isinstance(raw.get("data"), dict) and "last_write_progress" in raw["data"]:
+        from orchestrator.write_review import validate_progress
+        try:
+            validate_progress(raw["data"]["last_write_progress"])
+        except (ValueError, TypeError) as exc:
+            add("invalid_write_progress", str(exc))
     if not valid_links(raw.get("links", [])):
         add("invalid_step_links", "requires a list of evidence link mappings.")
     if raw.get("invalidated_at") is not None and _timestamp(raw["invalidated_at"]) is None:
@@ -94,6 +100,14 @@ def validate_step(state: ReleaseState, workflow: WorkflowDefinition, key: str):
                 or not isinstance(review, dict) or set(review) != {"hash", "approved_by"}
                 or not is_hash(review.get("hash")) or not _text(review.get("approved_by"))):
             add("invalid_write_review", "requires the exact reviewed write authorization.")
+    if "write_progress" in execution:
+        from orchestrator.write_review import validate_progress
+        try:
+            validate_progress(execution["write_progress"])
+            if not execution.get("write_review"):
+                raise ValueError("Compound progress requires reviewed ownership")
+        except (ValueError, TypeError) as exc:
+            add("invalid_write_progress", str(exc))
     if not all(_text(execution.get(k)) for k in ("id", "owner", "started_at")) or not _timestamp(execution.get("started_at")):
         add("invalid_execution", "requires a nonempty execution id/owner and valid started_at.")
     if _text(execution.get("id")) and any(

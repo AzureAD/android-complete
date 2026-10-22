@@ -39,6 +39,8 @@ class StatusViewMixin:
                 stp = self.state.get_step(phase["id"], sid)
                 s_done = selection.step(phase["id"], sid).complete
                 s_blocked = stp.status == "blocked"
+                continuing = sid in selection.scout_pending and bool(
+                    (stp.execution or {}).get("write_progress"))
                 s_inflight = stp.status == "in_flight"
                 kind = self._step_kind(s)
                 is_gate = kind == "gate"
@@ -47,6 +49,8 @@ class StatusViewMixin:
                 is_attest = kind == "attest"
                 if s_done:
                     status = "done"
+                elif continuing:
+                    status = "scout"
                 elif s_blocked:
                     status = "blocked"
                 elif stp.status == "running":
@@ -68,7 +72,7 @@ class StatusViewMixin:
                 # needs_owner = a genuine USER task. A pending scout step is Scout's
                 # automatic work (not the user's) until it BLOCKS (s_blocked), so it is
                 # NOT flagged — only gates, reminders, attests, and blocks are.
-                needs = bool((is_gate or is_rem or is_attest or s_blocked) and not s_done
+                needs = bool((is_gate or is_rem or is_attest or s_blocked) and not s_done and not continuing
                              and selection.step(phase["id"], sid).prerequisites_met)
                 steps_view.append({
                     "id": sid, "name": s["name"], "status": status,
@@ -166,6 +170,8 @@ class StatusViewMixin:
                 s_state = "skipped"
             elif step_readiness.complete:
                 s_state = "done"
+            elif s["id"] in selection.scout_pending and (rec.get("execution") or {}).get("write_progress"):
+                s_state = "scout"
             elif rec.get("status") == "running":
                 s_state = "running"
             elif rec.get("status") == "blocked":
@@ -296,11 +302,17 @@ class StatusViewMixin:
             is_scout_focus = bool(cur and self._step_kind(cur) == "scout")
             cur_blocked = (self.state.get_step(current_hold.phase_id, current_hold.step_id).status
                            == "blocked") if current_hold.step_id else False
+            if current_hold.reason == "compound_continuation":
+                cur_blocked = False
             if not is_scout_focus or cur_blocked:
                 action = self._hold_view(current_phase_name, current_step_name, selection)
         scheduled = self._scheduled_view(selection)
 
         chk = self.gate.checklist()
+        from orchestrator.readiness import dispatch_plan
+        readiness_dispatch = (dispatch_plan(chk, self.state.release_id, suspension=revision_problem)
+                              if revision_problem else chk["dispatch"])
+        chk = {**chk, "dispatch": readiness_dispatch}
         active_phase = self._active_phase_report(selection)
         # Scout steps ready for the SKILL to execute (perform the MCP send/scrape, then
         # record-step). They are NOT user holds — the skill drains these itself; only if
@@ -327,6 +339,8 @@ class StatusViewMixin:
             "as_of": self.as_of.isoformat(),
             "skip_release": bool(self.state.cancellation),
             "readiness_signed": chk["signed"],
+            "readiness": chk,
+            "readiness_dispatch": readiness_dispatch,
             "readiness_pending": [i["id"] for i in chk["items"] if not i["satisfied"]],
             "blocked": chk["blocked"] or bool(revision_problem),
             "blocked_items": list(chk["blocked_items"]),

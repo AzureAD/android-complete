@@ -112,12 +112,6 @@ items:
   # ---- ATTEST: the engineer confirms (Scout cannot fully prove these) ----
   # `detail` is the table-cell text and MAY contain inline markdown links
   # (they render fine inside Scout table cells).
-  - id: m365_write_access
-    label: "M365 send/upload authorization"
-    text: "You are authorized to send the release emails, calendar invitations and Teams posts, and upload reports to the configured SharePoint library"
-    detail: "Read probes do not establish write permissions. Confirm the required send/upload grants and the planned destinations. Scout will not send test messages or upload test files without separately previewed approval. New immutable report files use the checked SharePoint browser upload; every actual write still needs its own authorization and receipt."
-    verify: attest
-
   - id: adx_access
     label: "ADX release dashboard"
     text: "You can query the ADX release-telemetry cluster (Scout verifies via Kusto)"

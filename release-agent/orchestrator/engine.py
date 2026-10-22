@@ -497,7 +497,7 @@ class Orchestrator(StatusViewMixin):
         if selection.suspension == "readiness_gate":
             return NextAction(
                 kind="readiness",
-                message="HOLDING at the readiness entry gate. Sign the checklist before Phase 0 can start.",
+                message=self.gate.checklist()["dispatch"]["instruction"],
             )
 
         hold = selection.focus_hold
@@ -535,6 +535,16 @@ class Orchestrator(StatusViewMixin):
             step=step.id if step else None, name=step.name if step else None,
         )
         execution = self.step_execution(phase.id, step.id) if step else {}
+        if execution.get("write_progress"):
+            from orchestrator.write_review import continuation
+            outcome = continuation(self, phase.id, step.id)
+            if isinstance(outcome, NeedsSkill):
+                action.kind = "scout"
+                action.message = (
+                    f"Continue {step.name}: {outcome.payload['followup_command']}. "
+                    "The checked command verifies saved work and reviews only the remainder; "
+                    "unknown outcomes stay held.")
+                return action
         if execution.get("approval"):
             action.message = (
                 f"External gate approval {execution['id']} retains ownership. Use "

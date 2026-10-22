@@ -61,7 +61,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
     for label in ("Play Console access", "Free during release window", "SAW + AME", "YubiKey in hand"):
         assert label in ap
     # once signed, attest_prompt reports cleared
-    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey", "m365_write_access"], note="ok")
+    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"], note="ok")
     assert "entry gate cleared" in render.attest_prompt(orch.gate.checklist())
 
 
@@ -70,7 +70,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
 def test_attest_prompt_payload_is_deterministic_card():
     """render.attest_prompt_payload builds the exact m_ask_user card the engine owns:
     ready:false until auto checks pass, then a confirm_all + one decline-per-item card
-    set with confirm_items — so the always-rendered Scout card is the source of truth."""
+    set with confirm_items and the mandatory checklist from the same snapshot."""
     from orchestrator import render
     _stub_build_defs("pass")
     st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
@@ -78,6 +78,7 @@ def test_attest_prompt_payload_is_deterministic_card():
     # Not ready before auto checks
     p0 = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
     assert p0["ready"] is False and "pending" in p0["reason"]
+    assert p0["display_markdown"] == render.readiness_table(orch.gate.checklist(), "2026-07")
     # Resolve auto items
     orch.gate.verify()
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
@@ -88,23 +89,47 @@ def test_attest_prompt_payload_is_deterministic_card():
     _pass_m365_check(orch)
     p = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
     assert p["ready"] is True
+    assert p["display_markdown"] == render.readiness_table(orch.gate.checklist(), "2026-07")
     assert p["recommendedIndex"] == 0
     # first card is confirm_all; the rest are one decline per outstanding attest item
     assert p["answers"][0]["action"] == "confirm_all"
     decline_items = {a["item"] for a in p["answers"] if a["action"] == "decline"}
     assert decline_items == set(p["confirm_items"])
-    assert len(p["confirm_items"]) == 4 and "m365_write_access" in p["confirm_items"]
-    assert p["remaining_items"] == ["yubikey"]
+    assert set(p["confirm_items"]) == {"play_console_access", "oncall_window", "saw_ame", "yubikey"}
+    assert p["remaining_items"] == []
     # the on-call window dates are surfaced in the confirm_all description
     assert "2026-07-01" in p["answers"][0]["description"]
     # 2-5 cards (valid m_ask_user answer count)
     assert 2 <= len(p["answers"]) <= 5
-    orch.gate.sign(p["confirm_items"], note="confirmed this batch only")
+    orch.gate.sign(p["confirm_items"], note="confirmed all four readiness items")
     next_prompt = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
-    assert not orch.gate.signed and next_prompt["confirm_items"] == ["yubikey"]
-    assert len(next_prompt["answers"]) == 2
-    orch.gate.sign(next_prompt["confirm_items"], note="confirmed remaining item")
-    assert render.attest_prompt_payload(orch.gate.checklist(), "2026-07")["ready"] is False
+    assert orch.gate.signed and not next_prompt["ready"]
+    assert next_prompt["next_action"] == "complete" and "answers" not in next_prompt
+    assert next_prompt["display_markdown"] != p["display_markdown"]
+    assert next_prompt["display_markdown"] == render.readiness_table(orch.gate.checklist(), "2026-07")
+
+
+def test_attest_prompt_batches_additional_configured_items():
+    from copy import deepcopy
+    from orchestrator import render
+    st, orch = _orch(signed=False)
+    orch.gate.config = deepcopy(orch.gate.config)
+    orch.gate.config["items"].append({
+        "id": "extra_confirmation", "label": "Additional check",
+        "text": "Confirm an additional configured requirement", "verify": "attest",
+    })
+    orch.gate.verify()
+    _pass_scout_checks(orch)
+    first = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
+    assert len(first["confirm_items"]) == 4 and len(first["answers"]) == 5
+    assert first["remaining_items"] == ["extra_confirmation"]
+    orch.gate.sign(first["confirm_items"], note="confirmed only the first batch")
+    second = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
+    assert not orch.gate.signed and second["confirm_items"] == ["extra_confirmation"]
+    assert len(second["answers"]) == 2
+    assert second["display_markdown"] == render.readiness_table(orch.gate.checklist(), st.release_id)
+    orch.gate.sign(second["confirm_items"], note="confirmed additional requirement")
+    assert orch.gate.signed
 
 
 

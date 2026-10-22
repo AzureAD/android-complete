@@ -57,6 +57,9 @@ def test_every_real_writer_adapter_reaches_shared_authority(writer, monkeypatch,
     }
     assert owner.name in planners, "A new adapter must exercise the shared lifecycle"
     monkeypatch.setattr(module, planners[owner.name], lambda *a, **kw: plan)
+    if owner.name in ("integ_prs_cmd", "oneauth_pr_cmd"):
+        monkeypatch.setattr(module, "integration_progress" if owner.name == "integ_prs_cmd"
+                            else "oneauth_progress", lambda *a: object())
     if owner.name == "signoff_cmd":
         monkeypatch.setattr(module.checks, "current_az_user", lambda: args.approved_by)
         monkeypatch.setattr(module, "_validate_owner_execution_policy", lambda *a: None)

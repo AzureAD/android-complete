@@ -30,6 +30,10 @@ def _execution_guidance(execution: dict, status=None) -> str:
     if execution.get("approval"):
         return ("Scout needs to check the existing pipeline approval. "
                 "It will recover that decision rather than submit another approval.")
+    if execution.get("write_progress"):
+        return ("Continue with the same checked command. Scout verifies saved receipts and "
+                "reviews only remaining actions. Owner-confirmed manual results/completion "
+                "are supported; never clear ownership or blindly retry unknown writes.")
     if execution.get("write_review"):
         return ("Scout is checking the previous write's outcome before another attempt. "
                 "An unknown result will not be repeated.")
@@ -77,11 +81,28 @@ def step_detail(s: dict, limit: int = 160) -> str:
 
 
 # ---- readiness entry gate (the frozen table) ----
-_ICON = {"pass": "✅", "attested": "✅", "fail": "❌", "unable": "⛔",
+_ICON = {"pass": "✅", "attested": "✅", "fail": "❌", "unable": "⛔", "needs_input": "⏸",
          "degraded": "⚠️", "pending": "⬜"}
 _STATUS_WORD = {"pass": "PASS", "attested": "Confirmed", "fail": "FAIL",
                 "unable": "Unable", "degraded": "Proceeding (not silent)",
-                "pending": "Outstanding"}
+                "pending": "Outstanding", "needs_input": "Input needed"}
+
+
+def readiness_followup(chk: dict, release_id: str) -> str:
+    from orchestrator.readiness import dispatch_plan
+    plan = chk.get("dispatch") or dispatch_plan(chk, release_id)
+    lines = [plan["instruction"]]
+    if plan["pending_auto_checks"]:
+        lines.append("**Scout queue (not owner tasks):**")
+        for item in plan["pending_auto_checks"]:
+            probe = item["probe"]
+            target = probe.get("command") or probe["tool"]
+            lines.append(f"- `{item['id']}`: `{target}`")
+    if plan["next_action"] != "complete":
+        lines.append(f"Continue with `{plan['checklist_command']}`; a printed table is not completion.")
+        lines.append(f"Before returning or asking, run `{plan['handoff_command']}`. "
+                     "Exit 2 means execute the remaining queue, not return a started summary.")
+    return "\n".join(lines)
 
 
 def readiness_table(chk: dict, release_id: str) -> str:
@@ -99,11 +120,16 @@ def readiness_table(chk: dict, release_id: str) -> str:
         "| | Type | Item | Status |",
         "|---|---|---|---|",
     ]
+    if chk.get("owner_email"):
+        who = f"{chk.get('owner_name') or ''} {chk['owner_email']}".strip()
+        lines[2:2] = [f"**Owner:** {_cell(who)}", ""]
     for it in chk["items"]:
-        box = _ICON.get(it["status"], "⬜")
+        stale = it["status"] in ("pass", "degraded") and not it["satisfied"]
+        status = "pending" if stale else it["status"]
+        box = _ICON.get(status, "⬜")
         typ = "`[auto]`" if it["verify"] == "auto" else "`[attest]`"
         label = it.get("label") or it["id"]
-        if it.get("checks"):
+        if it.get("checks") and not stale:
             parts = [f"[{c['name']}]({c['url']}) {'✓' if c.get('ok') else '✗'}"
                      if c.get("url") else f"{c['name']} {'✓' if c.get('ok') else '✗'}"
                      for c in it["checks"]]
@@ -113,8 +139,12 @@ def readiness_table(chk: dict, release_id: str) -> str:
         win = it.get("window")
         if win and win.get("start") and win.get("end"):
             detail = f"{detail} (window: {win['start']} → {win['end']})".strip()
+        if stale:
+            detail += " — prior evidence no longer matches this release; Scout must recheck."
+        elif status in ("fail", "unable", "degraded", "needs_input") and it.get("message"):
+            detail = f"{detail} — {it['message']}".strip(" —")
         item_cell = f"**{_cell(label)}** — {_cell(detail)}"
-        lines.append(f"| {box} | {typ} | {item_cell} | {_STATUS_WORD.get(it['status'], it['status'])} |")
+        lines.append(f"| {box} | {typ} | {item_cell} | {_STATUS_WORD.get(status, status)} |")
     lines.append("")
 
     if chk["blocked"]:
@@ -127,6 +157,8 @@ def readiness_table(chk: dict, release_id: str) -> str:
     else:
         pending = [i["label"] for i in chk["items"] if not i["satisfied"]]
         lines.append("**Outstanding:** " + ", ".join(pending))
+    if not chk["signed"]:
+        lines.extend(["", readiness_followup(chk, release_id)])
     return "\n".join(lines)
 
 
@@ -141,6 +173,8 @@ def attest_prompt(chk: dict) -> str:
         return block
     if chk.get("signed"):
         return "✅ All items satisfied — entry gate cleared. Ready to start Phase 0."
+    if chk.get("blocked"):
+        return "Readiness is blocked; resolve the recorded decline before attesting."
     # auto checks not yet complete
     auto_pending = [i["label"] for i in chk["items"]
                     if i["verify"] == "auto" and not i["satisfied"]]
@@ -154,6 +188,8 @@ def _attest_prompt_block(chk: dict) -> str:
     """The 'your confirmation needed' section, or '' when it's not time yet.
     Only returned when: gate unsigned, not blocked, ALL auto items satisfied, and
     at least one attest item is still outstanding."""
+    if chk.get("blocked"):
+        return ""
     auto = [i for i in chk["items"] if i["verify"] == "auto"]
     if auto and not all(i["satisfied"] for i in auto):
         return ""  # auto checks not finished — don't prompt for attestations yet
@@ -174,7 +210,7 @@ def _attest_prompt_block(chk: dict) -> str:
 
 
 # Short "can't satisfy" card title + one-line description per attest item, so the
-# m_ask_user card is self-describing even when no markdown table renders.
+# m_ask_user card is self-describing alongside the mandatory full checklist.
 _ATTEST_CARD = {
     "play_console_access": ("I can't open Play Console", "Play Console dashboard doesn't load"),
     "oncall_window":       ("I'm on-call during the window", "Scheduled Android on-call during the release window"),
@@ -184,24 +220,30 @@ _ATTEST_CARD = {
 
 
 def attest_prompt_payload(chk: dict, release_id: str) -> dict:
-    """DETERMINISTIC m_ask_user payload for the readiness attestations — the engine
-    owns the exact question + answer cards so the (always-rendered) Scout card is the
-    source of truth, independent of whether the markdown table rendered.
+    """Build the mandatory checklist display and exact readiness question together.
 
     Returns a dict:
       { ready: bool, release, question, answers:[{title,description,action,item?}],
-        confirm_items:[ids], recommendedIndex, reason }
+        confirm_items:[ids], recommendedIndex, reason, display_markdown,
+        next_action, continue_automatically, pending_auto_checks, failed_auto_checks }
+    The caller displays display_markdown before prompting or ending the iteration.
     `ready` is False (with `reason`) when it's not time to attest yet (auto checks
     pending) or nothing is outstanding — the skill should not prompt in that case."""
-    auto = [i for i in chk["items"] if i["verify"] == "auto"]
-    if auto and not all(i["satisfied"] for i in auto):
-        pend = ", ".join(i["label"] for i in auto if not i["satisfied"])
-        return {"ready": False, "release": release_id,
-                "reason": f"auto checks pending: {pend}"}
+    from orchestrator.readiness import dispatch_plan
+    plan = chk.get("dispatch") or dispatch_plan(chk, release_id)
+    display = {
+        **plan,
+        "release": release_id,
+        "display_markdown": readiness_table(chk, release_id),
+    }
+    if plan["next_action"] not in ("attest", "complete"):
+        reason = ("auto checks pending: " + ", ".join(i["id"] for i in plan["pending_auto_checks"])
+                  if plan["continue_automatically"] else plan["instruction"])
+        return {**display, "ready": False, "reason": reason}
     outstanding = [i for i in chk["items"]
                    if i["verify"] == "attest" and not i["satisfied"]]
     if not outstanding:
-        return {"ready": False, "release": release_id,
+        return {**display, "ready": False, "next_action": "complete",
                 "reason": "no attestations outstanding"}
     # Reserve one of the host's five answer slots for confirmation.
     remaining = outstanding[4:]
@@ -227,8 +269,9 @@ def attest_prompt_payload(chk: dict, release_id: str) -> dict:
                         "action": "decline", "item": it["id"]})
 
     return {
+        **display,
         "ready": True,
-        "release": release_id,
+        "next_action": "attest",
         "question": (
             f"Automated readiness checks passed - confirm these {len(outstanding)} "
             f"item(s) for release {release_id}? {len(remaining)} more will follow."
@@ -302,6 +345,11 @@ def _pipelines_line(r: dict) -> str:
 def status_view(r: dict) -> str:
     """Human-readable status: next-action headline → phase map → current-phase steps.
     `r` is Orchestrator.status_report()."""
+    if (r.get("readiness") and not r["readiness_signed"]
+            and not r.get("halted") and not r.get("skip_release")
+            and not r.get("workflow_revision_problem")
+            and not any(issue.get("severity") == "error" for issue in r.get("invariant_violations", []))):
+        return readiness_table(r["readiness"], r["release_id"])
     bars = 20
     filled = round(bars * r["done"] / r["total"]) if r["total"] else 0
     bar = "█" * filled + "░" * (bars - filled)

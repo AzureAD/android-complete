@@ -16,6 +16,7 @@ from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState
 from steps.lib.mockctx import MISSING
 from tools import git_review as G, oneauth as OA, pipelines as PL, prs as PR
+from _write_progress import memory_progress
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +67,7 @@ def write(root, path, text):
 class Permit:
     def __init__(self, plan):
         self.plan, self.validations = plan, 0
+        self.progress = memory_progress(self)
 
     def validate(self):
         self.validations += 1
@@ -519,9 +521,11 @@ def test_prepared_operations_match_durable_review_before_any_write(oneauth, tmp_
     s.before_write = check_review
     with C.state_lock(s.args.runs_root, s.args.release):
         orch = locked_orchestrator(s)
-        authorization = W.authorize(s.args, orch, "finalize", "oneauth_common_pr", planner)
+        authorization = W.authorize(
+            s.args, orch, "finalize", "oneauth_common_pr", planner,
+            progress=P.oneauth_progress(orch, s.context, s.args))
         assert authorization.plan == plan
-        assert len(replans) == 2 and all(p == plan for p in replans)
+        assert len(replans) == 1 and all(p == plan for p in replans)
         P.execute_oneauth(authorization)
     assert [c[0] for c in s.calls] == ["push", "create"]
     assert s.calls[0][-1] == plan.as_dict()["operations"][0]["content"]
@@ -552,11 +556,12 @@ def test_partial_failure_keeps_owned_attempt_and_cannot_replay(oneauth, tmp_path
     with C.state_lock(s.args.runs_root, s.args.release):
         orch = locked_orchestrator(s)
         authorization = W.authorize(s.args, orch, "finalize", "oneauth_common_pr",
-                                    lambda: P.oneauth_plan(s.context, s.args))
+                                    lambda: P.oneauth_plan(s.context, s.args),
+                                    progress=P.oneauth_progress(orch, s.context, s.args))
         with pytest.raises(ValueError, match="offline PR failure"):
             P.execute_oneauth(authorization)
         calls = deepcopy(s.calls)
-        with pytest.raises(ValueError, match="already started|uncertain"):
+        with pytest.raises(ValueError, match="existing execution"):
             W.authorize(s.args, orch, "finalize", "oneauth_common_pr", lambda: plan)
     record = ReleaseState.load(str(path)).get_step("finalize", "oneauth_common_pr")
     assert record.execution["id"] == s.args.execution_id

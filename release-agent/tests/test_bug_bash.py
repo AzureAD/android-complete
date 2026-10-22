@@ -808,7 +808,6 @@ def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
         seed_invite(st)
         ready = Orchestrator(CONFIG, st, mocks={})
         _pass_m365_check(ready)
-        ready.gate.sign(["m365_write_access"], note="synthetic owner authorization after fixture invite")
         _C.save_state(st, d, rid)
         cid = "19:meeting_ABC123@thread.v2"
         monkeypatch.setattr(bugbash_meeting, "resolve", lambda inv, **kwargs: meeting(inv, cid))

@@ -19,6 +19,95 @@ from . import schedule
 from .state import ReleaseState, _now
 
 
+def dispatch_plan(chk: dict, release_id: str, *, suspension: str = "") -> dict:
+    """One host-executed readiness queue for every CLI/presentation surface."""
+    auto = [item for item in chk["items"] if item["verify"] == "auto" and not item["satisfied"]]
+    # A previously passing read with an invalidated binding needs a fresh probe.
+    pending = [item for item in auto if item["status"] in ("pending", "pass", "degraded")]
+    failed = [item["id"] for item in auto if item["status"] == "fail"]
+    inputs = [item["id"] for item in auto
+              if item["status"] not in ("pending", "pass", "degraded", "fail")]
+    if suspension:
+        action, instruction = "resolve_release_hold", suspension
+    elif pending:
+        action = "run_auto_checks"
+        instruction = (
+            "Scout must exhaust all executable readiness checks before returning to the user. "
+            "Run every pending probe and record its actual result, then re-read the checklist. "
+            "Defer optional permission/input questions until independent checks are exhausted; "
+            "never bypass a host consent prompt, retry a failure blindly, or invent a pass.")
+    elif chk.get("blocked"):
+        action, instruction = "resolve_readiness_block", "Readiness entry gate is blocked; resolve the recorded decline with the owner."
+    elif failed:
+        action, instruction = "resolve_auto_checks", "Show the recorded failures and request the actual repair."
+    elif inputs:
+        action, instruction = "resolve_auto_input", "Ask for the recorded input or consent; no automatic checks remain executable."
+    elif chk.get("signed"):
+        action, instruction = "complete", "Readiness is complete; continue the normal release flow."
+    else:
+        action, instruction = "attest", "Automatic checks are complete; request only the outstanding human attestations."
+    return {
+        "next_action": action,
+        "continue_automatically": bool(pending) and not suspension,
+        "may_return_to_user": not pending or bool(suspension),
+        "instruction": instruction,
+        "checklist_command": f"checklist --release {release_id} --attest-prompt --json",
+        "handoff_command": f"checklist --release {release_id} --attest-prompt --handoff --json",
+        "pending_auto_checks": [_auto_check_action(item, release_id) for item in pending],
+        "failed_auto_checks": failed,
+        "input_required_auto_checks": inputs,
+    }
+
+
+def _auto_check_action(item: dict, release_id: str) -> dict:
+    iid = item["id"]
+    source = item.get("source") or "python"
+    verifier = item.get("verifier")
+    command = f"record-check --release {release_id} --item {iid}"
+    action = {
+        "id": iid, "source": source, "verifier": verifier,
+        "instructions": item.get("detail") or item.get("text") or "",
+    }
+    if source == "python":
+        action["probe"] = {"command": f"verify --release {release_id} --pending-only"}
+        return action
+    action["record_command"] = command + " --status <actual-result> --detail <actual-evidence>"
+    action["input_command"] = command + " --status needs_input --detail <specific-input-or-consent>"
+    if verifier == "ccd_confirmed":
+        action["probe"] = {"command": f"check-ccd --release {release_id} --json"}
+    elif verifier == "m365_capabilities":
+        action["probe"] = {"command": f"m365-capabilities --release {release_id}"}
+        action["record_command"] += " --evidence-file <fresh-validated-observations.json>"
+    elif verifier == "silent_perms":
+        action["probe"] = {"tool": "m_get_settings", "arguments": {}}
+        action["required_servers"] = item.get("required_servers") or []
+        action["instructions"] += (
+            " Read settings only first. If approval is needed, record needs_input, continue "
+            "independent probes, then ask. Never change permissions or record degraded without consent.")
+    elif verifier == "teams_notify":
+        action["probe"] = {"tool": "m_relay_status", "arguments": {}}
+        action["instructions"] += (
+            " Follow reference/readiness-gate.md for the configured channel, interactive "
+            "connection/handshake and opt-out. Missing required consent is needs_input, not a pass.")
+    elif verifier == "kusto_access":
+        action["probe"] = {
+            "tool": "kusto_-_adx-kusto_query",
+            "arguments": {"cluster_uri": item.get("cluster_uri"),
+                          "database": item.get("database"), "query": "print 1"},
+        }
+    elif verifier == "oncall":
+        action["probe"] = {
+            "tool": "icm-get_on_call_schedule_by_team_id",
+            "arguments": {"teamIds": [item.get("team_id")]},
+        }
+        action["identity_probe"] = {"tool": "icm-get_my_icm_context", "arguments": {}}
+        action["instructions"] += " Only current primary duty blocks; do not fail a backup. Ask if the role is ambiguous."
+    else:
+        action["probe"] = {"command": f"gate-info --item {iid}"}
+        action["instructions"] += " Resolve the configured verifier; if unavailable, record its real failure, never silently skip it."
+    return action
+
+
 class ReadinessGate:
     def __init__(self, config: dict, state: ReleaseState):
         # config is the parsed readiness.yaml (or None if not configured)
@@ -46,7 +135,7 @@ class ReadinessGate:
     def checklist(self) -> dict:
         """The entry checklist as structured data (no formatting)."""
         if not self.config:
-            return {
+            chk = {
                 "items": [],
                 "auto_items": [],
                 "attest_items": [],
@@ -59,6 +148,7 @@ class ReadinessGate:
                 "instructions": "",
                 "blocked_message": "",
             }
+            return {**chk, "dispatch": self._dispatch(chk)}
         items = []
         for it in self.config.get("items", []):
             rec = self.state.readiness_items.get(it["id"], {}) or {}
@@ -88,8 +178,10 @@ class ReadinessGate:
                 "checks": rec.get("checks", []),         # per-check results for auto items
                 "satisfied": self._item_satisfied(it),
             })
-        return {
+        chk = {
             "title": self.config.get("title", "Release readiness"),
+            "owner_email": self.state.owner_email,
+            "owner_name": self.state.owner_name,
             "instructions": self.config.get("instructions", ""),
             "blocked_message": self.config.get("blocked_message", ""),
             "items": items,
@@ -101,6 +193,12 @@ class ReadinessGate:
             "blocked_items": self.blocked_item_ids,
             "all_satisfied": all(i["satisfied"] for i in items) if items else True,
         }
+        return {**chk, "dispatch": self._dispatch(chk)}
+
+    def _dispatch(self, chk):
+        suspension = ("Release cancelled; no readiness dispatch is authorized." if self.state.cancellation else
+                      "Release halted; resume explicitly before readiness dispatch." if self.state.halt else "")
+        return dispatch_plan(chk, self.state.release_id, suspension=suspension)
 
     @property
     def signed(self) -> bool:
@@ -131,7 +229,7 @@ class ReadinessGate:
         ]
 
     # ---- mutations ----
-    def verify(self) -> dict:
+    def verify(self, *, pending_only=False) -> dict:
         """Run the AUTO verifiers. Each returns pass or fail — no half-measures.
         Items with source: scout are skipped here — the skill runs those via its
         MCP tools and records the result with record_check()."""
@@ -141,6 +239,10 @@ class ReadinessGate:
             return self.checklist()
         for it in self.config.get("items", []):
             if it.get("verify") != "auto":
+                continue
+            if pending_only and (
+                    (self.state.readiness_items.get(it["id"]) or {}).get("status", "pending")
+                    not in ("pending", "pass", "degraded") or self._item_satisfied(it)):
                 continue
             # Local test mock: force ANY auto item (python OR scout-assisted) pass/fail,
             # skipping the real ADO/config/MCP check — lets a test clear the gate offline.
@@ -171,6 +273,8 @@ class ReadinessGate:
         valid for auto items marked source: scout — a Python-verified auto item
         (e.g. build_access) cannot be hand-recorded, and attest items use sign().
 
+        `needs_input` records an actual consent/input boundary without satisfying
+        the check or preventing independent pending probes from running.
         Status is normally 'pass' | 'fail'. Items marked `opt_out: true` (soft items
         the user may proceed WITHOUT — e.g. silent_perms) also accept 'degraded',
         which SATISFIES the gate while recording that they chose to proceed without
@@ -181,9 +285,11 @@ class ReadinessGate:
             return {"error": f"no such readiness item '{item_id}'"}
         if not (it.get("verify") == "auto" and it.get("source") == "scout"):
             return {"error": f"'{item_id}' is not a scout-assisted auto item (cannot record a result for it)"}
-        valid = ("pass", "fail") + (("degraded",) if it.get("opt_out") else ())
+        valid = ("pass", "fail", "needs_input") + (("degraded",) if it.get("opt_out") else ())
         if status not in valid:
             return {"error": f"status must be one of: {', '.join(valid)}"}
+        if status == "needs_input" and not message.strip():
+            return {"error": "needs_input requires the specific missing input or consent"}
         proof = {}
         if item_id == "m365_access" and status == "pass":
             from .m365_capabilities import validate
@@ -212,9 +318,6 @@ class ReadinessGate:
         targets = attest_ids if item_ids is None else [i for i in item_ids if i in attest_ids]
         for iid in targets:
             rec = {"status": "attested", "at": _now()}
-            if iid == "m365_write_access":
-                from .m365_capabilities import binding
-                rec["capability_binding"] = binding(self.state)
             if note:
                 rec["note"] = note
             self.state.readiness_items[iid] = rec
@@ -243,7 +346,7 @@ class ReadinessGate:
     def _item_satisfied(self, item: dict) -> bool:
         record = self.state.readiness_items.get(item["id"], {}) or {}
         status = record.get("status")
-        if item["id"] in ("m365_access", "m365_write_access"):
+        if item["id"] == "m365_access":
             from .m365_capabilities import binding
             from . import mocks as mocks_mod
             mocked = mocks_mod.readiness_result(self.mocks, item["id"])

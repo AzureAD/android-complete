@@ -54,7 +54,7 @@ def test_sign_records_evidence_note():
     """Attestations carry the engineer's confirmation as evidence (note)."""
     st, orch = _orch(signed=False)
     _pass_scout_checks(orch)
-    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey", "m365_write_access"],
+    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"],
                    note="engineer confirmed all four")
     assert orch.gate.signed
     assert st.readiness_items["yubikey"].get("note") == "engineer confirmed all four"
@@ -221,6 +221,149 @@ def test_oncall_window_shows_computed_dates():
     assert win == {"start": "2026-07-01", "end": "2026-07-22"}   # CCD-7 .. CCD+14
     out = render.readiness_table(orch.gate.checklist(), "2026-07")
     assert "2026-07-01" in out and "2026-07-22" in out
+
+
+@pytest.mark.parametrize("stage", ["pending", "failed", "ready", "blocked", "partial", "signed"])
+def test_readiness_prompt_always_includes_full_current_table_without_mutation(
+        stage, monkeypatch, capsys):
+    import argparse
+    from copy import deepcopy
+    from dataclasses import asdict
+    import json
+    from orchestrator import render
+    from orchestrator.commands import readiness as rcmd
+
+    st, orch = _orch(signed=False)
+    if stage != "pending":
+        orch.gate.verify()
+        _pass_scout_checks(orch)
+    if stage == "failed":
+        orch.gate.record_check("adx_access", "fail", "offline denied")
+    elif stage == "blocked":
+        orch.gate.decline(["yubikey"])
+    elif stage == "partial":
+        orch.gate.sign(["play_console_access", "oncall_window"], note="confirmed this batch only")
+    elif stage == "signed":
+        orch.gate.sign(note="explicit fixture confirmations")
+    before = deepcopy(asdict(st))
+    checklist = orch.gate.checklist()
+    monkeypatch.setattr(C, "load_orch", lambda *args: (st, orch))
+    args = argparse.Namespace(
+        runs_root="unused", release=st.release_id, config=CONFIG,
+        verify=False, attest_prompt=True, json=True)
+    assert rcmd.cmd_checklist(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["display_markdown"] == render.readiness_table(checklist, st.release_id)
+    assert payload["ready"] == (stage in ("ready", "partial"))
+    assert payload["next_action"] == {
+        "pending": "run_auto_checks", "failed": "resolve_auto_checks",
+        "ready": "attest", "blocked": "resolve_readiness_block",
+        "partial": "attest", "signed": "complete",
+    }[stage]
+    assert payload["continue_automatically"] == (stage == "pending")
+    assert "| | Type | Item | Status |" in payload["display_markdown"]
+    rows = [line for line in payload["display_markdown"].splitlines() if line.startswith("|")]
+    assert len(rows) == len(checklist["items"]) + 2
+    if stage == "blocked":
+        assert "blocked" in payload["reason"]
+        assert "Blocked" in payload["display_markdown"] and "Unable" in payload["display_markdown"]
+        assert "answers" not in payload
+    if stage == "failed":
+        assert "FAIL" in payload["display_markdown"] and "offline denied" in payload["display_markdown"]
+    assert asdict(st) == before
+
+
+def test_start_continues_scout_checks_after_only_python_verification():
+    """The test3 stopping point is automatic work, never an owner handoff."""
+    from orchestrator import render
+    st, orch = _orch(signed=False)
+    orch.gate.verify()
+    payload = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
+    assert payload["next_action"] == "run_auto_checks"
+    assert payload["continue_automatically"] and not payload["ready"]
+    assert "answers" not in payload
+    assert {item["id"] for item in payload["pending_auto_checks"]} == {
+        "ccd_confirmed", "m365_access", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
+    assert all(item["source"] == "scout" and item["verifier"]
+               for item in payload["pending_auto_checks"])
+    assert payload["failed_auto_checks"] == []
+    _pass_scout_checks(orch)
+    ready = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
+    assert ready["next_action"] == "attest" and ready["ready"]
+    assert ready["pending_auto_checks"] == [] and not ready["continue_automatically"]
+    assert ready["display_markdown"] != payload["display_markdown"]
+    assert not orch.gate.signed
+
+
+def test_auto_failure_does_not_hide_independent_pending_checks():
+    from orchestrator import render
+    st, orch = _orch(signed=False)
+    orch.gate.verify()
+    orch.gate.record_check("adx_access", "fail", "Read permission denied")
+    payload = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
+    assert payload["failed_auto_checks"] == ["adx_access"]
+    assert len(payload["pending_auto_checks"]) == 5
+    assert "adx_access" not in {item["id"] for item in payload["pending_auto_checks"]}
+    assert payload["next_action"] == "run_auto_checks" and payload["continue_automatically"]
+    assert "answers" not in payload
+
+
+def test_init_directs_readiness_now_even_before_phase_zero(tmp_path, monkeypatch, capsys):
+    import argparse
+    from types import SimpleNamespace
+    from orchestrator.commands import release as rcmd
+    monkeypatch.setattr(C, "ccd_source", lambda: {})
+    monkeypatch.setattr(C, "elog", lambda *args: SimpleNamespace(log=lambda *args, **kwargs: None))
+    args = argparse.Namespace(
+        runs_root=str(tmp_path), release="2026-11", config=CONFIG,
+        owner_email="owner@example.test", owner_name="Owner", timezone="America/Los_Angeles",
+        force=False)
+    assert rcmd.cmd_init(args) == 0
+    output = capsys.readouterr().out
+    assert "readiness entry gate now" in output
+    assert "checklist --release 2026-11 --attest-prompt --json" in output
+    assert "not a stopping point" in output and "Readiness does not wait for Phase 0" in output
+    assert "Until then nothing fires" not in output
+    state = ReleaseState.load(str(tmp_path / args.release / "release-state.json"))
+    assert not state.readiness_items
+
+
+@pytest.mark.parametrize("override", [None, "2026-11-11", "2026-11-18"])
+def test_init_json_persists_once_and_hands_off_to_entry_gate(
+        tmp_path, monkeypatch, capsys, override):
+    import json
+    from orchestrator import cli
+    from tools import checks
+    monkeypatch.setattr(
+        checks, "read_pipeline_variable", lambda *args, **kwargs: (True, override, "fixture"))
+    args = [
+        "--runs-root", str(tmp_path), "init", "--release", "2026-11", "--json",
+        "--owner-email", "owner@example.test", "--owner-name", "Owner",
+        "--timezone", "America/Los_Angeles",
+    ]
+    assert cli.main(args) == 0
+    output = json.loads(capsys.readouterr().out)
+    path = tmp_path / "2026-11" / "release-state.json"
+    st = ReleaseState.load(str(path))
+    assert output["initialized"] and output["state_path"] == str(path)
+    for field in ("release_id", "owner_email", "owner_name", "timezone",
+                  "ccd", "ccd_source", "ccd_conflict", "target_month"):
+        assert output[field] == getattr(st, field)
+    assert output["ccd"] == "2026-11-11" and output["target_month"] == "2026-12"
+    assert output["ccd_conflict"] == ("2026-11-18" if override == "2026-11-18" else None)
+    assert output["phase0_open"] == "2026-11-04"
+    assert not output["readiness_signed"] and not st.readiness_items and not st.steps
+    assert output["next_action"] == "run_entry_gate" and output["continue_automatically"]
+    assert output["checklist_command"] == "checklist --release 2026-11 --attest-prompt --json"
+    assert st.workflow_revision is not None
+    events_path = path.parent / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["event"] for event in events] == ["release_started"]
+    before, events_before = path.read_bytes(), events_path.read_bytes()
+    assert cli.main(args + ["--force"]) == 1
+    duplicate = json.loads(capsys.readouterr().out)
+    assert not duplicate["initialized"] and "already exists" in duplicate["error"]
+    assert path.read_bytes() == before and events_path.read_bytes() == events_before
 
 
 
@@ -461,7 +604,6 @@ def test_cli_done_and_skip_fail_without_mutating_gate(tmp_path, capsys):
     st, orch = _orch()
     st.release_id = rid
     _pass_m365_check(orch)
-    orch.gate.sign(["m365_write_access"], note="synthetic owner authorization for renamed fixture")
     _advance_to_first_gate(orch)
     C.save_state(st, str(tmp_path), rid)
     path = tmp_path / rid / "release-state.json"

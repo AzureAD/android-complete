@@ -119,7 +119,8 @@ def test_schema4_exact_binding_and_review_shapes(tmp_path):
         ReleaseState.load(str(path))
 
 
-@pytest.mark.parametrize("contract", ["missing", None, True, False, 0, 2, 1.0, "1", {}, []])
+@pytest.mark.parametrize("contract", [
+    "missing", None, True, False, 0, 1, 2, CURRENT_EXECUTION_CONTRACT + 1, 2.0, "2", {}, []])
 def test_unsupported_execution_contract_is_rejected_without_migration(tmp_path, contract):
     state, orch = _orch(tmp_path)
     if contract == "missing":

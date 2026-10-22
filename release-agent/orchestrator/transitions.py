@@ -739,6 +739,10 @@ class TransitionKernel:
         self, phase_id: str, step_id: str, outcome: AutoOutcome, *,
         data: dict | None = None, block_holds: bool = True, refresh: bool = False,
     ) -> TransitionResult:
+        progress = (self.state.get_step(phase_id, step_id).execution or {}).get("write_progress")
+        if isinstance(outcome, Done) and progress and not progress["finished"]:
+            return self._reject("Compound writes require verified completion, not generic settlement.",
+                                phase_id, step_id)
         return self._apply_outcome(
             phase_id, step_id,
             status="done" if isinstance(outcome, Done) else (
@@ -770,6 +774,9 @@ class TransitionKernel:
         if not reason or not reason.strip():
             return self._reject("A reason is required to skip a step.")
         previous = self.state.get_step(phase_id, step_id)
+        if (previous.execution or {}).get("write_progress"):
+            return self._reject("Continue the checked compound writer; skip cannot clear its receipts.",
+                                phase_id, step_id)
         if (previous.execution or {}).get("effect_mode"):
             return self._reject(
                 "Engine-owned effect execution cannot be cleared by skip. "
@@ -830,8 +837,19 @@ class TransitionKernel:
         )
 
     def complete(
-        self, phase_id: str, step_id: str, note: str
+        self, phase_id: str, step_id: str, note: str, *, manual_confirmation=None,
     ) -> TransitionResult:
+        progress = (self.state.get_step(phase_id, step_id).execution or {}).get("write_progress")
+        if progress:
+            if manual_confirmation is None:
+                return self._reject("Continue the checked writer or use its owner-confirmed manual completion; "
+                                    "generic done cannot clear its receipts.", phase_id, step_id)
+            from orchestrator.write_review import validate_manual_completion
+            validate_manual_completion(manual_confirmation)
+            if manual_confirmation["confirmed_by"] != (self.state.owner_email or "").strip():
+                return self._reject("Manual completion requires the configured release owner.", phase_id, step_id)
+        elif manual_confirmation is not None:
+            return self._reject("Manual compound completion requires its original owned attempt.", phase_id, step_id)
         check = self.eligibility().evaluate(
             TransitionIntent.COMPLETE, phase_id, step_id
         )
@@ -858,6 +876,12 @@ class TransitionKernel:
             completed_data["confirmation_preconditions"] = deepcopy(previous.data["gate_preconditions"])
         self._bind_notification_identity(completed_data, previous.execution)
         self._close_write_review(completed_data, previous.execution)
+        if progress:
+            from orchestrator.write_review import _sealed, validate_progress
+            closed = deepcopy(progress)
+            closed["manual_completion"] = deepcopy(manual_confirmation)
+            closed["finished"] = False
+            completed_data["last_write_progress"] = validate_progress(_sealed(closed))
         self.state.set_step(
             phase_id,
             step_id,
@@ -868,7 +892,9 @@ class TransitionKernel:
                 invalidation_reason=None,
                 note=note.strip() or "Marked done",
                 by="human",
-                links=previous.links,
+                links=(previous.links + [{"name": "Owner-attested manual completion",
+                                          "url": manual_confirmation["evidence"]}]
+                       if progress else previous.links),
                 data=completed_data,
             ),
         )
@@ -886,6 +912,9 @@ class TransitionKernel:
         )
         if not check.allowed:
             return self._reject(check.reason, phase_id, step_id)
+        if (check.execution or {}).get("write_progress"):
+            return self._reject("Continue the checked compound writer; reopen cannot clear its receipts.",
+                                phase_id, step_id)
         if check.execution and check.execution.get("approval"):
             return self._reject("External gate ownership cannot be cleared by reopen; reconcile its exact approval.",
                                 phase_id, step_id)
@@ -932,6 +961,88 @@ class TransitionKernel:
         if isinstance(permit, TransitionResult):
             self.state.set_step(phase_id, step_id, previous)
         return permit
+
+    def continue_reviewed_write(self, phase_id, step_id, execution_id, *, write_review, progress):
+        """Reauthorize only an adapter-reconciled remainder without changing ownership."""
+        from orchestrator.write_review import validate_progress
+        if rejected := self._owned_outcome_check(phase_id, step_id, execution_id):
+            return rejected
+        selection = self.projection_factory().scheduling()
+        if (selection.suspension or not selection.phase(phase_id).due
+                or not selection.step(phase_id, step_id).time_ready):
+            return self._reject("Reviewed continuation is suspended.", phase_id, step_id)
+        record = self.state.get_step(phase_id, step_id)
+        old = validate_progress(record.execution.get("write_progress"))
+        validate_progress(progress)
+        if (any(old[key] != progress[key] for key in ("scope", "policy", "manual_completion"))
+                or progress["reviews"][:-1] != old["reviews"]
+                or progress["reviews"][-1] != write_review
+                or len(old["operations"]) != len(progress["operations"])):
+            return self._reject("Compound continuation changed its ownership/history.", phase_id, step_id)
+        for before, after in zip(old["operations"], progress["operations"]):
+            if (any(before[key] != after[key] for key in ("key", "descriptor", "candidate", "resolutions"))
+                    or before["receipt"] is not None and before["receipt"] != after["receipt"]):
+                return self._reject("Compound continuation changed an operation receipt.", phase_id, step_id)
+        record.execution["write_progress"] = deepcopy(progress)
+        record.execution["write_review"] = deepcopy(write_review)
+        record.status = "in_flight"
+        self.state.set_step(phase_id, step_id, record)
+        permit = OutcomePermit(phase_id, step_id, TransitionIntent.WRITE)
+        self._outcome_permits[permit] = self._generation(record)
+        return permit
+
+    def record_write_recovery(self, phase_id, step_id, execution_id, progress):
+        """Record a scoped owner-confirmed result, never a provider-write permit."""
+        from orchestrator.write_review import validate_progress
+        from orchestrator.revision import digest
+        if rejected := self._owned_outcome_check(phase_id, step_id, execution_id):
+            return rejected
+        record = self.state.get_step(phase_id, step_id)
+        previous = deepcopy(record)
+        old = validate_progress(record.execution.get("write_progress"))
+        validate_progress(progress)
+        if (any(old[key] != progress[key] for key in ("scope", "policy", "reviews", "manual_completion"))
+                or progress["finished"] or len(old["operations"]) != len(progress["operations"])):
+            return self._reject("Recovery cannot replace compound scope/history.", phase_id, step_id)
+        changed = [(before, after) for before, after in zip(old["operations"], progress["operations"])
+                   if before != after]
+        if len(changed) != 1:
+            return self._reject("Recovery resolves exactly one recorded operation.", phase_id, step_id)
+        before, after = changed[0]
+        resolution = after["resolutions"][-1] if after["resolutions"] else {}
+        if (any(before[key] != after[key] for key in ("key", "descriptor", "candidate"))
+                or after["resolutions"][:-1] != before["resolutions"]
+                or resolution.get("previous") != digest(before)
+                or resolution.get("confirmed_by") != (self.state.owner_email or "").strip()):
+            return self._reject("Recovery must preserve the attempt and record its owner's confirmation.",
+                                phase_id, step_id)
+        record.execution["write_progress"] = deepcopy(progress)
+        record.note = "Owner-confirmed " + resolution["mode"] + " result recorded; continue the checked command."
+        self.state.set_step(phase_id, step_id, record)
+        try:
+            self.state.checkpoint()
+        except BaseException:
+            self.state.set_step(phase_id, step_id, previous)
+            raise
+        return TransitionResult("ran", record.note, phase_id, step_id, True)
+
+    def checkpoint_write_progress(self, permit, progress, *, checkpoint=True):
+        from orchestrator.write_review import validate_progress
+        if rejected := self.validate_outcome_permit(permit):
+            raise ValueError(rejected.message)
+        validate_progress(progress)
+        record = self.state.get_step(permit.phase, permit.step)
+        before = deepcopy(record)
+        record.execution["write_progress"] = deepcopy(progress)
+        self.state.set_step(permit.phase, permit.step, record)
+        try:
+            if checkpoint:
+                self.state.checkpoint()
+        except BaseException:
+            self.state.set_step(permit.phase, permit.step, before)
+            self._outcome_permits.pop(permit, None)
+            raise
+        self._outcome_permits[permit] = self._generation(record)
 
     def reserve(self, phase_id, step_id, executor):
         definition = self.workflow.step(phase_id, step_id)
@@ -1723,6 +1834,10 @@ class TransitionKernel:
             stored_data["last_write_review"] = deepcopy(previous.data["last_write_review"])
         else:
             stored_data.pop("last_write_review", None)
+        if "last_write_progress" in previous.data:
+            stored_data["last_write_progress"] = deepcopy(previous.data["last_write_progress"])
+        else:
+            stored_data.pop("last_write_progress", None)
         reviewed = bool((previous.execution or {}).get("write_review"))
         if reviewed and status != "done":
             preserve_execution = True
@@ -1824,6 +1939,8 @@ class TransitionKernel:
                 "last_write_review" not in record.data
                 or data["last_write_review"] != record.data["last_write_review"]):
             return self._reject("Closed write authorization is engine-owned evidence.", phase_id, step_id)
+        if data and "last_write_progress" in data and data["last_write_progress"] != record.data.get("last_write_progress"):
+            return self._reject("Compound receipts are engine-owned evidence.", phase_id, step_id)
         if data and "last_approval" in data and (
                 "last_approval" not in record.data or data["last_approval"] != record.data["last_approval"]):
             return self._reject("Closed approval receipt is engine-owned evidence.", phase_id, step_id)
@@ -1896,6 +2013,8 @@ class TransitionKernel:
         ]
 
     def _close_write_review(self, data: dict, execution: Optional[dict]) -> None:
+        if execution and execution.get("write_progress"):
+            data["last_write_progress"] = deepcopy(execution["write_progress"])
         if execution and execution.get("write_review"):
             from orchestrator.revision import revision_id
             data["last_write_review"] = {

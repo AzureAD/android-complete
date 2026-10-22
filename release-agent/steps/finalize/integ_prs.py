@@ -17,8 +17,8 @@ This step is CHECKED-AUTO: `build()` only READS — it computes the full plan (b
 existence, existing-vs-new PR detection, per-RI edit analysis) and returns it for
 review. The actual writes (create PBI, edit RI, open PRs, add labels) happen in the
 `create-integration-prs` command. The automation executes with `--auto-approve`, which
-checkpoints the current plan hash before the single fenced write attempt. Existing PRs
-are reused; an uncertain attempt remains owned and must not be automatically retried.
+checkpoints the current plan hash and each attempted/verified operation. The same
+command reconciles saved receipts and reviews only remaining work; unknown outcomes hold.
 
 Mock knobs (mocks.local.yaml / tests):
   versions : dict repo->version, e.g. {msal: "8.4.2"} — override state.versions for testing.
@@ -276,8 +276,8 @@ def build(context: StepContext):
                 "--execute --auto-approve --executor integration-pr-automation"),
             "execution_instructions": (
                 "Run the checked command with --execute --auto-approve. It recomputes the "
-                "current plan, checkpoints its hash, and fences one provider write before "
-                "creating or reusing PRs."),
+                "remaining plan, checkpoints each mutation, and retains verified work across "
+                "interruptions. Rerun this same command after drift; unknown outcomes stay held."),
             "_gather": {"preview": render_preview(p)},
         },
         record_as=ID,

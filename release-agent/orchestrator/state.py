@@ -179,6 +179,9 @@ class ReleaseState:
             if step.execution is not None and not isinstance(step.execution, dict):
                 raise ValueError(f"Invalid step execution for {key}")
             if step.execution is not None:
+                if "write_progress" in step.execution:
+                    from .write_review import validate_progress
+                    validate_progress(step.execution["write_progress"])
                 if "approval" in step.execution:
                     from .approvals import validate_approval
                     if set(step.execution) != {"id", "owner", "started_at", "approval"}:
@@ -224,6 +227,9 @@ class ReleaseState:
                     )
             if not isinstance(step.data, dict) or not isinstance(step.links, list):
                 raise ValueError(f"Invalid step evidence for {key}")
+            if "last_write_progress" in step.data:
+                from .write_review import validate_progress
+                validate_progress(step.data["last_write_progress"])
             if "last_approval" in step.data:
                 from .approvals import validate_closed_approval
                 validate_closed_approval(step.data["last_approval"])

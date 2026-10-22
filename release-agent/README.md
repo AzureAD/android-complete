@@ -24,22 +24,72 @@ runs each step's agent, and **holds at gates** for the release engineer to decid
 - **Engine = the brain.** Selects eligible work, invokes catalog-validated handlers, holds at gates, and persists execution ownership and outcomes. Recovery follows each capability's protocol; uncertain writes are not blindly replayed.
 - **Skill = the mouth & ears.** Presents the gate, collects your decision, relays it. Never decides the flow.
 
+**Every release iteration ends with a fresh visible table.** After the last action,
+the conductor pastes the full current readiness checklist while entry is unsigned or
+blocked; afterward it pastes the phase map and current-phase steps. This applies to
+success, scheduled waits, errors, recovery, manual completion and decision prompts.
+Render once per user-facing turn, not after each internal tool call. A card, prose,
+JSON, prior-turn table or logged tool output is not a substitute. Setup-only onboarding
+without a selected release is exempt.
+
+`checklist --attest-prompt --json` includes canonical `display_markdown` from the same
+snapshot as its question and answers. The skill must paste that field before prompting,
+including after every attestation batch; `ready:false` still includes the table for a
+blocked/pending handoff. The engine supplies the display but cannot prove the host
+assistant actually included it in its response.
+
+**Starting includes automatic entry checks.** Initialization and reminder registration
+are intermediate work, not a successful stopping point. The readiness payload's
+`pending_auto_checks`, `failed_auto_checks`, `next_action` and `continue_automatically`
+tell Scout to finish executable Python/Scout checks in the same turn. A future phase
+opening does not defer readiness. Only genuine input/permission/repair issues or the
+required human confirmations justify handing back control; show the fresh table there.
+Pending Scout checks are not manual tasks for the owner, and failed checks are not
+silently retried or converted to passes.
+
 **Simple write lifecycle:** plan and validate once, obtain any required human approval,
 save one durable attempt, execute, and verify the receipt. Failed preflight leaves no
 execution to unlock. All configured checked writers use this same path; there is no
 reserve-only mode, cancellation command, or extra recovery descriptor.
 
-**New version boundary:** release-state schema 4 requires the current execution
-contract. Older run files are rejected without modification or automatic migration.
+**New version boundary:** release-state schema 4 requires execution contract 3.
+Older contracts/run files are rejected without modification or automatic migration.
 Compatible implementation updates in a fresh process do not invalidate same-contract
 workflow approvals. Changed workflows and unsupported contracts still stop execution;
 source changes within a running process require a restart.
+
+**Moving branches must not strand completed work.** Compound Git writers keep compact
+verified progress for each provider operation. Continuing uses the same checked command:
+reconcile saved results, reuse the existing PBI/PRs/branch updates, then plan only what
+remains. Drift checks apply to the operation being performed, not unrelated repositories.
+An RI update computed from an older target is never pushed after that target changes.
+Changed remaining actions follow the existing approval policy; unknown or contradictory
+provider outcomes stay held rather than being repeated. No reset command or extra
+owner-managed execution identifier is required.
+
+**Manual work is a supported path, not a dead end.** The same integration/OneAuth
+command accepts result-only recovery options (never combine these with `--execute`,
+approval flags or `--executor`). All require explicit confirmation by the configured
+release owner and their explanation:
+
+| Option | Meaning |
+| --- | --- |
+| `--manual-result <commit-or-PR-or-PBI>` | Read the exact original provider target and record the owner's manually completed result. Manual changes are attributed to the owner, not certified against the old automatic payload. |
+| `--confirm-not-applied` | The owner confirms the prior writer stopped; readback must prove an attempted push's original source branch is unchanged. Retain the old attempt as not applied, then review a fresh remaining plan on normal continuation. Never use this for unknown PBI/PR creation. |
+| `--manual-completion <evidence-url>` | The owner confirms the prior writer stopped and ALL remaining work in this original step is complete. Close only that step as **owner-attested**, even if provider reads or the local checkout are unavailable. Preserve uncertain attempts and the original review; do not claim machine verification or approve another gate. |
+
+Supply `--confirmed-by <release-owner>` and `--recovery-reason <owner-explanation>`.
+For whole-step manual completion omit repository/PBI/path selectors: the confirmation
+covers the entire original step, not a selected subset. Automatic reconciliation
+uses exact PR identity after merge too, rather than treating a merged PR as missing.
+These paths neither delete history nor replay an uncertain write. Generic
+done/skip/reopen cannot erase compound progress.
 
 Other ownership types retain their own evidence requirements:
 
 | Ownership | Supported recovery |
 | --- | --- |
-| Checked writer | Check the recorded attempt's provider result; never repeat an uncertain write |
+| Checked writer | Check the recorded result; compound Git writers also support scoped owner-confirmed results, unapplied pushes and explicit whole-step manual completion |
 | Engine-owned effect | `next` reconciliation; supported verified `retry-effect` / `supersede-effect` |
 | Notification delivery | Exact `notification result` / `finalize`; no resend after lost acknowledgement |
 | External approval | Exact `approve-orchestrator-gate --execution-id`; no second submission after an attempt |
@@ -570,9 +620,15 @@ resolution with provider evidence, the latest authorization is retained in
 `approved_at` is the reservation's `started_at`. It survives invalidation and is
 overwritten only by the next closed reviewed execution. It proves authorization,
 **not** success of every provider operation, and can never authorize another attempt.
-There is no exactly-once guarantee: after a timeout inspect provider results and resolve
-the owner before obtaining a fresh review. No prompts, write payloads or receipt journal
-are added to release storage.
+There is no exactly-once guarantee: after a timeout inspect provider results before
+allowing further work. Compound Git writers persist compact operation digests and
+verified receipts, including the shared PBI identity, so a refreshed remaining plan
+cannot duplicate completed work. An attempted mutation without exact matching proof
+cannot be replayed automatically. The owner may record a scoped manual result, confirm
+an unchanged unapplied push, or explicitly attest whole-step manual completion using
+the result-only options above. The latter retains unverified operations and records
+`manual_completion` separately from `finished`: owner attestation is not provider proof.
+Full prompts, write payloads and raw provider responses are not stored.
 
 ### Approved external-gate lifecycle and recovery
 
@@ -952,13 +1008,39 @@ python -m orchestrator.cli infra --no-register --tools-file <inventory.json> --j
 ```powershell
 # drive a release AFTER setup prerequisites pass (runs are real)
 cd release-agent
-python -m orchestrator.cli init   --release 2026-07
+python -m orchestrator.cli init   --release 2026-07 --json
 python -m orchestrator.cli next   --release 2026-07     # runs until the first gate
 python -m orchestrator.cli approve --release 2026-07 --comment "flags reviewed"
 python -m orchestrator.cli status --release 2026-07
 ```
 
 Or in Scout: **`/release-agent`**.
+
+`init --json` returns initialization metadata and an immediate readiness handoff
+(`next_action:run_entry_gate`, `continue_automatically:true`, `checklist_command`).
+Run that checklist and its automatic checks before advancing; initialization does
+not sign readiness or run phase work. Omit `--json` for human-readable output.
+Existing release history is never overwritten, including with `--force`.
+
+Readiness dispatch is shared by all entry paths, including connection recovery,
+ordinary `checklist --verify`, `status`, `next` and `resume`. Python verification
+only runs Python checks; every outstanding host probe carries its actual command/
+tool arguments, record command and follow-up. The host must drain every executable
+probe and record actual results, not return a Python-only table as completed setup.
+`needs_input` records a real consent/input boundary without satisfying the check;
+independent probes continue before a skill-generated question. Failed checks are
+not retried automatically; Python dispatch uses `verify --pending-only`.
+Explicit halt/cancellation/workflow-integrity holds and real host consent remain in force.
+
+Before returning or asking during entry, run
+`checklist --release <id> --attest-prompt --handoff --json`. Exit 2 and
+`may_return_to_user:false` refuse a premature handoff and return the executable queue.
+After exhaustion, the same payload supplies the full checklist and either the real
+repair/input hold or exact human-attestation card. No new blanket authorization,
+automatic attestations or stored display/dispatch receipts are introduced.
+The engine cannot itself execute Scout MCP/settings tools or enforce the host's
+final response; the host must execute the returned contract. Offline CLI regressions
+exercise the persisted dispatch and refusal, not a claim of live model compliance.
 
 ## Time anchoring — phases open relative to the Code Complete Date (CCD)
 
@@ -1136,15 +1218,19 @@ delivery proof. M365 paths must not obtain Graph tokens through Azure CLI.
 ADO pipeline/Test Plans/repository/wiki operations retain their existing ADO
 authentication and checked execution fences.
 
-Entry readiness separates `m365_access` (actual loaded tool inventory and fresh
-owner/target-bound read probes) from `m365_write_access` (explicit owner confirmation
-of send/upload grants). `m365-capabilities --release <id>` prints the read-only
+Entry readiness requires `m365_access` (actual loaded tool inventory and fresh
+owner/target-bound read probes), not a blanket send/upload attestation. The four
+human items remain Play Console access, release-window availability, SAW + AME and
+YubiKey. `m365-capabilities --release <id>` prints the read-only
 probe plan. `record-check --item m365_access --status pass --evidence-file <file>`
 validates the structured observations; registration, `az login`, raw pasted results
 and bare passes are insufficient. Exact directory/group reads with complete member
 pagination and report site/library enumeration must succeed, not be skipped as
 unavailable. Missing evidence holds entry. No test send/upload is authorized.
-Actual destination access is rechecked when used, especially future Bug Bash chats.
+Actual destination access and authorization are checked at each owning write step,
+with its exact preview, required confirmation, host consent and provider receipt.
+Readiness and silent-run settings are not message approval. Future Bug Bash chats
+must still be checked when they exist.
 Native `workiq_upload_file` only
 replaces an existing item. New immutable report creation therefore uses a checked
 SharePoint browser upload with its owning receipt, not a fictitious upload API.

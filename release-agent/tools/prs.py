@@ -403,6 +403,100 @@ def az_create_pr(org, project, repo, head, base, title, body, work_items=None, t
 
 
 # ---------------------------------------------------------------- PBI (Azure Boards)
+def read_pr_result(target, identity, timeout=60):
+    """Read a specific open/merged PR, including its original repository/branch identity."""
+    if not str(identity).isascii() or not str(identity).isdigit() or int(identity) <= 0:
+        return False, None, "Invalid PR ID"
+    if target["tool"] == "gh":
+        host, slug = _gh_repo_parts(target["gh_repo"])
+        args = ["gh", "api", f"repos/{slug}/pulls/{identity}"]
+        if host:
+            args += ["--hostname", host]
+    else:
+        a = target["ado"]
+        args = ["az", "repos", "pr", "show", "--org", a["org"],
+                "--id", str(identity), "--output", "json"]
+    rc, out, error = _run(args, timeout=timeout)
+    if rc:
+        return False, None, error.strip() or "PR result read failed"
+    try:
+        value = json.loads(out)
+        if target["tool"] == "gh":
+            valid = (str(value["number"]) == str(identity)
+                     and value["head"]["ref"] == target["head"] and value["base"]["ref"] == target["base"]
+                     and value["head"]["repo"]["full_name"].casefold() == slug.casefold()
+                     and value["base"]["repo"]["full_name"].casefold() == slug.casefold()
+                     and (value["state"] == "open" or value["state"] == "closed" and value["merged"] is True))
+            result = {"number": value["number"], "url": value["html_url"], "title": value["title"],
+                      "body": "" if value["body"] is None else value["body"],
+                      "labels": [label["name"] for label in value["labels"]]}
+        else:
+            repository = value["repository"]
+            project = repository["project"]
+            valid = (str(value["pullRequestId"]) == str(identity)
+                     and a["repository"].casefold() in (repository["id"].casefold(), repository["name"].casefold())
+                     and a["project"].casefold() in (project["id"].casefold(), project["name"].casefold())
+                     and value["sourceRefName"] == "refs/heads/" + target["head"]
+                     and value["targetRefName"] == "refs/heads/" + target["base"]
+                     and not value.get("forkSource") and value["status"] in ("active", "completed"))
+            result = {"number": value["pullRequestId"], "title": value["title"],
+                      "body": "" if value.get("description") is None else value["description"],
+                      "url": f"{a['org'].rstrip('/')}/{a['project']}/_git/{a['repository']}/pullrequest/{identity}"}
+        if (not valid or not all(isinstance(result[k], str) for k in ("url", "title", "body"))
+                or "labels" in result and any(not isinstance(label, str) for label in result["labels"])):
+            raise ValueError("PR identity/state/content does not match the original target")
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        return False, None, f"Incomplete or mismatched PR result: {exc}"
+    if target["tool"] == "ado":
+        ok, work_items, detail = read_pr_work_items(a["org"], a["project"], identity, timeout)
+        if not ok:
+            return False, None, detail
+        result["work_items"] = work_items
+    return True, result, ""
+
+
+def read_pbi(org, project, identity, timeout=60):
+    """Exact-ID readback; never search by title to guess a lost create result."""
+    if not str(identity).isdigit() or int(identity) <= 0:
+        return False, None, "Invalid PBI ID"
+    rc, out, error = _run(
+        ["az", "boards", "work-item", "show", "--org", org, "--id", str(identity),
+         "--output", "json"], timeout=timeout)
+    if rc:
+        return False, None, error.strip() or "PBI read failed"
+    try:
+        value = json.loads(out)
+        fields = value["fields"]
+        result = {"id": value["id"], "title": fields["System.Title"],
+                  "type": fields["System.WorkItemType"], "project": fields["System.TeamProject"]}
+        if str(result["id"]) != str(identity) or result["project"] != project:
+            raise ValueError("PBI identity/project mismatch")
+        return True, result, ""
+    except (ValueError, KeyError, TypeError) as exc:
+        return False, None, f"Incomplete PBI readback: {exc}"
+
+
+def read_pr_work_items(org, project, identity, timeout=60):
+    """Exact linked-ID readback for the create-with-work-items operation."""
+    if not str(identity).isdigit() or int(identity) <= 0:
+        return False, None, "Invalid PR ID"
+    rc, out, error = _run(
+        ["az", "repos", "pr", "work-item", "list", "--org", org, "--id", str(identity),
+         "--output", "json"], timeout=timeout)
+    if rc:
+        return False, None, error.strip() or "PR work-item read failed"
+    try:
+        values = json.loads(out)
+        if not isinstance(values, list):
+            raise ValueError("Expected linked work-item list")
+        ids = [str(value["id"]) for value in values]
+        if any(not value.isdigit() or int(value) <= 0 for value in ids):
+            raise ValueError("Invalid linked work-item ID")
+        return True, sorted(set(ids)), ""
+    except (ValueError, KeyError, TypeError) as exc:
+        return False, None, f"Incomplete PR work-item readback: {exc}"
+
+
 def create_pbi(org, project, title, area=None, iteration=None, timeout=90):
     """(ok, id, url, detail) — create one Product Backlog Item to link every PR to. WRITE."""
     args = ["az", "boards", "work-item", "create", "--org", org, "--project", project,

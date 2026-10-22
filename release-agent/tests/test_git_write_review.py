@@ -17,6 +17,7 @@ from orchestrator.state import ReleaseState
 from steps.finalize import integ_prs as I
 from steps.lib.mockctx import MISSING
 from tools import git_review as G, oneauth as OA, prs as PR
+from _write_progress import memory_progress
 from test_oneauth_merge_review import (
     commit as oneauth_commit, git as oneauth_git, oneauth as git_oneauth, write as oneauth_write,
 )
@@ -76,6 +77,7 @@ class Permit:
     def __init__(self, plan):
         self.plan = plan
         self.validations = 0
+        self.progress = memory_progress(self)
 
     def validate(self):
         self.validations += 1
@@ -156,6 +158,9 @@ def integration(request, tmp_path, monkeypatch):
     def pbi(org, project, title):
         calls.append(("pbi", org, project, title))
         return True, 101, "https://example.test/pbi/101", ""
+    monkeypatch.setattr(PR, "read_pbi", lambda org, project, identity: (
+        True, {"id": 101, "title": next(c[3] for c in calls if c[0] == "pbi"),
+               "type": "Product Backlog Item", "project": project}, ""))
 
     def push(root, remote, name, expected, content, validate):
         validate()
@@ -389,13 +394,13 @@ def test_integration_executor_uses_captured_payloads_not_late_config(integration
     assert "integ_prs:" in summary
 
 
-def test_integration_drift_before_first_write_stops_entire_plan(integration):
+def test_integration_drift_stops_affected_operation_not_unrelated_work(integration):
     s = integration
     auth = Permit(P.integration_plan(s.context, s.args))
     s.tips["dev"] = "f" * 40
     with pytest.raises(ValueError, match="Branch changed"):
         P.execute_integration(auth)
-    assert s.calls == []
+    assert [c[0] for c in s.calls] == ["pbi", "create"]
 
 
 def test_integration_matching_tips_do_not_authorize_a_different_hosting_repository(integration, monkeypatch):
@@ -412,7 +417,7 @@ def test_integration_hosting_identity_drift_rejects_before_writes(integration, m
     monkeypatch.setattr(PR, "provider_repository_urls", lambda target: ["https://example.test/another.git"])
     with pytest.raises(ValueError, match="hosting repository"):
         P.execute_integration(authorization)
-    assert s.calls == []
+    assert [c[0] for c in s.calls] == ["pbi"]
 
 
 def test_integration_created_pr_receipt_must_match_exact_readback(integration, monkeypatch):
@@ -516,6 +521,7 @@ def test_ado_integration_uses_exact_repository_and_work_item(integration, monkey
 
     monkeypatch.setattr(PR, "az_find_open_pr", find)
     monkeypatch.setattr(PR, "az_create_pr", create)
+    monkeypatch.setattr(PR, "read_pr_work_items", lambda *args: (True, ["42"], ""))
     plan = P.integration_plan(s.context, s.args)
     assert plan.parameters["pbi"]["id"] == "42"
     monkeypatch.setitem(I.CONFIG["common"], "ado", {"org": "unreviewed"})

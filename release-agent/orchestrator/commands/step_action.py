@@ -93,6 +93,11 @@ def _parse_params(pairs) -> dict:
 
 def prepare_step(args, st, orch):
     handler = orch.handler(args.phase, args.step)
+    from orchestrator.write_review import continuation
+    resumed = continuation(orch, args.phase, args.step)
+    if resumed is not None:
+        return {**as_dict(resumed), "release": args.release, "phase": args.phase,
+                "step": args.step, "permission_to_execute": False, "reservable": False}
 
     # Agent steps run IN-PROCESS inside the engine's `next` (they perform the real
     # deterministic action). Executing their build() here would run that action a

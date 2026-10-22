@@ -707,11 +707,17 @@ readiness_items["m365_access"]:
   The binding covers release/owner/CCD, required connector tools and configured
   roster/representative chat/report target. Source/config changes invalidate it.
   Bare record-check pass, absent tools, denied/partial/stale reads do not pass.
-readiness_items["m365_write_access"]:
-  Only explicit owner attestation produces attested/at/note/capability_binding.
-  Read success is not write permission. Initial readiness sends/uploads nothing;
-  actual per-destination writes retain their normal checked execution/receipt.
-  Future Bug Bash resources cannot be proven before creation and are checked then.
+  No blanket send/upload attestation is part of entry readiness. Read success is
+  not write permission. Actual per-destination writes retain their own access,
+  authorization, host consent and checked execution/receipt. Future Bug Bash
+  resources cannot be proven before creation and are checked then.
+
+readiness_items[<scout-auto-item>].status="needs_input":
+  Actual host consent/input needs are recorded with message/at/source, never as
+  pass or an implicit opt-out. This remains unsatisfied while independent pending
+  probes run. Dispatch treats it as an input hold, not executable work or a blind
+  failed retry. Readiness dispatch/may_return_to_user/probe recipes are derived
+  output only, never stored as approvals, reusable permissions or display receipts.
 
 steps["build_verify.rc_report_publish"].data.publication_handoff:
   Existing checked execution owns a single reviewed connector/browser upload.

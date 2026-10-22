@@ -168,9 +168,7 @@ def test_unclaimed_step_refresh_preserves_audit_and_requires_new_approval(
     assert not refreshed.gate.signed
     result = refreshed.gate.record_check(
         "m365_access", "pass", "synthetic refreshed connector probes", evidence=capability_evidence(st))
-    assert "error" not in result and not refreshed.gate.signed
-    refreshed.gate.sign(["m365_write_access"], note="synthetic owner write-access confirmation")
-    assert refreshed.gate.signed
+    assert "error" not in result and refreshed.gate.signed
     C.save_state(st, str(tmp_path), st.release_id)
     assert cli.main(prepare) == 0
     fresh = json.loads(capsys.readouterr().out)["notifications"][0]

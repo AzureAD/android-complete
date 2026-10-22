@@ -137,3 +137,70 @@ def test_skill_requires_actionable_user_holds():
     assert "**Fixed — rerun**" in skill and "**Override**" in skill and "**Keep blocked**" in skill
     assert "Never infer completion from “what’s next,”" in skill
     assert "Override first asks for a free-text reason" in skill
+
+
+def test_skill_requires_fresh_table_at_every_release_iteration_and_prompt():
+    skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
+    presentation = open(
+        os.path.join(ROOT, "skill", "reference", "presenting-status.md"), encoding="utf-8").read()
+    readiness = open(
+        os.path.join(ROOT, "skill", "reference", "readiness-gate.md"), encoding="utf-8").read()
+    assert "Every release iteration ends with one fresh table" in skill
+    assert "final response or a handoff to `m_ask_user`" in skill
+    for text in (skill, presentation, readiness):
+        assert "display_markdown" in text
+        assert "ready:false" in text
+        assert "even if the table above didn't render" not in text
+        assert "card is the guaranteed source of truth" not in text
+    assert "stopping the loop never skips display" in skill
+    assert "Setup-only onboarding" in skill
+    assert "pending/failing rows" in readiness
+    assert "before returning or" in presentation
+
+
+def test_start_requires_automatic_readiness_before_the_final_table_handoff():
+    documents = [
+        open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
+        for path in ("SKILL.md", os.path.join("reference", "readiness-gate.md"),
+                     os.path.join("reference", "starting-and-scheduling.md"))]
+    for text in documents:
+        assert "pending_auto_checks" in text and "same" in text.lower() and "turn" in text
+        assert "not a stopping point" in text or "not just initialization" in text
+        assert "record" in text and "permission" in text
+    assert "`ready:false` alone is" in documents[0]
+    assert "Do not loop/retry `failed_auto_checks`" in documents[0]
+    assert "finish independent pending checks" in documents[0]
+    assert "Future" in documents[1] and "not readiness" in documents[1]
+
+
+def test_init_json_and_per_write_authorization_match_the_skill():
+    from orchestrator.cli import build_parser
+    args = build_parser().parse_args(["init", "--release", "2026-11", "--json"])
+    assert args.json and args.release == "2026-11"
+    documents = [
+        open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
+        for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
+                     os.path.join("reference", "readiness-gate.md"))]
+    for text in documents:
+        assert "m365_write_access" not in text
+        assert "blanket" in text and "owning write step" in text
+    for text in documents[:2]:
+        assert "init --release <id> --json" in text
+        assert "next_action:run_entry_gate" in text and "checklist_command" in text
+        assert "--help" in text
+
+
+def test_every_readiness_handoff_requires_exhaustion_not_a_python_only_table():
+    documents = [
+        open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
+        for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
+                     os.path.join("reference", "readiness-gate.md"),
+                     os.path.join("reference", "presenting-status.md"))]
+    for text in documents:
+        assert "--attest-prompt --handoff --json" in text
+        assert "may_return_to_user:false" in text and "exit 2" in text.lower()
+        assert "needs_input" in text and "independent" in text
+        assert "host consent" in text
+    assert "Readiness execution boundary" in documents[0]
+    assert "ordinary `checklist --verify` are not completion signals" in documents[0]
+    assert "no final table yet" in documents[2]

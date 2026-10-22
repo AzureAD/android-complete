@@ -9,6 +9,29 @@ description: Onboard the release engineer and drive an Android release using the
 
 You are the conversation layer over the **Release Orchestrator engine** (deterministic Python). The engine decides what happens next; you discover releases, present status/gates, and relay decisions. **Never decide the release flow yourself, and never invent a release — always call the engine.**
 
+## Readiness execution boundary
+
+For every selected-release start/continue/reconnect/status turn, exhaust the engine's
+executable readiness queue BEFORE returning to the user. `init`, `next`, `status`
+and ordinary `checklist --verify` are not completion signals. Python verification
+only handles Python checks; it cannot execute Scout MCP/settings probes.
+Use `readiness_dispatch` from init/status/next, `dispatch` from checklist JSON, or
+the canonical attestation payload. Execute every `pending_auto_checks[].probe`
+(and the referenced procedure), record actual results, then re-read. No unperformed
+automatic item becomes an owner task. Group/read pagination must complete too.
+
+Before a final response or a skill-generated question during entry, run
+`checklist --release <id> --attest-prompt --handoff --json`.
+**Exit 2 / `may_return_to_user:false` refuses the handoff:** keep executing the queue.
+Do not retry only the handoff command, show an incomplete table as completion, or
+stop because `ready:false`. If a read reveals missing input/consent, record
+`needs_input` with its exact reason and finish independent probes BEFORE asking.
+Do not fabricate pass/fail or silently opt out. Actual host consent prompts must
+still be honored immediately; do not bypass them or perform further actions after
+calling `m_ask_user`. An explicit halt/cancellation/runtime-integrity hold also stops work.
+Once the queue is exhausted, paste the returned fresh full table and ask the real
+repair/input question, or the returned human-attestation card. Setup-only remains separate.
+
 ## FIRST RUN — resolve the android-complete clone (ONCE per machine, before anything else)
 **This is the very first thing you do on any release request — before Discover, before any `python -m orchestrator.cli` command.** The engine is portable (it self-locates from its own file), but YOU must know which folder to `cd` into to run it. **Do NOT assume `C:\repos\android-complete` — that is only this author's layout; other users clone elsewhere.**
 
@@ -78,7 +101,7 @@ account/targets/actual route/how-to only, no
 tokens, roster contents or raw private responses. It is a recipe, not a durable
 grant; rediscover and rerun live reads next time. Say no release
 was started, preserve the configured account/targets, and end. Release-bound
-capability evidence, current on-call eligibility and human write attestations
+capability evidence, current on-call eligibility and human readiness attestations
 still run separately when the owner later starts a release.
 
 ## Setup prerequisite check BEFORE a new release
@@ -96,7 +119,27 @@ not a connection or permission.
 ## GOLDEN RULES (always apply — the deduped essentials)
 1. **Discover first for release activity.** Run `python -m orchestrator.cli list --json` and branch on `resolution`: `none` → offer to start (via `m_ask_user`); `one` → use `release.release_id`; `ambiguous` → list `all`, let the user pick; `explicit` → use it. Never run `status`/`next`/`approve` against an unconfirmed id. **Setup-only requests are the exception:** follow Check setup only above, without release discovery or actions.
 2. **Render CLI output as LIVE MARKDOWN — never fenced.** `checklist`, `status`, `next`, etc. print finished markdown tables. Reproduce their stdout **verbatim as normal message content** so Scout renders the table — do NOT wrap in a ``` code fence, and do NOT rebuild/re-order/re-type from memory (you'll introduce stale icons / broken URLs). A sentence before/after is fine; the block must match. Use `--json` only for your own branching. **Running the command is NOT the same as showing it** — the CLI auto-logs, but the user only sees what YOU paste into your reply. If you ran `checklist`/`status` and didn't paste its table, the user saw nothing.
+    **Every release iteration ends with one fresh table.** An iteration is a user-facing
+    release turn ending in a final response or a handoff to `m_ask_user`. After the last
+    action/read, show the engine's full current checklist while entry is unsigned/blocked;
+    otherwise show the phase map and current-phase steps from `status --release <id>`.
+    This includes initialization, entry checks, scheduled/no-op requests, failures,
+    interrupted/blocked work, recovery, manual completion, declines and status questions.
+    Prose, a confirmation card, JSON, a tool-output pane, or a table from an earlier turn
+    never substitutes for the table in THIS response. One iteration, one final table;
+    no table after every internal tool call and no stale pre-action table.
+    Before returning or asking, check: **fresh table obtained after the last action,
+    full table pasted as live markdown, then the next action/question**. If a pass must
+    pause before all checks finish, show the current table with pending/failing rows;
+    do not withhold context until everything succeeds. If rendering itself fails, report
+    that exact failure and do not ask for attestation/approval against a missing table.
+    Setup-only onboarding before release selection remains exempt: never create or
+    discover a release just to render a table.
 2b. **NEVER ask for a gate decision or attestation in a message that doesn't contain the freshly-rendered table.** Before any `m_ask_user` for attestations (entry gate) or Approve/Deny (a gate), the SAME assistant message must first show the current `checklist`/`status` table pasted verbatim. A bare list of items is not acceptable — the table is the context. If you're about to ask and haven't pasted the table in this message, run the command and paste it first.
+    `checklist --release <id> --attest-prompt --handoff --json` returns `display_markdown` from
+    the SAME checklist as its question/answers. Paste that full field before the card;
+    `ready:false` still requires displaying the table when stopping. Pass only the
+    question/answers/recommendedIndex to `m_ask_user`, not display metadata.
 2c. **Every focused user action gets an actionable prompt, not a prose dead end.**
     When status is `awaiting_action`, or the user asks “what’s next,” focus on the
     engine's current `action`/`needs_owner` step and handle exactly one user action:
@@ -115,6 +158,29 @@ not a connection or permission.
     Process multiple actions one at a time. After a confirmed completion/rerun, call
     `next`, render the new table, and prompt for the next focused user action.
 3. **The engine is the source of truth.** It owns sequencing and gate state. When unsure, `status --json`. Never hand-edit checklist/status output.
+3a. **Initialization and reminder setup are not a stopping point.** A request to start
+    a release includes running its entry gate NOW, even when pre-flight opens later.
+    Machine callers use `init --release <id> --json`: it returns initialization metadata,
+    `next_action:run_entry_gate`, `continue_automatically:true` and `checklist_command`.
+    Follow that handoff; successful init does not sign readiness or run phase steps.
+    Do not assume every subcommand accepts `--json`; check that command's `--help`
+    when its flags are uncertain, before attempting the operation.
+    After `init` and the required reminder registration, load reference/readiness-gate.md
+    and run `checklist --release <id> --attest-prompt --json` in the SAME turn.
+    `next_action:run_auto_checks` / `continue_automatically:true` means continue working,
+    not return a "Started" summary or ask "run the entry gate?".
+    Dispatch EVERY `pending_auto_checks` entry using its `probe`: `source:python` through `verify`,
+    `source:scout` through the reference's actual tools and `record-check`. Re-read the
+    payload after recording results; finish independent pending checks even when one
+    has failed. Do not loop/retry `failed_auto_checks` without a real correction.
+    Record a missing input/permission decision as `needs_input`, then finish every
+    independent probe before the handoff guard permits an owner question. Stop only
+    for actual host consent, an exhausted queue with recorded input/failure, an explicit
+    release hold, or the engine's required human attestation. Explain the exact
+    blocker; never hand unperformed Scout checks to the owner as manual tasks.
+    Always show the final fresh table at that genuine handoff. `ready:false` alone is
+    not a stopping condition while automatic checks remain executable. A generic "show
+    a table at the end" rule does not permit ending before available work is done.
 3b. **Drain every eligible Scout step in a parallel phase.** After every `next --json`,
     inspect and execute **all** entries in `scout_pending`, even when an independent
     auto/human step is blocked. A block stops phase completion, not unrelated Scout
@@ -141,6 +207,24 @@ not a connection or permission.
     Checked writers plan once and save one attempt immediately before execution.
     Preflight failure needs a corrected input, not a reservation-reset ceremony.
     Unknown outcomes require checking the original provider result, never another write.
+    For partial integration/OneAuth work, use the SAME checked command to reconcile
+    saved operation receipts and preview the remaining actions. Preserve verified
+    PR/PBI/branch-update identities; do not recreate them or clear ownership.
+    A moving target refreshes only the affected remaining plan under its normal
+    approval policy. An old reviewed RI update must never be pushed to a changed base.
+    Unresolved provider outcomes stay held. No new recovery/cancellation command,
+    user-managed IDs, generic override or workflow reopen is needed.
+    If reconciliation reports an unknown/mismatched result, stop that advance pass
+    and show its actual reason; do not repeatedly invoke the command in a drain loop.
+    Immediately offer supported manual recovery, not a prose dead end. The owner can
+    supply a manual commit/PR/PBI result; confirm a stopped, unapplied push; or attest
+    that ALL remaining work in the original step is manually complete with an evidence
+    URL. Use the same command's result-only options described in reference/commands.md.
+    Never invent an owner's confirmation/reason or infer it from a failed lookup.
+    Explicitly confirm the prior writer has stopped. Whole-step manual completion
+    needs no provider read or checkout, but is owner-attested, NOT machine-verified,
+    and does not authorize any other gate. Show this distinction before confirmation.
+    Scout handles flags/identities internally; do not make owners operate the CLI.
     Scout handles command IDs and hashes internally; ask the owner only for a real
     decision or missing information. For distinct notification/effect/approval/worker
     recovery, use **reference/commands.md → Runtime updates and recovery**.
@@ -222,8 +306,10 @@ each command recomputes and checkpoints the current plan hash before its single 
 provider request. Checked writers do not accept `--reserve`; a preview does not own
 work, and only execution saves an attempt. Existing execution IDs are receipt-only.
 Never replace this with generic reserve-step, raw provider calls or record-step.
-Changed plans need fresh approval. Interrupted/uncertain attempts stay owned: inspect
-provider evidence and resolve explicitly before another attempt. `last_write_review`
+Changed human-reviewed actions need fresh approval; existing scheduled auto-writer
+policy still applies to scheduled work. Partial Git writers retain their same execution
+and compact receipts while reconciling and refreshing only remaining actions. Never
+replay an uncertain provider call. `last_write_review`
 records authorization, not success or reusable permission. Other non-notification
 actions retain their existing guard/reservation/domain follow-up.
 External gate approvals use a separate checked lifecycle: `approve-orchestrator-gate
@@ -244,6 +330,8 @@ A `done` outcome marked `no_delivery_required:true` can use `record-step --statu
 the recorder revalidates it. This never acknowledges a send.
 
 Discover → (if no gate cleared, run the entry gate) → `next --json` to advance → drain every eligible `scout_pending` item (including beside independent blocks) → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
+Every exit from this loop follows the same final-table rule, including an error,
+pending input, scheduled wait, or manual recovery; stopping the loop never skips display.
 
 ## Provider routing and capability readiness
 
@@ -262,9 +350,12 @@ owner/target-bound profile/calendar/complete-roster/Teams/site/library read prob
 with the loaded tool inventory and discovered structured-fetch route. Record
 `m365_access` only with the validated structured evidence file, not a bare pass.
 Missing required tools/routes or failed/denied reads hold setup early; read
-reference/readiness-gate.md. The owner separately confirms `m365_write_access`;
-reads/tool discovery do not prove send/upload permission, and no test write is
-authorized by readiness. Recheck actual future event/chat destinations when used.
+reference/readiness-gate.md. No blanket send/upload attestation belongs in entry
+readiness. Reads/tool discovery do not prove write access or authorize a send/upload.
+Check actual access and authorization at the owning write step, with its exact
+destination/payload preview, required confirmation and owning receipt. Host consent
+requirements still apply; readiness and silent-run settings are not message approval.
+No test write is authorized by readiness. Recheck future event/chat destinations when used.
 
 Read-only connector requests are NOT completed Scout steps or notification
 deliveries. Gather the exact native response in its timestamp/account/argument
@@ -293,7 +384,7 @@ Never switch transports or repeat an upload/send after an unknown outcome.
   separate categories while preserving the combined UI+Stress gate. A held historical
   label correction is not a prerequisite for a fresh, separately identified test plan;
   never clear/reuse its receipt, retry its rename or silently adopt an existing release.
-- **"status" / "where are we":** discover. If the entry gate isn't cleared (`readiness_gate`/not signed, or `blocked`) → the useful answer IS the checklist: run `checklist --release <id> --verify` and show that table (don't ask permission). Otherwise show `status`. No release → say so, offer to start.
+- **"status" / "where are we":** discover. If entry is unsigned, run its shared readiness dispatch to exhaustion, then `checklist --release <id> --attest-prompt --handoff --json` and show that full table. `checklist --verify` only runs Python verifiers and is not a stopping point. Otherwise show `status`. Explicit halt/cancellation/runtime holds remain in force. No release → say so, offer to start.
 - **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before anything.)* After discovery, complete **Setup prerequisite check BEFORE a new release** above; do not initialize through a missing/unverified connector hold. **Confirm which release in ONE prompt** — run `python -m orchestrator.cli preview-release --json` (returns candidates, each with `release_id`, `ship_label`, `ccd_pretty` — the release is NAMED for its **ship month** = code-complete month + 1). Lead with candidate[0] (the current month's release) and `m_ask_user`: recommended chip **"Yes — start the `<ship_label>` release (code-complete `<ccd_pretty>`)"**, plus a **"A different month"** chip. Show the ship name and the CCD date TOGETHER so there's no month-mismatch surprise (never make the user pick a bare month, then tell them it's a different one). If they pick "A different month" → a second `m_ask_user` offering candidates[1..3] as chips (each **"`<ship_label>` (CC `<ccd_pretty>`)"**) plus a free-text "another month" fallback. → `init --release <chosen release_id>` (this stores + prints the confirmed ship-name; do NOT re-ask it) → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
 - **Engine HOLDS at a gate:** present fresh status. For an external gate, first run its `approval_command --preview --comment "<comment>"` and show the exact request/hash alongside the table; then `m_ask_user` Approve/Deny. On approval repeat the reviewed comment, hash and human reviewer through that command (see the lifecycle above); for a local gate use `approve`. On denial run `deny --comment` with their reason. An already-owned external attempt needs exact-ID read recovery, not another approval prompt/submission. Never substitute generic `approve` for an externally-backed gate; the CLI rejects that bypass. Present new status.
 - **Phase 3 `distribute_tests` needs owner input:** this is NOT a technical failure to skip or mark done. Follow **reference/commands.md → Bug Bash availability**: first resolve the current primary OCE from ICM and pass its verified UPN with `--oce`. Show only the returned filtered candidates (owner, OCE, Jia Le He, Moumita Ghosh and Veena Soman are already removed), never the raw DL roster. Then ask "Is anyone OOF for this Bug Bash?", stop and wait, and record the owner's explicit answer with `distribute-tests`. Never infer availability from calendars, presence, O365 OOF, or silence. The confirmation is for this release's Bug Bash only.
@@ -355,7 +446,7 @@ Never switch transports or repeat an upload/send after an unknown outcome.
   advance and present the next action.
 - **A step is BLOCKED** (agent found a real problem, e.g. `cg` on High/Critical CG alerts, `cron` on a stale Calendar Checker): show the note plainly. Two exits: **(a) fix** → `next` re-runs the check; **(b) override** → `skip --release <id> --phase <p> --step <s> --reason "<why>"`. No other way to clear it. **Exception — `build_verify.rc_report` (the <90% UI gate)** has a richer **three-exit** flow: **re-trigger** (flaky → re-run RC, then `rc-retriggered --release <id>`), **cherry-pick** (real bug → patch via the broker cherry-pick process, then `rc-retriggered`), or **override** (`skip …`, the last resort — discuss with the team first). After `rc-retriggered`, Scout tracks the newest RC: the verify step is `in_flight` (⏳ no action) while it runs, and the 30-min poller re-applies the gate on completion. See `reference/phases/build_verify.md`. Present all three — don't collapse it to "fix or override".
 - **Engine is `scheduled`** (before CCD‑7): relay the opens-date + countdown; nothing to advance. Earlier start = a CCD change (`set-ccd`), not `next`.
-- **"continue"/"resume":** discover → if gate not cleared show the checklist, else brief with status → `next`.
+- **"continue"/"resume"/connection recheck after restarting:** discover → if entry is unsigned, resume and exhaust its shared readiness dispatch, then guarded full-table handoff; otherwise `next` and the normal phase loop. Do not stop at "connections live", init or a Python-only checklist.
 - **User asks ABOUT a step** ("what does X do?", "where do I find the Play Console vitals?", "how do I clear this block?", "why is this needed?", "who fixes this?"): run `step-info --phase <p> --step <id>` and answer from it — do NOT guess step details from memory. It returns the step's what/who/where/how/links/FAQs (accurate, curated in `config/knowledge.yaml`). If it returns "no knowledge entry yet", say so rather than inventing an answer. **Then, if a release is active, silently journal the exchange:** `journal --release <id> --kind qa --phase <p> --step <id> --question "<what they asked>" --answer "<one-line gist of your answer>"` — best-effort, never announced, skip entirely when no release run exists.
 
 - **User asks about the RC pipelines / RC tests / "phase 2 status"** ("how are the release pipelines?", "did the RC tests pass?", "show pipeline status", "is the orchestrator done?"): run **`rc-report --release <id>`** and paste its output verbatim — the checker → orchestrator → ECS/Local-MRWP chain with each run's stage completion + Test-tab breakdown (unit/instrumented/UI-automation). It's **read-only** (never gates); use `--json` for your own branching. Red/yellow stages and failed tests are expected here (triaged in bug bash) — only a stage that never ran is a real problem, and it shows under **Issues**.

@@ -96,7 +96,7 @@ def test_readiness_rejects_bare_capability_pass_and_preserves_state():
         "binding": M.binding(st), "available_tools": {tool: tool for tool in M.REQUIRED_TOOLS}})
 
 
-def test_fresh_capabilities_store_summary_not_private_observations_and_need_write_attestation():
+def test_fresh_capabilities_store_read_proof_without_blanket_write_attestation():
     st = state()
     orch = fresh_orchestrator(CONFIG, st, mocks={})
     proof = evidence(st)
@@ -107,8 +107,12 @@ def test_fresh_capabilities_store_summary_not_private_observations_and_need_writ
     assert "observations" not in stored and "owner-guid" not in json.dumps(stored)
     items = {item["id"]: item for item in result["items"]}
     assert items["m365_access"]["satisfied"]
-    assert not items["m365_write_access"]["satisfied"]
+    assert "m365_write_access" not in items
+    assert {item["id"] for item in result["attest_items"]} == {
+        "play_console_access", "oncall_window", "saw_ame", "yubikey"}
     assert "do not prove permission" in stored["limitations"]
+    assert "at each owning write step" in stored["limitations"]
+    assert not M.plan(st)["permission_to_send"] and not M.plan(st)["permission_to_upload"]
     assert {check["name"] for check in stored["checks"]} == {
         "owner/calendar", "Teams chat/members", "distribution roster", "SharePoint library"}
     assert stored["structured_fetch"] == {"kind": "mcp", "tool": "workiq.fetch"}
@@ -152,16 +156,15 @@ def test_capabilities_reject_missing_tools_partial_wrong_targets_and_unreadable_
             M.validate(st, value)
 
 
-def test_owner_ccd_and_target_changes_invalidate_capability_and_write_attestation(monkeypatch):
+def test_owner_ccd_and_target_changes_invalidate_capability_reads(monkeypatch):
     st = state()
     orch = fresh_orchestrator(CONFIG, st, mocks={})
     assert "error" not in orch.gate.record_check("m365_access", "pass", evidence=evidence(st))
-    orch.gate.sign(["m365_write_access"], note="owner confirmed send/upload grants")
     for field, value in (("owner_email", "other@example.test"), ("ccd", "2026-10-22")):
         old = getattr(st, field)
         setattr(st, field, value)
         items = {item["id"]: item for item in orch.gate.checklist()["items"]}
-        assert not items["m365_access"]["satisfied"] and not items["m365_write_access"]["satisfied"]
+        assert not items["m365_access"]["satisfied"]
         setattr(st, field, old)
     old = M.targets()
     monkeypatch.setattr(M, "targets", lambda: {**old, "report_folder": "changed-folder"})

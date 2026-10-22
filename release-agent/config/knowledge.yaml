@@ -147,26 +147,9 @@ readiness.m365_access:
     that cache is never a durable permission or pass.
   faqs:
     - q: "Does a successful read prove I can send or upload?"
-      a: "No. Write grants need explicit owner confirmation and every actual checked write needs its own authorization and provider receipt."
+      a: "No. Readiness checks read access only; it does not ask for blanket send/upload authorization. Check actual destination access and authorization at the owning write step, with its exact preview, required confirmation and provider receipt."
     - q: "Do I need to add Hosted WorkIQ?"
       a: "No. The custom remote registration stays removed. Exact structured fetch can use an actual exposed MCP tool or the selected profile's existing native WorkIQ CLI. Discover that user's capability and verify live exact reads; absent MCP fetch or failed WorkIQ Ask does not prove CLI fetch unavailable. Missing launcher/version support holds with --workiq-path guidance. Never switch identity/transport after authentication failure or denial, replace membership with people search, or use Azure CLI Graph tokens."
-
-readiness.m365_write_access:
-  summary: "Confirm M365 send/upload authorization separately from read access."
-  what: >
-    The owner explicitly confirms permission to send the reviewed release emails,
-    calendar invitations and Teams posts, and create reports in the configured
-    SharePoint library. A read probe cannot prove those permissions. The attestation
-    is bound to this release owner, CCD and current capability/target configuration.
-  who: "The release owner confirms the grants; Scout never infers or signs this item."
-  how: >
-    Show the configured destinations and limitations before the readiness
-    attestation. No test send/upload is authorized merely by running readiness.
-    New immutable report creation uses a checked SharePoint browser upload,
-    with its owning execution and receipt.
-    The native file tool may replace only a proven existing target, never create
-    an invented item. Actual write denials still hold the owning step and require
-    explicit recovery; never switch transports after an unknown outcome.
 
 readiness.silent_perms:
   summary: "Scout's permissions allow fully unattended (silent) runs."
@@ -184,7 +167,10 @@ readiness.silent_perms:
     - "Scout → Settings → Permissions — the per-server auto-approve flags."
     - "The master toggle: 'When blocked, let Scout ask instead of stopping' (allowModelPermissionsChange)."
   how: >
-    If not all auto-approved, the skill offers 'Enable silent runs' — it requests
+    If not all auto-approved, record needs_input with the exact missing consent,
+    exhaust independent readiness probes, then use the guarded checklist handoff
+    before offering 'Enable silent runs'. Never bypass actual host consent.
+    On explicit consent the skill requests
     auto-approval for WorkIQ/browser/ICM/Kusto (you click Allow once); if the master
     toggle is off you turn it on first. Or choose 'Proceed without' → recorded as
     `degraded`, which STILL clears the gate (⚠️ 'Proceeding (not silent)') but

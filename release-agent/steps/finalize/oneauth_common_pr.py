@@ -113,7 +113,8 @@ def build(context: StepContext):
                 "--execute --auto-approve --executor oneauth-common-automation"),
             "execution_instructions": (
                 "Run the checked command with --execute --auto-approve. It recomputes the "
-                "current plan, checkpoints its hash, and fences one provider write. "
+                "remaining plan and checkpoints each attempted/verified mutation. Rerun this "
+                "same command after drift; saved receipts prevent replay and unknown outcomes hold. "
                 "Use --repo-dir <clean-OneAuth-checkout> if local path discovery is unavailable. "
                 "The planner calculates the merged tree and exact edits without changing your "
                 "checkout or refs. Missing objects, dirty work or conflicts require resolution "

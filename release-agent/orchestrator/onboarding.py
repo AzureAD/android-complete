@@ -15,7 +15,8 @@ def _action(kind, title, message, *, status="needs_action", **details):
         "permission_to_start_release": False, "permission_to_write": False,
         "limitations": (
             "Onboarding checks installation and read connections only. "
-            "Release readiness, on-call eligibility and send/upload approvals remain separate."
+            "Release readiness and on-call eligibility remain separate. "
+            "Send/upload access and authorization are checked at each owning write step."
         ),
     }
 

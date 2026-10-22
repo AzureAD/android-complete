@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from orchestrator import cli_common as C, write_review as W
-from orchestrator.git_write_plans import integration_plan, execute_integration
+from orchestrator.git_write_plans import integration_plan, execute_integration, integration_progress
 from steps.lib import mockctx
 from steps.finalize import integ_prs as S
 
@@ -15,25 +15,36 @@ def _step_mocks(orch):
 
 def cmd_create_integration_prs(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    progress = None
 
     def planner():
         with mockctx.active(_step_mocks(orch)):
-            return integration_plan(orch.context("finalize", S.ID), args)
+            return integration_plan(orch.context("finalize", S.ID), args, progress=progress)
 
     authorization = None
     try:
+        with mockctx.active(_step_mocks(orch)):
+            progress = (W.VerifiedProgress(orch, "finalize", S.ID, None, None)
+                        if getattr(args, "manual_completion", None) is not None else
+                        integration_progress(orch, orch.context("finalize", S.ID), args))
+            recovered = W.record_recovery(args, progress)
+        if recovered is not None:
+            print(json.dumps(recovered, indent=2))
+            return 0
         if not args.execute:
+            progress.prepare()
             print(json.dumps(W.preview(orch, "finalize", S.ID, planner()), indent=2))
             return 0
         authorization = W.authorize(
             args, orch, "finalize", S.ID, planner,
-            auto_approved_by="integration-pr-automation")
+            auto_approved_by="integration-pr-automation", progress=progress)
         summary = execute_integration(authorization)
     except Exception as exc:
         summary = f"integ_prs: {exc}"
         if authorization is not None:
-            summary += " Earlier operations may have succeeded; resolve the owned execution before retrying."
-        print(json.dumps({"error": summary, "permission_to_execute": False}))
+            summary += " Verified work is retained. Rerun this same checked command to reconcile and continue; unknown outcomes stay held."
+        print(json.dumps({"error": summary, "permission_to_execute": False,
+                          "recovery": W.recovery_guidance()}))
         if authorization is None:
             return 1
         orch.record_scout_step("finalize", S.ID, "attention", summary,
@@ -64,4 +75,5 @@ def register(sub):
         help_text="Integration-PR automation only: compute/checkpoint the current plan "
                   "without human approval, then execute through the normal fenced write path")
     W.add_arguments(p)
+    W.add_recovery_arguments(p)
     p.set_defaults(func=cmd_create_integration_prs)

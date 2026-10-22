@@ -123,6 +123,8 @@ class EvidenceSession:
                         "last_write_review" not in previous
                         or update.values["last_write_review"] != previous["last_write_review"]):
                     raise ValueError("Closed write authorization is engine-owned evidence")
+                if "last_write_progress" in update.values and update.values["last_write_progress"] != previous.get("last_write_progress"):
+                    raise ValueError("Compound receipts are engine-owned evidence")
                 if "last_approval" in update.values and (
                         "last_approval" not in previous or update.values["last_approval"] != previous["last_approval"]):
                     raise ValueError("Closed approval receipt is engine-owned evidence")
@@ -152,11 +154,14 @@ class EvidenceSession:
                     record = state.get_step(pid, sid)
                     receipt = deepcopy(record.data.get("last_write_review"))
                     approval_receipt = deepcopy(record.data.get("last_approval"))
+                    progress_receipt = deepcopy(record.data.get("last_write_progress"))
                     record.data = thaw(update.values)
                     if receipt is not None:
                         record.data["last_write_review"] = receipt
                     if approval_receipt is not None:
                         record.data["last_approval"] = approval_receipt
+                    if progress_receipt is not None:
+                        record.data["last_write_progress"] = progress_receipt
                     state.set_step(pid, sid, record)
                 elif isinstance(update, PipelineEvidence):
                     state.pipeline_runs = thaw(update.values)

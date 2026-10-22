@@ -158,8 +158,9 @@ def elog(runs_root: str, release: str) -> EventLog:
 
 def emit(runs_root: str, release: str, text: str, kind: str = "message", options=None,
          log_text: str = None):
-    """Print a user-facing block AND auto-log it as scout output, so the log
-    always captures 'what was shown' without relying on the skill/LLM to journal.
+    """Print a display block and log the emitted output.
+
+    Emission is not proof the host assistant pasted it into the conversation.
 
     `log_text` lets the caller journal a COMPACT form while still printing the full
     block to the console — used for the `advance`/`status` renders whose full status

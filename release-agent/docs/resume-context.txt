@@ -11,7 +11,186 @@ Resolve the earlier published checkpoint with
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
 
-CHECKPOINT / PUBLICATION STATUS (2026-10-21 12:26 PDT)
+TEST5 EXHAUSTIVE READINESS (2026-10-21 21:26 PDT) - LOCAL IMPLEMENTATION
+------------------------------------------------------------------------------
+Test5 again ended after init/Python-only checklist. Six Scout probes were not
+recorded. Prior continuation metadata existed only in the special attest JSON;
+ordinary checklist/next/status paths bypassed it. Presentation guidance explicitly
+said checklist --verify then show/stop, contradicting the drain instruction.
+
+Central readiness dispatch now supplies the same actionable probe/record/input
+recipes on checklist, init, status/next and after verify/record/sign/decline/resume.
+Unsigned ordinary status/next shows the full checklist and Scout queue, not a
+phase-only "sign first" dead end. Configured Kusto/ICM coordinates are retained.
+checklist --attest-prompt --handoff --json refuses final handoff(exit2) while
+executable probes remain. may_return_to_user:false requires executing the queue,
+not a blind guard retry. No Python process pretends to execute host tools.
+
+needs_input stores only an actual consent/input reason, is never satisfied, and
+lets independent probes continue before skill-generated questions. No implicit
+degraded/pass or human signing. Failed probes never retry automatically; queued
+Python verify --pending-only skips existing failures. Invalidated capability pass
+needs fresh probes, not a mislabeled failure. Halt/cancellation/runtime holds
+retain priority; real host consent is not bypassed. No new state schema/contract
+or compatibility adapters; no dispatch/display approvals stored.
+
+Initial205-case focused run195pass,10fail. One coupled renderer omission(owner
+identity missing in unsigned checklist) fixed. Other9core failures independently
+reproduced against an isolated pre-dispatch staged-runtime copy; no unrelated
+phase/fixture/ledger/catalog repairs made. Baseline and test temp files cleaned.
+Followup118selected:117pass,1case-sensitive documentation assertion corrected and
+passed separately. Final27new/coupled dispatch safety cases all passed in21.27s.
+All5changedskillresourcesinstalledwithbackup;all10matchsource. Live2026-11state
+unchanged;projectscratchlocks0;tempfixtures/baselinecleaned. No live release
+execution,commit,push,index/unrelatedGradlechanges. Sessionplanholds exacthash/backup.
+Host execution/final-response compliance is still a host responsibility, not
+something Python CLI regressions can prove;do not promise a futuremodelguarantee.
+
+TEST4 INIT CONTRACT AND ENTRY ATTESTATIONS (2026-10-21) - IMPLEMENTED LOCALLY
+------------------------------------------------------------------------------
+Read test4 session19678ef3-fdac-467c-8806-024ff22aacf8. Its start flow tried the
+unsupported init --json flag, then retried without it. Added real parser/handler
+JSON support, not a fallback or ignored flag. Default text output stays intact.
+JSON includes persisted release/owner/CCD/ship-month metadata, phase0_open and
+the immediate run_entry_gate/continue_automatically/checklist_command handoff.
+Duplicate init fails in JSON without replacing state/events, even with --force.
+
+Removed blanket m365_write_access from the entry checklist, special binding
+logic, knowledge and all active guidance. It was a self-attestation, not actual
+permission verification or authorization of a particular write. Entry now has
+8auto checks and4human items:PlayConsole,release-window availability,SAW+AME,YubiKey.
+Read probes stay exact/fresh/account/target-bound and grant no sends/uploads.
+Actual write access/authorization, previews, required confirmations, host consent,
+execution ownership and receipts remain at their owning steps. No test writes
+or changes to notification/publication authorization protocols.
+
+No legacy adapters, schema/contract bump or live-state migration. New CLI output
+is additive; removal of the extra readiness requirement is deliberate. Existing
+history is not rewritten. Changes remain local; do not push.
+Focused validation:93cases passed;1doc exact-phrase assertion corrected and passed
+in its smallest rerun.4installed skill resources updated with backup;all10match.
+Live2026-11 state unchanged and project scratchlock count0. Session plan records
+the hash/backup and preserved staging. No commit,push or live release execution.
+
+START READINESS CONTINUATION (2026-10-21 15:47 PDT) - IMPLEMENTED LOCALLY
+------------------------------------------------------------------------------
+User asked to fix test3 ending after init/reminder registration. Its stored state
+had only build_access/mcp_servers passed;6Scout checks unperformed,5existing human
+attestations outstanding. Readiness/phase config did NOT gain new requirements.
+
+Existing checklist attestation payload now includes pending_auto_checks (id,
+source, verifier), failed_auto_checks, next_action and continue_automatically.
+Pending executable checks route run_auto_checks even when another check failed;
+failed-only routes repair, explicit decline routes blocked, ready routes attest,
+signed routes complete. No fabricated pass, silent retry or early human attestation.
+The init output now explicitly directs immediate entry readiness and no longer
+says "Until then nothing fires" when Phase0 is scheduled in the future.
+
+Core skill/readiness/start reference require SAME-turn automatic-check dispatch
+after init+reminder setup, recording actual results and re-reading plan. No extra
+"run entry gate" request, no transferring Scout tasks to owner, no premature
+"Started" summary justified by the final-table rule. Stop only for real input/
+permission/repair or required human confirmations; show fresh table at that boundary.
+Setup-only remains separate; no new commands/state schema/contract version.
+
+12targeted cases passed:exact test3 stopping point, mixed failed/pending checks,
+all6readiness states, multi-card confirmations, init-now guidance and source contract.
+Only OS-temp fixtures used and cleaned. No live release commands, index edits,
+commits or pushes. Existing staging/unrelated Gradle changes preserved.
+Source/installed skill synchronization recorded in current session plan.
+
+REQUIRED ITERATION TABLES (2026-10-21 14:25 PDT) - IMPLEMENTED LOCALLY
+------------------------------------------------------------------------------
+Reviewed test1 conversation: initialization showed a phase table while entry was
+unsigned; later pre-flight request had acknowledgement only, and entry-gate checks
+ended in attestation prose/card without the required checklist. Shared docs wrongly
+described the card as sufficient even if the table did not render; quiet-check and
+success-only advance wording left failure/paused iterations without a display.
+
+Core skill and readiness/presentation references now require one fresh full table
+after the last action and before every release final response or question. This
+includes initialization, incomplete/failed checks, no-op/scheduled waits, recovery,
+manual completion and decline turns. Setup-only before release selection is exempt.
+Quiet internal calls never suppress the table at an interactive boundary.
+Existing checklist --attest-prompt --json now bundles display_markdown from the SAME
+snapshot as the question/answers. It is present for pending/failed/blocked/partial/
+signed states too. A blocked gate cannot offer attestation. Recorded failure/degraded
+reasons are now visible in the checklist rows instead of only a FAIL status.
+Logged emitted output is explicitly NOT proof of display in the Scout conversation.
+No host/UI enforcement claim: the conductor must actually paste the returned table.
+
+Existing targeted run:74 passed plus new failure-reason regression exposed the old
+missing-message display; fixed. Final smallest9-case rerun passed across all6 readiness
+states, multi-card payload snapshots and shared skill contract. No live release calls,
+schema change or execution-contract change; compatible additive display metadata.
+Skill installation/backup and final preservation audit recorded in session plan.
+
+OWNER-CONFIRMED MANUAL RECOVERY (2026-10-21 13:19 PDT) - IMPLEMENTED LOCALLY
+------------------------------------------------------------------------------
+User showed a distinct failure: push recorded attempted but no matching result,
+then no way to continue manually. Contract2 did NOT solve this failure mode.
+New version is schema4 / execution contract3; no compatibility or migration.
+
+Both existing Git commands now support result-only owner recovery:
+- --manual-result commit/PR/PBI plus --confirmed-by and --recovery-reason:
+  exact original provider readback and append-only owner-attributed resolution.
+  Alternate manual content is not represented as the earlier automatic payload.
+- --confirm-not-applied plus owner/reason: owner confirms writer stopped;
+  readback must match the saved pre-push source tip. Never retires an unknown create
+  or a previously verified push. Old attempt stays in history; normal continuation
+  freshly plans the remainder under original ownership/review policy.
+- --manual-completion HTTPS-evidence plus owner/reason: owner attests writer stopped
+  and ALL remaining work in this original step is complete. Needs neither provider
+  API nor local checkout. Closes only this step with human attribution, original
+  authorization and unknown operations retained. finished=false plus separate
+  manual_completion evidence prevents claiming machine verification.
+
+Recovery rejects execution/approval flags. Whole-step manual completion rejects
+repository/PBI/path selectors and cannot approve another gate. Shared checks
+preserve owner, history, prerequisites and checkpoint rollback. Push attempt moved
+after final local validation. Exact-ID readback recognizes merged PRs instead of
+recreating them. Normal summaries explicitly attribute owner-confirmed manual results.
+Generic done/skip/reopen still cannot erase compound progress.
+
+Validation:354 focused regressions, four actual local-Git cases,175 final owner/shared
+checks and275 final contract/parser/closure checks passed. Every run used unique OS
+temp directories with finally cleanup. No new dependencies, live actions, commit or push.
+Source docs explain human choices and explicit stopped-writer/full-step confirmation.
+Installed-skill synchronization and original sample checks recorded in session plan.
+
+PREVIOUS FOLLOW-UP: TARGET BRANCH DRIFT AFTER PARTIAL WRITES (2026-10-21 12:34 PDT)
+------------------------------------------------------------------------------
+User supplied screenshot: three of eight PRs created, then Broker dev advanced and
+the earlier approved branch-tip snapshot became stale. The prior atomic-attempt fix
+does NOT by itself solve this distinct target-branch-drift/partial-progress problem.
+User explicitly requested the fix and version increment. Publication remains CANCELLED
+by the user's 12:30 "do not push": no new commit or push is authorized.
+
+Implemented locally: shared compact attempted/verified operation receipts,
+same-command integration/OneAuth continuation under the same execution, scoped original
+intent, exact readback reconciliation, PBI/PR/push reuse and remaining-plan refresh.
+Only next-operation dependencies are checked; unrelated/completed repository tips
+cannot strand later work. Stale computed RI pushes are never applied after base drift.
+Unknown or contradictory mutation outcomes stay held, especially PBI creation with no
+known ID. Changed human-reviewed remaining actions need fresh approval; existing
+scheduled auto-writer policy stays unchanged. No legacy compatibility or live actions.
+Version: schema 4 / execution contract 2. Parent took over after the implementation
+agent was cancelled. The lock-file report was legitimate test-artifact clutter:
+209 released zero-byte locks in five untracked .test-compound-* directories.
+No active test process or OS-held lock was present. Parent checked and removed only
+those scratch directories, leaving live run lock files unchanged. All subsequent
+test commands used unique OS-temp directories with finally cleanup.
+
+Parent completed two integration fixes: normal continuation is now exposed through
+scout_pending/status instead of a generic owner override, and OneAuth reconciliation
+passes only frozen provider coordinates rather than local Git metadata to provider reads.
+Bounded regression outcomes: 176 initial focused cases passed; 297 flow/ownership/
+version cases passed; final 173 focused receipt/writer cases and four actual local-Git
+cases passed. No new dependencies, live provider calls, release changes, commit or push.
+Installed skill synchronization is recorded in the current session handoff.
+This is not a live release receipt; never copy the old diagnostic run back to its owner.
+
+PREVIOUS CHECKPOINT / PUBLICATION STATUS (2026-10-21 12:26 PDT)
 -----------------------------------------------------
 Owner requested commit and push of the simplified clean-version implementation.
 This checkpoint includes atomic checked-write attempts, execution-contract identity,

@@ -12,36 +12,46 @@ def cmd_checklist(args):
         orch.gate.verify()
         C.save_state(st, args.runs_root, args.release)
     chk = orch.gate.checklist()
+    from orchestrator.readiness import dispatch_plan
+    from orchestrator.revision import mismatch_reason
+    revision_problem = mismatch_reason(orch)
+    if revision_problem:
+        chk["dispatch"] = dispatch_plan(chk, args.release, suspension=revision_problem)
     attest = getattr(args, "attest_prompt", False)
+    code = 2 if getattr(args, "handoff", False) and not chk["dispatch"]["may_return_to_user"] else 0
     if getattr(args, "json", False):
-        # `--attest-prompt --json` → the DETERMINISTIC m_ask_user payload (question +
-        # answer cards) the skill passes straight to m_ask_user, so the always-rendered
-        # Scout card is the source of truth regardless of whether the table rendered.
+        # Keep the full checklist and deterministic card on the same snapshot.
+        # Tool output alone is not a user-visible table: the skill must paste it.
         if attest:
             print(_json.dumps(render.attest_prompt_payload(chk, args.release), indent=2))
         else:
             print(_json.dumps(chk, indent=2))
-        return 0
+        return code
     if attest:
-        # Human-readable: ONLY the '✋ Your confirmation needed' block (no table).
-        C.emit(args.runs_root, args.release, render.attest_prompt(chk), kind="readiness_attest_prompt")
-        return 0
+        C.emit(args.runs_root, args.release,
+               render.readiness_table(chk, args.release) + "\n\n" + render.attest_prompt(chk),
+               kind="readiness_attest_prompt")
+        return code
     # canonical, consistent display block (the template) — same for every engineer.
-    # auto-logged as scout output so the log always records what was shown.
+    # This records emitted output, not proof that Scout pasted it into the conversation.
     C.emit(args.runs_root, args.release, render.readiness_table(chk, args.release), kind="readiness_checklist")
-    return 0
+    return code
 
 
 def cmd_verify(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
-    chk = orch.gate.verify()
+    chk = orch.gate.verify(pending_only=getattr(args, "pending_only", False))
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
         "readiness_verified",
         results=[{"id": it["id"], "status": it["status"]} for it in chk["auto_items"]])
     for it in chk["auto_items"]:
-        mark = "OK" if it["status"] == "pass" else "FAIL"
-        print(f"  [{mark}] {it['id']}: {it['status']} — {it.get('message','')}")
+        status = ("pending" if not it["satisfied"] and it["status"] in ("pass", "degraded")
+                  else it["status"])
+        mark = {"pass": "OK", "degraded": "WARN", "pending": "PENDING",
+                "needs_input": "INPUT"}.get(status, "FAIL")
+        print(f"  [{mark}] {it['id']}: {status} — {it.get('message','')}")
+    print(render.readiness_followup(chk, args.release))
     return 0
 
 
@@ -76,6 +86,7 @@ def cmd_sign(args):
     else:
         pending = [i["id"] for i in chk["items"] if not i["satisfied"]]
         print(f"Recorded {', '.join(ids)}. Still pending: {', '.join(pending)}")
+        print(render.readiness_followup(chk, args.release))
     return 0
 
 
@@ -95,7 +106,8 @@ def cmd_decline(args):
                "   " + chk.get("blocked_message", "").strip())
     else:
         msg = f"Recorded as unable: {', '.join(args.item or [])}"
-    C.emit(args.runs_root, args.release, msg, kind="decline_result")
+    C.emit(args.runs_root, args.release,
+           msg + "\n" + render.readiness_followup(chk, args.release), kind="decline_result")
     return 0
 
 
@@ -120,11 +132,12 @@ def cmd_record_check(args):
     C.elog(args.runs_root, args.release).log(
         "readiness_check_recorded", item=args.item, status=args.status, driver=args.detail or None)
     item = next((i for i in res["items"] if i["id"] == args.item), None)
-    mark = {"pass": "OK", "degraded": "WARN"}.get(args.status, "FAIL")
+    mark = {"pass": "OK", "degraded": "WARN", "needs_input": "INPUT"}.get(args.status, "FAIL")
     tail = " — entry gate cleared." if res.get("signed") else ""
     C.emit(args.runs_root, args.release,
            f"[{mark}] {(item or {}).get('label', args.item)}: {args.status}"
-           f"{(' — ' + args.detail) if args.detail else ''}{tail}", kind="record_check")
+           f"{(' — ' + args.detail) if args.detail else ''}{tail}\n"
+           + render.readiness_followup(res, args.release), kind="record_check")
     return 0
 
 
@@ -149,22 +162,26 @@ def cmd_m365_capabilities(args):
 def register(sub):
     c = sub.add_parser("checklist", help="Show the readiness entry-gate checklist")
     c.add_argument("--release", required=True)
-    c.add_argument("--verify", action="store_true", help="Run auto verifiers before showing")
+    c.add_argument("--verify", action="store_true", help="Run Python verifiers only; Scout probes remain host-executed")
     c.add_argument("--attest-prompt", dest="attest_prompt", action="store_true",
-                   help="Emit ONLY the '✋ Your confirmation needed' block (no table) — the second readiness render")
+                   help="Emit the full checklist and readiness handoff/question from the same snapshot")
     c.add_argument("--json", action="store_true")
+    c.add_argument("--handoff", action="store_true",
+                   help="Refuse a final handoff (exit 2) while automatic probes remain executable")
     c.set_defaults(func=cmd_checklist)
 
-    v = sub.add_parser("verify", help="Run the auto readiness verifiers")
+    v = sub.add_parser("verify", help="Run Python readiness verifiers and report the remaining Scout queue")
     v.add_argument("--release", required=True)
+    v.add_argument("--pending-only", action="store_true",
+                   help="Dispatch only unperformed/invalidated checks; do not retry recorded failures")
     v.set_defaults(func=cmd_verify)
 
     rc = sub.add_parser("record-check",
                         help="Record a scout-assisted auto check result (e.g. ICM on-call)")
     rc.add_argument("--release", required=True)
     rc.add_argument("--item", required=True, help="Readiness item id (must be a source:scout auto item)")
-    rc.add_argument("--status", required=True, choices=["pass", "fail", "degraded"],
-                    help="pass | fail (or 'degraded' for opt-out items the user proceeds without)")
+    rc.add_argument("--status", required=True, choices=["pass", "fail", "degraded", "needs_input"],
+                    help="Actual result, consent/input hold, or explicit opt-out (degraded)")
     rc.add_argument("--detail", default="", help="Short evidence/summary (e.g. 'not in roster')")
     rc.add_argument("--evidence-file", help="Structured fresh M365 capability inventory/probe results")
     rc.set_defaults(func=cmd_record_check)

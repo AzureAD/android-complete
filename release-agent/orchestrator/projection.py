@@ -86,7 +86,8 @@ class SchedulingResult:
         return tuple(
             hold.step_id for hold in self.action_holds
             if hold.kind == "scout" and hold.step_id
-            and self.step(hold.phase_id, hold.step_id).status == "pending"
+            and (self.step(hold.phase_id, hold.step_id).status == "pending"
+                 or hold.reason == "compound_continuation")
         )
 
 
@@ -254,6 +255,13 @@ class StateProjection:
                     hold for item in ready
                     if (hold := self._step_hold(item.definition)) is not None
                 ]
+                actions.extend(
+                    HoldProjection("scout", frontier.id, item.definition.id, "scout",
+                                   "compound_continuation")
+                    for item in eligible
+                    if item.time_ready and item.reserved and item.definition.write_command
+                    and self._execution(item.definition).get("write_progress")
+                )
                 # Focus is for presentation, NOT a dispatch veto: pending gates
                 # and human holds must not starve independent automatic work.
                 focus = (

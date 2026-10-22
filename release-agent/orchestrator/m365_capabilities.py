@@ -160,7 +160,8 @@ def read_plan(owner, observations=None, *, now=None):
         "permission_to_send": False, "permission_to_upload": False,
         "limitations": (
             "Read probes and discovered write tools do not prove permission to send/upload. "
-            "Confirm write access separately. A future Bug Bash event/chat must be verified "
+            "Check access and authorization at each owning write step, not through a blanket "
+            "entry attestation. A future Bug Bash event/chat must be verified "
             "when created. Exact group/member and site/library reads must succeed through "
             "the current user's verified structured fetch route, not WorkIQ Ask or people search. "
             "Immutable report creation uses a separately owned, approved SharePoint browser upload."

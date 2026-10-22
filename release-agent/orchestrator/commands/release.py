@@ -13,7 +13,12 @@ from tools import checks
 def cmd_init(args):
     sp = C.state_path(args.runs_root, args.release)
     if os.path.exists(sp):
-        print(f"Release {args.release} already exists at {sp}; initialization never replaces release history.")
+        message = f"Release {args.release} already exists at {sp}; initialization never replaces release history."
+        if getattr(args, "json", False):
+            print(_json.dumps({"initialized": False, "release_id": args.release,
+                               "state_path": sp, "error": message}, indent=2))
+        else:
+            print(message)
         return 1
     st = ReleaseState(release_id=args.release)
 
@@ -58,13 +63,29 @@ def cmd_init(args):
     st.target_month = schedule.default_target_month(args.release)
     from orchestrator.engine import Orchestrator
     from orchestrator.revision import bind_initial
-    bind_initial(Orchestrator(args.config, st, mocks={}))
+    orch = Orchestrator(args.config, st, mocks={})
+    bind_initial(orch)
     st.save(sp)
 
     C.elog(args.runs_root, args.release).log(
         "release_started", forced=bool(args.force),
         ccd=st.ccd, ccd_source=st.ccd_source, ccd_conflict=st.ccd_conflict,
         owner=st.owner_email, timezone=st.timezone)
+    checklist_command = f"checklist --release {args.release} --attest-prompt --json"
+    if getattr(args, "json", False):
+        print(_json.dumps({
+            "initialized": True, "release_id": st.release_id, "state_path": sp,
+            "owner_email": st.owner_email, "owner_name": st.owner_name,
+            "timezone": st.timezone or schedule.DEFAULT_TZ,
+            "ccd": st.ccd, "ccd_source": st.ccd_source, "ccd_conflict": st.ccd_conflict,
+            "target_month": st.target_month,
+            "phase0_open": schedule.anchor_date(default, "CCD-7").isoformat() if default else None,
+            "readiness_signed": orch.gate.signed,
+            "readiness_dispatch": orch.gate.checklist()["dispatch"],
+            "next_action": "run_entry_gate", "continue_automatically": True,
+            "checklist_command": checklist_command,
+        }, indent=2))
+        return 0
     owner_line = f"  Owner: {st.owner_name + ' ' if st.owner_name else ''}{st.owner_email or '(unresolved)'}{owner_note}"
     tz_line = f"  Timezone: {st.timezone or schedule.DEFAULT_TZ}{tz_note}"
     if st.ccd:
@@ -74,13 +95,19 @@ def cmd_init(args):
                  f"  Code Complete Date: {st.ccd} (2nd Wednesday){note}",
                  f"  Release name: {tm_label or '(unresolved)'} release "
                  f"(ships the month after code-complete — confirm/adjust with set-target-month)",
-                 f"  Phase 0 (Pre-flight) opens {opens} (CCD-7). Until then nothing fires."]
+                 f"  Phase 0 (Pre-flight) opens {opens} (CCD-7). Scheduled phase work waits until then."]
         if conflict:
             lines.append(f"  ⚠ Pipeline override is {conflict.isoformat()}, which differs from the "
                          f"2nd-Wednesday default. Confirm which is the real CCD before proceeding.")
         print("\n".join(lines))
     else:
         print(f"Initialized release {args.release}.\n  state: {sp}\n{owner_line}\n{tz_line}\n{note}")
+    print(
+        f"  Next: run the readiness entry gate now with "
+        f"`{checklist_command}`. "
+        "Initialization/reminder registration is not a stopping point. "
+        "Complete available automatic checks, then show the full current table "
+        "and request the required human confirmations. Readiness does not wait for Phase 0.")
     return 0
 
 
@@ -284,7 +311,8 @@ def cmd_resume(args):
     if st.ccd_conflict:
         tail = (f"\n  ⚠ Pipeline override {st.ccd_conflict} differs from CCD {st.ccd} — "
                 f"confirm which is correct (see status).")
-    C.emit(args.runs_root, args.release, (act.message + tail), kind="override")
+    C.emit(args.runs_root, args.release,
+           act.message + tail + "\n\n" + render.status_view(orch.status_report()), kind="override")
     return 0
 
 
@@ -325,6 +353,8 @@ def cmd_set_target_month(args):
 def register(sub):
     i = sub.add_parser("init", help="Start a new release run")
     i.add_argument("--release", required=True)
+    i.add_argument("--json", action="store_true",
+                   help="Print initialization metadata and the immediate readiness handoff as JSON")
     i.add_argument("--force", action="store_true")
     i.add_argument("--owner-email", default=None, help="Release owner email (default: signed-in az user)")
     i.add_argument("--owner-name", default=None, help="Release owner display name (optional)")

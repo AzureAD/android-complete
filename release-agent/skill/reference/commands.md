@@ -47,14 +47,15 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | Check setup BEFORE new-release init | `python -m orchestrator.cli infra --no-register --tools-file <fresh-inventory.json> --json` — enforces `m365_connectors` using the actual loaded canonical-to-exposed tool map and separate discovered `structured_fetch` MCP/CLI route. CLI help is not live access proof; missing required evidence blocks setup. |
 | Exact native WorkIQ structured read (machine-only) | `python -m orchestrator.cli workiq-read --scout-root <selected-existing-profile> [--workiq-path <existing-workiq-launcher>] --account <verified-owner> --entity-url '<exact Graph-relative URL>'` — discovers the profile's existing `bin\workiq.cmd` or actual PATH launcher, verifies `fetch --help`, preserves Scout wrapper argv and prints the canonical `workiq.fetch` observation with actual route. No release state, tokens, raw-binary bypass or shell URL interpolation. Missing launcher/version support returns diagnostic/`--workiq-path` guidance; auth/denial stops, no alternate transport/identity. |
 | Resolve installation paths | `infra --no-register --scout-root <existing-profile> --agency-path <executable> --json` — validate user-specific locations; ask for returned `path_requests`, never guess or overwrite an existing server. Custom-profile later CLI calls use `RELEASE_AGENT_SCOUT_ROOT`. |
-| Start a new release | `python -m orchestrator.cli init --release <YYYY-MM>` |
+| Start a new release | `python -m orchestrator.cli init --release <YYYY-MM> [--json]` — JSON returns persisted metadata and `next_action:run_entry_gate` / `checklist_command`; continue entry checks in the same turn, not just initialization. |
 | Preview workflow revision adoption | `python -m orchestrator.cli workflow-adopt --release <id> --json` — old/new identity, conservative invalidations and ownership blockers; no execution. Before asking for approval, show `invalidation.summary`, every completed/blocked step being reset, removed gate decisions/offers, and blockers. |
 | Confirm reviewed workflow adoption | `python -m orchestrator.cli workflow-adopt --release <id> --approve-hash <hash> --by <owner> --reason "<reviewed change>"` — recomputes under locks, rejects stale reviews/owned work, persists atomically without draining |
 | List what a step exposes to `mocks.local.yaml` | `python -m orchestrator.cli mock-spec` |
-| Show readiness entry checklist | `python -m orchestrator.cli checklist --release <YYYY-MM> [--verify] [--json]` |
-| Run auto readiness verifiers | `python -m orchestrator.cli verify --release <YYYY-MM>` |
+| Show readiness entry checklist | `python -m orchestrator.cli checklist --release <YYYY-MM> [--verify] [--json]` — `--verify` runs Python checks ONLY; every output includes the remaining host-executed dispatch. |
+| Guard readiness handoff | `python -m orchestrator.cli checklist --release <id> --attest-prompt --handoff --json` — exit 2 / `may_return_to_user:false` refuses a return/question while automatic probes remain executable; execute the queue, do not blindly retry the guard. |
+| Run Python readiness verifiers | `python -m orchestrator.cli verify --release <YYYY-MM>` — execute the reported Scout queue afterward; never interpret Python success as complete readiness. |
 | Attest human items (+auto verify) | `python -m orchestrator.cli sign --release <YYYY-MM> --item <id> [--item <id> …] --note "<what they confirmed>"` |
-| Record a scout-assisted check (e.g. ICM on-call) | `python -m orchestrator.cli record-check --release <YYYY-MM> --item <id> --status pass\|fail\|degraded --detail "..."` |
+| Record a scout-assisted check (e.g. ICM on-call) | `python -m orchestrator.cli record-check --release <YYYY-MM> --item <id> --status pass\|fail\|degraded\|needs_input --detail "..."` — `needs_input` requires an actual consent/input reason, remains unsatisfied and lets independent probes continue before the question. |
 | Decide CCOA lockdown overlap | `python -m orchestrator.cli check-lockdown --release <YYYY-MM> --periods-json '[{"name","environment","start","end"}]'` |
 | Resolve a migrated step → outcome JSON (done\|blocked\|in_progress\|needs_human\|needs_skill) | `python -m orchestrator.cli step-action --release <YYYY-MM> --step <id> [--phase <p>] [--param k=v …] [--execution-id <id>]` — preparation/poll/refresh requires current readiness, prerequisites, frontier and time permission; owned polling requires its exact ID. Notification outputs are previews; use the shared protocol below. Non-notification reservable actions retain `--reserve --executor <session>` |
 | Review/execute a configured external write | `distribute-tests` previews live ADO assignment corrections and still requires explicit owner approval: repeat selections with `--apply --review-hash <hash> --approved-by <reviewer>`. Scheduled release writers (`launch-localization`, `create-integration-prs`, `create-oneauth-common-pr`, `create-payload-wiki`, `start-release-signoff`, `start-upload-whats-new`, `start-upload-alpha`) use `--execute --auto-approve --executor <automation-id>`; each recomputes/checkpoints its current plan hash, fences one provider request and verifies/read-backs before completion. Generic reserve-step cannot authorize these writers. |
@@ -697,14 +698,51 @@ Execution uses `--execute --auto-approve --executor integration-pr-automation`,
 `--execute --auto-approve --executor payload-wiki-automation`, or
 `--execute --auto-approve --executor release-signoff-automation|upload-whats-new-automation|upload-alpha-automation`
 respectively.
-An uncertain or partial attempt keeps that owner; inspect provider evidence and explicitly resolve with
-`done --note`, `skip --reason` or `reopen --reason` as appropriate. Never simply
-retry a compound create. The latest `last_write_review` is retained authorization
-evidence, not a provider-success receipt or permission to execute again.
+A partial Git attempt keeps its owner and verified operation receipts. Run the same
+checked command to reconcile its exact provider results and preview only remaining
+work. Reuse the existing PBI and PRs; preserve proven branch updates. Apply a refreshed
+remaining plan through the original review policy, not the previous stale hash.
+Scheduled auto-writers retain their fixed auto-approval policy; changed human-reviewed
+actions require a new exact review. A branch advance must never cause a stale RI push.
+
+If an attempted call has no exact matching readback, keep it held. Do not infer absence
+from a failed lookup or retry an unknown PBI creation. Do not use generic done/skip/reopen
+to discard ownership. The latest `last_write_review` proves authorization, not provider
+success; compact operation receipts separately prove reusable progress.
+
+Do not trap the owner at that hold. Both Git commands support these result-only paths:
+- `--manual-result <commit-or-PR-ID-or-URL-or-PBI-ID>` reads the exact original target
+  and records the owner's manual result. A different manual commit/content is explicitly
+  owner-confirmed, not certified as the earlier automatic payload.
+- `--confirm-not-applied` requires the owner to confirm the previous writer stopped,
+  plus successful source-branch readback matching the saved pre-push tip. It records
+  a retired attempt without deleting it. Normal continuation then freshly plans/reviews
+  remaining work; it does not replay the old payload. Unknown creates cannot use this.
+- `--manual-completion <HTTPS-evidence-URL>` records the owner's explicit confirmation
+  that the previous writer stopped and ALL remaining work in the original step is done.
+  This closes only that step as owner-attested, NOT machine-verified. It needs no provider
+  API or checkout and never certifies unknown operations or approves publication/merges/
+  another gate. Omit all repository/PBI/path selectors: this is the whole original step.
+
+Every path needs `--confirmed-by <configured-release-owner>` and the owner's
+`--recovery-reason <explanation>`. Do not combine with `--execute`, `--auto-approve`,
+`--executor`, review hashes or `--approved-by`. Recovery itself sends no provider writes.
+Use the SAME command and normal approval policy to continue after an operation result;
+whole-step manual completion needs no further writer invocation.
+
+Present the failed action and offer **Record manual result**, **Confirm push never applied**
+(only for a pending push), **Confirm all work manually completed**, or **Keep blocked**.
+Use `m_ask_user`; collect missing result/evidence and the owner's explanation as needed.
+For whole-step completion explicitly warn that the engine cannot verify it, and explain
+the exact original step covered. Never choose the recovery for the owner, invent evidence,
+or treat choosing "manual work" as a claim that all work is already complete.
+After one failed read, offer the owner-attested path immediately; do not require another
+successful API read before permitting it. Show final status with manual attribution.
 
 Keep necessary checkouts/resolution inputs in durable owner-selected storage, not a
 session/temp directory. A failed preview owns nothing. Once execution starts, recover
-the original provider outcome instead of rebuilding a plan and replaying the write.
+the original provider outcome. A compound writer may rebuild the remaining plan after
+verified reconciliation, but must never replay completed or uncertain mutations.
 
 ## Bug Bash availability
 

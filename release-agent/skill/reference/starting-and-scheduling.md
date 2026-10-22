@@ -160,7 +160,24 @@ state and end without asking another retry question.
 
 Complete guided onboarding above before choosing/initializing a NEW release.
 Then use the normal release-specific entry gate after init; machine onboarding
-never stands in for current owner/CCD bindings or human send/upload attestation.
+never stands in for current owner/CCD bindings or human readiness attestations.
+Send/upload access and authorization are checked at each owning write step, not
+through a blanket startup attestation.
+
+**Initialization and reminder setup are not a stopping point.** Continue immediately
+in the same turn through reference/readiness-gate.md. Read the checklist prompt's
+`next_action`/`pending_auto_checks`, complete every available Python and Scout check,
+record real results and re-evaluate. Do not require another "run entry gate" request
+or ask the owner to perform Scout-owned checks. A future pre-flight date does not defer
+entry readiness. Stop at a real permission/input/repair issue or required attestation,
+not an initialization success message. Show one fresh full table at that actual handoff.
+The same obligation resumes after a connection recheck/restart or a status/continue
+request. Follow `readiness_dispatch` from init/status/next or `dispatch` from
+checklist JSON; these all carry the same actionable probes and record commands.
+Before handing back control run `checklist --release <id> --attest-prompt --handoff --json`.
+Exit 2 / `may_return_to_user:false` means exhaust the remaining queue, not stop.
+Record actual input/consent needs as `needs_input`, finish independent probes, then
+ask only at the permitted handoff. Never bypass a real host consent prompt.
 
 The release id is just `YYYY-MM`. **You compute it — never ask the user to type the format.** Work out the current month from today (e.g. today 2026-07 → `2026-07`).
 
@@ -169,6 +186,16 @@ When no release is active (or the user says "start a release"), call **`m_ask_us
 - **"A different month"**
 
 Pick current → `init --release <id>` after the setup prerequisite check passes. Pick different → follow-up `m_ask_user` free-text (hint: "e.g. next month, or 2026-08"); accept natural answers ("this month", "August") and do the date math yourself. Runs are real — for test runs the engineer keeps a `mocks.local.yaml` (skip/redirect/inject per step; see `mock-spec`).
+
+For machine branching use `init --release <id> --json` with the same supported
+owner/timezone flags. It returns `initialized`, persisted release metadata,
+`phase0_open`, `readiness_signed`, `next_action:run_entry_gate`,
+`continue_automatically:true` and `checklist_command`. Run the returned checklist
+after reminder registration, then dispatch its pending checks in this same turn.
+Default output remains human-readable. Existing releases are never overwritten,
+including with `--force`; inspect the existing run instead of reinitializing it.
+If another command's flags are uncertain, read that subcommand's `--help` first;
+do not append `--json` indiscriminately or treat a syntax retry as release progress.
 
 `init` records the **release owner** (the engineer running it) from the signed-in `az` user; reminders email that address. Pass `--owner-email`/`--owner-name` for a richer profile (e.g. from `workiq_get_my_profile`), or change later with `set-owner`. Never hardcode a recipient.
 
