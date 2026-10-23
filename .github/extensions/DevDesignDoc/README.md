@@ -4,7 +4,9 @@
 
 `design-feature` is a repository-scoped **Copilot Dynamic Workflow**, not a GitHub
 Actions/Agentic Workflow. A compatible Copilot runtime discovers `extension.mjs`
-under `.github/extensions/design-feature`. The runtime supplies
+under `.github/extensions/DevDesignDoc`. The entry point is
+`.github/extensions/DevDesignDoc/extension.mjs`; the workflow invocation name remains
+`design-feature`. The runtime supplies
 `@github/copilot-sdk/extension`; do not install SDK dependencies in this directory.
 ES modules are required by the extension runtime (the Android Kotlin-first rule
 still applies to application code).
@@ -89,9 +91,9 @@ so replay does not publish duplicate artifacts.
 Run from the repository root (Node.js 18 or newer):
 
 ```powershell
-node --check .github\extensions\design-feature\extension.mjs
-node --check .github\extensions\design-feature\workflow.mjs
-node --test .github\extensions\design-feature\workflow.test.mjs
+node --check .github\extensions\DevDesignDoc\extension.mjs
+node --check .github\extensions\DevDesignDoc\workflow.mjs
+node --test .github\extensions\DevDesignDoc\workflow.test.mjs
 ```
 
 Tests use mocked agents/steps and require no SDK installation, network, or paid
