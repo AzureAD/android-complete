@@ -305,12 +305,13 @@ distinction no longer applies):
 | The cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref | `Won't-Fix (Already-Covered)` | Ship nothing — the change we don't make can't regress a >1B-user library. |
 | Accurate when filed; the control shipped **after** the filing date | `Won't-Fix (Fixed-Since-Filed)` | Close it, but name the first release containing the control **and** whether any shipped release lacked it — that decides whether a customer/SIR response is owed. Never report this as "never a bug". |
 | A real weakness that **no client-side change can close** (protocol/platform constraint) | `Not-Fixable (By-Design)` | Cite the standard (RFC) and the compensating control we implement instead; ask the security team to withdraw. See [protocol-constraints.md](protocol-constraints.md). |
-| Everything else — no control, fix unmerged, or landed-then-reverted | `Keep` | We own it and solution it. |
+| Everything else — no control, fix unmerged, or landed-then-reverted | `Keep` | Assess risk first; unmerged/reverted work needs owner confirmation before a reuse recommendation. |
 
 A single IcM can carry **different dispositions for different sub-claims** — that is the normal case for a
 multi-part filing. Record one per sub-claim in the Claim Ledger and summarize in **Per-Part Disposition**.
 
-For every **Keep** finding, produce a dispatch-ready Remediation Spec
+For a **Keep** finding, record the risk decision. Produce a gated Remediation Spec only when planning
+is requested; assessment-only intake stops at the verdict/report
 (see [remediation-spec.md](remediation-spec.md)).
 
 ## Eng-days heuristic (for roll-up)

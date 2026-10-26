@@ -67,6 +67,12 @@ decides whether a customer/SIR response is owed.
 **Prior incidents:** TODO — None found, or "IcM NNN — outcome". Run the prior-art sweep before writing this.
 **Bottom line:** TODO — ONE plain-English sentence: what it is, what to do now, what is still open.
 **Justification:** TODO — 1-3 sentences anchored to the cited evidence below.
+**Risk decision:** TODO — Must fix | Optional hardening | No fix | Needs review; explain before proposing remediation.
+**Remediation approval:** Not requested
+**Existing work approval:** Pending
+
+> Approval is never implied by Keep. Record the engineer's selected approach only after approval.
+> Existing work requires owner confirmation; use Not applicable only after establishing no candidate applies.
 
 > The `**Label:**` lines above and the `**Filed**`/`**Ours**` rows are a PARSER CONTRACT — they populate
 > the HTML stat tiles and the master-report row. Keep each on its own line. After generating, confirm no
@@ -87,9 +93,12 @@ decides whether a customer/SIR response is owed.
 > is a **release decision**, not an engineering one — reporting it as "not covered" sends someone to
 > rebuild work that exists. Write "None — no fix exists on any ref" only after the all-refs sweep.
 
-| Part | Branch / ref | Commit(s) | What it covers | Why it hasn't shipped | Ask |
-|---|---|---|---|---|---|
-| 1 | TODO | TODO | TODO | TODO | TODO |
+| Part | Branch / ref | Commit(s) / PR | State | Shipping coverage | Owner confirmation | Ask |
+|---|---|---|---|---|---|---|
+| 1 | TODO | TODO | TODO | TODO | TODO | TODO |
+
+> Unmerged/reverted work is a candidate, not shipping protection or an accepted solution.
+> Confirm scope, completeness and blockers with its owner before recommending reuse or landing.
 
 **Coverage judged against ref:** TODO — name it, plus the other candidate refs you checked
 (`release/<v>` vs `working/test-release/<v>` vs `release-integration/<v>` diverge).
@@ -148,6 +157,12 @@ TODO — numbered preconditions -> steps -> outcome. No PoC payloads, no PII. If
 ## Scope & Verification Boundary
 TODO — what we own and verified vs. what we cannot confirm (downstream consumers, server-side).
 
+## Documented Contract & Prior Decisions
+TODO — cite applicable prior rationale and compare asset, caller contract, prerequisites and shipping controls.
+For a contract-dependent claim, record the canonical Microsoft documentation URL, retrieval date,
+platform/version and exact requirement. Documentation proves a contract, not runtime enforcement.
+If not relevant, say Not applicable; missing material contracts stay OPEN with a targeted follow-up.
+
 ## Adversarial Verification
 - **What the Challenger attempted:** TODO
 - **Result:** TODO — HELD | WEAKENED | OVERTURNED
@@ -166,13 +181,20 @@ TODO — what we own and verified vs. what we cannot confirm (downstream consume
 |---|---|---|---|---|---|
 | 1 | TODO | TODO | TODO | TODO | TODO |
 
-> **Can proceed now vs. blocked:** TODO
+> **Can proceed now vs. blocked:** TODO — open gaps block automated fix dispatch; evidence gathering may continue.
 
 ## Decisions Needed
 - TODO — with a recommendation.
 
 ## Remediation
-TODO — 2-3 options with tradeoffs and a recommendation. Do NOT write code before the engineer picks.
+Remediation not requested; risk decision above is the deliverable.
+If planning was requested, replace this with 2-3 options and tradeoffs, then wait for the engineer's choice.
+Do NOT write code or mark remediation Approved before explicit approval.
+
+## Timing
+- **Depth / start time / agreed end-to-end budget:** TODO
+- **Actual elapsed by stage:** TODO — intake/preflight, Gate 0/history, Pass 1, Pass 2, reconciliation, rendering.
+- **Queue/tool time and overruns:** TODO — distinguish waiting from research; record revised ETA and continuation decision.
 
 ## Estimated Eng-Days
 TODO (ESTIMATE — on-call to adjust). Basis: TODO.
