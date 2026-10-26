@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Precise verification: For every no-response Copilot comment, check
+    Precise verification: For every no-response AI review comment, check
     if the specific suggestion was applied or the exact line range was modified.
     
     Approach:
@@ -11,8 +11,12 @@
        the suggestion appear as additions (+lines) in the diff
 #>
 
-$ErrorActionPreference = "Continue"
-$OutputDir = "$env:TEMP\copilot-review-analysis"
+param(
+    [string]$OutputDir = "$env:TEMP\copilot-review-analysis",
+    [string]$AuthAppRepoPath = (Join-Path $PSScriptRoot "..\..\..\..\AD-MFA-phonefactor-phoneApp-android")
+)
+
+$ErrorActionPreference = "Stop"
 
 $COPILOT_USERS = @("Copilot", "copilot-pull-request-reviewer[bot]")
 
@@ -23,8 +27,8 @@ $repoSlugs = @{
 }
 
 # Load raw data
-$rawData = Get-Content "$OutputDir\raw_results.json" | ConvertFrom-Json
-$noResponse = $rawData | Where-Object { $_.HasReply -eq $false }
+$rawData = @(Get-Content "$OutputDir\raw_results.json" -Raw | ConvertFrom-Json)
+$noResponse = @($rawData | Where-Object { $_.HasReply -eq $false })
 Write-Host "Total no-response comments to verify: $($noResponse.Count)" -ForegroundColor Cyan
 
 # Caches
@@ -170,6 +174,73 @@ function Check-SuggestionInDiff($patchText, $suggestionTokens) {
     return $matchCount
 }
 
+function Get-AuthAppVerification {
+    param($Item)
+    $result = [ordered]@{
+        Repo = $Item.Repo; PRNumber = $Item.PRNumber; CommentId = $Item.CommentId
+        FilePath = $Item.FilePath; PRAuthor = $Item.PRAuthor
+        ReviewSource = "Foundry"; Platform = "Azure DevOps"
+        HasSuggestion = ($Item.CommentBody -match '```suggestion')
+        Verdict = "unknown"; Evidence = ""; CommentExcerpt = ""
+        ReviewedCommitRewritten = $null; SnapshotNeedsValidation = $true
+    }
+    if (-not $Item.OriginalCommitId -or -not $Item.FinalCommitId -or -not (Test-Path $AuthAppRepoPath)) {
+        $result.Evidence = "Reviewed/final snapshot or AuthApp checkout unavailable; verify via msazure ADO tools."
+        return [pscustomobject]$result
+    }
+    foreach ($sha in @($Item.OriginalCommitId, $Item.FinalCommitId)) {
+        if ($sha -notmatch '^[0-9a-f]{40}$') { throw "Invalid AuthApp snapshot SHA for $($Item.CommentId)." }
+        git -C $AuthAppRepoPath cat-file -e "${sha}^{commit}" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $result.Evidence = "AuthApp snapshot $sha is not available locally; verify via msazure ADO tools."
+            return [pscustomobject]$result
+        }
+    }
+    git -C $AuthAppRepoPath merge-base --is-ancestor $Item.OriginalCommitId $Item.FinalCommitId 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { throw "Cannot check AuthApp snapshot ancestry for $($Item.CommentId)." }
+    $result.ReviewedCommitRewritten = ($LASTEXITCODE -eq 1)
+    if ($result.ReviewedCommitRewritten) {
+        $result.Evidence = "Reviewed AuthApp iteration was rewritten; inspect immutable reviewed file and final code before scoring."
+        return [pscustomobject]$result
+    }
+    $result.SnapshotNeedsValidation = $false
+    if ($Item.OriginalCommitId -eq $Item.FinalCommitId) {
+        $result.Verdict = "no-subsequent-commits"
+        $result.Evidence = "Foundry reviewed the final source snapshot."
+        return [pscustomobject]$result
+    }
+    $path = $Item.FilePath.TrimStart('/')
+    $patch = git --no-pager -C $AuthAppRepoPath diff --no-ext-diff --no-textconv --unified=3 $Item.OriginalCommitId $Item.FinalCommitId -- $path
+    if ($LASTEXITCODE -ne 0) { throw "Cannot diff AuthApp snapshots for $($Item.CommentId)." }
+    $patchText = $patch -join "`n"
+    if (-not $patchText) {
+        $result.Verdict = "file-not-changed"
+        $result.Evidence = "File unchanged between reviewed iteration and final source snapshot."
+        return [pscustomobject]$result
+    }
+    # ADO LEFT coordinates describe the target snapshot, not the reviewed source.
+    $line = if ($Item.Side -eq "RIGHT") { [int]$Item.Line } else { 0 }
+    $startLine = if ($Item.StartLine) { [int]$Item.StartLine } else { $line }
+    $overlap = $line -gt 0 -and (Check-DiffHunksOverlap $patchText $startLine $line)
+    $result.Verdict = "file-changed-elsewhere"
+    if ($result.HasSuggestion) {
+        $tokens = @(Extract-SuggestionTokens $Item.CommentBody)
+        $matches = Check-SuggestionInDiff $patchText $tokens
+        $totalTokens = @($tokens | Where-Object { $_.Trim().Length -ge 5 }).Count
+        if ($totalTokens -gt 0 -and $matches / $totalTokens -ge 0.5) {
+            $result.Verdict = if ($overlap) { "suggestion-applied" } else { "suggestion-likely-applied" }
+        } elseif ($overlap) {
+            $result.Verdict = "lines-modified-different-fix"
+        }
+    } elseif ($overlap) {
+        $result.Verdict = "exact-lines-modified"
+    } elseif ($line -eq 0) {
+        $result.Verdict = "file-changed-no-line-info"
+    }
+    $result.Evidence = "AuthApp immutable source diff; RIGHT line overlap: $overlap. Thread status is not adoption evidence."
+    return [pscustomobject]$result
+}
+
 # ========================================
 # MAIN ANALYSIS LOOP
 # ========================================
@@ -178,6 +249,10 @@ $count = 0
 
 foreach ($item in $noResponse) {
     $count++
+    if ($item.Repo -eq "authapp") {
+        $results += Get-AuthAppVerification $item
+        continue
+    }
     $repo = $item.Repo
     $prNum = $item.PRNumber
     $commentId = $item.CommentId
@@ -310,7 +385,13 @@ foreach ($item in $noResponse) {
 }
 
 # Save
-$results | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\precise.json" -Encoding utf8
+foreach ($result in $results) {
+    if (-not $result.ReviewSource) {
+        $result | Add-Member -NotePropertyName ReviewSource -NotePropertyValue "GitHub Copilot"
+        $result | Add-Member -NotePropertyName Platform -NotePropertyValue "GitHub"
+    }
+}
+ConvertTo-Json -InputObject @($results) -Depth 5 | Out-File "$OutputDir\precise.json" -Encoding utf8
 
 # ========================================
 # STATISTICS
@@ -362,10 +443,10 @@ Write-Host "================================================================" -F
 Write-Host "     EVIDENCE-BASED SUMMARY" -ForegroundColor Yellow
 Write-Host "================================================================" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  STRONG: Suggestion applied OR exact lines modified:            $strongCount ($([math]::Round($strongCount/$results.Count*100,1))%)" -ForegroundColor Green
-Write-Host "  MODERATE: Lines near comment modified (different fix):          $weakCount ($([math]::Round($weakCount/$results.Count*100,1))%)" -ForegroundColor DarkGreen
-Write-Host "  NOT APPLIED: File not changed OR changes elsewhere in file:   $notCount ($([math]::Round($notCount/$results.Count*100,1))%)" -ForegroundColor Red
-Write-Host "  NO DATA: No commits after review / unknown:                   $noDataCount ($([math]::Round($noDataCount/$results.Count*100,1))%)" -ForegroundColor DarkGray
+Write-Host "  STRONG: Suggestion applied OR exact lines modified:            $strongCount ($([math]::Round($strongCount/[Math]::Max(1,$results.Count)*100,1))%)" -ForegroundColor Green
+Write-Host "  MODERATE: Lines near comment modified (different fix):          $weakCount ($([math]::Round($weakCount/[Math]::Max(1,$results.Count)*100,1))%)" -ForegroundColor DarkGreen
+Write-Host "  NOT APPLIED: File not changed OR changes elsewhere in file:   $notCount ($([math]::Round($notCount/[Math]::Max(1,$results.Count)*100,1))%)" -ForegroundColor Red
+Write-Host "  NO DATA: No commits after review / unknown:                   $noDataCount ($([math]::Round($noDataCount/[Math]::Max(1,$results.Count)*100,1))%)" -ForegroundColor DarkGray
 
 # Force-push confound: not-applied verdicts sitting on a rewritten snapshot are UNSAFE
 $fpNotApplied = ($results | Where-Object { $_.Verdict -in $notApplied -and $_.ReviewedCommitRewritten -eq $true })
@@ -394,10 +475,10 @@ Write-Host "  Replied (Phase 3 will classify): $replied" -ForegroundColor White
 Write-Host "  No reply (verified via diff):    $noReply" -ForegroundColor White
 Write-Host ""
 Write-Host "  Of the $noReply no-reply comments:" -ForegroundColor Cyan
-Write-Host "    Applied (strong evidence):     $strongCount ($([math]::Round($strongCount/$noReply*100,1))%)" -ForegroundColor Green
-Write-Host "    Nearby lines modified:         $weakCount ($([math]::Round($weakCount/$noReply*100,1))%)" -ForegroundColor DarkGreen
-Write-Host "    Not applied / no evidence:     $notCount ($([math]::Round($notCount/$noReply*100,1))%)" -ForegroundColor Red
-Write-Host "    No subsequent commits:         $noDataCount ($([math]::Round($noDataCount/$noReply*100,1))%)" -ForegroundColor DarkGray
+Write-Host "    Applied (strong evidence):     $strongCount ($([math]::Round($strongCount/[Math]::Max(1,$noReply)*100,1))%)" -ForegroundColor Green
+Write-Host "    Nearby lines modified:         $weakCount ($([math]::Round($weakCount/[Math]::Max(1,$noReply)*100,1))%)" -ForegroundColor DarkGreen
+Write-Host "    Not applied / no evidence:     $notCount ($([math]::Round($notCount/[Math]::Max(1,$noReply)*100,1))%)" -ForegroundColor Red
+Write-Host "    No subsequent commits:         $noDataCount ($([math]::Round($noDataCount/[Math]::Max(1,$noReply)*100,1))%)" -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Yellow
