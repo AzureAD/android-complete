@@ -2,6 +2,12 @@
 
 Guide for the AI agent performing Phase 3 reply classification. Read each replied comment's full context (Copilot's comment + engineer's reply) and assign a verdict.
 
+Apply this rubric equally to **GitHub Copilot** and **Foundry** findings. Preserve
+`ReviewSource` and `Platform` through all outputs. For AuthApp, read
+[authapp-reviews.md](authapp-reviews.md) for build-service attribution, ADO reply
+semantics, composite IDs, and reviewed-iteration verification. Thread resolution
+status and AI self-replies are not human acceptance.
+
 ## Phase 3: Classifying Replied Comments
 
 For every comment where `HasReply = true`, read the `CommentBody` (what Copilot said) and `HumanReplyText` (what the engineer replied), then assign one of **three** verdicts:
@@ -128,11 +134,15 @@ Map of comment ID to verdict for every replied comment:
 {
     "1234567890": "helpful",
     "1234567891": "not-helpful",
-    "1234567892": "declined"
+    "1234567892": "declined",
+    "ado:msazure:repo-guid:123:456:1": "helpful"
 }
 ```
 
-Keys are comment IDs (as strings). Values are `"helpful"`, `"not-helpful"` (Copilot incorrect), or `"declined"` (Copilot correct/reasonable but engineer declined).
+Keys are complete `CommentId` strings. ADO keys must include organization,
+repository, PR, thread, and native comment ID; never use the native `1` alone.
+Use `"helpful"`, `"incorrect"`, or `"declined"`. Legacy `"not-helpful"` remains
+accepted and is normalized to `"incorrect"` for replied comments.
 
 ### `reaudit-flips.json`
 
@@ -157,8 +167,8 @@ These are handled by `precise.ps1` and `final-classification.ps1` automatically:
 |-------------|---------------------|
 | `suggestion-applied`, `suggestion-likely-applied`, `exact-lines-modified` | **Helpful** |
 | `lines-modified-different-fix` | **Helpful** |
-| `file-changed-elsewhere`, `file-changed-no-line-info` | **Not Helpful** (unless in re-audit flips) |
-| `file-not-changed`, `no-subsequent-commits`, `not-applied` | **Not Helpful** (unless in re-audit flips) |
+| `file-changed-elsewhere`, `file-changed-no-line-info` | **Unresolved** (unless in re-audit flips) |
+| `file-not-changed`, `no-subsequent-commits`, `not-applied`, `unknown` | **Unresolved** (unless manually verified) |
 
 > **Force-push caveat:** any `not-applied` / `file-not-changed` row with `ReviewedCommitRewritten = true` is UNSAFE to score as Not Helpful — the reviewed snapshot was rewritten, so the fix may live in the orphaned commit. Validate against the immutable `DiffHunk` (see "The Force-Push Confound") before finalizing; flip to **Helpful** if Copilot's claim was already satisfied by the merged code.
 
@@ -167,3 +177,7 @@ These are handled by `precise.ps1` and `final-classification.ps1` automatically:
 Engineers have separate personal GitHub accounts and EMU (Enterprise Managed User) accounts. Merge them for per-engineer statistics.
 
 The mapping is defined in `references/account-map.json` (external JSON file). Update for new team members by editing the JSON directly — no script changes needed.
+
+For AuthApp use an explicit `ado:msazure:<authorId>` mapping when merging an
+engineer with their GitHub identities. Otherwise retain the ADO display name;
+do not infer cross-platform identity links.

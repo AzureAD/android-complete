@@ -118,6 +118,9 @@
 </head>
 <body>
 
+<!-- Historical GitHub-only sample. Generate AI Code Review Effectiveness with
+     source-labeled GitHub Copilot and Foundry/AuthApp sections in the SAME file.
+     Recompute all metrics and include source columns in repo/engineer tables. -->
 <h1>Copilot Code Review Effectiveness Analysis</h1>
 <p class="subtitle">Android Auth Platform &nbsp;|&nbsp; June 10 &ndash; July 15, 2026 &nbsp;|&nbsp; Common, MSAL, Broker Repositories</p>
 
@@ -324,6 +327,13 @@
 <p><strong>Unresolved (31):</strong> No reply and no diff evidence either way. These are not confirmed failures — they are comments no one evaluated.</p>
 <hr />
 <h2 id="results-by-repository">Results by Repository</h2>
+<h3>Results by Review Source</h3>
+<table>
+<tr><th>Review source</th><th>Repositories</th><th>Comments</th><th>Response rate</th><th>Helpful/adopted</th><th>Precision</th></tr>
+<tr><td>GitHub Copilot</td><td>Common, MSAL, Broker</td><td>132</td><td>72.0%</td><td>54.5%</td><td>97.3%</td></tr>
+<tr><td>Foundry</td><td>AuthApp</td><td>Not collected in this historical sample</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+</table>
+<p>For new reports, compute each source independently, include all outcome buckets, and label repository, engineer/source, and example rows. Missing historical Foundry data is not zero activity.</p>
 <table>
 <thead>
 <tr>

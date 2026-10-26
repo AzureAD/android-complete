@@ -1,32 +1,36 @@
 ---
 name: copilot-review-analyst
-description: Analyze GitHub Copilot code review effectiveness across Android Auth repositories. Collects all Copilot inline review comments via GitHub API, classifies them as helpful/declined/incorrect/unresolved through reply analysis, diff verification, and AI-assisted classification, then generates a report with Copilot precision plus per-repo and per-engineer statistics. Use this skill when asked to "analyze Copilot reviews", "measure Copilot review effectiveness", "generate Copilot review report", "how helpful are Copilot reviews", "run review analysis", or any request to measure/report on GitHub Copilot code review quality and adoption.
+description: Analyze AI code review effectiveness across Android Auth repositories, including GitHub Copilot in Common/MSAL/Broker and Foundry reviews in the Azure DevOps AuthApp repo. Classify inline findings through human replies and immutable-snapshot verification, then generate one report with clearly labeled GitHub Copilot vs Foundry metrics, per-repo/per-engineer statistics, and trends. Use for "analyze Copilot reviews", "analyze AuthApp reviews", "Foundry review effectiveness", "generate AI review report", "compare Copilot and Foundry", "run review analysis", or any request to measure AI code review quality and adoption.
 ---
 
 # Copilot Review Analyst
 
-Analyze GitHub Copilot code review effectiveness across the Android Auth repositories by collecting all inline review comments, classifying each one, and producing a comprehensive report.
+Analyze GitHub Copilot and Foundry review effectiveness in **one combined report**, preserving the review source on every finding. Keep the existing skill name and output filenames for compatibility; title new reports **AI Code Review Effectiveness** and distinguish **GitHub Copilot** from **Foundry** throughout.
 
 ## Prerequisites
 
-- **GitHub CLI (`gh`)** authenticated with an **EMU account** (`*_microsoft`) which has access to all three repos (public and private). The script auto-detects the EMU account from `gh auth status`.
-- The `analyze.ps1` script automatically switches to the EMU account at startup and restores the original account on completion — no manual auth switching needed
+- **GitHub CLI (`gh`)** authenticated on both `github.com` and `msft.ghe.com`. Select the user's required account for each repository; do not assume one EMU token reaches both hosts.
+- **Azure DevOps:** Prefer configured ADO MCP tools scoped to **msazure / One**. The IdentityDivision / Engineering instance cannot read AuthApp; it has no organization override. Do not treat `{}` or `[]` from the wrong organization as an empty AuthApp corpus. If no msazure-scoped tools are available, use the collector's explicitly scoped Azure CLI fallback.
+- Read [references/authapp-reviews.md](references/authapp-reviews.md) before collecting or verifying AuthApp reviews.
 - **Output directory**: `~/.copilot-review-analysis/` for final artifacts, `$env:TEMP\copilot-review-analysis\` for intermediate data
 
 ## Repository Configuration
 
 Default repos (update in scripts if changed):
 
-| Label | Slug | Auth |
-|-------|------|------|
-| common | `AzureAD/microsoft-authentication-library-common-for-android` | EMU (also accessible via personal) |
-| msal | `AzureAD/microsoft-authentication-library-for-android` | EMU (also accessible via personal) |
-| broker | `security/ad-accounts-for-android` | EMU only |
+| Label | Repository | Review source | Platform / account |
+|-------|------------|---------------|--------------------|
+| common | `AzureAD/microsoft-authentication-library-common-for-android` | GitHub Copilot | github.com / shahzaibj |
+| msal | `AzureAD/microsoft-authentication-library-for-android` | GitHub Copilot | github.com / shjameel_microsoft |
+| broker | `security/ad-accounts-for-android` | GitHub Copilot | msft.ghe.com / shjameel |
+| authapp | `msazure/One/AD-MFA-phonefactor-phoneApp-android` | Foundry | Azure DevOps / organizational access |
+
+Identify Foundry findings by **both** `One Build Service (msazure)` and the **AuthApp PR Reviewer** content marker. The build-service identity is shared with other automation. Never count all comments posted by that identity as AI reviews. Keep provider (`ReviewSource`) separate from hosting platform (`Platform`).
 
 ## Analysis Pipeline
 
 The analysis runs in 5 sequential phases. Scripts and templates are bundled in this skill:
-- **Scripts:** `scripts/` (3 core pipeline scripts)
+- **Scripts:** `scripts/` (preflight, unified collection, AuthApp adapter, verification, classification, history)
 - **Assets:** `assets/` (report templates — Markdown, HTML, Outlook HTML)
 - **References:** `references/` (classification rules, report formatting guide)
 
@@ -34,7 +38,7 @@ The analysis runs in 5 sequential phases. Scripts and templates are bundled in t
 
 **Script:** `scripts/analyze.ps1`
 
-Collect all Copilot inline review comments from human-authored PRs:
+Run `scripts/preflight.ps1` first. Collect inline findings from **human-authored PRs merged/completed inside the inclusive start/end date window**, not PR creation dates. AuthApp is included by default; an inaccessible source must block the combined report.
 
 ```powershell
 # Default: last 60 days
@@ -42,33 +46,45 @@ Collect all Copilot inline review comments from human-authored PRs:
 
 # Custom date range:
 .\.github\skills\copilot-review-analyst\scripts\analyze.ps1 -StartDate "2026-01-23"
+
+# Prefer an AuthApp input exported using msazure-scoped ADO MCP tools:
+.\.github\skills\copilot-review-analyst\scripts\analyze.ps1 `
+    -StartDate "2026-10-01" -EndDate "2026-10-14" `
+    -AuthAppInputFile "$env:TEMP\copilot-review-analysis\authapp-export.json"
 ```
 
 **Parameters:**
-- `-StartDate` — Start date for PR search (default: 60 days ago). Format: `YYYY-MM-DD`
+- `-StartDate` / `-EndDate` — Inclusive merge/completion window. Format: `YYYY-MM-DD`
 - `-OutputDir` — Output directory (default: `$env:TEMP\copilot-review-analysis`)
+- `-AuthAppInputFile` — Array of full ADO `{ pullRequest, threads, iterations }` bundles; see the AuthApp reference. Without it, use the explicit msazure Azure CLI fallback.
+- `-SkipAuthApp` — Explicit GitHub-only run. Label the report's missing scope; never present it as covering both review sources.
 
 What it does:
-1. Fetch all PRs created after `-StartDate` via `gh pr list`
+1. Fetch merged GitHub PRs and completed AuthApp PRs in the same window, with pagination and explicit access checks.
 2. Filter out bot-authored PRs (Copilot, copilot-swe-agent, dependabot, github-actions)
 3. For each PR, call `repos/{slug}/pulls/{prNum}/comments` to get inline comments
 4. Filter to Copilot comments (user.login = "Copilot") that are top-level (not replies)
 5. Find human replies to each Copilot comment (matched via `in_reply_to_id`)
-6. Record whether each comment has a reply and capture the reply text (no classification at this stage)
+6. For AuthApp, collect full ADO threads and iterations using `analyze-authapp.ps1`. Identify marked reviewer roots, capture later human comments even when their `parentCommentId` is zero, and exclude summary/system/deleted/bot comments from inline denominators.
+7. Record `ReviewSource`, `Platform`, full comment/reply text, URLs, and immutable reviewed commits. ADO comment IDs are composite because native comment IDs are only unique within a thread.
 
 **Outputs:**
 - `$env:TEMP\copilot-review-analysis\raw_results.json` — all comments with `HasReply` flag and raw reply text. Also records the **force-push fingerprint** per comment: `OriginalCommitId` (the immutable commit Copilot reviewed), `DiffHunk` (frozen copy of the lines Copilot saw), and `ReviewedCommitRewritten` (`true` when the reviewed commit is no longer in the PR's commit list — see [The Force-Push Confound](references/classification-rules.md#the-force-push-confound-mandatory-validation-before-scoring)).
 - `$env:TEMP\copilot-review-analysis\review_summaries.json` — PR-level summary comments (for reference)
+- `coverage.json` — merged human PRs, reviewed PRs, with-feedback/no-feedback counts by repository, source, and overall. AuthApp summary-only reviews count toward coverage, not inline helpfulness.
+- `authapp_*.json` — source-specific collection artifacts, retained for auditing.
 
 ### Phase 2: Diff-Level Verification
 
 **Script:** `scripts/precise.ps1`
 
-For every comment with no reply, verify whether the engineer silently acted on the feedback:
+For every comment with no reply, verify whether the engineer silently acted on the feedback. GitHub uses the compare API; AuthApp uses an available local checkout's immutable reviewed iteration SHA and final source SHA. Missing snapshots remain unknown/unresolved and require ADO verification, never a fabricated negative.
 
 ```powershell
 .\.github\skills\copilot-review-analyst\scripts\precise.ps1
 ```
+
+Pass `-OutputDir` for a custom run directory and `-AuthAppRepoPath` if the checkout is elsewhere. The default is the umbrella repo's `AD-MFA-phonefactor-phoneApp-android` folder. This script never fetches or switches branches. For AuthApp LEFT-side threads, do not match target-side line numbers against a source-side diff.
 
 What it does:
 1. Load `raw_results.json`, filter to comments where `HasReply = false`
@@ -93,7 +109,7 @@ What it does:
 
 ### Phase 3: AI Reply Classification
 
-This phase is performed by the agent (you) in conversation. Classify **every replied comment** by reading the full Copilot comment and engineer reply in context.
+Perform this phase in conversation. Classify **every replied comment from either source** by reading the full finding and engineer reply in context, using the same fairness rubric.
 
 See [references/classification-rules.md](references/classification-rules.md) for detailed guidance on the three-way replied-comment verdict.
 
@@ -106,9 +122,10 @@ See [references/classification-rules.md](references/classification-rules.md) for
    - `not-helpful`: the reply demonstrates Copilot was factually or technically wrong. This is the only replied verdict that counts against Copilot quality.
 4. **Force-push validation pass (do this before finalizing any `declined`/`not-helpful`/`unresolved`):** for every such comment with `ReviewedCommitRewritten = true`, the engineer rewrote the commit Copilot reviewed — an "outdated / already there / not relevant" dismissal may be hiding a comment that was *correct* at the reviewed snapshot. Re-derive Copilot's claim from the immutable `DiffHunk` (and, if needed, `contents?ref=<OriginalCommitId>`) and compare to the merged state. Flip to `helpful` if the merged code already satisfies the claim; keep `declined` only if declined on the merits; assign `not-helpful` **only** if Copilot was wrong *at `OriginalCommitId`*. Never score a rewritten-snapshot comment as `not-helpful` without that confirmation. Full rule + reproducible `gh` commands in [The Force-Push Confound](references/classification-rules.md#the-force-push-confound-mandatory-validation-before-scoring).
 5. Also review `file-changed-elsewhere` and `file-changed-no-line-info` verdicts from Phase 2 to identify re-audit flips
+6. For AuthApp, validate the reviewed iteration's `sourceRefCommit` and final code before calling a finding incorrect. `SnapshotNeedsValidation` or a missing snapshot is not proof that Foundry was wrong. ADO `fixed`, `closed`, `wontFix`, or `byDesign` status alone is not a verdict; require reply or code evidence.
 
 **Outputs** (write to `$env:TEMP\copilot-review-analysis\`):
-- `reply-verdicts.json` — `{ "commentId": "helpful"|"declined"|"not-helpful", ... }` for every replied comment
+- `reply-verdicts.json` — `{ "commentId": "helpful"|"declined"|"incorrect", ... }` for every replied comment; legacy `"not-helpful"` remains accepted. Preserve AuthApp's entire composite `CommentId` as the key.
 - `reaudit-flips.json` — `{ "reauditFlipKeys": ["repo/prNum/filePattern", ...] }` for no-reply comments with strong evidence
 
 See `references/manual-audit-template.json` for the schema.
@@ -137,7 +154,7 @@ What it does:
 2. Load account mapping, reply verdicts (Phase 3), and re-audit flips (Phase 3)
 3. For replied comments: use the AI verdict from `reply-verdicts.json`
 4. For no-reply comments: use the Phase 2 diff verdict, with re-audit overrides
-5. Produce per-engineer and per-repo statistics
+5. Preserve source/platform/URL/snapshot fields and produce per-source, per-engineer, and per-repo statistics. Legacy GitHub rows without source fields are interpreted as GitHub Copilot.
 
 **Output:** `$env:TEMP\copilot-review-analysis\final_classification.json`
 
@@ -175,12 +192,17 @@ The history file is an array of snapshots. Each snapshot contains:
 - Period metadata: `runDate`, `periodStart`, `periodEnd`, `periodDays`
 - Volume: `total`, `commentsPerWeek`, `reviewedPRs`, `avgCommentsPerPR`
 - Rates: `responseRate`, `helpful.pct`, `notHelpful.pct`, `unresolved.pct`, `repliedHelpfulRate`
-- Per-repo breakdown: `repos.{broker,common,msal}.{comments, responseRate, helpfulPct, ...}`
+- Source scope and breakdown: `schemaVersion`, `reviewSources`, `repositories`, `sources.{"GitHub Copilot","Foundry"}` with counts, response rate, adoption, precision denominator, and coverage.
+- Per-repo breakdown: `repos.{broker,common,msal,authapp}.{comments, responseRate, helpfulPct, ...}`
 - Per-engineer breakdown: `engineers.{name}.{comments, responseRate, helpfulPct}`
 
 ### Phase 5: Report Generation
 
 Generate both Markdown and Outlook-compatible HTML reports.
+
+Keep all four repositories in the **same report file** for each format/audience. Include an overall **All AI reviews** summary plus a mandatory **Results by Review Source** comparison. Add a **Review source** column to repository, coverage, engineer/source, and example tables. Use exact labels **GitHub Copilot** and **Foundry**; never call mixed totals "Copilot comments" or "Copilot precision". Compute each source's rates from its own denominator.
+
+For old history without source metadata, identify it as **GitHub Copilot only**. Compare like-for-like source/repository scope. Mark Foundry's first period **new baseline**, not an improvement from zero; adding AuthApp is a scope expansion, not a Copilot trend.
 
 **Style/structure references** (in `assets/` — these contain data from the Jan-Mar 2026 analysis and serve as structural templates, NOT to be copied verbatim):
 - `assets/Copilot-Code-Review-Effectiveness-Report.md` — Markdown reference (~270 lines, ~3300 words)
@@ -224,7 +246,7 @@ If a report doesn't meet these thresholds, re-read the template and identify wha
 **Process:**
 1. Load `final_classification.json`
 2. **Read full template files** (`assets/Copilot-Code-Review-Effectiveness-Report.md` and `assets/Copilot-Code-Review-Effectiveness-Report-Outlook.html`) — do NOT skip this step
-3. Compute aggregate statistics (total, per-repo, per-engineer, four-way breakdown, precision)
+3. Compute aggregate statistics (total, per-source, per-repo, per-engineer/source, canonical verdict breakdown, precision). Display unknown counts if manual classification is unfinished; use **n/a** when a precision denominator is zero.
 4. Load `raw_results.json` to collect full comment text for helpful, declined, and genuinely incorrect examples
 5. Load `~/.copilot-review-analysis/history.json` for trend data. If ≥2 entries exist, generate a **Trend** section comparing the current run with the previous run(s). See [references/report-formatting.md](references/report-formatting.md) for trend section formatting rules.
 6. Generate reports matching the template's section structure, narrative depth, and visual formatting
@@ -245,9 +267,9 @@ The report must present four distinct outcome buckets:
 - **Incorrect** = a replied comment where the engineer demonstrated that Copilot was factually or technically wrong
 - **Unresolved** = insufficient evidence either way (engineer never engaged)
 
-Comments with no reply and no diff evidence are **Unresolved**, not assumed incorrect. Internally, `final-classification.ps1` retains the `not-helpful` verdict for these conservative no-reply cases; the report must split that value by `Replied`: replied `not-helpful` is Incorrect, while unreplied `not-helpful` is Unresolved.
+Comments with no reply and no diff evidence are **Unresolved**, not assumed incorrect. `final-classification.ps1` emits canonical `helpful`, `declined`, `incorrect`, `unresolved`, and `unknown` values. When reading older datasets only, split legacy `not-helpful` by `Replied`.
 
-Report **Copilot precision** as `Helpful / (Helpful + Incorrect)`. Exclude Declined and Unresolved from both numerator and denominator.
+Report **Review precision** as `Helpful / (Helpful + Incorrect)` overall and per source. Exclude Declined, Unresolved, and Unknown from both numerator and denominator. Use **GitHub Copilot precision** or **Foundry precision** only for the respective source.
 
 **Compute precision only after the force-push validation pass.** A comment on a rewritten snapshot can be a correct comment masquerading as a false positive, and it lands directly in the precision denominator. Before finalizing precision, resolve every `ReviewedCommitRewritten = true` comment per [The Force-Push Confound](references/classification-rules.md#the-force-push-confound-mandatory-validation-before-scoring), and report the count of rewritten-snapshot comments as a measurement-integrity note so readers know the denominator was validated.
 
