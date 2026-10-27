@@ -241,16 +241,26 @@ if (-not $PyExe -and $InstallPython -and -not $NoAutoInstallPython -and -not $Py
 
 $haveInfra = $false
 if ($PyExe) {
-  # Python is present. Ensure PyYAML — install it silently via pip, no user action needed.
-  & cmd /c "$PyExe -c ""import yaml"" 2>nul"
-  if ($LASTEXITCODE -eq 0) {
-    $haveInfra = $true
-  } else {
-    Write-Host "  [ ] PyYAML missing - installing via pip ..." -ForegroundColor DarkYellow
-    & cmd /c "$PyExe -m pip install --quiet --disable-pip-version-check pyyaml"
-    & cmd /c "$PyExe -c ""import yaml"" 2>nul"
-    if ($LASTEXITCODE -eq 0) { $haveInfra = $true; Write-Host "  [x] PyYAML installed" -ForegroundColor Green }
+  # Python is present. Ensure bootstrap-critical packages before running infra.
+  $requiredPyPackages = @(
+    @{ Name = "PyYAML"; PipName = "pyyaml"; ImportCheck = "import yaml" },
+    @{ Name = "tzdata"; PipName = "tzdata"; ImportCheck = "from zoneinfo import ZoneInfo; ZoneInfo('America/Los_Angeles')" }
+  )
+  $missingInfraPackages = @()
+  foreach ($pkg in $requiredPyPackages) {
+    & cmd /c "$PyExe -c ""$($pkg.ImportCheck)"" 2>nul"
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "  [ ] $($pkg.Name) missing - installing via pip ..." -ForegroundColor DarkYellow
+      & cmd /c "$PyExe -m pip install --quiet --disable-pip-version-check $($pkg.PipName)"
+      & cmd /c "$PyExe -c ""$($pkg.ImportCheck)"" 2>nul"
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "  [x] $($pkg.Name) installed" -ForegroundColor Green
+      } else {
+        $missingInfraPackages += $pkg.Name
+      }
+    }
   }
+  if ($missingInfraPackages.Count -eq 0) { $haveInfra = $true }
 }
 
 $ok = $true
@@ -266,7 +276,7 @@ if (-not $haveInfra) {
     Write-Host "      Install Python 3.9+ ('winget install Python.Python.3.12' or https://aka.ms/python)," -ForegroundColor DarkYellow
     Write-Host "      reopen your terminal, then re-run setup." -ForegroundColor DarkYellow
   } else {
-    Write-Host "  [ ] PyYAML ... could not be installed automatically" -ForegroundColor Yellow
+    Write-Host "  [ ] Python bootstrap dependencies (PyYAML/tzdata) ... could not be installed automatically" -ForegroundColor Yellow
   }
   $ok = $false
 } else {
