@@ -353,7 +353,9 @@ def test_init_json_persists_once_and_hands_off_to_entry_gate(
     assert output["ccd_conflict"] == ("2026-11-18" if override == "2026-11-18" else None)
     assert output["phase0_open"] == "2026-11-04"
     assert not output["readiness_signed"] and not st.readiness_items and not st.steps
-    assert output["next_action"] == "run_entry_gate" and output["continue_automatically"]
+    assert output["next_action"] == "provision_startup_automation" and output["continue_automatically"]
+    assert not output["startup_complete"]
+    assert output["work_dispatch"]["pending_work"][0]["key"] == "automation:push-reminders"
     assert output["checklist_command"] == "checklist --release 2026-11 --attest-prompt --json"
     assert st.workflow_revision is not None
     events_path = path.parent / "events.jsonl"
@@ -1135,6 +1137,8 @@ def test_gate_info_command_renders_and_handles_unknown():
 
 def _run_remove_rc_tags_command(command_module, cli_common, args, submit):
     from tools import pipelines as P
+    from tests._automation import seed_driver
+    seed_driver(args.runs_root, cli_common.load_state(args.runs_root, args.release), args.config)
 
     pending = {
         "approval_id": "approval-555",

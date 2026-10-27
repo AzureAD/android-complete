@@ -171,6 +171,11 @@ record real results and re-evaluate. Do not require another "run entry gate" req
 or ask the owner to perform Scout-owned checks. A future pre-flight date does not defer
 entry readiness. Stop at a real permission/input/repair issue or required attestation,
 not an initialization success message. Show one fresh full table at that actual handoff.
+Once entry clears, continue the SAME exhaustion rule across every phase using
+`work_dispatch.pending_work` and `status --release <id> --handoff --json --no-pipeline-check`.
+Exit 2 means finish independent work before an owner question, not only during entry.
+Never invent an `--as-of` date to evade a future phase; an explicit diagnostic clock
+does not authorize early sends, uploads or release rescheduling.
 The same obligation resumes after a connection recheck/restart or a status/continue
 request. Follow `readiness_dispatch` from init/status/next or `dispatch` from
 checklist JSON; these all carry the same actionable probes and record commands.
@@ -181,17 +186,30 @@ ask only at the permitted handoff. Never bypass a real host consent prompt.
 
 The release id is just `YYYY-MM`. **You compute it — never ask the user to type the format.** Work out the current month from today (e.g. today 2026-07 → `2026-07`).
 
-When no release is active (or the user says "start a release"), call **`m_ask_user`** with clickable options:
-- **"Current month (`<YYYY-MM>`)"** ← recommended
-- **"A different month"**
+When no release is active (or the user says "start a release"), the **first start contract is mandatory**: explicitly define and confirm **all three**
+1) the **android-complete path** (`<AGENT_ROOT>`),
+2) the **label month** (ship-month display name), and
+3) the **CCD date**.
 
-Pick current → `init --release <id>` after the setup prerequisite check passes. Pick different → follow-up `m_ask_user` free-text (hint: "e.g. next month, or 2026-08"); accept natural answers ("this month", "August") and do the date math yourself. Runs are real — for test runs the engineer keeps a `mocks.local.yaml` (skip/redirect/inject per step; see `mock-spec`).
+Use this sequence:
+1. Resolve/read back `<AGENT_ROOT>` and require explicit confirmation that the path is correct for this machine before release initialization.
+2. Run `preview-release --json` and present candidate chips that include both values together (`<ship_label>` + `CC <ccd_pretty>`).
+3. If user picks a candidate, run a second `m_ask_user` to confirm/edit the pair:
+   - "Use `<ship_label>` + `<ccd_pretty>`"
+   - "Change CCD date"
+   - "Change label month"
+   - "Change both"
+4. If the user says shorthand like "oct 26", treat it as ambiguous and require explicit resolution of both month/date fields; never silently map it.
+5. Only after path + month + CCD are explicit do you initialize (`init --release <id>`), then apply requested overrides (`set-ccd` and/or `set-target-month`) with their required gated flow.
+
+Runs are real — for test runs the engineer keeps a `mocks.local.yaml` (skip/redirect/inject per step; see `mock-spec`).
 
 For machine branching use `init --release <id> --json` with the same supported
 owner/timezone flags. It returns `initialized`, persisted release metadata,
-`phase0_open`, `readiness_signed`, `next_action:run_entry_gate`,
-`continue_automatically:true` and `checklist_command`. Run the returned checklist
-after reminder registration, then dispatch its pending checks in this same turn.
+`phase0_open`, `readiness_signed`, `next_action:provision_startup_automation`,
+`startup_complete:false`, `work_dispatch`, `continue_automatically:true` and
+`checklist_command`. Provision/reconcile the mandatory driver, then run the returned
+checklist and dispatch its pending checks in this same turn.
 Default output remains human-readable. Existing releases are never overwritten,
 including with `--force`; inspect the existing run instead of reinitializing it.
 If another command's flags are uncertain, read that subcommand's `--help` first;
@@ -199,7 +217,7 @@ do not append `--json` indiscriminately or treat a syntax retry as release progr
 
 `init` records the **release owner** (the engineer running it) from the signed-in `az` user; reminders email that address. Pass `--owner-email`/`--owner-name` for a richer profile (e.g. from `workiq_get_my_profile`), or change later with `set-owner`. Never hardcode a recipient.
 
-**The release NAME (ship month) is confirmed UP FRONT, in the single start prompt — not again after `init`.** A release is named for the month it **ships**, which is the code-complete month **+ 1** — a release whose CCD is in September is the **"October" release**. The start prompt (see SKILL.md → "start a release") already shows the user the ship-month name **and** the CCD date together (from `preview-release`) and gets their confirmation, so by the time you call `init` the name is settled. `init` stores it as `target_month` (e.g. `2026-10`) and prints it ("Release name: October 2026 release") — **do NOT ask a second time.** This name is what every doc/comms step uses (bug-bash invite, announcements, the payload wiki page). If the user later wants a *non-standard* display name (rare — the ship-month default is almost always right), override it with `set-target-month --release <id> --month <YYYY-MM>` (display-only — it does NOT touch `release_id`, the CCD, branches, or scheduling).
+**Path, release NAME (ship month), and CCD are confirmed UP FRONT, before initialization.** A release is named for the month it **ships**, which is the code-complete month **+ 1** — a release whose CCD is in September is the **"October" release**. The start flow (see SKILL.md → "start a release") must first confirm `<AGENT_ROOT>`, then show ship-month name **and** CCD together and require explicit confirmation/edit for both. `init` stores/prints the default ship label, and any non-default label month is then applied with `set-target-month --release <id> --month <YYYY-MM>` (display-only — it does NOT touch `release_id`, CCD, branches, or scheduling). Any non-default CCD is applied with `set-ccd` preview → confirm.
 
 ## Ensure push reminders exist (per release — provisioned at start, torn down at close)
 
@@ -227,7 +245,42 @@ do not append `--json` indiscriminately or treat a syntax retry as release progr
    ever-claimed payload automatically, even after a known-not-sent result. Investigate
    suppressed source-changed completion without re-sending.
 
-For every automation below, use this **recoverable provisioning protocol**:
+For every declared worker below, use this **idempotent desired-state protocol** at
+startup and on later operational release entries. `automation obligations --json`
+returns an `ensure` list even for currently registered workers: revalidate them
+against actual Scout state, not a historical id. A scope-limited worker may repair
+the shared driver plus workers in its own scope; it must not run unrelated phases.
+
+1. Obtain the canonical `provider_spec` and `registration` from `automation plan --json`.
+   Write the exact spec once to a temporary JSON file outside release state.
+   Declared workers do NOT need a separate prepare: `reconcile-create --ensure`
+   atomically prepares/reconciles the desired identity. Existing custom/manual
+   workers retain the explicit reviewed prepare protocol, never automatic ensure.
+2. Read a fresh exhaustive `m_list_automations` and full `m_get_automation` details.
+   Save `{observed_at:<UTC>,complete:true,automations:[{id,spec}]}` to another temp
+   file. Missing/failed/partial reads are NOT proof of absence.
+3. Run `automation reconcile-create --release <id> --slug <slug> --ensure --claim
+   --executor <session> --spec-file <exact.json> --observed-file <fresh.json> --json`
+   (`--on-demand <slug>` for on-demand workers). Only `permission_to_create:true`
+   permits `m_create_automation` with the EXACT returned spec.
+   An unchanged live worker is reused, including a provably unchanged frozen spec
+   after source code updates; no live settings are silently rewritten.
+   Fresh complete absence of a settled generation permits a replacement without
+   owner reset. Old IDs/intents/receipt history and the observation digest survive.
+   Claimed/uncertain creates/deletes, ambiguous or deliberately disabled/modified
+   live workers never authorize another create. Historical IDs/names remain checked
+   so a late old generation cannot be ignored as a new identity.
+4. Immediately acknowledge `automation create-result` with its owning attempt,
+   exact spec file and actual provider receipt. Repeated ensure is safe and creates
+   no second worker. Delete private temporary files only after acknowledgement.
+5. Respect desired lifecycle timing: on-demand work needs its durable trigger;
+   completed objectives/terminal releases are not recreated. Never roll an expired
+   CCD one-shot into another year. Halts suspend desired-state creation. Shared/manual
+   workers survive. If the sole driver was deleted, repair runs at the next active
+   Scout operational interaction or another existing callback—not while nothing runs.
+
+The lower-level **explicit prepare protocol** remains available for custom workers
+and exact owning recovery; it is not a prerequisite that should block declared ensure:
 1. Obtain the canonical `provider_spec` and `registration` from `automation plan --json`.
    All seven workers, including push/daily email, are defined there; do not reconstruct
    prompts from prose. A custom worker needs an explicit complete spec. Persist its
@@ -249,8 +302,9 @@ For every automation below, use this **recoverable provisioning protocol**:
    Never guess defaults or omit unmatched workers when asserting a complete list.
 3. An exact complete-spec match is adoptable only without unresolved ownership.
    Recorded ID OR reviewed name matches prevent renamed workers appearing absent.
-   Partial, mismatched, missing, duplicate, creating/uncertain/deleting/delete_uncertain
-   observations grant no create permission. Call `m_create_automation` only when
+   Failed/partial reads, live mismatches/duplicates and unresolved operation ownership
+   grant no create permission. Routine proven deletion of a settled declared worker
+   is recovered by --ensure above. Call `m_create_automation` only when
    `permission_to_create:true`, passing **exactly** returned `spec`, no registry-only kwargs.
 4. Immediately record `automation create-result --release <id> --slug <slug>
    --attempt-id <attempt> --outcome created --id <provider-id> --evidence
@@ -261,13 +315,33 @@ For every automation below, use this **recoverable provisioning protocol**:
    Record positive non-creation as `not_created`; timeouts or
    unknown outcomes as `uncertain`. Never automatically retry an unresolved claim.
 5. Identical prepare preserves the entire existing entry, including owner/ID/status.
-   Changed specs cannot replace an existing intent, even active/prepared. Restore the
-   exact reviewed source/spec to acknowledge an old claim, or safely retire it with
-   the owner. Registry schema v3 rejects older schemas; no silent migration/rehash.
+   Claimed/live specs are never silently replaced. An absent settled or unattempted
+   generation may adopt the current canonical intent through --ensure with fresh
+   absence proof and preserved history; old owned claims still need their exact spec.
+   Registry schema v3 rejects older schemas; no migration or blind rehash.
    Provider defaults are explicit in the plan (including model, enabled, oneShot,
    triggerType, conditionCheckInterval, browserHeadless and teamsNotify).
 
 Right after `init`, reconcile the **push-reminder automation** for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
+This is the whole-release hourly DRIVER, not an optional reminder. Its declarative
+`required_on_start:true` is checked against the release-specific automation registry.
+Every CLI start/checklist/status/next/tick path exposes this obligation, and
+`status --handoff` refuses an incomplete startup summary while provisioning is executable.
+`next`/`tick` cannot advance phases until active acknowledged creation or exact-provider
+adoption is recorded. Merely preparing an intent, claiming a create, tool availability,
+or signing readiness is not proof. Creating/uncertain/deleting/missing/blocked states
+retain their existing ownership and require the normal reconciliation/recovery.
+Never create a second driver to get around them.
+
+Run `automation obligations --release <id> --json` and the exact canonical plan below.
+Inspect fresh actual Scout list/details before creating or recovering. Registry
+receipts are historical proof, not live availability: a deleted/disabled provider
+worker must be reconciled, not described as running. For actual host consent/input
+on a queued startup task, guarded status may use
+`--hold-step "automation:push-reminders=<actual reason>"`; state remains incomplete
+and no create/retry permission is granted. A halt/cancel/runtime hold still prevents
+new setup work; terminal releases do not provision another driver.
+
 Use `automation plan --release <id> --slug push-reminders --json` before the CCD gate.
 - **slug:** `push-reminders`
 - **name:** `<YYYY-MM> · Release-wide — push reminders`

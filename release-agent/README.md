@@ -1017,10 +1017,58 @@ python -m orchestrator.cli status --release 2026-07
 Or in Scout: **`/release-agent`**.
 
 `init --json` returns initialization metadata and an immediate readiness handoff
-(`next_action:run_entry_gate`, `continue_automatically:true`, `checklist_command`).
+(`next_action:provision_startup_automation`, `startup_complete:false`,
+`work_dispatch`, `continue_automatically:true`, `checklist_command`).
 Run that checklist and its automatic checks before advancing; initialization does
 not sign readiness or run phase work. Omit `--json` for human-readable output.
 Existing release history is never overwritten, including with `--force`.
+
+The configured `push-reminders` worker is the whole-release hourly driver, not an
+optional reminder. `required_on_start:true` makes its release-specific provisioning
+a runtime obligation. Init/checklist/status/next/tick expose missing/prepared or
+unresolved driver setup. Runtime next/tick does not execute phases until active
+registration has an owning creation acknowledgement or exact-provider adoption
+receipt. Readiness probes/signing do not substitute for this proof; no extra human
+attestation is added.
+
+Provision only through the existing canonical plan, prepare, fresh exhaustive
+Scout list/details, reconcile-create and owning create-result lifecycle.
+Only `permission_to_create:true` permits creation. Unknown, deleting, missing or
+duplicate/mismatched identities retain their ownership and require recovery,
+never a second driver. Status guards never acknowledge a create or grant permission.
+An actual startup input/consent need can be shown with a transient guarded
+`--hold-step "automation:push-reminders=actual reason"`; startup remains incomplete.
+Registry receipts are not a live provider health check; fresh startup/recovery
+observations must reconcile a removed or disabled provider worker.
+Terminal releases do not create another driver; global halts/cancellations remain
+enforced. Pure domain engines without a run-store reader have no registry context;
+the runtime loader binds the actual selected run store, never an inferred path.
+
+Phase dispatch uses the SAME scheduler-derived `work_dispatch` contract in every
+phase, sequential or parallel, including future configured phases. `pending_work`
+contains executable engine/Scout commands; owner `action`/`gate` focus is not a
+dispatch veto. After each result, drain newly eligible work before owner handoff.
+`next --pending-only --json` does not automatically retry failed, owned or in-flight
+engine work. Checked compound continuations remain visible through their original
+adapter; unknown provider results require recovery, not repeated writes.
+
+`status --handoff --json --no-pipeline-check` returns exit 2 while executable work
+remains. This universal guard also delegates unsigned entry to readiness dispatch.
+Actual Scout input/consent/recovery boundaries can be reported with
+`--hold-step "phase.step=actual reason"` after the owning preview/read and after
+independent work. These transient, host-reported reasons do NOT complete a step,
+prove a provider result, change state or authorize writes/retries/approvals.
+They cannot hide unattempted engine work. Halts/cancellation/denied gates,
+dependencies, phase/fire-time windows and runtime/integrity holds retain priority.
+Real host consent pauses immediately. A simulated `--as-of` view never authorizes
+early notifications or reschedules the release.
+
+Ordinary status/next, `step-action`, and tick/notify JSON expose that contract;
+phase status headlines prioritize remaining Scout work over an owner decision.
+New worker prompts carry the same rule; existing live workers are not silently
+updated or replaced. Scope-limited notification/poll workers keep their scope.
+The guard is a CLI/host contract, not an OS-level guarantee that the host model
+cannot return early.
 
 Readiness dispatch is shared by all entry paths, including connection recovery,
 ordinary `checklist --verify`, `status`, `next` and `resume`. Python verification

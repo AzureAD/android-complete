@@ -89,6 +89,28 @@ def kind_of(entry: dict) -> str:
     return entry.get("kind")
 
 
+def has_creation_receipt(entry: dict) -> bool:
+    """A saved id alone is not acknowledged creation or exact-provider adoption."""
+    return bool(
+        entry.get("status") == "active" and entry.get("id") and entry.get("registered_at")
+        and (entry.get("adopted_at") or any(
+            attempt.get("status") == "created" and attempt.get("evidence")
+            and attempt.get("acknowledged_at") for attempt in entry.get("attempts", [])))
+    )
+
+
+def provider_check_fresh(entry: dict) -> bool:
+    stamp = entry.get("adopted_at") or entry.get("registered_at")
+    if not isinstance(stamp, str):
+        return False
+    try:
+        checked = datetime.fromisoformat(stamp)
+        now = datetime.fromisoformat(_now())
+    except ValueError:
+        return False
+    return checked.tzinfo is not None and 0 <= (now - checked).total_seconds() <= 300
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -223,7 +245,8 @@ class AutomationRegistry:
             raise ValueError("Active automation entry requires provider id")
         for attempt in entry["attempts"]:
             if (not isinstance(attempt, dict)
-                    or set(attempt) - {"id", "owner", "started_at", "status", "evidence", "acknowledged_at"}
+                    or set(attempt) - {"id", "owner", "started_at", "status", "evidence", "acknowledged_at",
+                                       "provider_id", "provider_name", "intent_hash", "registered_at", "adopted_at"}
                     or any(not isinstance(attempt.get(key), str) for key in ("id", "owner", "started_at", "status"))
                     or "evidence" in attempt and (
                         not isinstance(attempt["evidence"], str)
@@ -231,6 +254,13 @@ class AutomationRegistry:
                         or len(attempt["evidence"]) != 71
                     )):
                 raise ValueError("Invalid automation attempt; only digest evidence may be persisted")
+            if "provider_id" in attempt and (
+                    not isinstance(attempt["provider_id"], str) or not attempt["provider_id"].strip()):
+                raise ValueError("Historical automation provider identity must be non-empty text")
+            if attempt["status"] in ("provider_absent", "intent_refreshed") and (
+                    len(attempt.get("intent_hash", "")) != 64 or not attempt.get("evidence")
+                    or not attempt.get("provider_name") or not attempt.get("acknowledged_at")):
+                raise ValueError("Automation replacement history requires prior intent and observation proof")
 
     def _path_for(self, entry: dict) -> str:
         if entry["scope"] == "release":
@@ -383,13 +413,38 @@ class AutomationRegistry:
         spec: dict,
         executor: str = None,
         claim: bool = False,
+        ensure: bool = False,
+        registration: dict = None,
     ) -> dict:
+        spec = provider_spec(spec)
+        desired = None
+        if ensure:
+            if not isinstance(registration, dict) or set(registration) != {
+                    "name", "release", "purpose", "steps", "kind", "schedule", "slug", "cleanup_when"}:
+                raise ValueError("Ensure requires exact canonical release registration metadata")
+            desired = self._spec(**registration, shared=False, spec=spec)
+            if desired["key"] != key or _manual(desired):
+                raise ValueError("Ensure cannot manage shared/manual or foreign automation identities")
         with file_lock(self.lock_path, _LOCK_TIMEOUT):
             _, entry = self._find_unlocked(key=key)
             if not entry:
-                raise ValueError("Automation intent is not prepared")
-            spec = self._verify_spec(entry, spec)
-            rows = self._observed_unlocked(entry, observations)
+                if not ensure:
+                    raise ValueError("Automation intent is not prepared")
+                entry = desired
+                new_intent = True
+            else:
+                new_intent = False
+                if ensure and _manual(entry):
+                    raise ValueError("Ensure cannot replace shared/manual automation ownership")
+            if ensure and any(
+                    other["key"] != key and other["name"] in (entry["name"], desired["name"])
+                    for _, other in self._all_unlocked()):
+                raise ValueError("Automation name is owned by another registry identity; do not create a duplicate")
+            if not ensure:
+                spec = self._verify_spec(entry, spec)
+            rows = self._observed_unlocked(
+                entry, observations, additional_names=(desired["name"],) if ensure else (),
+                new_intent=new_intent)
             observed = sorted(row["id"] for row in rows)
             if entry["status"] in _OWNED:
                 return {
@@ -409,7 +464,13 @@ class AutomationRegistry:
                 }
             if observed:
                 observed_id = observed[0]
-                if (rows[0]["spec"] != spec
+                frozen_match = _intent_hash(entry, rows[0]["spec"]) == entry["intent_hash"]
+                fresh_match = rows[0]["spec"] == spec
+                if (ensure and not frozen_match and fresh_match
+                        and self._unattempted(entry)):
+                    entry = self._replace_absent(entry, desired, observations, executor)
+                    frozen_match = True
+                if ((not frozen_match if ensure else not fresh_match)
                         or entry.get("id") not in (None, observed_id)):
                     entry["status"] = "blocked"
                     entry["observed_ids"] = observed
@@ -438,7 +499,28 @@ class AutomationRegistry:
                     "permission_to_create": False,
                     "adopted": True,
                     "entry": deepcopy(entry),
+                    "desired_spec_drift": rows[0]["spec"] != spec,
                 }
+            replaced = False
+            if ensure:
+                barrier = self._creation_barrier_unlocked(entry)
+                if barrier:
+                    return {"status": entry["status"], "permission_to_create": False, "reason": barrier}
+                settled = (
+                    entry["status"] in ("active", "missing")
+                    and has_creation_receipt({**entry, "status": "active"})
+                    and (not entry["attempts"] or entry["attempts"][-1]["status"] in (
+                        "created", "not_deleted", "confirmed_absent", "provider_absent", "intent_refreshed", "not_created"))
+                )
+                if settled or self._unattempted(entry):
+                    if settled or _intent_hash(entry, spec) != entry["intent_hash"]:
+                        entry = self._replace_absent(entry, desired, observations, executor)
+                        replaced = True
+                else:
+                    return {
+                        "status": entry["status"], "permission_to_create": False,
+                        "reason": "No settled, owned absence proof; preserve the original operation and use recovery.",
+                    }
             if entry["status"] == "active":
                 entry["status"] = "missing"
                 entry["missing_at"] = _now()
@@ -458,11 +540,14 @@ class AutomationRegistry:
                 return {"status": entry["status"], "permission_to_create": False,
                         "reason": barrier}
             if not claim:
+                if ensure:
+                    self._upsert_unlocked(entry)
                 return {
                     "status": "prepared",
                     "permission_to_create": False,
                     "create_available": True,
                     "entry": deepcopy(entry),
+                    "replacement_available": replaced,
                 }
             if not executor or not executor.strip():
                 raise ValueError("executor is required to claim automation creation")
@@ -480,7 +565,31 @@ class AutomationRegistry:
                 "attempt_id": attempt["id"],
                 "permission_to_create": True,
                 "spec": spec,
+                "replacement": replaced,
             }
+
+    @staticmethod
+    def _unattempted(entry):
+        return bool(entry["status"] == "prepared" and not entry.get("id") and (
+            not entry["attempts"] or entry["attempts"][-1]["status"] in (
+                "not_created", "confirmed_absent", "provider_absent", "intent_refreshed")))
+
+    @staticmethod
+    def _replace_absent(entry, desired, observations, executor):
+        """Retain prior identities/receipts; never treat this as provider delivery."""
+        now = _now()
+        event = {
+            "id": uuid.uuid4().hex, "owner": executor or "automation-reconciler",
+            "started_at": now, "acknowledged_at": now,
+            "status": "provider_absent" if entry.get("id") else "intent_refreshed",
+            "evidence": _evidence_hash(json.dumps(observations, sort_keys=True)),
+            "intent_hash": entry["intent_hash"], "provider_name": entry["name"],
+            **{field: entry[field] for field in ("registered_at", "adopted_at") if entry.get(field)},
+        }
+        if entry.get("id"):
+            event["provider_id"] = entry["id"]
+        return {**deepcopy(desired), "prepared_at": entry["prepared_at"],
+                "attempts": [*deepcopy(entry["attempts"]), event]}
 
     def create_result(
         self,
@@ -519,6 +628,7 @@ class AutomationRegistry:
                     status="active",
                     registered_at=_now(),
                 )
+                attempt["provider_id"] = entry["id"]
             elif outcome == "not_created":
                 entry["status"] = "prepared"
             else:
@@ -534,7 +644,7 @@ class AutomationRegistry:
         return spec
 
     @staticmethod
-    def _observed_unlocked(entry: dict, observations: dict) -> list:
+    def _observed_unlocked(entry: dict, observations: dict, *, additional_names=(), new_intent=False) -> list:
         """An exhaustive, timestamped read; match recorded id OR reviewed name."""
         if (not isinstance(observations, dict)
                 or set(observations) != {"observed_at", "complete", "automations"}
@@ -547,6 +657,8 @@ class AutomationRegistry:
             if observed_at.tzinfo is None or not 0 <= (now - observed_at).total_seconds() <= 300:
                 raise ValueError()
             for field in ("prepared_at", "registered_at", "adopted_at", "missing_at"):
+                if new_intent and field == "prepared_at":
+                    continue
                 if entry.get(field) and observed_at < datetime.fromisoformat(entry[field]):
                     raise ValueError()
             if entry["attempts"]:
@@ -557,6 +669,8 @@ class AutomationRegistry:
                     raise ValueError()
         except (ValueError, TypeError):
             raise ValueError("Provider observation is stale or has an invalid UTC timestamp") from None
+        historical_ids = {attempt["provider_id"] for attempt in entry["attempts"] if attempt.get("provider_id")}
+        historical_names = {attempt["provider_name"] for attempt in entry["attempts"] if attempt.get("provider_name")}
         matched, seen = [], set()
         for row in observations["automations"]:
             if (not isinstance(row, dict) or set(row) != {"id", "spec"}
@@ -566,7 +680,8 @@ class AutomationRegistry:
             seen.add(row["id"])
             actual = provider_spec(row["spec"])
             if (row["id"] == entry.get("id") or row["id"] in entry.get("observed_ids", [])
-                    or actual["name"] == entry["name"]):
+                    or row["id"] in historical_ids
+                    or actual["name"] in {entry["name"], *additional_names, *historical_names}):
                 matched.append({"id": row["id"], "spec": actual})
         return matched
 

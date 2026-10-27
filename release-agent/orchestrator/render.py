@@ -95,13 +95,10 @@ def readiness_followup(chk: dict, release_id: str) -> str:
     if plan["pending_auto_checks"]:
         lines.append("**Scout queue (not owner tasks):**")
         for item in plan["pending_auto_checks"]:
-            probe = item["probe"]
-            target = probe.get("command") or probe["tool"]
-            lines.append(f"- `{item['id']}`: `{target}`")
+            lines.append(f"- `{item['id']}`: queued for Scout verification")
     if plan["next_action"] != "complete":
-        lines.append(f"Continue with `{plan['checklist_command']}`; a printed table is not completion.")
-        lines.append(f"Before returning or asking, run `{plan['handoff_command']}`. "
-                     "Exit 2 means execute the remaining queue, not return a started summary.")
+        lines.append("Readiness continues through the AI agent until all Scout checks are exhausted.")
+        lines.append("Scout may still need to finish executable checks before control can return to you.")
     return "\n".join(lines)
 
 
@@ -159,6 +156,14 @@ def readiness_table(chk: dict, release_id: str) -> str:
         lines.append("**Outstanding:** " + ", ".join(pending))
     if not chk["signed"]:
         lines.extend(["", readiness_followup(chk, release_id)])
+    startup = chk.get("startup_automation")
+    if startup is not None and not startup["complete"]:
+        lines.extend(["", "**Startup incomplete — the release-wide automation is not active.**"])
+        lines.extend(f"- `{item['slug']}`: startup automation must be provisioned by the AI agent."
+                     for item in startup["required"])
+        lines.extend(f"- `{item['slug']}`: {item['status']}; preserve its existing ownership and reconcile."
+                     for item in startup["recoveries"])
+        lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
     return "\n".join(lines)
 
 
@@ -342,6 +347,26 @@ def _pipelines_line(r: dict) -> str:
     return " · ".join(parts)
 
 
+def work_followup(plan: dict) -> str:
+    if not plan:
+        return ""
+    lines = [plan["instruction"]]
+    if plan.get("pending_work"):
+        lines.append("**Scout queue — finish before owner handoff:**")
+        lines.extend(f"- `{item['key']}`: queued for Scout execution" for item in plan["pending_work"])
+    for item in plan.get("deferred_work", []):
+        lines.append(f"- `{item['key']}` remains incomplete: {_cell(item['reason'])} (host-reported hold).")
+    if plan.get("pending_work") or plan.get("deferred_work"):
+        lines.append("Scout may still need to finish executable queued work before control can return to you.")
+    startup = plan.get("startup_automation")
+    if startup is not None and not startup["complete"]:
+        lines.append("**Unattended startup is NOT complete.**")
+        lines.extend(f"- `{item['slug']}`: {item['status']}; owning automation recovery is required."
+                     for item in startup["recoveries"])
+        lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
+    return "\n".join(lines)
+
+
 def status_view(r: dict) -> str:
     """Human-readable status: next-action headline → phase map → current-phase steps.
     `r` is Orchestrator.status_report()."""
@@ -398,28 +423,37 @@ def status_view(r: dict) -> str:
                      "Resolve it, or hand the release to someone who can.")
     elif not r["readiness_signed"]:
         lines.append("▣ **Entry gate** — the readiness checklist isn't signed yet.")
+    elif r.get("startup_automation") and not r["startup_automation"]["complete"]:
+        lines.append("⏸ **Startup incomplete — the required release-wide driver is not active.** "
+                     "Provision or reconcile it before phase execution; the release is not running unattended.")
     elif r.get("scheduled"):
         sc = r["scheduled"]
         when = _delta_phrase(sc.get("opens_in_days"))
         lines.append(f"📅 **Scheduled** — **{sc['phase_name']}** opens **{sc.get('opens','')}** "
                      f"({when}). Nothing to do yet.")
+    elif (r.get("work_dispatch") or {}).get("continue_automatically"):
+        lines.append("🤖 **Scout work remains — continue before an owner decision.** "
+                     "Independent tasks are still eligible; the owner-facing hold does not stop them.")
     elif r.get("action"):
         a = r["action"]
         if a.get("execution"):
             lines.append(f"**Execution needs review — {a['step_name']}.** {_execution_guidance(a['execution'])}")
+        elif a.get("reason") == "blocked":
+            lines.append(f"⛔ **Blocked check — {a['step_name']}.** "
+                         "Fix and rerun the owning check, or review an explicit override; "
+                         "a generic completion is not a passing result.")
         else:
             lines.append(f"📌 **Action needed** — you need to: **{a['step_name']}** "
-                         f"(Phase {_phase_num(r, a['phase'])} · {a['phase_name']}). Mark it done when complete.")
+                         f"(Phase {_phase_num(r, a['phase'])} · {a['phase_name']}). "
+                         "Tell the AI agent when complete so it can record the result.")
     elif r["gate"]:
         g = r["gate"]
         if g.get("kind") == "denied":
             lines.append(f"⛔ **Gate denied — {g['step_name']}.** "
                          f"{g.get('reason') or 'Owner review is required before reconsidering.'}")
         else:
-            approval = (f"approve with `{g['approval_command']}`"
-                        if g.get("approval_command") else "approve")
-            lines.append(f"⏸ **Next: your decision** — {approval} or deny **{g['step_name']}** "
-                         f"(Phase {_phase_num(r, g['phase'])} · {g['phase_name']}).")
+            lines.append(f"⏸ **Next: your decision** — approve or deny **{g['step_name']}** "
+                         f"(Phase {_phase_num(r, g['phase'])} · {g['phase_name']}) through the AI agent.")
     elif r.get("scout_pending"):
         pending = set(r.get("scout_pending") or [])
         step = next((s for s in r.get("current_steps", []) if s.get("id") in pending), None)
@@ -429,7 +463,7 @@ def status_view(r: dict) -> str:
     elif r["status"] == "complete":
         lines.append("✔ **Release complete.** All phases done.")
     elif r["status"] == "not_started":
-        lines.append("▶ **Not started yet** — run the next step to begin.")
+        lines.append("▶ **Not started yet** — ask the AI agent to continue when you want to begin.")
     else:
         # in progress, between gates
         nxt = _next_pending_step(r)
@@ -498,6 +532,10 @@ def status_view(r: dict) -> str:
                     if l.get("url"):
                         lines.append(f"🔗 [{l.get('name', 'link')}]({l['url']})  ")
 
+    plan = r.get("work_dispatch") or {}
+    if (plan.get("pending_work") or plan.get("deferred_work")
+            or plan.get("startup_automation") and not plan["startup_automation"]["complete"]):
+        lines.extend(["", work_followup(plan)])
     return "\n".join(lines)
 
 

@@ -32,7 +32,10 @@ def start(capsys, root, monkeypatch):
     assert payload["readiness_dispatch"]["continue_automatically"]
     code, _ = call(capsys, root, "verify", "--release", RID, "--pending-only")
     assert code == 0
-    return C.load_state(str(root), RID)
+    state = C.load_state(str(root), RID)
+    from tests._automation import seed_driver
+    seed_driver(root, state)
+    return state
 
 
 @pytest.mark.parametrize("surface", [

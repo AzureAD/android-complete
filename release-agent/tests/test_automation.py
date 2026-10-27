@@ -216,7 +216,7 @@ def test_on_demand_obligation_survives_trigger_worker_race():
 
     missing = A.provisioning_obligations(st, [], CONFIG)
     assert [item["slug"] for item in missing["required"]] == [
-        "ccd-localization-poller"]
+        "push-reminders", "ccd-localization-poller"]
     assert missing["recoveries"] == []
 
     planned = {item["slug"]: item for item in A.plan(
@@ -229,12 +229,12 @@ def test_on_demand_obligation_survives_trigger_worker_race():
         "status": "active",
     }]
     satisfied = A.provisioning_obligations(st, active, CONFIG)
-    assert satisfied["required"] == []
+    assert [item["slug"] for item in satisfied["required"]] == ["push-reminders"]
     assert satisfied["active"] == ["ccd-localization-poller"]
 
     st.set_step("ccd", "localization", StepState(status="done"))
     settled = A.provisioning_obligations(st, [], CONFIG)
-    assert settled["required"] == []
+    assert [item["slug"] for item in settled["required"]] == ["push-reminders"]
 
 
 def test_push_worker_recovers_on_demand_obligations():
@@ -311,7 +311,7 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
             "--release", rid, "--json"]
         assert cli.main(obligations) == 0
         required = json.loads(capsys.readouterr().out)["required"]
-        assert [a["slug"] for a in required] == ["ccd-localization-poller"]
+        assert [a["slug"] for a in required] == ["push-reminders", "ccd-localization-poller"]
 
 
 def test_cleanup_plan_applies_declared_lifecycle_rules():

@@ -258,7 +258,7 @@ class StatusViewMixin:
         phase map, current-phase steps, current hold, scheduled window, active phase."""
         violations = self.invariant_violations()
         if any(v.severity == "error" for v in violations):
-            return {
+            report = {
                 "release_id": self.state.release_id, "status": "blocked",
                 "owner_email": self.state.owner_email, "owner_name": self.state.owner_name,
                 "ccd": self.state.ccd, "target_month": self.state.target_month,
@@ -278,6 +278,13 @@ class StatusViewMixin:
                 "pipeline_runs": {}, "updated_at": self.state.updated_at,
                 "invariant_violations": [v.as_dict() for v in violations],
             }
+            report["work_dispatch"] = {
+                "pending_work": [], "held_work": [], "deferred_work": [],
+                "next_action": "resolve_release_hold", "continue_automatically": False,
+                "may_return_to_user": True, "permission_to_execute": False,
+                "permission_to_send": False, "instruction": report["blocked_message"],
+            }
+            return report
         selection = self.scheduling()
         from orchestrator.revision import mismatch_reason, revision_id
         revision_problem = mismatch_reason(self)
@@ -324,6 +331,10 @@ class StatusViewMixin:
         # until its wall-clock time arrives, so the every-hour worker doesn't fire it early
         # — its dedicated cron automation runs it at the pinned time.
         scout_pending = list(selection.scout_pending)
+        from orchestrator.dispatch import phase_plan, startup_plan, with_startup, startup_checklist
+        startup = startup_plan(self, selection)
+        work_dispatch = with_startup(phase_plan(self, selection, chk), startup)
+        chk = startup_checklist(chk, work_dispatch)
         return {
             "release_id": self.state.release_id,
             "status": projected_status,
@@ -341,6 +352,8 @@ class StatusViewMixin:
             "readiness_signed": chk["signed"],
             "readiness": chk,
             "readiness_dispatch": readiness_dispatch,
+            "work_dispatch": work_dispatch,
+            "startup_automation": startup,
             "readiness_pending": [i["id"] for i in chk["items"] if not i["satisfied"]],
             "blocked": chk["blocked"] or bool(revision_problem),
             "blocked_items": list(chk["blocked_items"]),

@@ -3,6 +3,8 @@
 _Loaded on demand. How to render the CLI's `status` / `checklist` output._
 
 > **Render as markdown, never as a code block.** Both `checklist` and `status` outputs are already markdown (headings + tables). Paste them into your reply as **normal message content** so Scout renders the table/stepper — do **NOT** wrap them in a ``` code fence. Fencing shows raw text instead of a rendered table. Reproduce faithfully, as live markdown. (This is the core "render CLI output" golden rule — detailed here.)
+>
+> **Hard stop on fenced status output:** if your draft contains ```` ```markdown ```` or any code fence around the status/checklist block, do not send it. Remove the fence and paste the same block as live markdown.
 
 **First exhaust work, then decide what to show.** If entry is unsigned, follow the
 shared readiness dispatch returned by init/status/next/checklist. Ordinary
@@ -15,7 +17,31 @@ Then run `checklist --release <id> --attest-prompt --handoff --json`: exit 2 or
 Only a permitted handoff supplies the final full checklist and real owner question.
 After entry clears, use the normal `status` block.
 
+**All phases share the same guarded handoff.** On a release-advancing turn, inspect
+`work_dispatch.pending_work` from status/next/step-action/tick and execute every
+eligible independent item through its owning protocol before an owner decision.
+The `action`/`gate` focus never overrides that queue. Between host results use
+`next --pending-only` to avoid rerunning recorded failures or in-flight work.
+Then run `status --release <id> --handoff --json --no-pipeline-check`.
+Exit 2 / `work_dispatch.may_return_to_user:false` refuses an early final response.
+For actual Scout input/consent/recovery needs, finish independent work and pass
+`--hold-step "<phase.step>=<actual reason>"` to that same guard. These are transient,
+host-reported holds, not verified receipts, state completion or permission.
+Show deferred reasons with the full table, then ask. Never defer unattempted engine
+work or fabricate a blocker. Real host consent and global release holds retain priority.
+Startup automation entries (`kind:automation`, key `automation:<slug>`) are part of
+that queue. `startup_automation.complete:false` means NEVER claim the release is
+running unattended, even if readiness is signed and phases are future-dated.
+Show the mandatory driver/provisioning or owning recovery requirement explicitly.
+For an ordinary deleted settled driver, execute the idempotent --ensure repair;
+do not return only "driver missing" or ask the owner to clear a registry file.
+At each operational entry inspect the actual provider list/details; never call a
+cached registry id "running" without its fresh check. Unknown operations remain held.
+An actual startup input hold uses `--hold-step "automation:<slug>=<actual reason>"`
+and remains host-reported/incomplete. Active registry receipt is not a live-provider check.
+
 **Mid-release status:** run `status --release <id>` (no `--json`) and show its output as rendered markdown — a next-action headline, a **phase map** (✅ done · ⏸ in progress · 📅 scheduled · ⬜ not started), and the **current phase's steps** table. It logs emitted output, not proof of display in the conversation. Add a sentence before/after, but reproduce the block faithfully; don't re-render from `--json` (that skips the auto-log) and don't invent a layout. Never surface raw engine state names (`holding_gate`, `awaiting_action`, `scheduled`) — the view already translates them ("Waiting for your approval", "Action needed from you", "Scheduled").
+For explicit `/release-agent show status` requests, this rule is mandatory: the only valid response body is the complete markdown block emitted by `status --release <id>` plus optional surrounding prose. A condensed substitute status table is invalid.
 
 **Every release iteration ends with one fresh table.** This means every user-facing
 release turn before a final response or `m_ask_user`, not just a successful advance:
@@ -32,6 +58,9 @@ For readiness prompts, `checklist --release <id> --attest-prompt --handoff --jso
 canonical table in `display_markdown` with its question and answers. Paste that field
 once, then ask for attestation only if `ready:true`. A `ready:false` result is not a
 display exemption at a genuine boundary, nor permission to stop while the queue is executable.
+Never replace `display_markdown` with a condensed/custom variant. If your reply contains a
+table that did not come verbatim from `display_markdown`, treat it as invalid and re-render
+the canonical block before asking anything.
 
 Alongside the table, tell the user exactly what each outstanding step needs (run the scout steps yourself; for `attest` steps spell out what to confirm). Do **not** replace the table with your own summarized list.
 
@@ -56,6 +85,10 @@ next?”**—the response must be actionable, not informational only. Handle one
   machine-verified; it does not approve another gate. Never infer the confirmation.
 - **Blocked check:** show the reason, then offer **Fixed — rerun**, **Override**,
   **Keep blocked**. Override requires a separate free-text reason before `skip`.
+
+If the owner action is discrete, do not use prose-only instructions. The same turn must
+call `m_ask_user` with explicit options. A message ending in "please review/confirm"
+without an options card is invalid.
 
 Never treat “what’s next?” as completion. After a confirmed action, advance, render the
 new status, and prompt for the next focused action. Process multiple holds one at a time.

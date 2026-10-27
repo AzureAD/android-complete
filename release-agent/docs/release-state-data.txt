@@ -719,6 +719,26 @@ readiness_items[<scout-auto-item>].status="needs_input":
   failed retry. Readiness dispatch/may_return_to_user/probe recipes are derived
   output only, never stored as approvals, reusable permissions or display receipts.
 
+work_dispatch (derived output only):
+  All-phase scheduler projection of pending engine/Scout work, held owned/failing/
+  in-flight work, and transient host-reported input/consent/recovery reasons.
+  status --handoff returns exit2 when independent executable work remains.
+  --hold-step only reports actual needs on currently queued Scout steps; no central
+  state, completion, provider receipt, permission or retry grant is written.
+  Standard checked write/notification/effect ownership and human gates are unchanged.
+
+startup_automation (derived from the selected runtime automation registry):
+  required_on_start declarations identify mandatory interval workers. The default
+  push-reminders worker drives the entire release. Missing/prepared entries expose
+  canonical provisioning work; creating/uncertain/missing/blocked/deleting states
+  expose owning recovery. Only active id plus acknowledged creation evidence or
+  exact-provider adoption satisfies startup. A saved id/claim/readiness signature
+  alone does not. Registry receipts are historical proof, not live provider health.
+  No prompts, provider specs, new approval flags or duplicate automation ids are
+  copied into release-state. Runtime next/tick stops phase execution until ready;
+  independent readiness reads remain available. Terminal releases do not recreate
+  a driver. Halt/cancel/denial/integrity holds and actual host consent retain priority.
+
 steps["build_verify.rc_report_publish"].data.publication_handoff:
   Existing checked execution owns a single reviewed connector/browser upload.
   Frozen target, content SHA/size, review/workflow/executor identity and route

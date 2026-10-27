@@ -229,6 +229,7 @@ def cmd_step_action(args):
         out = prepare_step(args, st, orch)
         if out.get("execution_id") or out.get("state_changed"):
             C.save_state(st, args.runs_root, args.release)
+        out["work_dispatch"] = orch.status_report()["work_dispatch"]
         print(_json.dumps(out))
         return 0
     except ValueError as exc:

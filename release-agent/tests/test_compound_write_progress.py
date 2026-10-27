@@ -332,6 +332,15 @@ def test_normal_continue_exposes_checked_adapter_not_generic_override(compound, 
     assert report["action"] is None
     assert report["current_steps"][0]["state"] == "scout"
     assert not report["active_phase"]["steps"][0]["needs_owner"]
+    task, = report["work_dispatch"]["pending_work"]
+    assert task["key"] == f"finalize.{I.ID}" and task["continuation"]
+    assert not report["work_dispatch"]["may_return_to_user"]
+    from orchestrator.dispatch import handoff_plan
+    before = deepcopy(state.steps)
+    held = handoff_plan(report["work_dispatch"], [
+        f"finalize.{I.ID}=Exact provider readback remains unknown; owner recovery required"])
+    assert held["may_return_to_user"] and not held["permission_to_execute"]
+    assert state.steps == before
     outcome = W.continuation(orch, "finalize", I.ID)
     assert outcome.kind == "needs_skill" and "--execute --auto-approve" in outcome.payload["followup_command"]
     args = SimpleNamespace(phase="finalize", step=I.ID, release="r")

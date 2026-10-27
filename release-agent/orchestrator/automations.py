@@ -148,9 +148,15 @@ def validate(config_path: str) -> list:
         slugs.add(slug)
         if set(d) - {
             "slug", "label", "phase", "scope", "steps", "every", "on_demand",
-            "provision_when", "cleanup_when", "purpose", "prompt_kind",
+            "provision_when", "cleanup_when", "purpose", "prompt_kind", "required_on_start",
         }:
             problems.append(f"automation '{slug}' has unknown settings")
+        if "required_on_start" in d and (
+                type(d["required_on_start"]) is not bool
+                or d["required_on_start"] and (d.get("on_demand") or not d.get("every"))):
+            problems.append(f"automation '{slug}' has invalid required_on_start (must be an interval startup worker)")
+        if d.get("required_on_start") and _provider_defaults(config_path).get("enabled") is not True:
+            problems.append(f"automation '{slug}' is mandatory but provider_defaults.enabled is not true")
         provision_when = d.get("provision_when")
         if provision_when is not None and (
             not d.get("on_demand")
@@ -246,21 +252,38 @@ def _prompt_for(spec: dict, release: str) -> str:
         f"intents need owner-reviewed abandon-prepared with fresh absence evidence. "
         f"This is a finally block: "
         f"execute it even on silence, stopped work, or errors. Halts suspend, not delete.")
-    protocol = delivery.PROTOCOL.replace("<release>", release)
+    protocol = delivery.PROTOCOL.replace("<release>", release) + (
+        "\nFor every release-advancing task, inspect work_dispatch after each result. "
+        "A sibling failure/owner gate does not cancel independent pending_work. "
+        "Drain only eligible work through its owning protocol; never bypass scope, consent, "
+        "dependency/time guards or unknown-write recovery. Before returning or asking, run "
+        f"`status --release {release} --handoff --json --no-pipeline-check`. "
+        "Exit 2/may_return_to_user:false means more work, not a final summary. "
+        "For a Scout task genuinely needing input/consent after its preview, or unresolved "
+        "owning recovery, use --hold-step phase.step=<actual-reason> on this read-only guard "
+        "after independent work is exhausted. This is host-reported, not provider-verified; "
+        "it changes no state or authorization. Notification-only/poll workers retain their "
+        "scope and never start unrelated phase work."
+    )
     provisioning = (
         "\nProvision workers only through `automation plan` and the exact complete "
         "provider_spec/registration it returns. Write the exact provider_spec once to "
-        "a fresh temporary JSON file outside release state, then call `automation prepare` "
-        "with --spec-file <path>. Obtain a fresh exhaustive provider list and full details; "
+        "a fresh temporary JSON file outside release state. For declared desired workers "
+        "use idempotent `automation reconcile-create --ensure`; it prepares a missing intent "
+        "and recovers a proven-absent settled generation without an owner reset. "
+        "Custom/manual workers retain explicit automation prepare and their own reviewed lifecycle. "
+        "Obtain a fresh exhaustive provider list and full details; "
         "losslessly write {observed_at:<UTC>,complete:true,automations:[{id:<id>,"
         "spec:<complete-provider-kwargs>}]} to a second temporary JSON file. Call "
         "`automation reconcile-create` with the SAME --spec-file, --observed-file, "
-        "--claim and --executor. Only permission_to_create:true permits "
+        "--ensure --claim and --executor for declared workers. Only permission_to_create:true permits "
         "m_create_automation with exactly returned spec. Immediately acknowledge "
         "create-result with owning --attempt-id, the SAME --spec-file and receipt evidence "
         "of that exact invocation. Unknown outcomes are uncertain, never retry them. "
         "Pass --on-demand <slug> for on-demand provisioning. Never register directly "
-        "or update in place; review delete/recreate. Delete both temporary files only "
+        "or update a live worker in place. Disabled/mismatched/duplicate live workers require review. "
+        "Absent settled generations preserve prior ids, intent hashes and observation digests. "
+        "Delete both temporary files only "
         "after the owning result is durably recorded. Do not persist prompts/specs or "
         "raw provider responses in release state, registry, journals, or evidence text."
     )
@@ -273,7 +296,15 @@ def _prompt_for(spec: dict, release: str) -> str:
             f"2. Loop `next --release {release} --json`; resolve scout_pending via "
             f"`step-action --release {release} --phase <phase> --step <step>`. "
             "Non-notification gather/trigger actions retain domain follow-ups and "
-            "owning effect recovery; never blind-record pass or start another write.\n"
+            "owning effect recovery; never blind-record pass or start another write. "
+            "Every response includes work_dispatch: drain all pending_work in every phase, "
+            "even beside a sibling block or pending owner gate. Continue engine tasks with "
+            f"`next --release {release} --pending-only --json`, not a blind failed-step retry. "
+            f"Before an owner handoff run `status --release {release} --handoff --json --no-pipeline-check`; "
+            "exit 2/may_return_to_user:false requires finishing the queue. If a checked preview "
+            "or host tool needs actual input/consent/recovery, finish independent work then "
+            "use --hold-step phase.step=<exact-reason> on that read-only handoff. This never "
+            "completes a step or authorizes sending/replaying; preserve unknown ownership.\n"
             f"3. Run `automation obligations --release {release} --json` after the drain "
             "and on every later run, even when scout_pending is empty. Provision every "
             "required on-demand worker through its exact plan; reconcile any listed "
@@ -384,6 +415,7 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             # start — the skill creates them only when their trigger condition arises
             # (an in-flight re-triggered RC) and tears them down when it clears.
             "on_demand": bool(d.get("on_demand")),
+            "required_on_start": bool(d.get("required_on_start")),
             "provision_when": d.get("provision_when"),
             "cleanup_when": d.get("cleanup_when"),
         }
@@ -393,6 +425,15 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             f"Work from the authoritative release-agent root: {agent_root}. "
             "All command fragments below mean `python -m orchestrator.cli` in this root. "
             "Use ONE authoritative runs directory, never a copied release snapshot.\n"
+            f"At each operational run first read `automation obligations --release {release} --json`. "
+            "Reconcile the whole-release driver and currently desired workers within this worker's scope "
+            "from its ensure list using a fresh exhaustive Scout list/details and canonical exact spec. "
+            "Use automation reconcile-create --ensure --claim; reuse an existing exact worker, recreate "
+            "only a proven-absent settled worker, and acknowledge its owning create-result. "
+            "A historical registry id is not live presence. Never repeat uncertain creation/deletion, "
+            "replace shared/manual workers, resurrect completed objectives or roll missed CCD jobs "
+            "into another year. Scope-limited poll/notification workers may repair the shared driver "
+            "but never start unrelated phase work. Real host consent still applies.\n"
             + spec["prompt"]
         )
         from orchestrator.registry import provider_spec
@@ -433,28 +474,101 @@ def _provision_rule_matches(state, rule: str) -> bool:
     return False
 
 
+def _producer_applied(state, spec):
+    for record in state.notification_deliveries.values():
+        if record.get("status") != "sent" or (record.get("completion") or {}).get("status") != "applied":
+            continue
+        descriptor = record.get("descriptor") or {}
+        request = ((descriptor.get("completion") or {}).get("automation") or {}).get("on_demand")
+        scope = descriptor.get("scope") or {}
+        phase, step = scope.get("phase"), scope.get("step")
+        if request != spec["slug"] or f"{phase}.{step}" not in spec["steps"]:
+            continue
+        producer = state.get_step(phase, step)
+        if (producer.status == "done" and scope.get("generation") == (producer.invalidated_at or "initial")
+                and all(getattr(state, key, None) == value
+                        for key, value in (scope.get("release_matches") or {}).items())):
+            return True
+    return False
+
+
+def ensure_reason(state, spec, config_path, selection=None, *, ignore_holds=False):
+    """Why a declared worker is not desired now; no provider calls or mutations."""
+    if selection is None:
+        from orchestrator.engine import Orchestrator
+        selection = Orchestrator(config_path, state, mocks={}).scheduling()
+    if selection.frontier is None or state.cancellation:
+        return "The release is terminal; do not recreate its automations"
+    if not ignore_holds and selection.suspension in ("halted", "denied", "blocked", "workflow_revision"):
+        return "The release has an explicit hold; reconcile receipts but do not create workers"
+    if "manual" in _cleanup_rules(spec["cleanup_when"]):
+        return "Manual workers are not automatically ensured"
+    if spec["on_demand"]:
+        rule = spec.get("provision_when")
+        if rule:
+            requested = _provision_rule_matches(state, rule)
+        else:
+            requested = _producer_applied(state, spec)
+        if not requested:
+            return "The on-demand worker's durable trigger has not occurred"
+    target = {**spec["registration"], "id": None, "scope": "release", "status": "active"}
+    cleanup = cleanup_plan(state, [target], config_path)
+    if cleanup["problems"]:
+        return "; ".join(cleanup["problems"])
+    if cleanup["removals"]:
+        return "The worker's objective is already complete; do not recreate it"
+    return ""
+
+
 def provisioning_obligations(state, entries: list[dict], config_path: str) -> dict:
-    """Return missing or unresolved on-demand workers required by current state.
+    """Return missing or unresolved startup/on-demand workers required by current state.
 
     This is computed from durable release state plus the automation registry, so the
     obligation survives whichever scheduled worker wins the triggering action.
     """
+    from orchestrator.registry import has_creation_receipt
     planned = plan(
         config_path, state.release_id, state.ccd, owner_timezone=state.timezone)
-    by_slug = {entry.get("slug"): entry for entry in entries}
+    by_slug = {
+        entry.get("slug"): entry for entry in entries
+        if entry.get("release") == state.release_id and entry.get("scope", "release") == "release"
+    }
+    from orchestrator.engine import Orchestrator
+    selection = Orchestrator(config_path, state, mocks={}).scheduling()
+    terminal = selection.frontier is None or bool(state.cancellation)
     required = []
     recoveries = []
     active = []
+    ensure = []
     problems = list(planned["problems"])
+    duplicates = {
+        slug for slug in by_slug
+        if sum(entry.get("slug") == slug and entry.get("release") == state.release_id
+               and entry.get("scope", "release") == "release" for entry in entries) > 1
+    }
     for spec in planned["automations"]:
         rule = spec.get("provision_when")
-        if not spec["on_demand"] or not rule or not _provision_rule_matches(state, rule):
+        needed = spec["required_on_start"] or (
+            spec["on_demand"] and (_provision_rule_matches(state, rule) if rule else
+                                   _producer_applied(state, spec)))
+        managed = spec["slug"] in by_slug
+        if terminal or not (needed or managed):
+            continue
+        if ensure_reason(state, spec, config_path, selection, ignore_holds=True):
+            continue
+        if spec["slug"] in duplicates:
+            problems.append(f"{spec['slug']}: duplicate registry identities require reconciliation")
             continue
         problems.extend(f"{spec['slug']}: {problem}" for problem in spec["problems"])
+        if not spec["problems"] and not ensure_reason(state, spec, config_path, selection):
+            ensure.append(spec)
+        if not needed:
+            continue
         existing = by_slug.get(spec["slug"])
         if existing is None:
             required.append(spec)
-        elif existing.get("status") == "active":
+        elif (existing.get("status") == "active" and existing.get("id")
+              and (not spec["required_on_start"] or has_creation_receipt(existing))):
             active.append(spec["slug"])
         else:
             recoveries.append({
@@ -469,6 +583,7 @@ def provisioning_obligations(state, entries: list[dict], config_path: str) -> di
         "recoveries": recoveries,
         "active": active,
         "problems": problems,
+        "ensure": ensure,
     }
 
 

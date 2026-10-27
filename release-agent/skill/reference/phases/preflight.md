@@ -5,12 +5,23 @@ human confirmation steps are ordered last, after every automated/Scout check._
 
 ## Parallel phases — process ALL the holds, not one at a time
 
+Use the universal all-phase `work_dispatch` contract, not `pending_human` alone.
+Drain `pending_work` before offering a CG/cron/vitals decision. A CG failure is
+step-local: notice, flight_reminder and lockdown remain independent. Between host
+results use `next --pending-only --json`, not a tight rerun of the failed CG check.
+Finish with `status --release <id> --handoff --json --no-pipeline-check`.
+Exit 2 refuses a handoff while work remains. Actual Scout input/consent/recovery
+needs use transient `--hold-step "<phase.step>=<actual reason>"` on that guard
+after independent work is done. Never label a pending send as sent or bypass consent.
+
 A single `next` attempts **every independent ready automated step in the same pass** (breaking, CG, cron — one after another, not concurrent provider calls) then surfaces **all the human/scout holds together** (e.g. *"4 item(s) need you: …"*). An in-flight step or effect-recovery hold does not stop its ready siblings; each handler is attempted at most once per pass. Waiting work keeps its dependencies blocked and is polled/reconciled on a later invocation. After `next`, read `status --json` → **`pending_human`** (and `active_phase.steps` with `status`/`needs_owner`) — the full outstanding set. Work through **all** of them this pass:
 - **`source: scout`** steps → notices use notification prepare/claim/result; lockdown keeps its browser + `check-lockdown` follow-up (below). Independent — do them all.
 - **`attest`** steps (confirm_reminders, vitals) → obtain the exact `step-action`
   prompt, show fresh status, and use `m_ask_user` choices **Completed / Not yet /
   Need help**. Only Completed authorizes `done --step <id>` with a specific note.
-- **`blocked`** steps (cg/cron on a real problem) → show the note; fix + rerun, or skip.
+- **`blocked`** steps (cg/cron on a real problem) → show the note, then use
+  `m_ask_user` choices **Fixed — rerun / Override / Keep blocked**. Never end with a
+  prose-only "review/confirm CG" ask.
 
 Dependencies still hold: `confirm_reminders` only appears **after** `flight_reminder` is sent. Call `next` again after clearing holds to surface newly-ready steps and advance.
 

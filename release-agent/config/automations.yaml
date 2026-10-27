@@ -32,6 +32,9 @@
 #              condition (`step_status:<phase.step>:<status>` or
 #              `step_flag:<phase.step>:<data-key>`) that makes `automation
 #              obligations` require the worker until it is registered.
+#   required_on_start : mandatory interval worker. Missing/prepared provisioning
+#              appears in dispatch; runtime next/tick cannot advance phases until
+#              acknowledged creation or exact-provider adoption is registered.
 #   purpose  : one-line description (stored in the registry)
 #   cleanup_when : REQUIRED lifecycle rule for the central cleanup planner:
 #              steps_done | steps_settled | phase_done:<phase> |
@@ -57,6 +60,7 @@ automations:
     label: "push reminders"
     scope: Release-wide
     prompt_kind: push-reminders
+    required_on_start: true
     every: "1 hour"
     steps: []
     cleanup_when: release_done

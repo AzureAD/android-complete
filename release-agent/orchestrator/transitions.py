@@ -508,8 +508,6 @@ class TransitionKernel:
             or attempts[-1].get("id") != execution["id"]
         ):
             return self._reject("Notification completion requires its acknowledged delivery receipt.", phase_id, step_id)
-        if self.projection_factory().scheduling().suspension:
-            return self._reject("Notification evidence retained; finalization waits for release resume.", phase_id, step_id)
         return None
 
     def authorize_outcome(

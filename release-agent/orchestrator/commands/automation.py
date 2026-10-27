@@ -56,18 +56,27 @@ def _spec(args):
 
 def _canonical_policy(args, reg, spec, *, preparing=False):
     """Check new known-worker creation only; never block an owning late receipt."""
+    ensuring = getattr(args, "ensure", False)
     if args.shared:
+        if ensuring:
+            raise ValueError("Ensure cannot manage shared/manual automations")
         return
     from orchestrator.revision import assert_current
     _, orch = C.load_orch(args.runs_root, args.release, args.config)
     assert_current(orch)
+    if ensuring:
+        errors = [issue.message for issue in orch.invariant_violations() if issue.severity == "error"]
+        if errors:
+            raise ValueError("Invalid release state: " + "; ".join(errors))
     key = stable_key(args.release, args.slug)
     existing = reg.get(key=key)
-    if existing and (preparing or existing["status"] != "prepared"):
+    if existing and (preparing or existing["status"] != "prepared") and not ensuring:
         return
     config = args.config
     definition = next((d for d in auto_plan.load_defs(config) if d["slug"] == args.slug), None)
     if not definition:
+        if ensuring:
+            raise ValueError("Ensure requires a declared canonical worker")
         return  # Custom workers still require the entire explicit provider spec.
     if definition.get("on_demand") and args.on_demand != args.slug:
         raise ValueError("On-demand workers require --on-demand <slug>; never provision at startup")
@@ -78,6 +87,8 @@ def _canonical_policy(args, reg, spec, *, preparing=False):
             raise ValueError("CCD workers require owner-confirmed CCD with no conflict")
     from orchestrator.engine import Orchestrator
     selection = Orchestrator(config, st, mocks={}).scheduling()
+    if definition.get("required_on_start") and selection.suspension in ("halted", "denied"):
+        raise ValueError("Cannot create a mandatory driver while the release has an explicit hold")
     if selection.status == "cancelled" or selection.frontier is None:
         raise ValueError("Cannot provision workers for a terminal release")
     planned = auto_plan.plan(config, args.release, st.ccd, owner_timezone=st.timezone)
@@ -86,6 +97,10 @@ def _canonical_policy(args, reg, spec, *, preparing=False):
         raise ValueError("; ".join(planned["problems"] + desired["problems"]))
     if desired["provider_spec"] != spec:
         raise ValueError("Known worker spec differs from the complete canonical plan")
+    if ensuring:
+        reason = auto_plan.ensure_reason(st, desired, config, selection)
+        if reason:
+            raise ValueError(reason)
     if preparing:
         registration = desired["registration"]
         rules = lambda v: sorted(v if isinstance(v, list) else [v])
@@ -94,6 +109,7 @@ def _canonical_policy(args, reg, spec, *, preparing=False):
                 or (args.kind and args.kind != registration["kind"])
                 or rules(args.cleanup_when) != rules(registration["cleanup_when"])):
             raise ValueError("Known worker metadata differs from canonical registration")
+    return desired["registration"]
 
 
 def cmd_automation(args):
@@ -109,6 +125,8 @@ def _dispatch_automation(args):
     """Track Scout automations the orchestrator provisions, so they can be torn
     down at release close. This only records ids + step linkage — the skill does the
     actual Scout create/delete via m_create_automation / m_delete_automation."""
+    if getattr(args, "ensure", False) and args.action != "reconcile-create":
+        raise ValueError("--ensure belongs only to reconcile-create")
     reg = AutomationRegistry(args.runs_root, getattr(args, "release", None))
     if args.action == "plan":
         return _cmd_plan(args)
@@ -147,14 +165,17 @@ def _dispatch_automation(args):
         try:
             key = stable_key(args.release, args.slug, args.shared)
             spec = _spec(args)
-            if args.claim:
-                _canonical_policy(args, reg, spec)
+            registration = None
+            if args.claim or getattr(args, "ensure", False):
+                registration = _canonical_policy(args, reg, spec)
             result = reg.reconcile_create(
                 key,
                 _observations(args),
                 spec=spec,
                 executor=args.executor,
                 claim=args.claim,
+                ensure=getattr(args, "ensure", False),
+                registration=registration,
             )
         except ValueError as exc:
             print(_json.dumps({"error": str(exc), "permission_to_create": False})
@@ -358,7 +379,7 @@ def _cmd_sync(args):
 
 
 def _cmd_obligations(args):
-    """Report state-required on-demand workers without claiming or creating them."""
+    """Report mandatory startup and state-required workers without claiming or creating."""
     config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
     st = C.load_state(args.runs_root, args.release)
     entries = AutomationRegistry(args.runs_root, args.release).list(
@@ -374,7 +395,7 @@ def _cmd_obligations(args):
         for problem in result["problems"]:
             print(f"PROBLEM: {problem}")
         if not result["required"] and not result["recoveries"] and not result["problems"]:
-            print("No on-demand automation obligations.")
+            print("No outstanding startup/on-demand automation obligations.")
     return 1 if result["problems"] else 0
 
 
@@ -454,6 +475,8 @@ def register(sub):
                     help="Worker/session claiming create or delete")
     au.add_argument("--claim", action="store_true",
                     help="Persist a create claim and return permission_to_create")
+    au.add_argument("--ensure", action="store_true",
+                    help="Reconcile a currently desired canonical worker; safely replace proven-absent settled generations")
     au.add_argument("--attempt-id", default=None,
                     help="Owning create/delete attempt id")
     au.add_argument("--outcome", choices=[

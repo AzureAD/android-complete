@@ -186,7 +186,7 @@ def test_init_json_and_per_write_authorization_match_the_skill():
         assert "blanket" in text and "owning write step" in text
     for text in documents[:2]:
         assert "init --release <id> --json" in text
-        assert "next_action:run_entry_gate" in text and "checklist_command" in text
+        assert "next_action:provision_startup_automation" in text and "checklist_command" in text
         assert "--help" in text
 
 
@@ -204,3 +204,44 @@ def test_every_readiness_handoff_requires_exhaustion_not_a_python_only_table():
     assert "Readiness execution boundary" in documents[0]
     assert "ordinary `checklist --verify` are not completion signals" in documents[0]
     assert "no final table yet" in documents[2]
+
+
+def test_universal_dispatch_contract_is_not_a_phase_specific_rule():
+    from orchestrator import automations
+    skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
+    assert "Universal execution boundary" in skill and "ALL phases" in skill
+    for path in ("SKILL.md", os.path.join("reference", "presenting-status.md"),
+                 os.path.join("reference", "commands.md"), os.path.join("reference", "phases", "preflight.md")):
+        text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
+        assert "work_dispatch" in text and "--handoff" in text
+        assert "--hold-step" in text and "consent" in text
+    for spec in automations.plan(CONFIG, "2026-09", "2026-09-09")["automations"]:
+        assert "work_dispatch" in spec["prompt"] and "may_return_to_user:false" in spec["prompt"]
+        assert "Notification-only/poll workers retain their" in spec["prompt"]
+
+
+def test_required_driver_is_a_receipted_startup_obligation_not_an_attestation():
+    from orchestrator import automations
+    required = [item for item in automations.load_defs(CONFIG) if item.get("required_on_start")]
+    assert [item["slug"] for item in required] == ["push-reminders"]
+    for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
+                 os.path.join("reference", "readiness-gate.md"),
+                 os.path.join("reference", "presenting-status.md")):
+        text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
+        assert "driver" in text and ("receipt" in text or "acknowledged" in text)
+        assert "startup" in text.lower() and "consent" in text
+    entry = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
+    assert "startup_complete:false" in entry and "not unattended startup success" in entry
+
+
+def test_worker_prompts_and_skill_ensure_desired_state_instead_of_owner_reset():
+    from orchestrator import automations
+    for worker in automations.plan(CONFIG, "2026-12", "2026-12-09")["automations"]:
+        assert "At each operational run first" in worker["prompt"]
+        assert "reconcile-create --ensure --claim" in worker["prompt"]
+        assert "proven-absent settled worker" in worker["prompt"]
+    for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
+                 os.path.join("reference", "commands.md")):
+        text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
+        assert "--ensure" in text
+        assert "absen" in text.lower() and "unknown" in text.lower()

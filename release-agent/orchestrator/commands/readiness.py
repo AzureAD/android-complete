@@ -17,6 +17,8 @@ def cmd_checklist(args):
     revision_problem = mismatch_reason(orch)
     if revision_problem:
         chk["dispatch"] = dispatch_plan(chk, args.release, suspension=revision_problem)
+    runtime_report = orch.status_report()
+    chk = runtime_report.get("readiness", chk)
     attest = getattr(args, "attest_prompt", False)
     code = 2 if getattr(args, "handoff", False) and not chk["dispatch"]["may_return_to_user"] else 0
     if getattr(args, "json", False):

@@ -29,6 +29,8 @@ def orch(tmp_path, monkeypatch):
     from tests._harness import _active_phase
     _active_phase(st, "ccd")
     obj = Orchestrator(C.DEFAULT_CONFIG, st, mocks={}, as_of=datetime.fromisoformat("2026-09-09T12:00:00-07:00"))
+    from tests._automation import seed_driver
+    seed_driver(tmp_path, st)
     return obj
 
 
@@ -81,6 +83,28 @@ def test_ambiguous_and_lost_ack_never_replay(orch):
     before = copy.deepcopy(orch.state.notification_deliveries)
     assert not D.result(orch, item["id"], claim["execution_id"], "sent", "replay", {"raw": "other"})
     assert before == orch.state.notification_deliveries
+
+
+def test_startup_driver_loss_preserves_owning_delivery_acknowledgement(orch, tmp_path):
+    from orchestrator.registry import AutomationRegistry
+    item = email(orch)
+    D.offer(orch, item)
+    claim = D.claim(orch, item["id"], item["hash"], "original-owner")
+    C.save_state(orch.state, str(tmp_path), orch.state.release_id)
+    registry = AutomationRegistry(str(tmp_path), orch.state.release_id)
+    deleting = registry.claim_delete(
+        f"fixture-driver-{orch.state.release_id}", "fixture-owner")
+    assert deleting["permission_to_delete"]
+    with C.state_lock(str(tmp_path), orch.state.release_id):
+        state, runtime = C.load_orch(
+            str(tmp_path), orch.state.release_id, C.DEFAULT_CONFIG, orch.now_local)
+        assert runtime.scheduling().suspension == "automation"
+        assert D.result(runtime, item["id"], claim["execution_id"], "sent", "actual synthetic provider receipt")
+        assert not D.claim(runtime, item["id"], item["hash"], "another-owner")["permission_to_send"]
+        C.save_state(state, str(tmp_path), state.release_id)
+    saved = C.load_state(str(tmp_path), orch.state.release_id)
+    assert saved.notification_deliveries[item["id"]]["status"] == "sent"
+    assert registry.get(auto_id=f"fixture-driver-{orch.state.release_id}")["status"] == "deleting"
 
 
 def test_claim_uses_approved_snapshot_not_later_preparation(orch):

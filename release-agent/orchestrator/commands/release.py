@@ -66,12 +66,14 @@ def cmd_init(args):
     orch = Orchestrator(args.config, st, mocks={})
     bind_initial(orch)
     st.save(sp)
+    C.bind_automation_registry(orch, args.runs_root)
 
     C.elog(args.runs_root, args.release).log(
         "release_started", forced=bool(args.force),
         ccd=st.ccd, ccd_source=st.ccd_source, ccd_conflict=st.ccd_conflict,
         owner=st.owner_email, timezone=st.timezone)
     checklist_command = f"checklist --release {args.release} --attest-prompt --json"
+    initialized_report = orch.status_report()
     if getattr(args, "json", False):
         print(_json.dumps({
             "initialized": True, "release_id": st.release_id, "state_path": sp,
@@ -82,7 +84,11 @@ def cmd_init(args):
             "phase0_open": schedule.anchor_date(default, "CCD-7").isoformat() if default else None,
             "readiness_signed": orch.gate.signed,
             "readiness_dispatch": orch.gate.checklist()["dispatch"],
-            "next_action": "run_entry_gate", "continue_automatically": True,
+            "work_dispatch": initialized_report["work_dispatch"],
+            "startup_complete": (initialized_report["startup_automation"] is None
+                                 or initialized_report["startup_automation"]["complete"]),
+            "next_action": initialized_report["work_dispatch"]["next_action"],
+            "continue_automatically": initialized_report["work_dispatch"]["continue_automatically"],
             "checklist_command": checklist_command,
         }, indent=2))
         return 0
@@ -102,12 +108,18 @@ def cmd_init(args):
         print("\n".join(lines))
     else:
         print(f"Initialized release {args.release}.\n  state: {sp}\n{owner_line}\n{tz_line}\n{note}")
+    if (initialized_report["startup_automation"] is not None
+            and not initialized_report["startup_automation"]["complete"]):
+        print("  Required startup: provision/reconcile the configured release-wide driver "
+              "through the work queue below and save its owning provider receipt before "
+              "claiming unattended startup is complete.")
     print(
         f"  Next: run the readiness entry gate now with "
         f"`{checklist_command}`. "
         "Initialization/reminder registration is not a stopping point. "
         "Complete available automatic checks, then show the full current table "
         "and request the required human confirmations. Readiness does not wait for Phase 0.")
+    print(render.work_followup(initialized_report["work_dispatch"]))
     return 0
 
 
@@ -142,19 +154,26 @@ def cmd_status(args):
         # Status may refresh its in-memory view, but observation must never modify
         # release-state. Explicit CCD reconciliation commands own persistence.
         C.refresh_conflict(st)
-    if getattr(args, "json", False):
-        print(_json.dumps(orch.status_report(), indent=2))
-        return 0
     rep = orch.status_report()
+    holds = getattr(args, "hold_step", None)
+    if holds and not getattr(args, "handoff", False):
+        raise ValueError("--hold-step requires --handoff; it never completes or changes a step")
+    if getattr(args, "handoff", False):
+        from orchestrator.dispatch import handoff_plan
+        rep["work_dispatch"] = handoff_plan(rep["work_dispatch"], holds)
+    code = 2 if getattr(args, "handoff", False) and not rep["work_dispatch"]["may_return_to_user"] else 0
+    if getattr(args, "json", False):
+        print(_json.dumps(rep, indent=2))
+        return code
     C.emit(args.runs_root, args.release, render.status_view(rep), kind="status",
            log_text=(f"status viewed — {rep['release_id']} {rep['done']}/{rep['total']} "
                      f"({rep['percent']}%), phase: {rep.get('current_phase_name','')}"))
-    return 0
+    return code
 
 
 def cmd_next(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    actions = orch.run_until_gate()
+    actions = orch.run_until_gate(pending_only=getattr(args, "pending_only", False))
     C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
     C.log_actions(C.elog(args.runs_root, args.release), actions, state=st)
     if getattr(args, "json", False):
@@ -177,7 +196,7 @@ def cmd_approve(args):
         if approval_command:
             print(
                 f"Gate {hold.phase_id}/{hold.step_id} requires external approval; "
-                f"use `{approval_command}`."
+                "ask the AI agent to perform the approval flow."
             )
             return 1
     act = orch.approve_gate(args.comment or "")
@@ -371,6 +390,10 @@ def register(sub):
     s.add_argument("--release", required=True)
     s.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--handoff", action="store_true",
+                   help="Refuse returning to the owner (exit 2) while independent work remains executable")
+    s.add_argument("--hold-step", action="append",
+                   help="With --handoff only: queued phase.step=actual input/consent/recovery reason; no state changes or permission")
     s.add_argument("--no-pipeline-check", action="store_true",
                    help="Skip re-reading the pipeline to detect CCD drift (faster/offline).")
     s.set_defaults(func=cmd_status)
@@ -380,6 +403,8 @@ def register(sub):
     n.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     n.add_argument("--json", action="store_true",
                    help="After advancing, print the status report as JSON (carries scout_pending).")
+    n.add_argument("--pending-only", action="store_true",
+                   help="Drain fresh work without automatically retrying failed, owned or in-flight steps")
     n.set_defaults(func=cmd_next)
 
     a = sub.add_parser("approve", help="Approve the current holding gate, continue")

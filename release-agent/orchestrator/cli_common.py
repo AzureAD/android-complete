@@ -138,7 +138,22 @@ def parse_as_of(args):
 def load_orch(runs_root: str, release: str, config: str, as_of=None):
     """Load state + build an Orchestrator wired to the --as-of clock."""
     st = load_state(runs_root, release)
-    return st, Orchestrator(config, st, as_of=as_of)
+    orch = Orchestrator(config, st, as_of=as_of)
+    bind_automation_registry(orch, runs_root)
+    return st, orch
+
+
+def bind_automation_registry(orch, runs_root):
+    """Attach the runtime run-store reader; pure domain engines have no run store."""
+    from orchestrator.automations import automations_path
+    # Standalone custom workflows may declare no automation policy. The shipped
+    # release policy must never silently disappear into that mode.
+    if (not os.path.isfile(automations_path(orch.config_path))
+            and os.path.abspath(orch.config_path) != os.path.abspath(DEFAULT_CONFIG)):
+        return
+    from orchestrator.registry import AutomationRegistry
+    registry = AutomationRegistry(runs_root, orch.state.release_id)
+    orch.automation_entries = lambda: registry.list(release=orch.state.release_id)
 
 
 # ---- config ----
@@ -177,7 +192,7 @@ def emit(runs_root: str, release: str, text: str, kind: str = "message", options
 # ---- advancing the loop (shared by next / approve / done) ----
 TAGS = {"ran": "[ok]", "gate": "[gate]", "reminder": "[action]", "scheduled": "[scheduled]",
         "complete": "[done]", "idle": "[--]", "readiness": "[entry-gate]",
-        "blocked": "[BLOCKED]", "halted": "[HALTED]"}
+        "blocked": "[BLOCKED]", "halted": "[HALTED]", "automation": "[startup-automation]"}
 
 
 def log_actions(el: EventLog, actions, state=None):
@@ -192,6 +207,7 @@ def log_actions(el: EventLog, actions, state=None):
         "ran": "step_ran", "gate": "gate_hold", "reminder": "reminder_hold",
         "scheduled": "scheduled_hold", "readiness": "readiness_hold",
         "blocked": "blocked_hold", "halted": "halted_hold", "complete": "release_complete",
+        "automation": "startup_automation_hold",
     }
     for a in actions:
         name = events.get(a.kind)

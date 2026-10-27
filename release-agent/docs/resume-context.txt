@@ -11,6 +11,96 @@ Resolve the earlier published checkpoint with
 The longer historical audit is docs\release-audit.txt; its older checkpoint
 sections are history, not new instructions to restart completed work.
 
+MANDATORY RELEASE DRIVER (2026-10-21 22:32 PDT) - COMPLETE LOCALLY
+------------------------------------------------------------------------------
+User asked why test6 lacked push-reminders,then explicitly requested a fix.
+Actual Scout list was empty and run had no registry. Required provisioning was
+only skill text; prior phase guard could not see it.
+
+push-reminders now declares required_on_start:true (interval startup worker).
+Runtime loader binds an actual release-specific registry reader to its engine.
+Init/checklist/status/next/tick and automation obligations expose startup work.
+Runtime step_once stops phase execution while the driver is unsatisfied; pure
+domain engines without a run-store reader retain their explicit separate context.
+Independent readiness probes remain available; no additional human attestation.
+Init reports initialized:true but startup_complete:false and provisioning as next
+action, never unattended success. Status/readiness handoff refuses missing or
+merely prepared driver work. Unknown/deleting/blocked outcomes retain ownership
+and need actual recovery,not duplicate create. A host consent/input hold stays
+incomplete and gives no create/write/retry permission.
+
+Required proof is active registry id with acknowledged creation evidence or
+exact-provider adoption,not a bare id/claim. The existing canonical plan/prepare/
+fresh exhaustive provider observation/reconcile-create/owning create-result
+protocol remains authoritative. Registry receipt is NOT live provider health;
+startup/recovery must inspect actual Scout list/details and reconcile removed or
+disabled workers. Terminal releases do not create replacements. Explicit global
+holds retain priority. No state schema/registry schema/execution-contract bump,
+migration,synthetic production receipt or silent live-worker changes.
+
+Initial307targeted:302pass5fail. Coupled transient startup-hold route and changed
+on-demand expectation fixed. Other3preexisting automation tests independently
+reproduced against isolated untouchedHEAD runtime;left unchanged.
+370affectedcasespassed(3independentlybaseline-brokenautomationcasesexcluded).
+135startup/registry/specsafetycasespassed. Startup readiness was then integrated
+into the shared projection itself,so phase/scout/provider eligibility cannot leak
+around the next/tick guard. Owning late receipts still settle during driver loss.
+478projection/commandcases:473pass;3approvalfixtures needed explicit synthetic
+driver setup(corrected),2clock-sensitive localization-writer cases reproduced
+against untouchedHEAD and leftunmodified. Final34targetedcases passed19.63s,
+including all driver states,real runtime releaseafterack,missing/disabled/
+duplicate/corrupt handling,approvalfixtures and late receipt preservation.
+
+Installed5changedskillresources;all10matchsource. Backupunder sessionfiles/
+release-agent-skill-before-mandatory-driver. Live2026-12state unchanged(hash in
+sessionplan),no liveautomation created/updated,no release advance,indexchanges,
+commit or push. ExistingrootGradle/settings/.kotlinchangespreserved.
+Allbaseline/testOS-tempdirectoriescleaned;scratchlocks0. Engine startup proof is
+registry-backed,not a claim of live provider health or futurehostmodelcompliance.
+
+ALL-PHASE EXECUTION/HANDOFF (2026-10-21 22:13 PDT) - LOCAL IMPLEMENTATION
+------------------------------------------------------------------------------
+Read test6: readiness now exhausted correctly, but Phase0 stopped at CG while
+notice/flight_reminder/lockdown remained scout_pending. Engine ran all4auto checks;
+3passed,CGblocked. Its owner focus was mistaken for a dispatch veto. Found separate
+wrong requested ship-month(Dec became release_id2026-12/shipJan2027)and simulated
+date execution; did not mutate/reidentify/reschedule the live run.
+
+orchestrator/dispatch.py centralizes work_dispatch for EVERY configured phase,
+not a phase0 branch or independent duplicate scheduler. Scheduler preserves
+frontier/dependencies/time/gates/globalholds;status/next/step-action/tick/notify
+carry pending engine+Scout commands,held work and no-write/no-send permission.
+Phase status headline prefers executable queue over sibling owner action/gate.
+status --handoff rejects(exit2)while executable work remains. Signed entry routes
+phasework;unsigned delegates existing readiness dispatch.
+next --pending-only drains freshenginework without failed/inflight/owned replay.
+Compound continuations remain visible throughoriginal checked adapter; unknown
+provider results need exact recovery/hold,not repeated mutation.
+
+Actual input/consent/recovery from a Scout preview/read may be reported to that
+read-only guard via --hold-step phase.step=reason. Transient host-reported,
+not provider-verified;no statechange/completion/receipt/permission/retry grant.
+Cannot suppress queued enginework or unrelated steps. Other independent work
+still refuseshandoff. Real hostconsent/globalhalts/denial/integrity still stop.
+New worker prompt/source+skill guidance uses universalcontract;liveworkersnot
+silentlyupdated. No state schema/contractchange or compatibilityadapter.
+
+Focused validation initial312selected:306pass;5coupled activephase-report failures
+exposed a misplaced return in this edit,corrected. Remaining skip fixture failure
+reproducedagainst isolated untouchedHEAD runtime and leftunmodified.
+Followup322selected:321pass,1newcorruptionfixture used an emptyhalt not coveredby
+existinginvariants. Corrected fixture to actual invalid unownedrunning external.
+Final56targetedcasespassed19.41s:all10configuredphases plusfuturephase name,
+parallel/sequential gates,dependencyunlocks,3globalholds,blocked/inflight no-replay,
+test6persistedplain/JSONguard,inputboundaries,entrydelegation,integrityhold,
+completeofflineflow andcheckedcompoundcontinuation/unknownresult preservation.
+321otheraffectedcasespassedprecedingrun;knownunrelatedskipfixtureexcludedonly
+afterbaseline reproduction,not silently declaredpassing.
+Installed6changedskillresources;all10matchsource. Backupundercurrent session
+files/release-agent-skill-before-universal-phase-dispatch. Live2026-12state hash
+unchanged;scratchlocks0;alltempbaseline/fixturescleaned. Nocommit,push,indexedits
+or liveworkerupdates. RootGradle/settings/.kotlinchangespreserved.
+
 TEST5 EXHAUSTIVE READINESS (2026-10-21 21:26 PDT) - LOCAL IMPLEMENTATION
 ------------------------------------------------------------------------------
 Test5 again ended after init/Python-only checklist. Six Scout probes were not

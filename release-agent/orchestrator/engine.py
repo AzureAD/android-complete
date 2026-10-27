@@ -14,7 +14,7 @@ import hashlib
 import os
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 import yaml
 
@@ -62,7 +62,8 @@ class Orchestrator(StatusViewMixin):
     def __init__(self, config_path: str, state: ReleaseState, readiness_path: str = None,
                  as_of: date = None, mocks: dict = None, tz=None, now: datetime = None,
                  *, handler_resolver: HandlerResolver | None = None, services=None,
-                 effect_services=None, clock=None, new_id=None, revision_provider=None):
+                 effect_services=None, clock=None, new_id=None, revision_provider=None,
+                 automation_entries: Callable[[], list[dict]] | None = None):
         self.config_path = os.path.abspath(config_path)
         with open(config_path, "rb") as fh:
             config_bytes = fh.read()
@@ -94,6 +95,7 @@ class Orchestrator(StatusViewMixin):
         self._new_id = new_id
         self._evidence_sessions = {}
         self._approval_results = {}
+        self.automation_entries = automation_entries
         self.gate = ReadinessGate(readiness_cfg, state)
         # Local step mocks (personal, gitignored mocks.local.yaml). Absent → {}.
         # Pass mocks={} in tests for isolation from any developer's local file.
@@ -294,7 +296,7 @@ class Orchestrator(StatusViewMixin):
         from .revision import mismatch_reason
         workflow = self._workflow_definition()
         handlers = self.handlers
-        return StateProjection(
+        projection = StateProjection(
             self.state,
             workflow,
             self.as_of,
@@ -305,6 +307,13 @@ class Orchestrator(StatusViewMixin):
             fire_at=lambda step: handlers.get(step.phase_id, step.id).fire_at_local,
             revision_problem=mismatch_reason(self),
         )
+        if self.automation_entries is not None:
+            from .dispatch import startup_plan
+            selection = projection.scheduling()
+            if selection.suspension not in ("workflow_revision", "cancelled", "halted", "denied", "blocked"):
+                startup = startup_plan(self, selection)
+                projection.startup_ready = startup["complete"]
+        return projection
 
     def _transition_kernel(self) -> TransitionKernel:
         workflow = self._workflow_definition()
@@ -486,6 +495,14 @@ class Orchestrator(StatusViewMixin):
                         + ". Run resume to continue.",
             )
 
+        if selection.suspension == "automation":
+            return NextAction(
+                kind="automation",
+                message="Required release-wide automation is not active. Run automation obligations "
+                        "and its canonical prepare/reconcile/create-result lifecycle before phase execution. "
+                        "Unknown provisioning outcomes require owning recovery, never another create.",
+            )
+
         if selection.suspension == "blocked":
             labels = self.gate.blocked_labels()
             msg = (self.gate.config or {}).get("blocked_message", "").strip()
@@ -541,17 +558,17 @@ class Orchestrator(StatusViewMixin):
             if isinstance(outcome, NeedsSkill):
                 action.kind = "scout"
                 action.message = (
-                    f"Continue {step.name}: {outcome.payload['followup_command']}. "
-                    "The checked command verifies saved work and reviews only the remainder; "
-                    "unknown outcomes stay held.")
+                    f"Continue {step.name}: an in-progress operation needs reconciliation. "
+                    "Ask the AI agent to continue this step; ownership checks and partial-work "
+                    "review are preserved, and unknown outcomes stay held. Do not repeat the action.")
                 return action
         if execution.get("approval"):
             action.message = (
-                f"External gate approval {execution['id']} retains ownership. Use "
-                f"{step.approval_command} --release {self.state.release_id} "
-                f"--execution-id {execution['id']} to reconcile. "
+                f"External gate approval {execution['id']} retains ownership. "
+                "Ask the AI agent to reconcile this approval with the original reservation context. "
                 "An unattempted reservation also requires its original review hash/reviewer. "
-                "Never resend an attempted approval or clear ownership with done/reopen."
+                "Never resend an attempted approval or clear ownership with done/reopen. "
+                "Do not repeat the action."
             )
             return action
         if not hold or hold.kind == "waiting":
@@ -601,7 +618,7 @@ class Orchestrator(StatusViewMixin):
             elif step.kind == StepKind.ATTESTATION:
                 action.message = (
                     f"CONFIRM — attest that this is done to proceed: {step.name}. "
-                    "Mark it done once you've verified it."
+                    "Tell the AI agent once you've verified it so it can record completion."
                 )
             elif hold.kind == "scout":
                 action.message = (
@@ -610,7 +627,8 @@ class Orchestrator(StatusViewMixin):
                 )
             else:
                 action.message = (
-                    f"ACTION NEEDED — you need to: {step.name}. Mark it done when complete."
+                    f"ACTION NEEDED — you need to: {step.name}. "
+                    "Tell the AI agent when complete so it can record the result."
                 )
         return action
 
@@ -753,7 +771,7 @@ class Orchestrator(StatusViewMixin):
             self._evidence_sessions.pop(permit, None)
         return self._next_from_transition(transition)
 
-    def run_until_gate(self, max_steps: int = 500) -> list[NextAction]:
+    def run_until_gate(self, max_steps: int = 500, *, pending_only=False) -> list[NextAction]:
         """Drain independent work until a settled hold, completion, or step cap.
 
         Step-local parallel waits retain their kind but allow another selection.
@@ -761,7 +779,10 @@ class Orchestrator(StatusViewMixin):
         drain. A later invocation can poll/reconcile it again.
         """
         actions = []
-        attempted = set()
+        attempted = {
+            step.key for step in self._workflow_definition().step_by_key.values()
+            if pending_only and self.state.get_step(step.phase_id, step.id).status != "pending"
+        }
         for _ in range(max_steps):
             act = self.step_once(attempted)
             actions.append(act)

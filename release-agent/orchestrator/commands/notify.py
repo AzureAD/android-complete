@@ -87,11 +87,11 @@ def _notify_payload(args, rid, advance):
         C.save_state(st, args.runs_root, rid)
         C.log_actions(C.elog(args.runs_root, rid), actions, state=st)
     else:
-        st = ReleaseState.load(sp)
-        orch = Orchestrator(args.config, st, as_of=as_of)
+        st, orch = C.load_orch(args.runs_root, rid, args.config, as_of)
     report = orch.status_report()
+    routing = {"work_dispatch": report["work_dispatch"]}
     if D.scope_reason(orch, {"kind": "release"}):
-        return _empty_payload(rid, args.config)
+        return {**_empty_payload(rid, args.config), **routing}
     # Both preview paths are read-only with respect to delivery checkpoints.
     alert_model = notif.preflight_escalation(
         report, orch.now_local, getattr(st, "escalation_checkpoints", {}))
@@ -144,7 +144,7 @@ def _notify_payload(args, rid, advance):
             "owner_name": st.owner_name, "release": rid,
             "channels": {k: v and k in digest_channels for k, v in ch.items()},
             "teams": teams, "core_alert": core_alert, "notifications": items,
-            "permission_to_send": False}
+            "permission_to_send": False, **routing}
 
 
 def cmd_tick(args):
@@ -166,6 +166,8 @@ def cmd_tick(args):
             print(payload["message"])
         if payload["core_alert"]:
             print(f"Core Team deadline alert due: {payload['core_alert']['checkpoint']}")
+        if payload.get("work_dispatch", {}).get("continue_automatically"):
+            print(render.work_followup(payload["work_dispatch"]))
     return 0
 
 

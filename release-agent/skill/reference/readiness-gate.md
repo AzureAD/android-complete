@@ -94,6 +94,19 @@ exact owning receipt, never an invented uploader.
 
 ## Flow
 
+Readiness is the entry branch of the universal `work_dispatch` contract. After
+signing, do not switch to a weaker "advance once then return" behavior: every phase
+uses `status --release <id> --handoff --json --no-pipeline-check` and drains its
+`pending_work` before owner handoff. Entry's checklist guard is not the only guard.
+The same payload also exposes mandatory startup automation work. A missing or
+prepared/deleted `push-reminders` driver is automatic desired-state repair, not an
+extra question for the owner. Use the canonical plan, fresh complete provider reads,
+`reconcile-create --ensure --claim` and actual owning create-result receipts.
+The same check runs on later operational entries, not only initial setup. A
+receipt older than five minutes queues a live provider recheck, not blind recreation.
+Its absence is shown beside the checklist, NOT as another human attestation.
+Unknown setup outcomes are genuine recovery holds, never permission to create again.
+
 **Start includes entry-gate execution, not just initialization.** After `init` and
 required reminder registration, run this flow immediately in the same user turn.
 Do not return "Started" with only `build_access`/`mcp_servers` evaluated. Future
@@ -177,9 +190,9 @@ fetch and paste the current checklist once, even if checks remain unresolved.
         - Fails → `--status fail --detail "<error>"`.
     - A `fail` on `oncall_now`/`adx_access` keeps the gate closed — resolve or hand off. Do NOT attest these; they're `auto` items.
     - **`ccd_confirmed` (CCD validity — temporal + pipeline):** run **`check-ccd --release <id> --json`** → `{ccd, override, ccd_conflict, status, days_to_ccd, runway_days, compressed, phase0_open}`. Act on `status` (checked in priority order):
-        - **`past`** (CCD is before today — `days_to_ccd` < 0; e.g. a current-month release whose 2nd-Wednesday default already passed) → **BLOCK; must reschedule to a future date.** `--default` won't help (the default IS the past date). If `override` is present AND itself in the future, offer to adopt it; otherwise ask the user for a real future CCD (`m_ask_user`: "CCD `<ccd>` is `<days_to_ccd humanized>` — pick a future Code Complete Date."). Apply with **`set-ccd --release <id> --date <future> --confirm --reason "CCD was in the past"`**, **re-run `check-ccd`** until it's no longer `past`, then continue to whatever status it now reports. Do NOT record pass while `past`.
-        - **`conflict`** (pipeline override is an in-month date that DIFFERS) → **surface both to the user** and ask which is right (`m_ask_user`: "Pipeline says `<override>`, this release is anchored to `<ccd>` — which is the real Code Complete Date?"). Then apply their choice with **`set-ccd --release <id> … --confirm --reason "<why>"`** (`--date <override>` to adopt the pipeline, or `--default` to keep the 2nd-Wednesday default), **re-run `check-ccd`** until `match`, then `record-check … --item ccd_confirmed --status pass --detail "reconciled to <ccd>"`. Do NOT record pass while it still conflicts.
-        - **`unreadable`** (couldn't read pipeline 3038) → **attest fallback**: ask the user to confirm the CCD by hand ("I couldn't read the pipeline; is `<ccd>` the correct Code Complete Date?"). On yes → `record-check … --item ccd_confirmed --status pass --detail "pipeline unreadable — CCD <ccd> confirmed manually"`. On a different date → `set-ccd … --date <their date> --confirm --reason` first, then record pass.
+        - **`past`** (CCD is before today — `days_to_ccd` < 0; e.g. a current-month release whose 2nd-Wednesday default already passed) → **BLOCK; must reschedule to a future date.** `--default` won't help (the default IS the past date). If `override` is present AND itself in the future, first show an options card with `Use pipeline date <override>` and `Enter a different future date`; only the second path uses free-text date input. If no future override exists, ask for a future CCD value via free-text `m_ask_user`. Apply with **`set-ccd --release <id> --date <future> --confirm --reason "CCD was in the past"`**, **re-run `check-ccd`** until it's no longer `past`, then continue to whatever status it now reports. Do NOT record pass while `past`.
+        - **`conflict`** (pipeline override is an in-month date that DIFFERS) → **surface both to the user** and use an options card: `Use pipeline date <override>`, `Keep release default <ccd>`, `Use a different date`. Only `Use a different date` opens a free-text date input. Then apply with **`set-ccd --release <id> … --confirm --reason "<why>"`** (`--date <override>` to adopt the pipeline, or `--default` to keep the 2nd-Wednesday default), **re-run `check-ccd`** until `match`, then `record-check … --item ccd_confirmed --status pass --detail "reconciled to <ccd>"`. Do NOT record pass while it still conflicts.
+        - **`unreadable`** (couldn't read pipeline 3038) → **attest fallback**: use an options card (`Confirm CCD <ccd>`, `Use a different date`). On confirm → `record-check … --item ccd_confirmed --status pass --detail "pipeline unreadable — CCD <ccd> confirmed manually"`. On different date → `set-ccd … --date <their date> --confirm --reason` first, then record pass.
         - **`match`** (future-dated CCD, no override or override equals it) → `record-check --release <id> --item ccd_confirmed --status pass --detail "CCD <ccd> reconciled with pipeline"`.
         - **`unset`** (release id isn't YYYY-MM, so no CCD) → keeps the gate closed; the release needs a proper month id.
         - **`compressed: true` (WARN, never blocks) — applies on ANY non-past status:** Phase 0 normally runs CCD-7→CCD (7 days) but only `runway_days` remain (Phase 0 opens `phase0_open`). Tell the user once — *"Heads up: your CCD is `<ccd>` (`<days_to_ccd humanized>`), so Phase 0 has only `<runway_days>` day(s) of prep instead of 7. Proceed, or move the CCD out with set-ccd?"* If they move it → `set-ccd … --confirm --reason` then re-check. If they proceed → still `record-check … --status pass --detail "CCD <ccd> — compressed Phase 0 (<runway_days>d), user accepted"`. A squeezed window is a risk to flag, not a blocker.
@@ -200,6 +213,8 @@ fetch and paste the current checklist once, even if checks remain unresolved.
    At a permitted handoff, paste its **full `display_markdown`**
    verbatim as live markdown, not fenced or summarized. The engine builds it from the
    same checklist snapshot as the question/answers. Do not also print a second checklist.
+   Do not produce any condensed replacement (short status matrix, rewritten rows, or
+   "cleaned up" markdown). Only the exact `display_markdown` block is valid context.
    Even if `ready:false`, show this table before ending or asking for a repair.
 
 5. **Then collect the decision with the engine's exact `m_ask_user` card.** Use the
@@ -212,12 +227,16 @@ fetch and paste the current checklist once, even if checks remain unresolved.
       exact `question`, answer `title`/`description` and `recommendedIndex`. The table must
       appear in the same assistant message before the card. Do not hand-write the card,
       send display metadata to the question tool, or say only "choose an option."
+    - For any follow-up user decision in this flow (including CCD conflict/past/unreadable),
+      if there is a known bounded set of choices, use an options card. Free-text is only for
+      values that cannot be represented as fixed choices (for example a custom date).
 
    > ⛔ **NEVER assume attestation.** Only act on the option the user actually clicks. Do not narrate "All four confirmed" or run `sign` until they pick. Attesting on an assumption is a release-integrity violation.
 
 6. **Map the card answer to the engine (using the payload's `action`/`item`):**
     - User picks the **`confirm_all`** answer → `sign --release <id>` with one `--item <id>` for **each** id in `confirm_items`, plus `--note "confirmed via readiness card"`. (No `--all` — list each; the CLI refuses a bare `sign`.) Then `next` to begin Phase 0.
     - User picks a **`decline`** answer → `decline --release <id> --item <that answer's item>`. Gate blocks (step 7).
+    - **Same-turn render is mandatory after this step.** In the same assistant response that processes `confirm_all`/`decline`, run a fresh `checklist` (if entry remains unsigned/blocked) or `status` (if signed) and paste that full markdown block. Do not end this turn with narrative-only acknowledgements.
 
 7. **Can't satisfy an attest item** → `decline --release <id> --item <id>` (repeat per item). Gate blocks. Tell them plainly: the release can't start until it's resolved; if they can't, hand off to another engineer (notify their manager / release team). Treat every item the same.
 

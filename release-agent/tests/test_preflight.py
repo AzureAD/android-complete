@@ -250,6 +250,8 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
     )
     _active_phase(state, "preflight")
     C.save_state(state, root, rid)
+    from tests._automation import seed_driver
+    seed_driver(root, state)
 
     def call(*args, expected=0):
         code = cli.main(["--runs-root", root, *args, "--release", rid])
@@ -265,6 +267,11 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
     assert "DRAFT COMMS" in saved.get_step("preflight", "breaking").note
     assert len(writes) == 2 and refs == {"refs/heads/master": "a" * 40}
     assert set(report["scout_pending"]) == {"notice", "flight_reminder", "lockdown"}
+    assert {item["step"] for item in report["work_dispatch"]["pending_work"]} == {
+        "notice", "flight_reminder", "lockdown"}
+    assert cli.main(["--runs-root", root, "status", "--release", rid,
+                     "--handoff", "--json", "--no-pipeline-check"]) == 2
+    assert not json.loads(capsys.readouterr().out)["work_dispatch"]["may_return_to_user"]
     email_provider, teams_provider = Mock(return_value={"accepted": True}), Mock(return_value={"id": "fixture"})
     for sid, provider in (("notice", email_provider), ("flight_reminder", teams_provider)):
         item, = json.loads(call(
@@ -305,6 +312,9 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
         assert C.load_state(root, rid).is_done("preflight", sid)
         provider.assert_called_once_with(**claim["payload"])
     call("check-lockdown", "--periods-json", "[]")
+    settled = json.loads(call("status", "--handoff", "--json", "--no-pipeline-check"))
+    assert settled["work_dispatch"]["may_return_to_user"]
+    assert not C.load_state(root, rid).is_done("preflight", "cg")
     for sid in ("confirm_reminders", "vitals"):
         prompt = json.loads(call("step-action", "--phase", "preflight", "--step", sid))
         assert prompt["kind"] == "needs_human" and prompt["attest"]
