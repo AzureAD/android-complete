@@ -49,6 +49,17 @@
     "android-dri-search": {
       "type": "http",
       "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp"
+    },
+
+    "bluebird-mcp-myrepo": {
+      "type": "http",
+      "url": "https://mcp.bluebird-ai.net/",
+      "headers": {
+        "x-mcp-ec-organization": "msazure",
+        "x-mcp-ec-project": "One",
+        "x-mcp-ec-repository": "AD-MFA-phonefactor-phoneApp-android",
+        "x-mcp-ec-branch": "working"
+      }
     }
   }
 }
