@@ -19,12 +19,21 @@ payloads, no PII**.
 **Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY | RE-ROOTED  _(RE-ROOTED = the filed tier stands but the filed **root cause** was refuted and a different real weakness was kept from the same report — common when a report bundles a wrong headline with a correct aside. Do not render this as AGREE; it hides the point.)_
 **Confidence:** High | Medium | Low  _(set by the adversarial pass — see below)_
 **IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
-**Disposition:** Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)  _(GATE 0 — see severity-rubric.md. **Already-Covered**: the cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref. **Fixed-Since-Filed**: accurate when filed, control shipped later — fill in Shipped-release exposure below. **Not-Fixable (By-Design)**: no client-side change can close it; you MUST cite the standard (see protocol-constraints.md). **Keep**: we own it and solution it.)_
+**Disposition:** Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)  _(GATE 0 — see severity-rubric.md. **Already-Covered**: the cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref. **Fixed-Since-Filed**: accurate when filed, control shipped later — fill in Shipped-release exposure below. **Not-Fixable (By-Design)**: no client-side change can close it; you MUST cite the standard (see protocol-constraints.md). **Keep**: assess remaining risk; planning and execution require separate approval.)_
 **Shipped-release exposure:** _Required when Disposition = Fixed-Since-Filed; otherwise "N/A". Name the first release containing the control and the last shipped release without it. This is what decides whether a customer/SIR response is owed — "fixed on dev" is not an answer._
 **External validation:** Yes | No — _one line: do we need facts outside the code we own (downstream consumers / server-side eSTS) to be sure? If the verdict leans on a server/downstream safeguard we can only infer, say "Yes" and name it — the impact is partly theoretical until confirmed._
 **Prior incidents:** None found | _IcM NNN — outcome (e.g. "fixed in <area>, same sink"); IcM NNN — duplicate._ — _from IcM `get_similar_incidents` + the `android-dri-search` MCP (Step 1.5). A prior **resolved** match means the on-call may short-circuit (link the fix / close as duplicate) instead of re-triaging. A similar title is a lead, not proof — still confirm against current code._
 **Bottom line:** _one plain-English sentence (the TL;DR rendered at the top of the HTML): what it is, what to do now, and the one thing still open. A human skimming should get the whole story from this line._
 **Justification:** <1–3 sentences, anchored to the evidence below>
+**Risk decision:** Must fix | Optional hardening | No fix | Needs review
+**Remediation approval:** Not requested | Pending | Approved
+**Existing work approval:** Pending | Approved | Not applicable
+
+_Explain the risk decision before recommending a solution: proven shipping reachability, impact,
+controls, prior decisions and their applicability, and unresolved facts. Keep `Needs review` for
+unsettled material claims. Approval means the engineer actually chose an approach; it is never implied
+by `Keep`. Existing-work approval requires owner confirmation of an unmerged/reverted candidate.
+Use `Not applicable` only when no candidate work needs such confirmation._
 
 > These `**Label:**` fields drive the colorful **stat tiles** at the top of the generated HTML page
 > (Severity, Confidence, Verdict, Passes, External-Validation, Disposition). Keep each on its own line so
@@ -46,9 +55,13 @@ written, reviewed and merged to `dev` is a *release decision*, not an engineerin
 "not covered" sends someone to rebuild work that already exists. Say what exists, where, and why it hasn't
 shipped. Write "None — no fix exists on any ref" only after the all-refs sweep proves it.
 
-| Part | Branch / ref | Commit(s) | What it covers | Why it hasn't shipped | Ask |
-|---|---|---|---|---|---|
-| <n> | `<branch>` | `<sha>` | <the control it adds> | <reverted for X / unmerged / dev-only> | Land on `<train>` / decide / N/A |
+| Part | Branch / ref | Commit(s) / PR | State | Shipping coverage | Owner confirmation | Ask |
+|---|---|---|---|---|---|---|
+| <n> | `<branch>` | `<sha> / <PR>` | Unmerged / merged / reverted / released / unknown | <content checked on shipping ref> | Pending / confirmed, with source | Evaluate candidate / release decision / N/A |
+
+_Unmerged work is a **candidate**, not an accepted recommendation or shipping mitigation. State what
+the owner confirmed about intent, completeness, review and blockers. If the owner cannot be reached,
+leave confirmation Pending and report the decision needed; do not recommend landing by default._
 
 > Also record the **ref you judged coverage against** and the other candidate refs you checked
 > (`release/<v>` vs `working/test-release/<v>` vs `release-integration/<v>` — they diverge, and the
@@ -111,6 +124,16 @@ What we own and verified (Authenticator client / Broker / Common) vs. what we **
 State plainly: it is possible there are downstream/server checks but we cannot conclude definitively — worth
 investigating. Only confirm what you can; do not assert "safe" or "exploitable" about an unverified boundary.
 
+## Documented Contract & Prior Decisions
+When the finding depends on an MSAL/Authenticator developer contract, record the canonical Microsoft
+documentation URL, retrieval date, supported platform/version, exact relevant requirement, and whether
+it assigns responsibility to the library or caller. Reconcile it with the code and the filed claim.
+Documentation is not proof that a caller or server actually enforces that requirement.
+
+Record applicable prior decisions and the differences in entry point, asset, prerequisites and shipping
+controls. If a required document or prior decision cannot be retrieved, name the unresolved contract
+question and a targeted follow-up; do not fill it from memory.
+
 ## Adversarial Verification
 The second, independent `codebase-researcher` (Challenger) pass that tried to **break** the Pass 1 verdict.
 - **What the Challenger attempted:** <bypass of the cited mitigation / alternate entry path / case for still-exploitable>
@@ -140,9 +163,9 @@ was verified when it was only reasoned about.**
 |---|----------------------------|--------------------------------------|--------------------------|------------------------|-----------------------|
 | 1 | <the precise claim we could not settle> | <runtime / server-side / downstream-repo / device-state / rooted / timing — name it> | <the static fact we DID establish, cited> | <the person, repro, or data that would close it> | <Sev/verdict change if confirmed> |
 
-> **Can proceed now vs. blocked:** one line — which parts of the fix an engineer/intern can start immediately
-> on the confirmed-in-code facts, and which decisions must wait for the answers above. Never stall on a gap
-> you can route around; never over-claim a gap you can't.
+> **Can proceed now vs. blocked:** state what evidence gathering can continue and which decisions need
+> answers. Open verification gaps block automated fix dispatch. Any separately scoped implementation
+> requires explicit engineer approval; never infer it from confirmed-in-code facts alone.
 
 ## Decisions Needed
 Judgment calls a human must make — the agent should **not** decide these alone (severity acceptance vs.
@@ -154,7 +177,9 @@ with a recommendation. Omit the section only if there are genuinely none.
 Pick ONE based on Disposition:
 
 ### If Keep — Dispatch-ready Remediation Spec
-Fill out the full spec from [remediation-spec.md](remediation-spec.md): Root Cause · Fix Approach ·
+For assessment-only intake, state **"Remediation not requested; risk decision above is the deliverable"**
+and leave remediation approval `Not requested`. Generated agent specs must remain blocked.
+When remediation planning is requested, fill out the full spec from [remediation-spec.md](remediation-spec.md): Root Cause · Fix Approach ·
 Files to Change (`file:line`) · Test Plan · Risks & Rollout (flighting). Must be detailed enough to hand to
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation.
 
@@ -165,6 +190,11 @@ an engineer or the Copilot coding agent / `pbi-creator` without further investig
 
 ## Estimated Eng-Days
 <n> (ESTIMATE — on-call to adjust). Basis: <tier + fix complexity>.
+
+## Timing
+- **Depth / start time / agreed end-to-end budget:** <mode, timestamp and budget>.
+- **Actual elapsed by stage:** <intake/preflight, Gate 0/history, Pass 1, Pass 2, reconciliation, rendering>.
+- **Queue/tool time and overruns:** <waiting vs research; revised ETA and continuation decision, or none>.
 
 ## Searches Run (audit trail)
 Verbatim list of the searches BOTH passes actually ran — ESPECIALLY the ones that returned nothing

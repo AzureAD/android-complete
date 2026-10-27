@@ -1,6 +1,7 @@
 # Dispatch-Ready Remediation Spec
 
-For every **kept** finding (one we own and will fix), produce this spec. The bar:
+For a **kept** finding, produce this spec only when remediation planning is requested, after recording
+the evidence-backed risk decision. `Keep` is not approval to fix. The bar:
 **detailed enough to hand to an engineer or the Copilot coding agent / `pbi-creator` without further
 investigation.** It is grounded in the same cited evidence as the triage report — reuse the `file:line`
 citations from the investigation; do not re-derive them loosely.
@@ -95,8 +96,8 @@ on, plus the acceptance criteria (the negative test passing). Do not include exp
 ## Guidance
 
 - **Options before implementation, always.** The single most common complaint about this skill was that it
-  jumped to a fix. Show the table, name a pick, wait. Even under "just fix it", show it and proceed —
-  it costs seconds and lets the engineer catch a wrong approach before the diff exists.
+  jumped to a fix. Show the table, name a pick, and wait for approach approval, even under "just fix it".
+  Silence is not approval; the engineer must be able to reject the approach before the diff exists.
 - **Reuse, don't reinvent.** Most of these findings have a hardened *sibling* path already in the codebase
   (the investigation usually found it during the defense-in-depth sweep). The strongest fix mirrors that
   sibling — cite it so the implementer copies a proven control.

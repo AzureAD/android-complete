@@ -1,6 +1,6 @@
 # Remediation Execution (implement the fix & open the PR)
 
-The rest of this skill stops at a **dispatch-ready spec** — handing the work to an engineer or the Copilot
+Requested remediation planning stops at a **gated spec** — handing the work to an engineer or the Copilot
 coding agent. But the skill can also **execute the fix itself**: implement the change, write tests, build,
 and open the PR. This doc captures the hard-won rules for doing that **safely on a PUBLIC repo**.
 
@@ -10,6 +10,17 @@ and open the PR. This doc captures the hard-won rules for doing that **safely on
 > never like a vulnerability writeup. Treat this as non-negotiable, same as the skill's commit banner.
 
 ---
+
+## Authorization: assess risk before choosing or executing a fix
+
+Read the source report's **Risk decision**, **Remediation approval**, and **Existing work approval**
+before this execution workflow. `Keep` alone is not authorization. Proceed only after an evidence-backed
+Must fix/Optional hardening decision, an engineer-selected approach, and resolved dispatch gates.
+A generated `.agent.md` marked blocked is not executable; never bypass it by interpreting the prose.
+
+An unmerged or reverted change is candidate work. Verify its live PR/ref state and shipping coverage,
+then obtain the owner's confirmation of intended scope, completeness and blockers before recommending
+reuse or landing. Missing confirmation stays Pending. Never treat a candidate as a shipped control.
 
 ## Pre-flight: re-verify the finding is STILL LIVE on the current base branch (do this FIRST)
 

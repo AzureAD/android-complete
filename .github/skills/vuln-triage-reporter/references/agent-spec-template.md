@@ -36,14 +36,17 @@ confidence: "High | Medium | Low"
 verdict: "<AGREE | DOWN-CLASSIFY | UP-CLASSIFY ...>"
 disposition: "Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)"
 external_validation_needed: true | false
-status: "ready-to-fix | ready-to-fix (severity pending external confirmation) | closed-out (no fix)"
+status: "ready-to-fix | blocked (decision or verification pending) | closed-out (no fix)"
+risk_decision: "Must fix | Optional hardening | No fix | Needs review"
+remediation_approval: "Approved | Pending | Not requested"
+existing_work_approval: "Approved | Pending | Not applicable"
 target_repos: [common, adal, broker, msal, authenticator]   # inferred from file paths
 firewatch_id: "<guid>"                                       # ITD only
 files_to_change:
   - path: "<repo-relative path#Lxx-Lyy>"
     change: "<what to change>"
 blocked_on:
-  - "<unverifiable open question that gates the severity/decision>"
+  - "<open evidence question, missing risk decision, approval, or implementation contract>"
 ---
 ```
 
@@ -67,7 +70,20 @@ The generator parses the README's `**Label:**` fields, the Classification table,
 Fix-Notes table, the Test Plan (acceptance), and the Verification Gaps table (blocked_on). Keep those
 sections well-formed (per [report-template.md](report-template.md)) so extraction stays clean.
 
+## Dispatch gate
+
+Generation never authorizes execution. A kept finding is `ready-to-fix` only when its risk decision is
+`Must fix` or `Optional hardening`, remediation is explicitly `Approved`, existing work is `Approved`
+by its owner or `Not applicable`, confidence is High/Medium, and files plus test acceptance criteria
+exist. Any open verification gap or external-validation requirement blocks automated dispatch.
+Low/unknown confidence blocks it too. Closed-out findings remain `closed-out (no fix)`.
+
+Older reports missing these approval fields deliberately generate a **blocked** spec. Review the source
+report, record the actual decisions (never invent approval to clear the gate), and regenerate. Keep
+resolved questions in the evidence history rather than the open Verification Gaps table.
+
 ## Safety
-The agent spec is **public-repo-safe by construction** — it carries fix instructions, not exploit detail.
-Never inject PoC payloads or PII into the README sections it reads from; the `safety_check.py` scanner
-covers the generated specs too.
+The agent spec is a **private investigation output**, just like its source report. Fix instructions,
+identifiers, and verification questions may be sensitive; generation does not sanitize them. Keep it
+outside the repository under `VULN_TRIAGE_WORKSPACE`. Never inject PoC payloads or PII into source
+sections. The public-repo scanner is a check, not permission to publish an investigation artifact.
