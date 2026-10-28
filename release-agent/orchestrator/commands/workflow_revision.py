@@ -44,6 +44,26 @@ def cmd_workflow_adopt(args):
         return 1
 
 
+def cmd_migrate_integration_recovery_runtime(args):
+    from orchestrator import integration_runtime_migration as migration
+
+    try:
+        _, orch = C.load_orch(args.runs_root, args.release, args.config)
+        registry = AutomationRegistry(args.runs_root, args.release)
+        with file_lock(registry.lock_path, 30.0):
+            entries = [entry for _, entry in registry._all_unlocked()]
+            if args.approve_hash:
+                result = migration.apply(orch, args, registry_entries=entries)
+            else:
+                result = migration.preview(orch, args, registry_entries=entries)
+        print(json.dumps(result, indent=2))
+        return 0
+    except (ValueError, OSError, RuntimeError, KeyError, TypeError) as exc:
+        print(json.dumps({"error": str(exc), "permission_to_migrate": False,
+                          "permission_to_execute": False}))
+        return 1
+
+
 def register(subparsers):
     parser = subparsers.add_parser(
         "workflow-adopt", help="Preview or hash-confirm a workflow revision adoption (no execution)")
@@ -53,3 +73,18 @@ def register(subparsers):
     parser.add_argument("--reason")
     parser.add_argument("--json", action="store_true")
     parser.set_defaults(func=cmd_workflow_adopt)
+    migration = subparsers.add_parser(
+        "migrate-integration-recovery-runtime",
+        help="Review a zero-reset runtime migration preserving one exact owned integration attempt")
+    migration.add_argument("--release", required=True)
+    migration.add_argument("--execution-id", required=True)
+    migration.add_argument("--executor", required=True)
+    migration.add_argument("--original-preview", required=True)
+    migration.add_argument("--source-runtime-hash")
+    migration.add_argument("--target-runtime-hash")
+    migration.add_argument("--approve-hash")
+    migration.add_argument("--by")
+    migration.add_argument("--reason")
+    migration.add_argument("--confirm-no-inflight", action="store_true")
+    migration.add_argument("--json", action="store_true")
+    migration.set_defaults(func=cmd_migrate_integration_recovery_runtime)

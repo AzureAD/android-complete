@@ -1,6 +1,6 @@
 ---
 name: release-agent
-description: Drive an Android release end-to-end using the Release Orchestrator backbone. Use when the user invokes /release-agent, says "start a release", "continue the release", "advance the release", "approve the gate", "release status", or asks about release run-state. The engine is deterministic and does the real work; this skill is the conversation layer that discovers releases, presents gate briefs and status, and relays the human decision.
+description: Drive an Android release end-to-end using the Release Orchestrator backbone. Use when the user invokes /release-agent, says "start a release", "continue the release", "advance the release", "approve the gate", "release status", "draft a release update", "send a status email", or asks about release run-state. The engine is deterministic and does the real work; this skill discovers releases, presents gates and email drafts, and relays the human decision.
 ---
 
 # /release-agent — Release Orchestrator conductor
@@ -82,6 +82,16 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
     Validation copies use the same rule: send the renderer-produced HTML/plain payload
     verbatim through the MCP mail tool, or do not send. Never hand-compose a shortened
     validation email that preserves one section while summarizing or dropping another.
+3f. **Phase-completion and ad-hoc status drafts require engineer approval.** Prepare
+    phase-completion drafts after each advance, including the final release completion.
+    Show each draft's complete rendered body, recipients, subject and exact hash, then
+    use `m_ask_user` with **Send this draft** and **Not now**. Claim only after an explicit
+    Send decision, passing `--approved-by <release-owner-email>`. Leave deferred drafts
+    prepared; do not mark a release step complete or hold unrelated release work.
+    Refresh changed or expired drafts and obtain approval again. Unattended workers
+    prepare and surface these drafts, never self-approve them. See commands.md for the
+    separate identities and commands; routine daily and step-required notices retain
+    their existing delivery policy.
 4. **Prompt, don't interrogate.** For any discrete choice (start? which release? approve/deny?) use the `m_ask_user` clickable prompt, not free-text. Reserve free-text for genuinely open values (an unusual month).
 5. **Never assume a human decision.** An `m_ask_user` result that merely echoes the offered options is NOT confirmation. Never attest, approve, sign, or mark done until the user explicitly said so. Attesting/approving on an assumption is a release-integrity violation.
 6. **Gates are human-decided.** Present and relay Approve/Deny; never authorize yourself.
@@ -104,7 +114,10 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
 
 ## The universal loop
 **Every notification uses one delivery contract, including specialized follow-ups.**
-On every run, including silent or terminal producer outcomes, discover `notification prepare
+After advancing and on every run, including release completion, run `notification prepare
+--release <id> --source phase-status-email` to persist drafts for newly completed, included
+phases. These are owner-reviewed status updates, not phase gates or proof that DUMMY
+operations occurred. Discover them alongside saved work with `notification prepare
 --release <id> --source pending`. Finalize sent records with empty completion status;
 claim only eligible prepared/not_sent records. Keep expired/closed work unsent and
 surface claimed/uncertain work for evidence-based owner recovery.
@@ -113,8 +126,10 @@ permission. Run `notification prepare --release <id> --source step|digest|status
 (step source needs the same `--phase`, `--step`, `--param` inputs).
 Review the exact destination and payload yourself, then `notification claim --release <id> --id <notification-id>
 --hash <approved-hash> --executor <session-id>`. This review is a Scout/engine safety check,
-not an owner approval prompt: do NOT call `m_ask_user` or pause for send approval unless the
-engine returned an explicit human gate/review. Send exactly the returned tool/payload ONLY
+not an owner approval prompt EXCEPT when `requires_owner_approval:true` identifies an
+engine-required draft review. For those drafts follow rule 3f and include the approved
+owner in the claim; do not treat the runner's review as human approval.
+Send exactly the returned tool/payload ONLY
 when `permission_to_send:true`. No extra courtesy copies. For the Scout bot transport,
 verify the signed-in runner is the descriptor's owner target before claiming.
 Only preparation accepts `--as-of`; claim/result/finalize use the trusted current clock.
@@ -175,6 +190,15 @@ the recorder revalidates it. This never acknowledges a send.
 Discover → (if no gate cleared, run the entry gate) → `next --json` to advance → drain every eligible `scout_pending` item (including beside independent blocks) → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
 
 ## Behaviour dispatch
+- **"draft/send a status email" / "email a release update":** discover the release and
+  prepare `notification prepare --release <id> --source ad-hoc-status-email --request-id
+  <stable-request-id>`. Generate one request ID for this explicit request and retain it
+  through review, sending and recovery. Show the complete draft and ask **Send this draft**
+  or **Not now**; only Send permits claim with its exact hash and `--approved-by` owner.
+  Allow these requests outside the daily phase/time/business-day window and after another
+  email that day, without consuming the daily checkpoint. Do not send for suspended,
+  unsigned or closed releases. Never create a new request ID to retry an owned/uncertain
+  send. A plain "status" request never creates an ad-hoc request or authorizes email.
 - **"status" / "where are we":** discover. If the entry gate isn't cleared (`readiness_gate`/not signed, or `blocked`) → the useful answer IS the checklist: run `checklist --release <id> --verify` and show that table (don't ask permission). Otherwise show `status`. No release → say so, offer to start.
 - **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before anything.)* **Confirm which release in ONE prompt** — run `python -m orchestrator.cli preview-release --json` (returns candidates, each with `release_id`, `ship_label`, `ccd_pretty` — the release is NAMED for its **ship month** = code-complete month + 1). Lead with candidate[0] (the current month's release) and `m_ask_user`: recommended chip **"Yes — start the `<ship_label>` release (code-complete `<ccd_pretty>`)"**, plus a **"A different month"** chip. Show the ship name and the CCD date TOGETHER so there's no month-mismatch surprise (never make the user pick a bare month, then tell them it's a different one). If they pick "A different month" → a second `m_ask_user` offering candidates[1..3] as chips (each **"`<ship_label>` (CC `<ccd_pretty>`)"**) plus a free-text "another month" fallback. → `init --release <chosen release_id>` (this stores + prints the confirmed ship-name; do NOT re-ask it) → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
 - **Engine HOLDS at a gate:** present fresh status. For an external gate, first run its `approval_command --preview --comment "<comment>"` and show the exact request/hash alongside the table; then `m_ask_user` Approve/Deny. On approval repeat the reviewed comment, hash and human reviewer through that command (see the lifecycle above); for a local gate use `approve`. On denial run `deny --comment` with their reason. An already-owned external attempt needs exact-ID read recovery, not another approval prompt/submission. Never substitute generic `approve` for an externally-backed gate; the CLI rejects that bypass. Present new status.

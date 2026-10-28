@@ -764,7 +764,8 @@ def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
         _C.save_state(st, d, rid)
         cid = "19:meeting_ABC123@thread.v2"
         monkeypatch.setattr(bugbash_meeting, "resolve", lambda inv: meeting(inv, cid))
-        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=cid)
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=cid,
+                                transport="graph", mcp_evidence_file=None)
         assert BC.cmd_record_bugbash_chat(ns) == 0
         again = _C.load_state(d, rid)
         assert again.is_done("bug_bash", "activate_chat")
@@ -773,7 +774,8 @@ def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
         # Missing prerequisite state cannot record even a supplied syntactically valid ID.
         st2 = ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed")
         _C.save_state(st2, d, rid)
-        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=None)
+        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=None,
+                                 transport="graph", mcp_evidence_file=None)
         assert BC.cmd_record_bugbash_chat(ns2) == 1
         after = _C.load_state(d, rid)
         assert not after.is_done("bug_bash", "activate_chat")

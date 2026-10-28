@@ -8,10 +8,10 @@
 """
 from __future__ import annotations
 import subprocess
-import shutil
 from dataclasses import dataclass
 
 from tools.coordinates import coords
+from tools.executables import find_azure_cli
 
 
 @dataclass
@@ -22,7 +22,7 @@ class CheckResult:
 
 
 def check_ado_build_def(org: str, project: str, def_id: int, timeout: int = 30) -> CheckResult:
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return CheckResult(False, False, "az CLI not found")
     try:
@@ -59,7 +59,7 @@ def check_ado_build_def(org: str, project: str, def_id: int, timeout: int = 30) 
 def current_az_user(timeout: int = 20):
     """Return the signed-in user's email/UPN from `az account show`, or None.
     Used to resolve the release owner without hardcoding an address."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return None
     try:
@@ -145,7 +145,7 @@ def read_pipeline_variable(org: str, project: str, def_id: int, name: str,
                            timeout: int = 30):
     """Return (ok, value, detail). value is the variable's string value (may be '')
     or None if the variable isn't defined. ok is False only on a real access/CLI error."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
@@ -175,7 +175,7 @@ def set_pipeline_variable(org: str, project: str, def_id: int, name: str,
                           value: str, timeout: int = 30) -> CheckResult:
     """Write a definition variable (update, creating it if absent). A real
     production change — callers must gate this behind explicit confirmation."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return CheckResult(False, False, "az CLI not found")
     base = [az, "pipelines", "variable", "{verb}", "--pipeline-id", str(def_id),
@@ -215,7 +215,7 @@ def wiki_page_exists(org: str, project: str, wiki: str, path: str,
                      timeout: int = 30):
     """True/False whether a wiki page exists, or None if it can't be determined
     (e.g. az missing / CLI error) — callers should treat None conservatively."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return None
     try:
@@ -235,7 +235,7 @@ def wiki_page_exists(org: str, project: str, wiki: str, path: str,
 
 def create_wiki_page(org: str, project: str, wiki: str, path: str,
                      content: str, timeout: int = 60, *, require_absent: bool = False) -> CheckResult:
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return CheckResult(False, False, "az CLI not found")
     import tempfile
@@ -274,7 +274,7 @@ def get_wiki_page(org: str, project: str, wiki: str, path: str, timeout: int = 6
     """Read a wiki page's content + ETag. Returns (ok, content, etag, detail). ok is False
     (with content=None) when the page can't be read; a MISSING page returns ok=False and a
     detail that contains 'not found' so callers can distinguish absent from error."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, None, "az CLI not found")
     try:
@@ -309,7 +309,7 @@ def update_wiki_page(org: str, project: str, wiki: str, path: str, content: str,
                      etag: str, timeout: int = 60) -> CheckResult:
     """Overwrite an existing wiki page's content (ETag-guarded). `etag` is the version from
     get_wiki_page. Returns a CheckResult (ok, ran, detail)."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return CheckResult(False, False, "az CLI not found")
     import tempfile
@@ -349,7 +349,7 @@ def fetch_cg_alerts(resource: str, host: str, project_id: str, repo_id: int,
                     branch: str, timeout: int = 60):
     """Return (ok, alerts, detail). `alerts` is the raw list of alert dicts for
     the branch (all states). ok is False on a real CLI/access error."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, [], "az CLI not found")
     url = (f"{host}/{project_id}/_apis/ComponentGovernance/GovernedRepositories/"
@@ -383,7 +383,7 @@ def fetch_cg_alerts(resource: str, host: str, project_id: str, repo_id: int,
 def latest_scheduled_build(org: str, project: str, def_id: int, timeout: int = 60):
     """Return (ok, run, detail). `run` is a dict {queueTime, result, status} for
     the most recent schedule-reason build, or None if none in recent history."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:

@@ -52,6 +52,23 @@ def cmd_create_integration_prs(args):
     return 0
 
 
+def cmd_recover_integration_prs(args):
+    from orchestrator import integration_recovery as recovery
+
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    try:
+        if not args.execute:
+            print(json.dumps(recovery.preview(orch, args), indent=2))
+            return 0
+        print(recovery.execute(orch, args))
+        return 0
+    except Exception as exc:
+        # Never save an uncheckpointed attention result after a checkpoint failed.
+        print(json.dumps({"error": str(exc), "permission_to_execute": False,
+                          "note": "Original owner retained; uncertain operations cannot be blindly replayed."}))
+        return 2 if args.execute else 1
+
+
 def register(sub):
     p = sub.add_parser(
         "create-integration-prs",
@@ -61,6 +78,10 @@ def register(sub):
     p.add_argument("--execute", action="store_true", help="Execute the approved, checked write plan")
     p.add_argument("--repos", nargs="*", default=None,
                    help="Limit to these repo keys (common msal broker authenticator)")
+    p.add_argument("--checkout-root", default=None,
+                   help="Absolute directory containing separate clean common/msal/broker/authenticator checkouts")
+    p.add_argument("--resolutions-file", default=None,
+                   help="Absolute version-1 JSON file pinning explicit MSAL/Auth integration conflict choices")
     p.add_argument("--pbi", default=None, help="Reuse this PBI id instead of creating one")
     p.add_argument("--pbi-title", default=None, help="Title for the created PBI")
     p.add_argument("--execution-id", help="Active reviewed reservation execution id")
@@ -70,3 +91,21 @@ def register(sub):
                   "without human approval, then execute through the normal fenced write path")
     W.add_arguments(p)
     p.set_defaults(func=cmd_create_integration_prs)
+    r = sub.add_parser("recover-integration-prs",
+                       help="Reconcile the frozen approved plan; manually resume only its owned suffix")
+    r.add_argument("--release", required=True)
+    r.add_argument("--as-of", default=None)
+    r.add_argument("--execution-id", required=True)
+    r.add_argument("--executor", required=True)
+    r.add_argument("--original-preview", required=True,
+                   help="Original exact approved preview JSON, not a new remaining-PR plan")
+    r.add_argument("--existing-pbi", required=True,
+                   help="Explicit existing PBI to verify; recovery never creates another")
+    r.add_argument("--execute", action="store_true")
+    r.add_argument("--recovery-hash", help="Exact fresh recovery preview hash manually approved")
+    r.add_argument("--broker-target-tip",
+                   help="Exact explicitly reviewed fast-forward Broker dev tip; replan only pending RI dependencies")
+    r.add_argument("--approved-by", help="Manual reviewer of receipts and displayed content differences")
+    r.add_argument("--confirm-no-inflight", action="store_true",
+                   help="Owner confirms the original runner and provider operations have stopped")
+    r.set_defaults(func=cmd_recover_integration_prs)

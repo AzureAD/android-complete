@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json as _json
-import shutil
 import subprocess
 from urllib.parse import quote
 
 from tools.coordinates import coords
+from tools.executables import find_azure_cli
 from tools import pipelines as _pp
 
 
@@ -19,7 +19,7 @@ RAN_RESULTS = {"succeeded", "succeededWithIssues", "failed"}
 
 def _az_json(args, timeout):
     """Run `az <args> -o json` and return (ok, parsed_json, detail)."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
@@ -53,7 +53,7 @@ _ADO_RESOURCE = coords.resource_id()
 def _ado_rest_get(url, timeout):
     """GET an ADO REST url with an az-minted bearer token. Returns (ok, json, detail).
     Used only where `az devops invoke` can't reach an endpoint cleanly."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
@@ -88,7 +88,7 @@ def _ado_rest_get_h(url, timeout):
     """Like _ado_rest_get but also returns the response headers:
     (ok, json, headers_lower, detail). ADO returns paging tokens in the
     `x-ms-continuationtoken` HEADER (not the body), so header access is needed to page."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, {}, "az CLI not found")
     try:
@@ -141,7 +141,7 @@ def _ado_rest_get_all(url, timeout, cap_pages=60):
 
 def _ado_rest_get_text(url, timeout):
     """GET an ADO REST url returning PLAIN TEXT (e.g. a build log). (ok, text, detail)."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
@@ -171,7 +171,7 @@ def _ado_rest_send(url, method, body, timeout):
     """Send a JSON REST request (POST/PATCH/PUT) to ADO with an az-minted bearer token.
     Returns (ok, json, detail). The ONE write primitive — used for test-plan creates
     where `az devops invoke` has no clean surface."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:

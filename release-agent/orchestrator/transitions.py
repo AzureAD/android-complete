@@ -447,6 +447,12 @@ class TransitionKernel:
             deepcopy(record.execution),
         )
 
+    @staticmethod
+    def _fenced_integration(phase_id, step_id, record):
+        return ((phase_id, step_id) == ("finalize", "integ_prs")
+                and (record.execution or {}).get("write_review")
+                and record.data.get("in_flight_since"))
+
     def _owned_outcome_check(
         self, phase_id: str, step_id: str, execution_id: str
     ) -> TransitionResult | None:
@@ -769,6 +775,8 @@ class TransitionKernel:
         if not reason or not reason.strip():
             return self._reject("A reason is required to skip a step.")
         previous = self.state.get_step(phase_id, step_id)
+        if self._fenced_integration(phase_id, step_id, previous):
+            return self._reject("Receipt-backed integration recovery cannot be skipped.", phase_id, step_id)
         if (previous.execution or {}).get("effect_mode"):
             return self._reject(
                 "Engine-owned effect execution cannot be cleared by skip. "
@@ -843,6 +851,8 @@ class TransitionKernel:
                 step_id,
             )
         previous = self.state.get_step(phase_id, step_id)
+        if self._fenced_integration(phase_id, step_id, previous):
+            return self._reject("Use the receipt-backed integration recovery command.", phase_id, step_id)
         if rejected := self._outcome_invalidation_check(phase_id, step_id, status="done"):
             return rejected
         if self._refresh_invalidates(phase_id, step_id, status="done"):
@@ -985,6 +995,75 @@ class TransitionKernel:
         self.state.set_step(phase_id, step_id, record)
         self._outcome_permits[permit] = self._generation(record)
         return permit
+
+    def begin_integration_recovery(self, execution_id, plan, recovery_hash, approved_by):
+        """A separate manual authorization; never reserve or replace the original owner."""
+        from orchestrator.revision import digest, is_hash
+
+        pid, sid = "finalize", "integ_prs"
+        if rejected := self._owned_outcome_check(pid, sid, execution_id):
+            return rejected
+        record = self.state.get_step(pid, sid)
+        definition = self.workflow.step(pid, sid)
+        if (definition.write_command != "create-integration-prs"
+                or record.status not in ("blocked", "in_flight")
+                or not record.data.get("in_flight_since")
+                or not is_hash(recovery_hash) or digest(plan) != recovery_hash
+                or plan.get("command") != "recover-integration-prs"
+                or plan.get("release") != self.state.release_id
+                or plan.get("execution_id") != execution_id
+                or plan.get("owner") != record.execution["owner"]
+                or plan.get("original_review") != record.execution.get("write_review")
+                or not approved_by or not approved_by.strip()
+                or not plan.get("receipts")
+                or any(r.get("status") not in ("pending", "applied") for r in plan["receipts"])):
+            return self._reject("Invalid same-execution integration recovery review.", pid, sid)
+        selection = self.projection_factory().scheduling()
+        if (selection.suspension or not selection.phase(pid).due
+                or not selection.step(pid, sid).time_ready):
+            return self._reject("Integration recovery provider invocation is suspended.", pid, sid)
+        previous = record.data.get("integration_recovery")
+        history = deepcopy(previous.get("approvals", [])) if previous else []
+        if len(history) >= 32:
+            return self._reject("Recovery approval history is full; owner inspection required.", pid, sid)
+        history.append({"hash": recovery_hash, "approved_by": approved_by, "at": self.now()})
+        record.data["integration_recovery"] = {
+            "original_hash": record.execution["write_review"]["hash"],
+            "execution_id": execution_id, "approvals": history,
+            "receipts": deepcopy(plan["receipts"]),
+        }
+        if plan.get("replans"):
+            replans = deepcopy(plan["replans"])
+            history[-1]["replan_hashes"] = [entry["hash"] for entry in replans]
+            for entry in replans:
+                if entry["approval_hash"] is None:
+                    entry["approval_hash"] = recovery_hash
+            record.data["integration_recovery"]["replans"] = replans
+            record.data["integration_recovery"]["effective_plan_hash"] = plan["effective_plan_hash"]
+        record.status = "in_flight"
+        self.state.set_step(pid, sid, record)
+        permit = OutcomePermit(pid, sid, TransitionIntent.WRITE)
+        self._outcome_permits[permit] = self._generation(record)
+        return permit
+
+    def complete_integration_recovery(self, permit):
+        if (not isinstance(permit, OutcomePermit)
+                or (permit.phase, permit.step) != ("finalize", "integ_prs")):
+            return self._reject("Integration recovery requires its live invocation permit.")
+        if rejected := self.validate_outcome_permit(permit):
+            return rejected
+        recovery = self.state.get_step(permit.phase, permit.step).data.get("integration_recovery")
+        if (not recovery or not recovery["receipts"]
+                or any(r["status"] != "applied" for r in recovery["receipts"])):
+            return self._reject("Integration recovery requires every exact provider receipt.")
+        self._integration_completion = permit
+        try:
+            return self._apply_canonical(
+                permit.phase, permit.step,
+                Done("integ_prs: receipt-backed recovery completed the original execution", by="agent"))
+        finally:
+            self._integration_completion = None
+            self._outcome_permits.pop(permit, None)
 
     def begin_effect(
         self,
@@ -1285,6 +1364,57 @@ class TransitionKernel:
             return self._reject("External approval requires the current eligible, unowned gate.", phase_id, step_id)
         return None
 
+    def validate_manual_approval_start(self, phase_id, step_id):
+        if rejected := self._invalid():
+            return rejected
+        record = self.state.get_step(phase_id, step_id)
+        previous = record.data.get("last_approval")
+        if "last_approval" not in record.data:
+            return self.validate_approval_start(phase_id, step_id)
+        definition = self.workflow.step(phase_id, step_id)
+        from .revision import revision_id
+        from .manual_approvals import validate_evidence
+        if not isinstance(previous, dict) or previous.get("provenance") != "external_manual":
+            return self._reject("Existing owned approval evidence cannot be replaced by manual import.", phase_id, step_id)
+        validate_evidence(previous)
+        decision = self.projection_factory().latest_gate_decision(definition) if definition else None
+        if (not definition or not definition.is_gate or not definition.approval_command
+                or record.execution or record.status != "done" or not decision
+                or decision.get("decision") != "approved" or previous["step"] != definition.key
+                or previous["release"] != self.state.release_id
+                or previous["workflow_revision"] != revision_id(self.state.workflow_revision)
+                or previous["generation"] != (record.invalidated_at or "initial")):
+            return self._reject("Existing manual receipt is not an exact completed replay; never overwrite it.",
+                                phase_id, step_id)
+        return None
+
+    def record_manual_approval(self, phase_id, step_id, evidence):
+        from .manual_approvals import target_for_definition, validate_evidence
+        from .revision import revision_id
+
+        if rejected := self.validate_manual_approval_start(phase_id, step_id):
+            return rejected
+        record = self.state.get_step(phase_id, step_id)
+        if "last_approval" in record.data:
+            return self._reject("Manual approval is already recorded; preserve its original receipt.", phase_id, step_id)
+        target = validate_evidence(evidence)
+        expected = target_for_definition(
+            self.state, self.workflow.step(phase_id, step_id), target.approval_id)
+        if (evidence["release"] != self.state.release_id or evidence["step"] != f"{phase_id}.{step_id}"
+                or evidence["workflow_revision"] != revision_id(self.state.workflow_revision)
+                or evidence["generation"] != (record.invalidated_at or "initial") or target != expected):
+            return self._reject("Manual approval binding changed; review again.", phase_id, step_id)
+        record.data["last_approval"] = deepcopy(evidence)
+        record.status, record.by, record.completed_at = "done", "human", self.now()
+        target = evidence["target"]
+        record.note = (f"Recorded externally approved ADO approval {target['approval_id']} "
+                       f"on build {target['build_id']}; Scout did not submit it.")
+        self.state.set_step(phase_id, step_id, record)
+        self.state.gate_decisions.append(_gate_dict(GateDecision(
+            step=f"{phase_id}.{step_id}", decision="approved", at=self.now(),
+            by=evidence["recorded_by"], comment=record.note)))
+        return self._accept("ran", record.note, phase_id, step_id)
+
     def validate_approval_owner(self, phase_id, step_id, execution_id, *, active=False):
         if rejected := self._invalid(phase_id, step_id):
             return rejected
@@ -1580,6 +1710,8 @@ class TransitionKernel:
         protected = []
         for step in steps:
             record = self.state.get_step(step.phase_id, step.id)
+            if self._fenced_integration(step.phase_id, step.id, record):
+                protected.append(f"{step.key} (receipt-backed integration recovery)")
             if (record.execution or {}).get("approval"):
                 protected.append(f"{step.key} (approval execution {record.execution['id']})")
             if (step.kind == StepKind.AUTO and step.effect_mode
@@ -1636,6 +1768,28 @@ class TransitionKernel:
         links = deepcopy(links)
         data = deepcopy(data)
         previous = self.state.get_step(phase_id, step_id)
+        if (previous.execution and previous.data.get("integration_recovery")
+                and status == "done" and getattr(self, "_integration_completion", None) is None):
+            return self._reject("Generic results cannot complete integration recovery.", phase_id, step_id)
+        stored_data = deepcopy(data if data is not None else previous.data)
+        for key in ("integration_recovery", "integration_write_journal", "integration_runtime_migration"):
+            if key in previous.data:
+                if data is not None and data.get(key, previous.data[key]) != previous.data[key]:
+                    return self._reject("Integration receipts are writer-owned evidence.", phase_id, step_id)
+                stored_data[key] = deepcopy(previous.data[key])
+            elif key in stored_data:
+                return self._reject("Integration receipts are writer-owned evidence.", phase_id, step_id)
+        if self._fenced_integration(phase_id, step_id, previous) and status == "done":
+            journal = previous.data.get("integration_write_journal", {}).get("operations", {})
+            live_write = any(
+                (permit.phase, permit.step) == (phase_id, step_id)
+                and permit.intent == TransitionIntent.WRITE
+                and generation == self._generation(previous)
+                for permit, generation in self._outcome_permits.items())
+            if (getattr(self, "_integration_completion", None) is None
+                    and (not live_write or not journal
+                         or any(entry["status"] != "applied" for entry in journal.values()))):
+                return self._reject("Integration completion requires its live writer and receipts.", phase_id, step_id)
         if rejected := self._outcome_invalidation_check(phase_id, step_id, status=status, refresh=refresh):
             return rejected
         if self._refresh_invalidates(phase_id, step_id, status=status, refresh=refresh):
@@ -1643,7 +1797,6 @@ class TransitionKernel:
                 phase_id, step_id, reason=f"Refreshed result for {phase_id}.{step_id}.")
             if result.kind != "invalidated":
                 return result
-        stored_data = deepcopy(data if data is not None else previous.data)
         if "last_write_review" in previous.data:
             stored_data["last_write_review"] = deepcopy(previous.data["last_write_review"])
         else:
@@ -1745,6 +1898,9 @@ class TransitionKernel:
             return self._reject("Evidence requires mapping data, list links and text note/by.", phase_id, step_id)
         record = self.state.get_step(phase_id, step_id)
         before = deepcopy(record)
+        if data and any(key in data for key in (
+                "integration_recovery", "integration_write_journal", "integration_runtime_migration")):
+            return self._reject("Integration receipts are writer-owned evidence.", phase_id, step_id)
         if data and "last_write_review" in data and (
                 "last_write_review" not in record.data
                 or data["last_write_review"] != record.data["last_write_review"]):
@@ -1823,10 +1979,17 @@ class TransitionKernel:
     def _close_write_review(self, data: dict, execution: Optional[dict]) -> None:
         if execution and execution.get("write_review"):
             from orchestrator.revision import revision_id
+            migration = data.get("integration_runtime_migration")
+            original_revision = revision_id(self.state.workflow_revision)
+            if migration:
+                from orchestrator.integration_runtime_migration import receipts
+                migration = receipts(StepState(data=data))[0]
+            if migration and migration["plan"]["execution"] == execution:
+                original_revision = migration["plan"]["source_revision"]
             data["last_write_review"] = {
                 "execution_id": execution["id"], **deepcopy(execution["write_review"]),
                 "approved_at": execution["started_at"],
-                "workflow_revision": revision_id(self.state.workflow_revision),
+                "workflow_revision": original_revision,
             }
 
     @staticmethod

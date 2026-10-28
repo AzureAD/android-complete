@@ -55,6 +55,33 @@ def test_status_email_window_boundaries():
     assert r5["skip"] and "after Phase 5" in r5["reason"]
 
 
+def test_completed_library_email_uses_current_rc_steps_without_starting_rollout():
+    from orchestrator.state import StepState
+
+    st = _status_state("finalize")
+    _active_step(st, "finalize", "final_status_email")
+    result = _compose(st, [])
+    rows = {row["label"]: row for row in result["model"]["milestones"]}
+    assert rows["RC builds and test apks generated, automation run"]["status"] == "complete"
+    assert rows["Manual Test Pass Scheduled"]["status"] == "complete"
+    assert rows["Manual Test Pass Complete"]["status"] == "complete"
+    assert rows["Authenticator app built & tagged"]["status"] != "complete"
+    assert "Library release complete." in result["html"]
+    assert not st.is_done("rollout_start", "tag_authenticator")
+
+    st.set_step("build_verify", "rc_report_gate", StepState(status="blocked"))
+    result = _compose(st, [])
+    rows = {row["label"]: row for row in result["model"]["milestones"]}
+    assert rows["RC builds and test apks generated, automation run"]["status"] == "blocked"
+    assert "Library release complete." not in result["html"]
+
+
+def test_manual_pass_invitation_remains_scheduled_until_completion():
+    result = _compose(_status_state("bug_bash"), [])
+    rows = {row["label"]: row for row in result["model"]["milestones"]}
+    assert rows["Manual Test Pass Scheduled"]["status"] == "scheduled"
+
+
 def test_status_email_projection_does_not_complete_legacy_skipped_gate():
     from orchestrator import status_email as SE
     from orchestrator.state import StepState

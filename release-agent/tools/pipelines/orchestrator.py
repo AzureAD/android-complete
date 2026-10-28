@@ -335,11 +335,36 @@ def orchestrator_stage_state(org, project, release_month, stage_ref, timeout=90)
     return (True, None, f"stage '{stage_ref}' not in the orchestrator timeline")
 
 
+def _latest_final_mrwp(tags):
+    """Select the highest publish job attempt, never an older successful build."""
+    import re
+
+    if not isinstance(tags, list):
+        return False, None, "malformed orchestrator build tags"
+    attempts = {}
+    for tag in tags:
+        if not isinstance(tag, str):
+            return False, None, "malformed orchestrator build tag"
+        if not re.match(r"Final[0-9]", tag):
+            continue
+        match = re.fullmatch(r"Final([1-9][0-9]*)=([1-9][0-9]*)", tag)
+        if not match:
+            return False, None, f"invalid final build tag: {tag!r}"
+        attempt, build_id = int(match[1]), match[2]
+        if attempt in attempts and attempts[attempt] != build_id:
+            return False, None, f"conflicting Final{attempt} build identities"
+        attempts[attempt] = build_id
+    if not attempts:
+        return True, None, "no valid Final<N> tag yet"
+    return True, attempts[max(attempts)], ""
+
+
 def orchestrator_finalization_status(org, project, release_month, stage_ref, timeout=90):
     """Resolve the final publication-gate state and its final MRWP/Auth outputs.
 
-    `Final1=<mrwp id>` is emitted on the orchestrator run. Authenticator build/version
-    evidence is captured later by rollout_start.identify_auth_build from pipeline 475778.
+    `Final<N>=<mrwp id>` uses the Publish Internal job attempt, not the RC number.
+    The highest numbered attempt wins regardless of tag order or build outcome.
+    Authenticator evidence is captured later by rollout_start.identify_auth_build.
     """
     ok, run, detail = _pp.find_orchestrator_run(
         org, project, ORCHESTRATOR_DEF, release_month, timeout)
@@ -387,10 +412,11 @@ def orchestrator_finalization_status(org, project, release_month, stage_ref, tim
                     f"orchestrator build {build_id} completed before reaching '{stage_ref}'")
         return (True, info, f"orchestrator build {build_id} has not reached '{stage_ref}'")
 
-    final_mrwp = _pp._tag_value(run.get("tags") or [], "Final1")
-    if _numeric_build_id(final_mrwp) is None:
-        return (True, info, f"orchestrator build {build_id} has no valid Final1 tag yet")
-    final_mrwp = str(_numeric_build_id(final_mrwp))
+    valid_tags, final_mrwp, tag_detail = _latest_final_mrwp(run.get("tags", []))
+    if not valid_tags:
+        return False, None, f"orchestrator build {build_id}: {tag_detail}"
+    if final_mrwp is None:
+        return True, info, f"orchestrator build {build_id} has {tag_detail}"
     info["mrwp_run_id"] = final_mrwp
     okf, final_run, final_detail = _pp._az_json(
         ["pipelines", "build", "show", "--org", org, "--project", project,
@@ -399,6 +425,8 @@ def orchestrator_finalization_status(org, project, release_month, stage_ref, tim
     if not okf:
         return (False, None, final_detail)
     final_run = final_run or {}
+    if _numeric_build_id(final_run.get("id")) != int(final_mrwp):
+        return False, None, f"final MRWP {final_mrwp} returned a mismatched build identity"
     if final_run.get("status") != "completed":
         return (True, info, f"final MRWP {final_mrwp} is {final_run.get('status') or 'not started'}")
     if final_run.get("result") not in ("succeeded", "partiallySucceeded"):

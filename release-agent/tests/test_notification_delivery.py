@@ -83,6 +83,146 @@ def test_ambiguous_and_lost_ack_never_replay(orch):
     assert before == orch.state.notification_deliveries
 
 
+def _different_daily_email(orch):
+    item = D.descriptor(
+        orch.state, "status-email:2026-09-09",
+        {"kind": "window", "phases": ["ccd"], "date": "2026-09-09"},
+        "workiq_send_email",
+        {"to": ["owner@example.com"], "subject": "Daily", "body": "gate >=90%", "isHtml": False},
+        {"release_field": "last_status_email_date", "date": "2026-09-09"})
+    D.offer(orch, item)
+    claim = D.claim(orch, item["id"], item["hash"], "original-worker")
+    D.result(orch, item["id"], claim["execution_id"], "uncertain", "different body delivered")
+    observed = {
+        "tool": "workiq_send_email", "payload": {**item["payload"], "body": "gate <=90%"},
+        "provider_receipt": {
+            "transport": "workiq_send_email", "success": True,
+            "tool_call_id": "original-tool-call", "event_id": "original-result",
+            "evidence": "Original provider returned Email sent",
+        },
+    }
+    return item, claim["execution_id"], observed
+
+
+def test_daily_mismatch_review_is_read_only_and_resolution_never_replays_or_completes(orch):
+    from orchestrator import notification_mismatch as M, revision
+
+    item, execution, observed = _different_daily_email(orch)
+    before = copy.deepcopy(orch.state)
+    review = M.preview(orch, item["id"], execution, observed)
+    assert orch.state == before
+    assert revision.adoption_preview(orch)["blockers"]
+    assert not review["adoption_after_resolution"]["blockers"]
+    assert review["plan"]["body_changes"] == [{"expected": ">", "delivered": "<"}]
+    M.resolve(orch, item["id"], execution, observed, review["review_hash"],
+              by=orch.state.owner_email, reason="Owner accepted original delivery incident",
+              confirm_runner_stopped=True)
+    record = orch.state.notification_deliveries[item["id"]]
+    assert record["status"] == "uncertain"
+    assert record["attempts"] == before.notification_deliveries[item["id"]]["attempts"]
+    assert not record.get("completion")
+    assert orch.state.last_status_email_date is None
+    assert M.validate_resolution(orch.state, record)
+    assert not D.available(orch, item)
+    with pytest.raises(ValueError):
+        D.claim(orch, item["id"], item["hash"], "new-worker")
+    with pytest.raises(ValueError):
+        D.result(orch, item["id"], execution, "not_sent", "incorrect", review=True)
+    with pytest.raises(ValueError):
+        finish(orch, item["id"])
+
+
+@pytest.mark.parametrize("change", ["recipient", "exact", "failed", "wrong-execution", "step"])
+def test_daily_mismatch_review_rejects_unproven_or_ineligible_evidence(orch, change):
+    from orchestrator import notification_mismatch as M
+
+    item, execution, observed = _different_daily_email(orch)
+    if change == "recipient":
+        observed["payload"]["to"] = ["someone-else@example.com"]
+    elif change == "exact":
+        observed["payload"] = copy.deepcopy(item["payload"])
+    elif change == "failed":
+        observed["provider_receipt"]["success"] = False
+    elif change == "wrong-execution":
+        execution = "other-execution"
+    else:
+        record = orch.state.notification_deliveries[item["id"]]
+        record["descriptor"]["completion"]["kind"] = "step_data"
+        record["descriptor"]["hash"] = D.fingerprint(
+            {k: v for k, v in record["descriptor"].items() if k != "hash"})
+        record["attempts"][-1]["hash"] = record["descriptor"]["hash"]
+    before = copy.deepcopy(orch.state)
+    with pytest.raises(ValueError):
+        M.preview(orch, item["id"], execution, observed)
+    assert orch.state == before
+
+
+@pytest.mark.parametrize("change", ["hash", "reviewer", "running", "state", "registry"])
+def test_daily_mismatch_resolution_requires_fresh_exact_owner_review(orch, change):
+    from orchestrator import notification_mismatch as M
+
+    item, execution, observed = _different_daily_email(orch)
+    review = M.preview(orch, item["id"], execution, observed)
+    args = {
+        "by": orch.state.owner_email, "reason": "Reviewed", "confirm_runner_stopped": True,
+        "registry_entries": [],
+    }
+    reviewed_hash = review["review_hash"]
+    if change == "hash":
+        reviewed_hash = "incorrect"
+    elif change == "reviewer":
+        args["by"] = "other@example.com"
+    elif change == "running":
+        args["confirm_runner_stopped"] = False
+    elif change == "state":
+        orch.state.owner_name = "Changed"
+    else:
+        args["registry_entries"] = [{"scope": "shared", "status": "active", "key": "new"}]
+    before = copy.deepcopy(orch.state)
+    with pytest.raises(ValueError):
+        M.resolve(orch, item["id"], execution, observed, reviewed_hash, **args)
+    assert orch.state == before
+
+
+def test_invalid_daily_mismatch_resolution_cannot_remove_adoption_barrier(orch):
+    from orchestrator import revision
+
+    item, _, _ = _different_daily_email(orch)
+    orch.state.notification_deliveries[item["id"]]["mismatch_resolution"] = {"plan": {}, "hash": "fake"}
+    with pytest.raises(ValueError, match="mismatch"):
+        revision.adoption_preview(orch)
+
+
+def test_cli_daily_mismatch_resolution_persists_only_reviewed_disposition(orch, tmp_path, capsys):
+    item, execution, observed = _different_daily_email(orch)
+    C.save_state(orch.state, str(tmp_path), orch.state.release_id)
+    observed_file = tmp_path / "observed.json"
+    observed_file.write_text(json.dumps(observed), encoding="utf-8")
+    command = [
+        "--runs-root", str(tmp_path), "notification", "resolve-mismatch",
+        "--release", orch.state.release_id, "--id", item["id"],
+        "--execution-id", execution, "--observed-file", str(observed_file),
+    ]
+    assert cli.main(command) == 0
+    review = json.loads(capsys.readouterr().out)
+    before = C.load_state(str(tmp_path), orch.state.release_id)
+    assert not before.notification_deliveries[item["id"]].get("mismatch_resolution")
+    assert cli.main(command + [
+        "--approve-hash", review["review_hash"], "--by", orch.state.owner_email,
+        "--reason", "Owner reviewed exact difference", "--confirm-runner-stopped",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["resolved"] and not result["permission_to_send"]
+    after = C.load_state(str(tmp_path), orch.state.release_id)
+    record = after.notification_deliveries[item["id"]]
+    assert record["mismatch_resolution"]["hash"] == review["review_hash"]
+    assert record["status"] == "uncertain" and not record.get("completion")
+    assert record["attempts"] == before.notification_deliveries[item["id"]]["attempts"]
+    assert after.workflow_revision == before.workflow_revision
+    assert after.steps == before.steps
+    assert after.last_status_email_date is None
+
+
 def test_claim_uses_approved_snapshot_not_later_preparation(orch):
     item = email(orch)
     D.offer(orch, item)
@@ -786,3 +926,199 @@ def test_partner_preparation_honors_configured_closing_step(orch, monkeypatch):
     assert status_email_cmd.prepare_status_email(args, orch.state, orch)["skip"]
     with pytest.raises(ValueError, match="closing step"):
         D.claim(orch, item["id"], item["hash"], "A")
+
+
+@pytest.fixture
+def reviewed_email_args(orch, monkeypatch):
+    from orchestrator.commands import status_email_cmd
+
+    monkeypatch.setattr(status_email_cmd, "_broker_changes", lambda _state: [])
+    return SimpleNamespace(
+        config=C.DEFAULT_CONFIG, release=orch.state.release_id,
+        source="phase-status-email", request_id=None, send_to=None)
+
+
+def _reviewed_drafts(orch, args):
+    from orchestrator.commands.status_email_cmd import prepare_reviewed_status_emails
+
+    return prepare_reviewed_status_emails(args, orch.state, orch)["notifications"]
+
+
+def _send_reviewed_draft(orch, item):
+    D.offer(orch, item)
+    claim = D.claim(orch, item["id"], item["hash"], "engineer-session",
+                    approved_by=orch.state.owner_email)
+    D.result(orch, item["id"], claim["execution_id"], "sent", "MCP confirmed exact payload",
+             receipt=D.exact_payload_receipt(item, {"message_id": "provider-id"}))
+    assert finish(orch, item["id"])
+    return claim
+
+
+def test_phase_completion_draft_requires_explicit_owner_review(orch, reviewed_email_args):
+    before = copy.deepcopy(orch.state)
+    items = _reviewed_drafts(orch, reviewed_email_args)
+    assert [item["id"] for item in items] == ["phase-status-email:preflight:email"]
+    assert orch.state == before
+    item = items[0]
+    shown = D.offer(orch, item)
+    assert shown["requires_owner_approval"] and not shown["permission_to_send"]
+    assert "Pre-flight" in item["payload"]["subject"]
+    saved = copy.deepcopy(orch.state)
+    for reviewer in (None, "worker@example.com"):
+        with pytest.raises(ValueError, match="release-owner approval"):
+            D.claim(orch, item["id"], item["hash"], "worker", approved_by=reviewer)
+        assert orch.state == saved
+    claim = _send_reviewed_draft(orch, item)
+    attempt = orch.state.notification_deliveries[item["id"]]["attempts"][-1]
+    assert attempt["approved_by"] == orch.state.owner_email and attempt["approved_at"]
+    assert claim["permission_to_send"]
+    assert orch.state.steps == before.steps and orch.state.gate_decisions == before.gate_decisions
+    assert orch.state.last_status_email_date is None
+    assert not _reviewed_drafts(orch, reviewed_email_args)
+    assert not D.claim(orch, item["id"], item["hash"], "worker")["permission_to_send"]
+
+
+@pytest.mark.parametrize("change", ["hash", "snapshot", "reopen", "midnight"])
+def test_reviewed_draft_rejects_stale_approval(orch, reviewed_email_args, change):
+    item = _reviewed_drafts(orch, reviewed_email_args)[0]
+    D.offer(orch, item)
+    approved_hash = item["hash"]
+    if change == "hash":
+        approved_hash = "unreviewed"
+    elif change == "snapshot":
+        orch.state.owner_name = "Changed since review"
+    elif change == "reopen":
+        orch.state.set_step("preflight", "notice", StepState(status="pending"))
+    else:
+        orch.now_local = datetime.fromisoformat("2026-09-10T00:01:00-07:00")
+    with pytest.raises(ValueError):
+        D.claim(orch, item["id"], approved_hash, "worker", approved_by=orch.state.owner_email)
+    assert orch.state.notification_deliveries[item["id"]]["attempts"] == []
+
+
+@pytest.mark.parametrize("phase", ["preflight", "rollout_start"])
+def test_ad_hoc_emails_bypass_only_daily_cadence_and_have_distinct_requests(
+        orch, reviewed_email_args, phase):
+    from tests._harness import _active_phase
+
+    _active_phase(orch.state, phase)
+    orch.now_local = datetime.fromisoformat("2026-09-12T08:00:00-07:00")
+    orch.state.last_status_email_date = "2026-09-12"
+    reviewed_email_args.source = "ad-hoc-status-email"
+    reviewed_email_args.request_id = "engineer-request-1"
+    before = copy.deepcopy(orch.state)
+    item = _reviewed_drafts(orch, reviewed_email_args)[0]
+    assert item["id"] == "ad-hoc-status-email:engineer-request-1:email"
+    assert "Status Update" in item["payload"]["subject"]
+    assert "Engineer-reviewed" in item["payload"]["body"]
+    _send_reviewed_draft(orch, item)
+    assert orch.state.last_status_email_date == "2026-09-12"
+    assert orch.state.steps == before.steps and orch.state.gate_decisions == before.gate_decisions
+    assert not _reviewed_drafts(orch, reviewed_email_args)
+    reviewed_email_args.request_id = "engineer-request-2"
+    second = _reviewed_drafts(orch, reviewed_email_args)[0]
+    assert second["id"] != item["id"]
+    _send_reviewed_draft(orch, second)
+    assert len(orch.state.notification_deliveries) == 2
+
+
+def test_ad_hoc_uncertain_delivery_cannot_be_bypassed_with_new_request(orch, reviewed_email_args):
+    reviewed_email_args.source = "ad-hoc-status-email"
+    reviewed_email_args.request_id = "original-request"
+    item = _reviewed_drafts(orch, reviewed_email_args)[0]
+    D.offer(orch, item)
+    claim = D.claim(orch, item["id"], item["hash"], "worker",
+                    approved_by=orch.state.owner_email)
+    D.result(orch, item["id"], claim["execution_id"], "uncertain", "MCP response lost")
+    reviewed_email_args.request_id = "another-request"
+    with pytest.raises(ValueError, match="existing owned ad-hoc"):
+        _reviewed_drafts(orch, reviewed_email_args)
+    assert len(orch.state.notification_deliveries) == 1
+
+
+@pytest.mark.parametrize("source", ["phase-status-email", "ad-hoc-status-email"])
+@pytest.mark.parametrize("stop", ["halt", "cancel", "timezone"])
+def test_reviewed_status_drafts_preserve_release_safety_guards(
+        orch, reviewed_email_args, source, stop):
+    reviewed_email_args.source = source
+    reviewed_email_args.request_id = "engineer-request" if source.startswith("ad-hoc") else None
+    if stop == "halt":
+        orch.state.halt = {"at": "2026-09-09T12:00:00-07:00", "reason": "Owner halted"}
+    elif stop == "cancel":
+        orch.state.cancellation = {"at": "2026-09-09T12:00:00-07:00", "reason": "Owner cancelled"}
+    else:
+        orch.state.timezone = None
+        with pytest.raises(ValueError, match="timezone"):
+            _reviewed_drafts(orch, reviewed_email_args)
+        return
+    assert not _reviewed_drafts(orch, reviewed_email_args)
+    assert not orch.state.notification_deliveries
+
+
+def test_completed_release_only_allows_reviewed_phase_completion_emails(orch, reviewed_email_args):
+    from tests._harness import _active_phase
+
+    _active_phase(orch.state, "close")
+    for step in orch.workflow.phase("close").steps:
+        orch.state.set_step("close", step.id, StepState(status="done"))
+        if step.is_gate:
+            orch.state.gate_decisions.append({
+                "step": step.key, "decision": "approved", "at": orch.now_local.isoformat(),
+                "by": "human", "comment": "Confirmed completion",
+            })
+    assert orch.scheduling().status == "complete"
+    items = _reviewed_drafts(orch, reviewed_email_args)
+    assert "phase-status-email:close:email" in {item["id"] for item in items}
+    assert not any("hotfix" in item["id"] for item in items)
+    item = next(item for item in items if item["id"] == "phase-status-email:close:email")
+    assert "DUMMY steps track workflow only" in item["payload"]["body"]
+    _send_reviewed_draft(orch, item)
+    reviewed_email_args.source = "ad-hoc-status-email"
+    reviewed_email_args.request_id = "closed-request"
+    assert not _reviewed_drafts(orch, reviewed_email_args)
+
+
+def test_cli_status_draft_requires_owner_and_persists_exact_approval(
+        orch, reviewed_email_args, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(schedule, "now_local", lambda _zone: orch.now_local)
+    C.save_state(orch.state, str(tmp_path), orch.state.release_id)
+    command = ["--runs-root", str(tmp_path), "notification"]
+    release = ["--release", orch.state.release_id]
+    assert cli.main(command + ["prepare"] + release + ["--source", "phase-status-email"]) == 0
+    item = json.loads(capsys.readouterr().out)["notifications"][0]
+    claim_args = command + ["claim"] + release + [
+        "--id", item["id"], "--hash", item["hash"], "--executor", "engineer-session"]
+    assert cli.main(claim_args) == 1
+    assert "release-owner approval" in json.loads(capsys.readouterr().out)["error"]
+    assert cli.main(claim_args + ["--approved-by", orch.state.owner_email]) == 0
+    claimed = json.loads(capsys.readouterr().out)
+    saved = C.load_state(str(tmp_path), orch.state.release_id)
+    assert saved.notification_deliveries[item["id"]]["attempts"][-1]["approved_by"] == saved.owner_email
+    assert cli.main(command + ["result"] + release + [
+        "--id", item["id"], "--execution-id", claimed["execution_id"], "--outcome", "sent",
+        "--evidence", "MCP acknowledged exact draft",
+        "--receipt-file", exact_receipt_file(tmp_path, item)]) == 0
+    capsys.readouterr()
+    saved = C.load_state(str(tmp_path), orch.state.release_id)
+    assert saved.notification_deliveries[item["id"]]["completion"]["status"] == "applied"
+    assert saved.last_status_email_date is None
+
+
+def test_ad_hoc_cli_preview_does_not_save_or_send(orch, reviewed_email_args, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(schedule, "now_local", lambda _zone: orch.now_local)
+    C.save_state(orch.state, str(tmp_path), orch.state.release_id)
+    path = Path(C.state_path(str(tmp_path), orch.state.release_id))
+    before = path.read_bytes()
+    assert cli.main(["--runs-root", str(tmp_path), "status-email", "--release", orch.state.release_id,
+                     "--ad-hoc", "explicit-preview"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["notifications"] and not output["permission_to_send"]
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("request_id", [None, "", "../unsafe", "x" * 81])
+def test_ad_hoc_requires_a_valid_explicit_request_identity(orch, reviewed_email_args, request_id):
+    reviewed_email_args.source = "ad-hoc-status-email"
+    reviewed_email_args.request_id = request_id
+    with pytest.raises(ValueError, match="request-id"):
+        _reviewed_drafts(orch, reviewed_email_args)

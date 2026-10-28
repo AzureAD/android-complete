@@ -96,7 +96,7 @@ def scope_reason(orch, scope, *, acknowledgement=False):
     if not isinstance(scope, dict):
         return "missing/invalid lifecycle scope"
     kind = scope.get("kind")
-    if kind not in ("release", "phase", "window", "step", "refresh"):
+    if kind not in ("release", "phase", "window", "step", "refresh", "phase_completion"):
         return "missing/invalid lifecycle scope"
     errors = [v.message for v in orch.invariant_violations() if v.severity == "error"]
     if errors:
@@ -107,7 +107,13 @@ def scope_reason(orch, scope, *, acknowledgement=False):
     frontier = selection.frontier
     current_phase = frontier.id if frontier else None
     projected_status = selection.status
-    if projected_status == "complete":
+    if kind == "phase_completion":
+        phase = phase_readiness.get(scope.get("phase"))
+        if not phase or not phase.included or not phase.complete:
+            return "owning phase is not complete"
+        if scope.get("requires_owner_approval") is not True:
+            return "phase-completion email requires owner approval"
+    if projected_status == "complete" and kind != "phase_completion":
         return "release complete"
     if projected_status in ("halted", "blocked", "readiness_gate", "cancelled"):
         return "release suspended or unsigned"
@@ -123,7 +129,7 @@ def scope_reason(orch, scope, *, acknowledgement=False):
             return "outside owning phase/window"
         if not phase_readiness[pid].due:
             return "owning phase not due"
-    elif kind != "release":
+    elif kind not in ("release", "phase_completion"):
         if not phases or current_phase not in phases:
             return "outside owning phase/window"
         if any(p not in phase_readiness for p in phases):
@@ -254,6 +260,22 @@ def validate_record_state(state, record):
             or not isinstance(scope.get("until_steps", []), list)
             or any(not isinstance(k, str) or "." not in k for k in scope.get("until_steps", []))):
         raise ValueError("Malformed notification lifecycle scope; owner recovery required")
+    if "requires_owner_approval" in scope:
+        if scope["requires_owner_approval"] is not True:
+            raise ValueError("Invalid owner-reviewed notification scope")
+        owner = scope.get("release_matches", {}).get("owner_email")
+        if (item["tool"] != "workiq_send_email" or completion
+                or scope.get("kind") not in ("release", "phase_completion")
+                or not isinstance(owner, str) or not owner.strip()):
+            raise ValueError("Owner-reviewed status email requires its owner and read-only completion")
+        for attempt in record["attempts"]:
+            if (not isinstance(attempt, dict)
+                    or str(attempt.get("approved_by") or "").casefold() != owner.casefold()
+                    or not isinstance(attempt.get("approved_at"), str)
+                    or not attempt["approved_at"].strip()):
+                raise ValueError("Status email attempt lacks explicit owner approval")
+    elif scope.get("kind") == "phase_completion":
+        raise ValueError("Phase-completion email requires owner review")
     if item["completion"].get("kind") == "step" and (
             item["scope"].get("kind") != "step"
             or not item["scope"].get("step")
@@ -269,6 +291,9 @@ def validate_record_state(state, record):
             or record["attempts"][-1]["status"] != record["status"]
             or record["attempts"][-1]["hash"] != item["hash"]):
         raise ValueError("Incomplete notification attempt; owner recovery required")
+    if record.get("mismatch_resolution") is not None:
+        from orchestrator.notification_mismatch import validate_resolution
+        validate_resolution(state, record)
     return item
 
 
@@ -324,11 +349,14 @@ def preview(orch, record):
                 "sent_receipt": deepcopy(record["sent_receipt"]), "stop_reason": "already sent",
                 "permission_to_send": False}
     return {**deepcopy(item), "delivery_status": record["status"],
+            **({"requires_owner_approval": True} if item["scope"].get("requires_owner_approval") else {}),
             "completion_status": deepcopy(record.get("completion")),
-            "stop_reason": scope_reason(orch, item["scope"]), "permission_to_send": False}
+            "stop_reason": ("Owner-reviewed different delivery; never resend or complete"
+                           if record.get("mismatch_resolution")
+                           else scope_reason(orch, item["scope"])), "permission_to_send": False}
 
 
-def claim(orch, notification_id, approved_hash, executor):
+def claim(orch, notification_id, approved_hash, executor, *, approved_by=None):
     from orchestrator.revision import assert_current
     assert_current(orch)
     record = orch.state.notification_deliveries.get(notification_id)
@@ -352,6 +380,12 @@ def claim(orch, notification_id, approved_hash, executor):
         raise ValueError("executor/session identifier is required")
     scope = item["scope"]
     execution = {"id": uuid.uuid4().hex, "owner": executor.strip(), "started_at": now_iso()}
+    if scope.get("requires_owner_approval"):
+        owner = orch.state.owner_email
+        if (not isinstance(approved_by, str) or not approved_by.strip()
+                or approved_by.strip().casefold() != str(owner or "").casefold()):
+            raise ValueError("Explicit release-owner approval of this exact email draft is required")
+        execution.update(approved_by=approved_by.strip(), approved_at=execution["started_at"])
     if item["completion"].get("kind") == "step":
         result = orch.claim_notification_step(notification_id, approved_hash, executor)
         if not result.changed:
@@ -383,6 +417,8 @@ def result(orch, notification_id, execution_id, outcome, evidence, receipt=None,
         raise ValueError("Only the owning execution can acknowledge this delivery")
     if record["status"] == "sent":
         return False
+    if record.get("mismatch_resolution"):
+        raise ValueError("Owner-resolved different delivery cannot be acknowledged or replayed")
     if not isinstance(evidence, str) or not evidence.strip():
         raise ValueError("Explicit transport evidence is required")
     if record["status"] == "uncertain" and not review:
@@ -413,7 +449,8 @@ def has_pending(orch, step_keys):
 
 
 PROTOCOL = (
-    "On every run, including silent/terminal producer outcomes, discover saved work with "
+    "On every run, including release completion, prepare phase-completion email drafts with "
+    "`notification prepare --release <release> --source phase-status-email`, then discover saved work with "
     "`notification prepare --release <release> --source pending`. Finalize sent records "
     "whose completion_status is empty; do not resend them. Review eligible prepared/not_sent "
     "records for claim; leave expired/closed work unsent. Surface claimed/uncertain records "
@@ -428,8 +465,14 @@ PROTOCOL = (
     "(step source also takes --phase/--step and the same --param inputs), review the exact "
     "target/payload, then `notification claim --release <release> --id <id> --hash <hash> "
     "--executor <session-id>`. Send ONLY when permission_to_send is true, using exactly "
-    "the returned tool/payload, with no extra courtesy copies. Claims and acknowledgements use "
-    "the trusted current clock, never --as-of. A changed preparation can replace only "
+    "the returned tool/payload, with no extra courtesy copies. "
+    "For requires_owner_approval:true drafts, show the full draft, recipients, subject and hash "
+    "to the release engineer and wait for explicit send approval. Only then add "
+    "--approved-by <release-owner-email> to claim. Unattended workers must leave these "
+    "drafts prepared and surface them to the owner; never self-approve or treat a request "
+    "for status as approval to send. Ordinary notifications retain their existing policy. "
+    "Claims and acknowledgements use the trusted current clock, never --as-of. "
+    "A changed preparation can replace only "
     "never-claimed work; review its new hash. Immediately run "
     "`notification result --release <release> --id <id> --execution-id <id> "
     "--outcome sent --evidence <provider-confirmed-success> [--receipt-file <json>]`. "

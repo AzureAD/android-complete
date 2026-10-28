@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json as _json
 import os
-import shutil
 import subprocess
 import urllib.parse
 import urllib.request
@@ -36,6 +35,7 @@ import yaml
 
 from tools import pipelines as P
 from tools import testplans as T
+from tools.executables import find_azure_cli
 
 _CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
 ORG = T.ORG
@@ -218,7 +218,7 @@ def distribute(tests, eligible):
 # ----------------------------------------------------------------- ADO / Graph I/O
 
 def _graph_token(timeout=60):
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (None, "az CLI not found")
     try:
@@ -375,7 +375,7 @@ def _wiql_ids(query, timeout=90):
 
 def _ado_wiql(query, timeout=90):
     """POST a WIQL query via the ADO REST wiql endpoint. (ok, json, headers, detail)."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, {}, "az CLI not found")
     tok = subprocess.run(
@@ -583,7 +583,7 @@ def set_assigned_to(
         if type(expected_revision) is not int or expected_revision < 1:
             return False, "Invalid expected work-item revision; no assignment written"
         body.insert(0, {"op": "test", "path": "/rev", "value": expected_revision})
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, "az CLI not found")
     tok = subprocess.run(

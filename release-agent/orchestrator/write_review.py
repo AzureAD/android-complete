@@ -162,6 +162,32 @@ class WriteAuthorization:
             raise ValueError("Reservation is not permission to execute")
         self._orch.validate_outcome_permit(self._permit)
 
+    def checkpoint_operation(self, index, operation, status, evidence=None):
+        """Fence a remote operation before invocation; retain uncertainty on failure."""
+        self.validate()
+        if ((self._permit.phase, self._permit.step) != ("finalize", "integ_prs")
+                or type(index) is not int or not 0 <= index < len(self.plan.operations)
+                or operation != self.plan.operations[index].as_dict()
+                or status not in ("in_flight", "applied")
+                or len(json.dumps(evidence, allow_nan=False)) > 4096):
+            raise ValueError("Invalid integration operation checkpoint")
+        before = deepcopy(asdict(self._orch.state))
+        record = self._orch.state.get_step(self._permit.phase, self._permit.step)
+        journal = record.data.setdefault("integration_write_journal", {
+            "execution_id": self.execution_id, "original_hash": record.execution["write_review"]["hash"],
+            "operations": {}})
+        if journal["execution_id"] != self.execution_id:
+            raise ValueError("Operation journal belongs to another execution")
+        previous = journal["operations"].get(str(index))
+        if (status == "in_flight" and previous is not None
+                or status == "applied" and (not previous or previous["status"] != "in_flight")):
+            raise ValueError("Operation checkpoint cannot replay or invent a completed effect")
+        journal["operations"][str(index)] = {
+            "operation_hash": revision.digest(operation), "status": status,
+            "evidence": deepcopy(evidence)}
+        self._orch.state.set_step(self._permit.phase, self._permit.step, record)
+        _checkpoint(self._orch, before)
+
 
 def authorize(
     args, orch, phase: str, step: str, planner: Callable[[], WritePlan],
