@@ -132,6 +132,49 @@ def test_daily_mismatch_review_is_read_only_and_resolution_never_replays_or_comp
         finish(orch, item["id"])
 
 
+def test_daily_mismatch_disposition_survives_owner_handoff(orch, tmp_path, capsys):
+    from orchestrator import notification_mismatch as M, revision
+
+    item, execution, observed = _different_daily_email(orch)
+    owner = orch.state.owner_email
+    review = M.preview(orch, item["id"], execution, observed)
+    M.resolve(orch, item["id"], execution, observed, review["review_hash"],
+              by=owner, reason="Reviewed original delivery", confirm_runner_stopped=True)
+    before = copy.deepcopy(orch.state.notification_deliveries[item["id"]])
+    C.save_state(orch.state, str(tmp_path), orch.state.release_id)
+    assert cli.main([
+        "--runs-root", str(tmp_path), "set-owner", "--release", orch.state.release_id,
+        "--owner-email", "new-owner@example.com",
+    ]) == 0
+    capsys.readouterr()
+    state, current = C.load_orch(str(tmp_path), orch.state.release_id, C.DEFAULT_CONFIG)
+    record = state.notification_deliveries[item["id"]]
+    assert state.owner_email == "new-owner@example.com" and record == before
+    assert M.validate_resolution(state, record)
+    assert record["mismatch_resolution"]["plan"]["approved_by"] == owner
+    assert not D.available(current, item)
+    assert not revision.adoption_preview(current)["blockers"]
+    assert record["status"] == "uncertain" and not record.get("completion")
+    assert state.last_status_email_date is None
+
+
+@pytest.mark.parametrize("change", ["receipt-author", "reviewed-author"])
+def test_daily_mismatch_disposition_rejects_changed_approving_owner(orch, change):
+    from orchestrator import notification_mismatch as M
+
+    item, execution, observed = _different_daily_email(orch)
+    review = M.preview(orch, item["id"], execution, observed)
+    M.resolve(orch, item["id"], execution, observed, review["review_hash"],
+              by=orch.state.owner_email, reason="Reviewed", confirm_runner_stopped=True)
+    record = orch.state.notification_deliveries[item["id"]]
+    if change == "receipt-author":
+        record["mismatch_resolution"]["by"] = "other@example.com"
+    else:
+        record["mismatch_resolution"]["plan"]["approved_by"] = "other@example.com"
+    with pytest.raises(ValueError, match="mismatch"):
+        M.validate_resolution(orch.state, record)
+
+
 @pytest.mark.parametrize("change", ["recipient", "exact", "failed", "wrong-execution", "step"])
 def test_daily_mismatch_review_rejects_unproven_or_ineligible_evidence(orch, change):
     from orchestrator import notification_mismatch as M
@@ -157,7 +200,7 @@ def test_daily_mismatch_review_rejects_unproven_or_ineligible_evidence(orch, cha
     assert orch.state == before
 
 
-@pytest.mark.parametrize("change", ["hash", "reviewer", "running", "state", "registry"])
+@pytest.mark.parametrize("change", ["hash", "reviewer", "running", "state", "registry", "owner"])
 def test_daily_mismatch_resolution_requires_fresh_exact_owner_review(orch, change):
     from orchestrator import notification_mismatch as M
 
@@ -176,6 +219,8 @@ def test_daily_mismatch_resolution_requires_fresh_exact_owner_review(orch, chang
         args["confirm_runner_stopped"] = False
     elif change == "state":
         orch.state.owner_name = "Changed"
+    elif change == "owner":
+        orch.state.owner_email = args["by"] = "new-owner@example.com"
     else:
         args["registry_entries"] = [{"scope": "shared", "status": "active", "key": "new"}]
     before = copy.deepcopy(orch.state)

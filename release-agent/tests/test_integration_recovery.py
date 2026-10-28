@@ -116,6 +116,32 @@ def test_external_merge_of_checkpointed_pr_is_explicit_read_only_evidence(extern
     assert s.orch.state.steps == before and not s.calls
 
 
+def test_recovery_preview_and_execution_support_python39_zip(external_merge, monkeypatch):
+    s = external_merge
+    monkeypatch.setattr(R, "zip", lambda *iterables: zip(*iterables), raising=False)
+    s.approve()
+    execute(s)
+    assert s.orch.state.get_step("finalize", "integ_prs").status == "done"
+    assert [call[0] for call in s.calls] == ["push", "create"]
+
+
+@pytest.mark.parametrize("change", ["missing", "extra"])
+def test_recovery_rejects_mismatched_receipt_counts(recovery, change):
+    s = recovery
+    receipts = R.preview(s.orch, s.args)["plan"]["receipts"]
+    record = s.orch.state.get_step("finalize", "integ_prs")
+    record.data[R.DATA_KEY] = {
+        "original_hash": record.execution["write_review"]["hash"],
+        "execution_id": record.execution["id"], "approvals": [],
+        "receipts": receipts[:-1] if change == "missing" else receipts + [deepcopy(receipts[-1])],
+    }
+    s.orch.state.set_step("finalize", "integ_prs", record)
+    before = deepcopy(asdict(s.orch.state))
+    with pytest.raises(ValueError, match="receipt count"):
+        R.preview(s.orch, s.args)
+    assert asdict(s.orch.state) == before and not s.calls
+
+
 @pytest.mark.parametrize("change", ["uncheckpointed", "unrelated-base", "wrong-ancestry",
                                    "changed-content", "wrong-merge-date", "wrong-pr"])
 def test_external_merge_cannot_hide_other_changes(external_merge, monkeypatch, change):
@@ -457,6 +483,83 @@ def test_legacy_owned_execution_cannot_use_generic_success_or_clear(recovery):
     assert not kernel.complete("finalize", "integ_prs", "pretend").changed
     assert not kernel.skip("finalize", "integ_prs", "pretend", execution_id=s.args.execution_id).changed
     assert not kernel.reopen("finalize", "integ_prs", "pretend").changed
+
+
+@pytest.mark.parametrize("value", [None, "", "2000-01-01T00:00:00Z"])
+@pytest.mark.parametrize("with_journal", [False, True])
+def test_annotations_cannot_clear_or_replace_active_integration_fence(recovery, value, with_journal):
+    s = recovery
+    if with_journal:
+        record = s.orch.state.get_step("finalize", "integ_prs")
+        record.data["integration_write_journal"] = {
+            "execution_id": s.args.execution_id, "original_hash": s.args.review_hash,
+            "operations": {"0": {
+                "operation_hash": revision.digest(s.original["operations"][0]),
+                "status": "in_flight", "evidence": None}},
+        }
+        s.orch.state.set_step("finalize", "integ_prs", record)
+    before = deepcopy(asdict(s.orch.state))
+    kernel = s.orch._transition_kernel()
+    assert not kernel.annotate_step(
+        "finalize", "integ_prs", data={"in_flight_since": value}).changed
+    assert not kernel.skip(
+        "finalize", "integ_prs", "abandon uncertain writes", execution_id=s.args.execution_id).changed
+    assert not kernel.reopen("finalize", "integ_prs", "replace uncertain writes").changed
+    assert asdict(s.orch.state) == before and not s.calls
+    assert kernel.annotate_step("finalize", "integ_prs", note="Owner is checking receipts").changed
+
+
+@pytest.mark.parametrize("completion", ["normal", "recovery"])
+def test_reopened_integration_archives_completed_journals_before_new_reservation(recovery, completion):
+    s = recovery
+    if completion == "normal":
+        s.orch.state.steps.clear()
+        s.args.execution_id = None
+        plan = P.integration_plan(s.orch.context("finalize", "integ_prs"), s.args)
+        s.args.review_hash = W.review_hash(s.orch, "finalize", "integ_prs", plan)
+        with C.state_lock(s.args.runs_root, s.args.release):
+            assert IC.cmd_create_integration_prs(s.args) == 0
+    else:
+        record = s.orch.state.get_step("finalize", "integ_prs")
+        record.data["integration_write_journal"] = {
+            "execution_id": s.args.execution_id, "original_hash": s.args.review_hash,
+            "operations": {"0": {
+                "operation_hash": revision.digest(s.original["operations"][0]),
+                "status": "in_flight", "evidence": None}},
+        }
+        s.orch.state.set_step("finalize", "integ_prs", record)
+        s.approve()
+        execute(s)
+    for _ in range(2):
+        completed = ReleaseState.load(str(s.path)).get_step("finalize", "integ_prs")
+        old_id = completed.data["last_write_review"]["execution_id"]
+        keys = ("integration_write_journal", R.DATA_KEY, "integration_runtime_migration", "in_flight_since")
+        evidence = {key: deepcopy(completed.data[key]) for key in keys if key in completed.data}
+        prior_history = deepcopy(completed.data.get("integration_execution_history", {}))
+        assert s.orch.reopen("finalize", "integ_prs", "Recheck the integration PRs").changed
+        s.args.execution_id = None
+        s.args.reserve = True
+        plan = P.integration_plan(s.orch.context("finalize", "integ_prs"), s.args)
+        s.args.review_hash = W.review_hash(s.orch, "finalize", "integ_prs", plan)
+        with C.state_lock(s.args.runs_root, s.args.release):
+            assert IC.cmd_create_integration_prs(s.args) == 0
+        reserved = ReleaseState.load(str(s.path)).get_step("finalize", "integ_prs")
+        assert reserved.execution["id"] != old_id
+        assert not any(key in reserved.data for key in keys)
+        history = reserved.data["integration_execution_history"]
+        assert history == {
+            **prior_history, old_id: {"review": completed.data["last_write_review"], "data": evidence}}
+        assert not s.orch.annotate_step(
+            "finalize", "integ_prs", data={"integration_execution_history": {}}).changed
+        s.args.reserve = False
+        with C.state_lock(s.args.runs_root, s.args.release):
+            assert IC.cmd_create_integration_prs(s.args) == 0
+        saved = ReleaseState.load(str(s.path)).get_step("finalize", "integ_prs")
+        assert saved.status == "done" and saved.execution is None
+        assert saved.data["integration_execution_history"] == history
+        assert saved.data["integration_write_journal"]["execution_id"] == reserved.execution["id"]
+        assert all(entry["status"] == "applied"
+                   for entry in saved.data["integration_write_journal"]["operations"].values())
 
 
 @pytest.mark.parametrize("integration", ["git"], indirect=True)

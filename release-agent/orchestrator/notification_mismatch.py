@@ -44,8 +44,8 @@ def validate_resolution(state, record):
         or not revision.is_hash("sha256:" + str(plan.get("observed_payload_hash")))
         or plan["observed_payload_hash"] == plan["claimed_payload_hash"]
         or not plan.get("body_changes")
-        or not isinstance(state.owner_email, str) or not state.owner_email.strip()
-        or receipt.get("by") != state.owner_email
+        or not isinstance(plan.get("approved_by"), str) or not plan["approved_by"].strip()
+        or receipt.get("by") != plan["approved_by"]
         or any(not isinstance(receipt.get(key), str) or not receipt[key].strip()
                for key in ("at", "reason"))
     ):
@@ -89,6 +89,7 @@ def preview(orch, notification_id, execution_id, observed, *, registry_entries=(
     ]
     plan = {
         "version": 1, "release": orch.state.release_id, "notification_id": notification_id,
+        "approved_by": orch.state.owner_email,
         "execution_id": execution_id, "descriptor_hash": item["hash"],
         "claimed_payload_hash": D.fingerprint(expected),
         "observed_payload_hash": D.fingerprint(actual),

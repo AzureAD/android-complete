@@ -365,8 +365,14 @@ reset to pending based on absence, even with `--confirm-no-inflight`. An exact
 provider result can be reconciled only through a new fresh preview/manual hash.
 If the result cannot be proved, retain ownership and stop. Generic completion,
 skip, reopen and receipt annotation cannot bypass this writer's fenced attempt.
+Annotations cannot clear or replace its engine-owned `in_flight_since` timestamp.
 Successful completion settles the existing execution; it does not advance/drain
 the release. Future ordinary integration writes also checkpoint operation fences.
+When completed integration work is reopened, the next reviewed reservation archives
+the closed review, operation/recovery/migration journals and fence timestamp under
+`integration_execution_history`, keyed by the completed execution ID. The new
+execution starts with fresh active journals; annotations and generic results cannot
+rewrite the archive. Unfinished evidence never qualifies for archival.
 
 **Broker dev fast-forward drift:** do not ignore drift or replace the original
 preview. Add `--broker-target-tip <exact-current-dev-object-id>` to the recovery
@@ -808,6 +814,11 @@ All commands below require an explicit release and use the existing OS-held stat
 | Acknowledge one channel | `notification result --release <id> --id <id> --execution-id <execution> --outcome sent\|not_sent\|uncertain --evidence "<proof>" [--receipt-file <JSON>] [--owner-review]`; `workiq_send_email` sent results require a receipt file with matching `tool`, `descriptor_hash`, `payload_hash`, `target`, and `provider_receipt.transport: "workiq_send_email"` |
 | Retry domain completion, never sending again | `notification finalize --release <id> --id <id>` |
 | Review a proven differently delivered daily email | `notification resolve-mismatch --release <id> --id <notification-id> --execution-id <original-id> --observed-file <JSON>` previews exact body differences and subsequent adoption impact. The JSON must contain the original `tool`, actual invocation `payload`, and successful `provider_receipt` (`transport`, `success`, `tool_call_id`, `event_id`, `evidence`). Recipients, subject, format and all non-body fields must match. After the owner reviews the exact hash and original runner is stopped, repeat with `--approve-hash <hash> --by <owner-email> --reason "<owner decision>" --confirm-runner-stopped`. This records a disposition only: status remains uncertain, ownership/attempts are preserved, no send receipt or completion is granted, and retries remain forbidden. It supports non-step daily email only, never step notifications. Workflow adoption still needs its separately reviewed hash and exact reset scope; rollout is never advanced. |
+
+Mismatch reviews bind the approving owner into the reviewed hash. Recording a new
+resolution requires the current release owner and a fresh review after an owner
+change. Historical dispositions retain their original approving identity and remain
+valid after `set-owner`; an owner handoff never authorizes a resend or completion.
 
 For normal notification delivery, the Scout runner reviews the descriptor and claims it silently.
 For `requires_owner_approval:true`, show the full rendered draft, recipients, subject and

@@ -17,6 +17,10 @@ from orchestrator.workflow import PhaseDefinition, StepDefinition, StepKind, Wor
 from orchestrator.approvals import ApprovalPermit, ApprovalRequest
 
 
+_INTEGRATION_JOURNALS = (
+    "integration_recovery", "integration_write_journal", "integration_runtime_migration")
+
+
 class TransitionIntent(str, Enum):
     EXECUTE = "execute"
     PREPARE = "prepare"
@@ -961,6 +965,34 @@ class TransitionKernel:
         if was_complete and step.refresh_invalidation == "always":
             if rejected := self._invalidation_check(self._dependent_steps(phase_id, step_id)):
                 return rejected
+        if (phase_id, step_id) == ("finalize", "integ_prs"):
+            evidence = {
+                key: deepcopy(record.data[key])
+                for key in (*_INTEGRATION_JOURNALS, "in_flight_since") if key in record.data}
+            if evidence:
+                closed = record.data.get("last_write_review")
+                if (record.execution or not closed or any(
+                        evidence[key].get("execution_id") != closed["execution_id"]
+                        or evidence[key].get("original_hash") != closed["hash"]
+                        for key in ("integration_recovery", "integration_write_journal") if key in evidence)):
+                    return self._reject(
+                        "Unclosed integration evidence requires receipt-backed recovery.", phase_id, step_id)
+                recovery = evidence.get("integration_recovery")
+                journal = evidence.get("integration_write_journal")
+                if (recovery and any(r["status"] != "applied" for r in recovery["receipts"])
+                        or journal and not recovery and any(
+                            entry["status"] != "applied" for entry in journal["operations"].values())):
+                    return self._reject(
+                        "Unfinished integration evidence cannot be archived.", phase_id, step_id)
+                history = record.data.get("integration_execution_history", {})
+                if not isinstance(history, dict) or closed["execution_id"] in history:
+                    return self._reject(
+                        "Integration execution history cannot be overwritten.", phase_id, step_id)
+                record.data["integration_execution_history"] = {
+                    **deepcopy(history), closed["execution_id"]: {
+                        "review": deepcopy(closed), "data": evidence}}
+                for key in evidence:
+                    record.data.pop(key)
         previous_status = record.status
         record.status = "running"
         record.execution = {
@@ -1772,7 +1804,7 @@ class TransitionKernel:
                 and status == "done" and getattr(self, "_integration_completion", None) is None):
             return self._reject("Generic results cannot complete integration recovery.", phase_id, step_id)
         stored_data = deepcopy(data if data is not None else previous.data)
-        for key in ("integration_recovery", "integration_write_journal", "integration_runtime_migration"):
+        for key in (*_INTEGRATION_JOURNALS, "integration_execution_history"):
             if key in previous.data:
                 if data is not None and data.get(key, previous.data[key]) != previous.data[key]:
                     return self._reject("Integration receipts are writer-owned evidence.", phase_id, step_id)
@@ -1898,9 +1930,11 @@ class TransitionKernel:
             return self._reject("Evidence requires mapping data, list links and text note/by.", phase_id, step_id)
         record = self.state.get_step(phase_id, step_id)
         before = deepcopy(record)
-        if data and any(key in data for key in (
-                "integration_recovery", "integration_write_journal", "integration_runtime_migration")):
+        if data and any(key in data for key in (*_INTEGRATION_JOURNALS, "integration_execution_history")):
             return self._reject("Integration receipts are writer-owned evidence.", phase_id, step_id)
+        if (data and "in_flight_since" in data
+                and self._fenced_integration(phase_id, step_id, record)):
+            return self._reject("Integration fence is writer-owned evidence.", phase_id, step_id)
         if data and "last_write_review" in data and (
                 "last_write_review" not in record.data
                 or data["last_write_review"] != record.data["last_write_review"]):

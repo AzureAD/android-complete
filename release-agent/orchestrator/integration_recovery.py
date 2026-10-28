@@ -227,7 +227,7 @@ def observe(orch, args, original, *, active_index=None, push_root=None, remap=No
         receipts.append(receipt)
     for key, branch, tip in branch_changes:
         proofs = [
-            r for r, op in zip(receipts, operations, strict=True)
+            r for r, op in zip(receipts, operations)
             if op["kind"] == "integration.create" and op["target"]["key"] == key
             and op["target"]["base"] == branch
             and (r.get("evidence") or {}).get("state") == "merged"
@@ -247,7 +247,9 @@ def observe(orch, args, original, *, active_index=None, push_root=None, remap=No
         if (previous["original_hash"] != record.execution["write_review"]["hash"]
                 or previous.get("execution_id") != record.execution["id"]):
             raise ValueError("Recovery journal belongs to another execution/review")
-        for old, new in zip(previous["receipts"], receipts, strict=True):
+        if len(previous["receipts"]) != len(receipts):
+            raise ValueError("Recovery receipt count differs from approved operations")
+        for old, new in zip(previous["receipts"], receipts):
             if old["operation_hash"] != new["operation_hash"] and not (
                     old["status"] == new["status"] == "pending"
                     and (remap or {}).get(old["index"]) == (old["operation_hash"], new["operation_hash"])):
