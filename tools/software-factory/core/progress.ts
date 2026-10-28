@@ -4,7 +4,7 @@ import { exactKeys, FactoryError, object, text, type Feature } from "./contracts
 import type { ChatProgress, Execution, FactoryFeature, FactoryState, GatePreview, ProgressInput, Stage, WorkflowKind } from "./lifecycle-contracts.ts";
 
 export const workflowLabels: Record<WorkflowKind, string> = {
-    intake: "Draft success criteria", design: "Create design", lifecycle: "Plan and deliver", monitor: "Check delivery", check: "Runtime check",
+    intake: "Draft success criteria", design: "Create design", plan: "Create implementation plan", lifecycle: "Retired delivery workflow", monitor: "Check delivery", check: "Runtime check",
 };
 export const stageLabels = ["Define success", "Design", "Plan", "Backlog", "Implementation", "Verify & finish"];
 export interface ActivityEntry { id: string; createdAt: string; title: string; detail: string; source: string }
@@ -100,6 +100,8 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
     const stage = feature.currentArtifacts.plan ? state.operations.some((op) => op.kind === "dispatch" && op.status === "completed") ? 4 : 2
         : feature.currentArtifacts.design || feature.status === "ready_for_design" ? 1 : 0;
     if (state.cancelled) return { stage, title: "Feature cancelled", description: "History is preserved. Remote work was not cancelled or deleted." };
+    if (feature.shared?.lock && !active) return { stage, title: "Shared operation needs attention",
+        description: `${feature.shared.lock.actor.displayName} owns ${feature.shared.lock.kind}. Inspect that run or operation before explicitly releasing its claim. No automatic takeover is allowed.` };
     if (feature.lifecycleStatus === "completed") return { stage: 5, title: "Feature delivered", description: "Delivery evidence and the completion decision are saved." };
     if (active && ["starting", "running"].includes(active.status)) return {
         stage: active.kind === "intake" ? 0 : stage, title: /owning Factory runtime/.test(active.phase) ? "Waiting for the owning runtime"
@@ -128,6 +130,7 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
             action: { label: "Review scope decisions", target: "edit" } };
         if (!feature.current.requirements.length) return { stage: 0, title: "Let's define what done looks like", description: "Factory can propose a short checklist from your brief, or you can write it yourself. AI drafting asks for confirmation first.",
             action: start("intake", "Draft success criteria with Factory") };
+        if (!feature.shared) return { stage: 0, title: "Publish this draft for team review", description: "Choose an ADO Feature above. Publishing creates a shared successor; local historical approvals are not transferred." };
         return { stage: 0, title: "Review your brief and success criteria", description: "Check the saved scope below, then approve it for design. Approval does not start AI work." };
     }
     const order: Stage[] = ["design", "plan", "backlog", "dispatch", "complete"];
@@ -143,12 +146,19 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
     if (!feature.currentArtifacts.design) return { stage: 1, title: "Ready, not running.", description: "Your criteria are approved. Start design when you are ready; it uses Copilot usage.", action: start("design", "Run guarded design") };
     const design = gates.find((entry) => entry.stage === "design");
     if (design?.available && !design.approved) return { stage: 1, title: "Review the design", description: "Read the design and independent findings before deciding.", gate: design };
-    if (!feature.currentArtifacts.plan) return { stage: 2, title: "Turn the design into a plan", description: "Factory will propose repository-specific work items. It will pause before creating anything remotely.", action: start("lifecycle", "Create implementation plan") };
+    if (!feature.currentArtifacts.plan) return { stage: 2, title: "Turn the design into a plan", description: "Factory will propose repository-specific work items and end for human review. No backlog is created.", action: start("plan", "Create implementation plan") };
+    const backlog = gates.find((entry) => entry.stage === "backlog" && entry.approved && entry.ready);
+    const plan = state.artifacts.find((entry) => entry.id === feature.currentArtifacts.plan);
+    const planned = plan?.content && typeof plan.content === "object" && !Array.isArray(plan.content) ? plan.content.items : null;
+    if (backlog && Array.isArray(planned) && state.operations.filter((op) => op.planId === plan!.id && op.kind === "links" && op.status === "completed").length < planned.length) {
+        return { stage: 3, title: "Create the approved backlog", description: "Create and verify the approved ADO items and dependency links. No agent or coding task starts.",
+            action: { label: "Create approved backlog", command: command("create_backlog") } };
+    }
     const gate = order.slice(1).map((name) => gates.find((entry) => entry.stage === name)).find((entry) => entry?.available && !entry.approved && (entry.ready || ["plan", "backlog"].includes(entry.stage)));
     if (gate) return { stage: order.indexOf(gate.stage) + 1, title: gate.ready ? `Review ${gate.stage === "complete" ? "completion" : gate.stage}` : `Resolve ${gate.stage} blockers`,
         description: gate.ready ? "Inspect the exact scope before approving. Remote changes need their own approval." : gate.blockers?.join(" ") || gate.reason || "This step needs your input.", gate };
     const wave = gates.find((entry) => entry.stage === "dispatch" && entry.approved && entry.ready);
     if (wave) return { stage: 4, title: "Dispatch the approved work", description: "This creates coding tasks for the approved dependency-ready wave. No PR is merged automatically.",
-        action: start("lifecycle", "Start approved delivery wave") };
+        action: { label: "Dispatch approved work", command: command("dispatch_work") } };
     return { stage: 4, title: "Track implementation and delivery", description: "Check work items, PRs and acceptance criteria. Missing evidence stays visible; nothing merges automatically.", action: start("monitor", "Check delivery status") };
 }

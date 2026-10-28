@@ -158,7 +158,7 @@ test("every assigned domain guide changes the runtime fingerprint and a missing 
             copyFileSync(path.join(repositoryRoot, file), target);
         }
         for (const file of [
-            "tools/software-factory/package-lock.json", "tools/software-factory/cli.ts",
+            "tools/software-factory/package-lock.json", "tools/software-factory/cli.ts", "tools/software-factory/evals/design.mjs",
             ".github/extensions/DevDesignDoc/workflow.mjs", ".github/extensions/SoftwareFactory/extension.mjs",
         ]) {
             const target = path.join(directory, file);

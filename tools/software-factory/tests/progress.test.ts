@@ -129,7 +129,7 @@ test("the guided view does not skip blocked backlog authority or hide an approve
         assert.match(step.description, /Choose the ADO area/);
         assert.equal(step.action, undefined, "a monitor run is not the next step when backlog is blocked");
         const dispatch = nextStep(view, [approved("design"), approved("plan"), approved("backlog"), approved("dispatch")]);
-        assert.equal(dispatch.action?.label, "Start approved delivery wave");
-        assert.equal(dispatch.action?.command?.workflow, "lifecycle");
+        assert.equal(dispatch.action?.label, "Dispatch approved work");
+        assert.equal(dispatch.action?.command?.kind, "dispatch_work");
     } finally { f.cleanup(); }
 });

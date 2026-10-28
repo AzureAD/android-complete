@@ -2,19 +2,27 @@
 
 # Software Factory: dynamic workflows, chat, and local-first UI implementation plan
 
-**Status:** Workflow-backed local implementation is available; live paid/provider rollout remains human-approved.
+**Status:** ADO-backed team authority and separate stage workflows are implemented; live ADO pilot and human-graded model evaluations remain rollout gates.
 **Baseline:** `origin/master`, commit `1c7efd1b2`, inspected on 2026-10-26.
 **Scope:** Developer tooling in `android-complete`, not Android authentication runtime behavior.
 
 ### Current implementation boundary
 
 The [implementation](../tools/software-factory/README.md) connects native
-`software-factory-design`, `software-factory-lifecycle`, and
-`software-factory-monitor` workflows to the shared TypeScript/SQLite core,
+`software-factory-design`, `software-factory-plan`, and
+`software-factory-monitor` workflows to a shared TypeScript core with ADO authority
+and a local SQLite draft/cache/execution store,
 app/CLI chat tools and user slash commands, and the optional React UI.
 Plain-language intake allows saving an idea before success criteria are known.
 The optional native `software-factory-intake` workflow proposes criteria and
 open questions only; reviewing/editing, saving and approving remain distinct.
+The team-aligned direction follows PR #478: publish requirements/artifacts as
+versioned attachments on an existing ADO Feature; attribute exact-scope approvals
+to the authenticated ADO editor following genuine host confirmation. Stage runs
+end before review. Backlog creation and dispatch are separate deterministic
+commands, not a workflow spanning human approval. Private drafts remain local.
+The unchanged design engine from #477 and requirements template from #476 are
+reused. The product-spec commit itself is not merged into this branch by these edits.
 The UI assigns IDs automatically and accepts ordinary text, bullets and pasted
 legacy labels instead of requiring a requirements syntax.
 The dashboard emphasizes current progress, the next relevant decision and a
@@ -106,9 +114,9 @@ Start with per-developer local operation and a web UI served on loopback when re
 | Confirmed direction | Use Dynamic Workflows for execution instead of expanding a custom orchestration engine. |
 | Confirmed direction | Provide a purpose-built UI, informed by the dashboard/worker separation in `icm-tracker` and `pr-reviewer`. |
 | Confirmed direction | Preserve human approval, durable feature records, and explicit recovery. |
-| Proposed implementation | A shared TypeScript application core and transactional SQLite registry, with chat adapters and an optional React/TypeScript web UI and HTTP transport. |
+| Confirmed direction | A shared TypeScript core with versioned ADO Feature attachments as team authority; SQLite stores private drafts, caches, local sessions and attempts. |
 | Proposed implementation | Supported native chat-session and SDK integration; select execution adapters from verified capabilities, not from a requirement to use the dashboard. |
-| Proposed implementation | A top-level lifecycle workflow and a separately invoked monitor workflow, sharing ordinary phase helpers rather than nesting workflows. |
+| Confirmed direction | Separate intake, design, plan and monitor workflows end before human review. Explicit backlog/dispatch commands follow their own approvals. |
 | Deferred decisions | Exact chat/runner integration, local process hosting, installation packaging, and optional canvas interoperability require the first milestone's evidence. |
 
 Approval of this document is not authorization to run paid workflows, create remote work items, dispatch coding agents, publish artifacts, or merge changes.
@@ -304,9 +312,10 @@ flowchart TD
     HTTP --> Core[Shared application core]
     Chat --> Core
     Canvas[Optional Copilot app canvas] -. same commands .-> Core
-    Core --> Registry[(Feature registry and audit log)]
+    Core --> Registry[(ADO Feature attachments and approval history)]
+    Core --> Local[(Local drafts / cache / sessions / attempts)]
     Core --> Runner[Supported session and workflow adapters]
-    Runner --> Lifecycle[Top-level lifecycle workflow]
+    Runner --> Lifecycle[Separate intake / design / plan workflows]
     Runner --> Monitor[Separate top-level monitor workflow]
     Lifecycle --> Agents[Research / design / planning / validation agents]
     Lifecycle --> Gate[Application approval and operation boundary]
@@ -318,7 +327,8 @@ flowchart TD
 | State or behavior | Authoritative owner |
 |---|---|
 | Agent scheduling, journaled workflow results, checkpoints, runtime usage | Copilot workflow runtime |
-| Feature identity, artifact revisions, approvals, run mappings, operation receipts | Software Factory registry |
+| Shared feature identity, artifact revisions, approvals, operation receipts | Versioned ADO Feature attachments with authenticated writer/ancestry verification |
+| Private drafts, cached shared snapshots, run mappings, schedules, attempt evidence | Per-user SQLite store, never offline approval authority |
 | Actual PBI and PR state, repository branches and commit revisions | ADO/GitHub/GHE |
 | Presentation, navigation, drafts before submission | Respective UI/chat client; never authoritative for approvals or external results |
 
@@ -397,7 +407,7 @@ The currently inspected SDK rejects nested `ctx.workflow(...)` calls, and the wo
 Preferred composition:
 
 1. Keep `design-feature` registered and preserve its input/output and no-side-effect contract.
-2. Reuse its exported design algorithm as an ordinary phase helper in the new lifecycle workflow, with an explicit approved Stage 0 input.
+2. Reuse its exported design algorithm in the separate design workflow, with an explicit approved Stage 0 input.
 3. Extract shared code only where needed; do not copy the algorithm, validators, or fixed rubric.
 4. Keep monitoring as a separately invoked top-level workflow, not a nested workflow or an unbounded child.
 
@@ -447,7 +457,7 @@ Approving content is not blanket permission to publish it. Rejection, revision r
 - For chat, bind the decision to the host session and actual user-response/request reference supplied by a supported interaction mechanism. Do not accept a model-authored `approved: true` or a quoted conversation excerpt as evidence.
 - Interpret natural language as intent, not implicit authorization. If "approved" or "continue" could refer to multiple features, revisions, gates, or external effects, present the exact target and scope for confirmation in the current chat.
 - Interactive CLI chat and programmatic/headless CLI execution are different modes. A headless run with no valid prior approval pauses/blocks explicitly; it cannot auto-approve or require a browser to obtain approval later.
-- The locally authenticated operator identity is provenance for a per-developer tool, not enterprise identity verification or a team authorization system.
+- Shared decisions require authenticated ADO identity and successful work-item edit permission, in addition to genuine host confirmation. Self-approval is permitted in v1; there is no separate approver roster.
 - A display string such as `approvedBy`, matching revision strings, a green validation report, or a workflow recommendation is not proof of approval.
 - Make the approval record inspectable by the existing design evidence worker without exposing credentials or permitting agents to manufacture it.
 - Use compare-and-swap/version checks when recording approval and when admitting the approved command.
@@ -455,9 +465,13 @@ Approving content is not blanket permission to publish it. Rejection, revision r
 
 ### Pause/resume protocol
 
-Persist the gate packet before pausing, then associate the pending gate with the owning session and workflow run. On every resume, read the current decision and relevant provider state outside the replay cache before performing the next effect.
+Persist the gate packet to ADO and end the stage run before human review. A later
+explicitly authorized stage reads fresh approvals from ADO. Native checkpoints
+and resume are reserved for recovery inside a stage, not business approval.
 
-Native "Resume" must not bypass a missing, rejected, or stale approval. Because checkpoints are one-shot, repeatedly calling the same checkpoint key is not a waiting loop. Milestone 0 must prove an explicit re-pause/blocked-recovery protocol for a resume without valid approval.
+Native "Resume" must not bypass missing, rejected, or stale approval or a released
+shared claim. Retired multi-stage `lifecycle` runs cannot resume. Team handoff
+starts a subsequent stage in the teammate's own session; it does not copy journals.
 
 Workflow arguments and journaled outputs are immutable for an existing execution. A requirements change or incompatible design/plan revision may require a successor run with explicit lineage rather than resuming old cached work. A code/prompt/schema/rubric change requires a new workflow version or new run when cached semantics no longer match.
 
@@ -465,7 +479,11 @@ Do not automatically invalidate all earlier work because expected implementation
 
 ## 10. Persistence and domain contracts
 
-Use a transactional, versioned SQLite registry under a per-user application data directory outside the repository. Do not use Copilot's database as the registry, and do not store runtime state in committed project files.
+Use versioned ADO Feature attachments as shared authority from publication onward.
+Guard writes with work-item revisions; verify hashes, immutable snapshot ancestry
+and authenticated writers before accepting approvals. Store private drafts,
+verified caches and local run/attempt records in transactional per-user SQLite
+outside the repository. Do not use Copilot's database or committed runtime state.
 
 | Entity | Required identity and invariants |
 |---|---|

@@ -12,17 +12,24 @@ async function main(): Promise<void> {
         console.log(JSON.stringify(runtimeReport(), null, 2));
         return;
     }
-    if (!["list", "show", "serve"].includes(command || "")) {
-        throw new FactoryError("usage", "Usage: node cli.ts doctor | list | show <feature-id> | serve [--port <port>]");
+    if (!["list", "show", "team-list", "team-open", "serve"].includes(command || "")) {
+        throw new FactoryError("usage", "Usage: node cli.ts doctor | list | show <feature-id> | team-list | team-open <ADO-feature-id> | serve [--port <port>]");
     }
     const app = new Application();
     let serving = false;
     try {
         if (command === "list") {
-            console.log(JSON.stringify({ project: app.registry.project, features: app.registry.list().map((feature) => app.lifecycle.store.view(feature.id)) }, null, 2));
+            console.log(JSON.stringify({ project: app.registry.project, features: await app.features() }, null, 2));
         } else if (command === "show") {
             if (args.length !== 1 || !args[0]) throw new FactoryError("usage", "show requires one stable feature ID.");
-            console.log(JSON.stringify(app.lifecycle.store.view(args[0]), null, 2));
+            console.log(JSON.stringify(await app.feature(args[0]), null, 2));
+        } else if (command === "team-list") {
+            const boards = app.lifecycle.configuration().boards;
+            console.log(JSON.stringify(await app.shared.provider.list(boards.organization, boards.project), null, 2));
+        } else if (command === "team-open") {
+            if (args.length !== 1 || !/^[1-9]\d*$/.test(args[0]!)) throw new FactoryError("usage", "team-open requires an existing ADO Feature ID.");
+            const boards = app.lifecycle.configuration().boards;
+            console.log(JSON.stringify(await app.shared.open({ organization: boards.organization, project: boards.project, workItemId: Number(args[0]) }), null, 2));
         } else {
             let port = 0;
             if (args.length) {

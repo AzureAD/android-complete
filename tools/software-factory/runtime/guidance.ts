@@ -5,6 +5,7 @@ export const workerGuidance = {
     research: [
         ".github/agents/codebase-researcher.agent.md",
         ".github/skills/codebase-researcher/references/research-standards.md",
+        "docs/Templates/requirements-template.md",
     ],
     design: [
         ".github/agents/design-writer.agent.md",

@@ -60,7 +60,7 @@ test("chat-host bare SDK redirection cannot change Doctor, client runtime or ext
         assert.equal(result.applicationController.status, "completed");
         assert.equal(result.applicationController.usage.subagents, 0);
         assert.deepEqual(result.productionRegistration.map((entry) => entry.workflow), [
-            "software-factory-intake", "software-factory-design", "software-factory-lifecycle", "software-factory-monitor",
+            "software-factory-intake", "software-factory-design", "software-factory-plan", "software-factory-monitor",
         ]);
         assert.ok(result.productionRegistration.every((entry) => entry.agentsStarted === 0 && entry.scopeGuardVerified));
     } finally { f.cleanup(); }

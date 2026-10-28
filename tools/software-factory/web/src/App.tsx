@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { parseRequirements, parseSuccessCriteria, type Command, type Feature, type Project, type Requirement, type Requirements } from "../../core/contracts.ts";
-import { parseIntakeProposal, type Artifact, type FactoryFeature, type Json } from "../../core/lifecycle-contracts.ts";
+import { parseIntakeProposal, type Artifact, type FactoryFeature, type Json, type ConfigRevision } from "../../core/lifecycle-contracts.ts";
+import type { SharedTarget } from "../../core/shared-contracts.ts";
 import { FactoryPanel, FactorySettings } from "./FactoryPanel";
 import { Confirmation, type ConfirmationRequest } from "./Confirmation";
 import { nextStep } from "../../core/progress.ts";
@@ -64,6 +65,9 @@ export function App() {
     const [project, setProject] = useState<Project>();
     const [features, setFeatures] = useState<FactoryFeature[]>([]);
     const [settings, setSettings] = useState(false);
+    const [adoFeatureId, setAdoFeatureId] = useState("");
+    const [recoveryReason, setRecoveryReason] = useState("");
+    const [teamFeatures, setTeamFeatures] = useState<SharedTarget[]>([]);
     const [selectedId, setSelectedId] = useState<string>();
     const [creating, setCreating] = useState(false);
     const [editing, setEditing] = useState(false);
@@ -78,19 +82,20 @@ export function App() {
     const [syncError, setSyncError] = useState("");
     const refreshing = useRef(false);
     const refreshSequence = useRef(0);
+    const authorityReadAt = useRef(0);
     const csrf = useRef("");
     const creationId = useRef(crypto.randomUUID());
     const selected = features.find((feature) => feature.id === selectedId);
 
-    async function refresh() {
+    async function refresh(authoritative = true) {
         const sequence = ++refreshSequence.current;
-        const data = await request<{ project: Project; features: FactoryFeature[] }>("/api/features");
+        if (authoritative) authorityReadAt.current = Date.now();
+        const data = await request<{ project: Project; features: FactoryFeature[] }>(authoritative ? "/api/features" : "/api/features?cached=1");
         if (sequence !== refreshSequence.current) return data.features;
         setProject(data.project);
         setFeatures((previous) => JSON.stringify(previous) === JSON.stringify(data.features) ? previous : data.features);
         setSelectedId((previous) => previous || data.features[0]?.id);
-        setSyncedAt(Date.now());
-        setSyncError("");
+        if (authoritative) { setSyncedAt(Date.now()); setSyncError(""); }
         return data.features;
     }
 
@@ -109,15 +114,15 @@ export function App() {
 
     useEffect(() => {
         if (!project) return;
-        const sync = async () => {
+        const sync = async (force = false) => {
             if (refreshing.current) return;
             refreshing.current = true;
-            try { await refresh(); }
+            try { await refresh(force || Date.now() - authorityReadAt.current >= 15000); }
             catch (failure) { setSyncError(failure instanceof Error ? failure.message : "Shared state could not be refreshed."); }
             finally { refreshing.current = false; }
         };
         const timer = setInterval(() => { void sync(); }, 2000);
-        const focus = () => { void sync(); };
+        const focus = () => { void sync(true); };
         window.addEventListener("focus", focus);
         return () => { clearInterval(timer); window.removeEventListener("focus", focus); };
     }, [project?.id]);
@@ -172,7 +177,18 @@ export function App() {
             body: JSON.stringify(command),
         });
         await refresh();
+        if (["publish_feature", "open_shared_feature"].includes(String(command.kind)) && result.feature &&
+            typeof result.feature === "object" && !Array.isArray(result.feature) && typeof result.feature.id === "string") {
+            setSelectedId(result.feature.id);
+        }
         return result;
+    }
+
+    async function teamAction(kind: "publish_feature" | "open_shared_feature", workItemId = Number(adoFeatureId)) {
+        const { configuration } = await request<{ configuration: ConfigRevision | null }>("/api/configuration");
+        if (!configuration) throw new Error("Configure repository mappings and the ADO organization/project under Connections first.");
+        await execute({ kind, ...(kind === "publish_feature" ? { featureId: selected?.id } : {}),
+            target: { organization: configuration.value.boards.organization, project: configuration.value.boards.project, workItemId } });
     }
 
     async function send(command: Command) {
@@ -233,7 +249,7 @@ export function App() {
     return <div className="app-shell">
         <aside className="sidebar">
             <a className="brand" href="/" aria-label="Software Factory home"><span className="brand-mark"><FactoryMark /></span><span>Software<br /><strong>Factory</strong></span></a>
-            <div className="workspace"><span className="eyebrow">WORKSPACE</span><strong>{workspace}</strong><span>Local, private, and under your control.</span></div>
+            <div className="workspace"><span className="eyebrow">WORKSPACE</span><strong>{workspace}</strong><span>Private drafts. Shared team features in ADO.</span></div>
             <div className="sidebar-heading"><span>FEATURES</span><span>{features.length.toString().padStart(2, "0")}</span></div>
             <button className="new-feature" onClick={newFeature} disabled={busy}><span aria-hidden="true">+</span> New feature</button>
             <nav aria-label="Features" className="feature-nav">
@@ -260,6 +276,42 @@ export function App() {
                 {settings && <FactorySettings execute={execute} />}
                 {error && <div role="alert" className="message error">{error}</div>}
                 {notice && <div role="status" className="message notice">{notice}</div>}
+                {!formOpen && <section className="card" aria-label="Team features">
+                    <h2>{selected?.shared ? `Shared ADO Feature #${selected.shared.target.workItemId}` : "Local draft or team feature"}</h2>
+                    <p>Publish deliberately to an existing ADO Feature. Versioned attachments hold the shared requirements, artifacts and approvals.
+                        Local historical approvals are not transferred. The signed-in ADO user must have edit permission to approve.</p>
+                    {selected?.shared?.lock && <p role="status">Shared operation: {selected.shared.lock.kind}, owned by {selected.shared.lock.actor.displayName}.
+                        Inspect the owner and receipts before recovery; do not start a competing run.</p>}
+                    {selected?.shared && <p><a href={`https://dev.azure.com/${encodeURIComponent(selected.shared.target.organization)}/${encodeURIComponent(selected.shared.target.project)}/_workitems/edit/${selected.shared.target.workItemId}`} target="_blank" rel="noreferrer">Open authoritative ADO Feature</a>
+                        {" "}— revision {selected.shared.revision}. Local checkout paths and GitHub accounts are not shared.</p>}
+                    {selected?.shared?.lock && <details><summary>Recover an inspected shared claim</summary>
+                        <p>Stop or inspect the original owner and reconcile uncertain provider sends first. Releasing does not cancel native work.</p>
+                        <label htmlFor="shared-recovery-reason">Investigation and recovery reason</label>
+                        <textarea id="shared-recovery-reason" value={recoveryReason} onChange={(event) => setRecoveryReason(event.target.value)} />
+                        <button className="secondary" disabled={busy || !recoveryReason.trim()} onClick={() => void act(async () => {
+                            await execute({ kind: "release_shared_claim", featureId: selected.id, claimId: selected.shared!.lock!.id, reason: recoveryReason });
+                            setRecoveryReason("");
+                        })}>Review claim release</button>
+                    </details>}
+                    <label htmlFor="ado-feature-id">ADO Feature work item ID</label>
+                    <input id="ado-feature-id" inputMode="numeric" value={adoFeatureId} onChange={(event) => setAdoFeatureId(event.target.value)} />
+                    <div className="factory-actions">
+                        <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>Open team feature</button>
+                        <button className="secondary" disabled={busy || !selected || !!selected.shared || !adoFeatureId}
+                            onClick={() => void act(() => teamAction("publish_feature"))}>Publish draft to ADO</button>
+                        <button className="secondary" disabled={busy} onClick={() => void act(async () => {
+                            const result = await execute({ kind: "list_shared_features" });
+                            if (!Array.isArray(result.features)) throw new Error("ADO returned no team feature list.");
+                            setTeamFeatures(result.features.map((entry) => {
+                                if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.workItemId !== "number" ||
+                                    typeof entry.organization !== "string" || typeof entry.project !== "string") throw new Error("Invalid shared feature reference.");
+                                return { organization: entry.organization, project: entry.project, workItemId: entry.workItemId };
+                            }));
+                        })}>Find team features</button>
+                    </div>
+                    {teamFeatures.map((target) => <button key={target.workItemId} className="text-button" disabled={busy}
+                        onClick={() => void act(async () => { await execute({ kind: "open_shared_feature", target }); })}>Open Feature #{target.workItemId}</button>)}
+                </section>}
                 {doctor !== undefined && <section className="card preflight"><div className="card-heading"><h2>{doctor.runtime.ready ? "Local runtime ready" : "Local runtime needs repair"}</h2><button className="text-button" onClick={() => setDoctor(undefined)}>Close</button></div>
                     <p>{doctor.runtime.message}</p>{doctor.runtime.recoveryCommand && <><p>Run this from the repository root, then explicitly retry. No AI work runs during repair.</p><pre>{doctor.runtime.recoveryCommand}</pre></>}
                     <details><summary>Full setup diagnostics</summary><pre>{JSON.stringify(doctor, null, 2)}</pre></details></section>}
@@ -302,7 +354,7 @@ export function App() {
                         <div className="unknowns"><h3>Open questions saved in this brief</h3>{selected.current.blockingUnknowns.length ? <ul>{selected.current.blockingUnknowns.map((unknown, index) => <li key={index}>{unknown}</li>)}</ul> : <p><span className="checkmark" aria-hidden="true">+</span> {selected.currentProgress?.question ? "No additional questions saved in the brief. Chat questions are tracked separately in shared activity." : "No open questions saved in the brief."}</p>}</div>
                         <div className="revision-receipt"><span>REVISION ID</span><code>{selected.current.id}</code><span>FEATURE ID</span><code>{selected.id}</code></div>
                         <div className="form-actions"><button className="secondary" disabled={busy} onClick={edit}>Edit brief and criteria</button>
-                            <button className="primary" disabled={busy || selected.status === "ready_for_design" || !selected.current.requirements.length || selected.current.blockingUnknowns.length > 0} onClick={() => approve(selected)}>{selected.status === "ready_for_design" ? "Approved for design" : "Approve for design"}</button>
+                            <button className="primary" disabled={busy || !selected.shared || selected.status === "ready_for_design" || !selected.current.requirements.length || selected.current.blockingUnknowns.length > 0} onClick={() => approve(selected)}>{!selected.shared ? "Publish before approving" : selected.status === "ready_for_design" ? "Approved for design" : "Approve for design"}</button>
                         </div>
                         <p className="approval-help">Approval applies only to this revision. It does not start a workflow or authorize remote changes.</p>
                     </section>

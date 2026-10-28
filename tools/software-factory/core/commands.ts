@@ -11,6 +11,7 @@ import { createBackup, inspectBackup, restoreClone } from "./backups.ts";
 import { runtimeFingerprint } from "./evidence.ts";
 import { parseProgress } from "./progress.ts";
 import { decisionMessage, describeDecision, type DecisionPresentation } from "./decisions.ts";
+import { sharedTarget } from "./shared-contracts.ts";
 
 export interface PreparedCommand {
     command: Record<string, unknown>; scope: Json; consentKey: string | null; confirmation: string | null; decision: DecisionPresentation | null;
@@ -58,6 +59,31 @@ export function prepare(app: Application, input: unknown): PreparedCommand {
     let scope: Json = jsonValue(command);
     let confirm = false;
     switch (command.kind) {
+        case "publish_feature":
+            exactKeys(command, ["kind", "featureId", "target"], "Command");
+            scope = { feature: jsonValue(app.registry.get(text(command.featureId, "Feature ID")).current), target: jsonValue(sharedTarget(command.target)),
+                effect: "Publish a new shared successor on this ADO Feature. Upload the current requirements as an attachment. Existing local history is preserved; no previous approvals or artifacts become team approvals." };
+            app.lifecycle.configuration();
+            confirm = true;
+            break;
+        case "open_shared_feature":
+            exactKeys(command, ["kind", "target"], "Command");
+            sharedTarget(command.target);
+            break;
+        case "list_shared_features":
+            exactKeys(command, ["kind"], "Command");
+            app.lifecycle.configuration();
+            break;
+        case "release_shared_claim": {
+            exactKeys(command, ["kind", "featureId", "claimId", "reason"], "Command");
+            text(command.reason, "Investigation and recovery reason");
+            const shared = app.shared.cached(text(command.featureId, "Feature ID"));
+            if (!shared || shared.snapshot.lock?.id !== command.claimId) throw new FactoryError("shared_claim_changed", "Inspect the current shared claim before recovery.", 409);
+            scope = { command: jsonValue(command), claim: jsonValue(shared.snapshot.lock),
+                effect: "Revoke this shared claim only after inspecting its owner and remote receipts. Does not stop native agents or undo remote effects. Old stage results can no longer be published." };
+            confirm = true;
+            break;
+        }
         case "create_feature": case "revise_requirements":
             parseCommand(command);
             break;
@@ -155,7 +181,7 @@ export function prepare(app: Application, input: unknown): PreparedCommand {
             break;
         case "start_workflow": {
             exactKeys(command, ["kind", "featureId", "workflow", "limits"], "Command");
-            if (!["intake", "design", "lifecycle", "monitor"].includes(String(command.workflow))) throw new FactoryError("invalid_workflow", "Choose intake, design, lifecycle, or monitor.");
+            if (!["intake", "design", "plan", "monitor"].includes(String(command.workflow))) throw new FactoryError("invalid_workflow", "Choose intake, design, plan, or monitor. Multi-stage lifecycle runs are retired.");
             const feature = app.registry.get(text(command.featureId, "Feature ID"));
             if (command.workflow !== "intake" && feature.status !== "ready_for_design") throw new FactoryError("approval_required", "Review and approve success criteria before starting design or delivery.", 409);
             const requestedLimits = limits(command.limits);
@@ -174,6 +200,14 @@ export function prepare(app: Application, input: unknown): PreparedCommand {
             limits(command.limits);
             scope = jsonValue(command); confirm = command.action !== "refresh";
             break;
+        case "create_backlog": case "dispatch_work": {
+            exactKeys(command, ["kind", "featureId"], "Command");
+            const preview = app.lifecycle.gate(text(command.featureId, "Feature ID"), command.kind === "create_backlog" ? "backlog" : "dispatch");
+            if (!preview.ready || !preview.approved) throw new FactoryError("approval_required", "Approve the exact current operation scope first.", 409);
+            scope = { command: jsonValue(command), gate: jsonValue(preview) };
+            confirm = true;
+            break;
+        }
         case "reconcile_operation":
             exactKeys(command, ["kind", "featureId", "operationKey"], "Command");
             app.registry.get(text(command.featureId, "Feature ID"));
@@ -268,6 +302,17 @@ export async function dispatch(app: Application, input: unknown, actor: Actor, c
     }
     const id = () => text(command.featureId, "Feature ID");
     switch (command.kind) {
+        case "publish_feature":
+            return { feature: jsonValue(await app.shared.publish(id(), sharedTarget(command.target), actor)) };
+        case "open_shared_feature":
+            return { feature: jsonValue(await app.shared.open(sharedTarget(command.target))) };
+        case "list_shared_features": {
+            const boards = app.lifecycle.configuration().boards;
+            return { features: jsonValue(await app.shared.provider.list(boards.organization, boards.project)) };
+        }
+        case "release_shared_claim":
+            await app.shared.release(id(), text(command.claimId, "Claim ID"), text(command.reason, "Recovery reason"), actor);
+            return { feature: jsonValue(app.lifecycle.store.view(id())) };
         case "create_feature": case "revise_requirements": case "approve_requirements": {
             if (command.kind === "approve_requirements" && app.registry.get(id()).status === "ready_for_design") {
                 return { outcome: "already_approved", feature: jsonValue(app.lifecycle.store.view(id())) };
@@ -333,6 +378,11 @@ export async function dispatch(app: Application, input: unknown, actor: Actor, c
         case "control_run":
             return { control: await (await app.runtime()).control(id(), text(command.executionId, "Execution ID"),
                 command.action as "pause" | "resume" | "cancel" | "refresh", actor, limits(command.limits)) };
+        case "create_backlog":
+            return { receipt: await app.lifecycle.backlog(id()), feature: jsonValue(app.lifecycle.store.view(id())) };
+        case "dispatch_work":
+            await app.lifecycle.repairDispatchStatus(id());
+            return { receipts: await app.lifecycle.dispatch(id()), feature: jsonValue(app.lifecycle.store.view(id())) };
         case "reconcile_operation":
             return { receipt: await app.lifecycle.reconcile(id(), text(command.operationKey, "Operation key")), feature: jsonValue(app.lifecycle.store.view(id())) };
         case "confirm_operation_not_sent":
@@ -392,9 +442,11 @@ export async function dispatch(app: Application, input: unknown, actor: Actor, c
         case "restore_backup_clone":
             return { restored: jsonValue(await restoreClone(app.registry, text(command.path, "Backup path"), text(command.expectedHash, "Backup hash"))) };
         case "cancel_feature": {
-            const runtime = await app.runtime();
             const pending = app.lifecycle.store.state(id()).executions.filter((run) => ["starting", "running", "paused"].includes(run.status));
-            for (const run of pending) await runtime.control(id(), run.id, "cancel", actor);
+            if (pending.length) {
+                const runtime = await app.runtime();
+                for (const run of pending) await runtime.control(id(), run.id, "cancel", actor);
+            }
             app.lifecycle.store.change(id(), (state) => { state.cancelled = true; state.schedule = null; });
             return { feature: jsonValue(app.lifecycle.store.view(id())) };
         }

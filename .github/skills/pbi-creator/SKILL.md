@@ -14,8 +14,8 @@ Follow `.github/agents/software-factory.agent.md`.
 2. Resolve missing configuration through the shared configuration command and
    genuine confirmation. Do not guess area paths, iterations, or accounts.
 3. Obtain outstanding exact plan approval, then separately preview and confirm
-   the backlog gate. Resume the owning lifecycle run through shared commands.
-4. Report saved work-item receipts and unresolved operations from the registry.
+   the backlog gate. Separately preview and confirm `create_backlog`.
+4. Report ADO-backed work-item receipts and unresolved operations.
 
 The application creates/links work items and reconciles ambiguous responses.
 Do not invoke a creation subagent, call provider mutation APIs directly, or

@@ -26,7 +26,9 @@ function actorFromJson(json: string): Actor {
         throw new FactoryError("storage_corrupt", "Invalid stored actor.", 500);
     }
     const sessionId = "sessionId" in value && typeof value.sessionId === "string" ? value.sessionId : undefined;
-    return validateActor({ channel: value.channel, reference: value.reference, sessionId });
+    const ado = "ado" in value && value.ado && typeof value.ado === "object" && "id" in value.ado && "displayName" in value.ado &&
+        typeof value.ado.id === "string" && typeof value.ado.displayName === "string" ? { id: value.ado.id, displayName: value.ado.displayName } : undefined;
+    return validateActor({ channel: value.channel, reference: value.reference, sessionId, ...(ado ? { ado } : {}) });
 }
 
 export function contentHash(input: Requirements): string {
@@ -158,6 +160,42 @@ export class Registry {
     list(): Feature[] {
         return this.db.prepare("SELECT id FROM features WHERE project_id = ? ORDER BY updated_at DESC, id")
             .all(this.project.id).map((row) => this.get(column(row, "id")));
+    }
+
+    importShared(feature: Feature): void {
+        this.transaction(() => {
+            const existing = this.db.prepare("SELECT project_id FROM features WHERE id=?").get(feature.id);
+            if (existing && existing.project_id !== this.project.id) throw new FactoryError("shared_project_conflict", "This shared feature is already cached for another workspace in this registry.", 409);
+            if (existing) {
+                const prior = this.get(feature.id);
+                for (const key of ["history", "approvals", "audit"] as const) {
+                    const before = key === "audit" ? prior.audit.map((entry, index) => ({ ...entry, sequence: index + 1 })) : prior[key];
+                    if (before.length > feature[key].length || before.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(feature[key][index]))) {
+                        throw new FactoryError("shared_history_conflict", "Shared history diverges from the previously verified cache.", 409);
+                    }
+                }
+            }
+            this.db.prepare("INSERT OR IGNORE INTO features VALUES (?, ?, ?, ?, ?, ?, ?)")
+                .run(feature.id, this.project.id, `ado:${feature.id}`, feature.history[0]!.hash, feature.current.id, feature.createdAt, feature.updatedAt);
+            for (const revision of feature.history) {
+                const prior = this.db.prepare("SELECT hash FROM revisions WHERE id=? AND feature_id=?").get(revision.id, feature.id);
+                if (prior && prior.hash !== revision.hash) throw new FactoryError("shared_history_conflict", "Shared requirements conflict with immutable local history.", 409);
+                if (!prior) {
+                    const input: Requirements = { title: revision.title, ...(revision.description ? { description: revision.description } : {}),
+                        ...(revision.designTasks?.length ? { designTasks: revision.designTasks } : {}), requirements: revision.requirements, blockingUnknowns: revision.blockingUnknowns };
+                    this.addRevision(feature.id, revision.id, revision.number, input, revision.createdAt);
+                }
+            }
+            for (const approval of feature.approvals) {
+                const prior = this.db.prepare("SELECT id FROM approvals WHERE feature_id=? AND revision_id=?").get(feature.id, approval.revisionId);
+                if (prior && prior.id !== approval.id) throw new FactoryError("shared_history_conflict", "Shared approval conflicts with local history.", 409);
+                if (!prior) this.db.prepare("INSERT INTO approvals VALUES (?, ?, ?, ?, ?)")
+                    .run(approval.id, feature.id, approval.revisionId, JSON.stringify(validateActor(approval.actor)), approval.createdAt);
+            }
+            const audit = this.db.prepare("SELECT sequence FROM audit WHERE feature_id=? ORDER BY sequence").all(feature.id);
+            for (const entry of feature.audit.slice(audit.length)) this.event(feature.id, entry.kind, entry.revisionId, validateActor(entry.actor), entry.createdAt);
+            this.db.prepare("UPDATE features SET current_revision=?, updated_at=? WHERE id=?").run(feature.current.id, feature.updatedAt, feature.id);
+        });
     }
 
     private addRevision(featureId: string, id: string, number: number, input: Requirements, now: string): void {

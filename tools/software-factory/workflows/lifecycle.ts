@@ -3,7 +3,7 @@
 import type { WorkflowAgentOptions, WorkflowContext, WorkflowDefinition } from "@github/copilot-sdk";
 import { Application } from "../core/application.ts";
 import { FactoryError, object, text } from "../core/contracts.ts";
-import { analysisConfiguration, jsonValue, parseIntakeProposal, parsePlan, strings, type Json, type Stage, type WorkflowKind } from "../core/lifecycle-contracts.ts";
+import { analysisConfiguration, jsonValue, parseIntakeProposal, parsePlan, strings, type Json, type WorkflowKind } from "../core/lifecycle-contracts.ts";
 import { runDesignFeature, workflowDefinition as guardedDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
 import type { Provider } from "../providers/provider.ts";
 import { runtimeFingerprint } from "../core/evidence.ts";
@@ -51,6 +51,7 @@ async function open(ctx: Context, kind: WorkflowKind, provider?: Provider) {
         provider,
     });
     try {
+        await app.shared.assertRun(featureId, executionId);
         const execution = app.lifecycle.assertFresh(featureId, executionId);
         if (execution.runtimeFingerprint !== loadedWorkflowFingerprint) {
             throw new FactoryError("workflow_version_changed", "Reload the workflow host after implementation changes; old code cannot resume a new revision.", 409);
@@ -59,8 +60,7 @@ async function open(ctx: Context, kind: WorkflowKind, provider?: Provider) {
             throw new FactoryError("wrong_workflow_owner", "This run was not admitted for this exact owning session.", 403);
         }
         app.lifecycle.store.updateExecution(featureId, executionId, { runtimeId: ctx.runId, status: "running" });
-        const beforeDelivery = execution.kind === "intake" || execution.kind === "design" || (execution.kind === "lifecycle" &&
-            !app.lifecycle.store.state(featureId).operations.some((operation) => operation.kind === "work_item" && operation.status === "completed"));
+        const beforeDelivery = ["intake", "design", "plan"].includes(execution.kind);
         if (beforeDelivery && Object.keys(execution.sourcePins).length &&
             JSON.stringify(await sourcePins(app.lifecycle)) !== JSON.stringify(execution.sourcePins)) {
             throw new FactoryError("source_drift", "Source changed since admission. Review a successor execution before generating or applying work.", 409);
@@ -69,29 +69,15 @@ async function open(ctx: Context, kind: WorkflowKind, provider?: Provider) {
             ctx.phase(title);
             app.lifecycle.store.updateExecution(featureId, executionId, { phase: title });
         };
-        const agent = (prompt: string, options: WorkflowAgentOptions = {}) => runReader(ctx, featureId, executionId, prompt, options);
+        const agent = async (prompt: string, options: WorkflowAgentOptions = {}) => {
+            await app.shared.assertRun(featureId, executionId);
+            return runReader(ctx, featureId, executionId, prompt, options);
+        };
         return { app, factory: app.lifecycle, featureId, executionId, execution, phase, agent };
     } catch (error) {
         app.close();
         throw error;
     }
-}
-
-async function gate(ctx: Context, factory: Application["lifecycle"], featureId: string, executionId: string, stage: Stage) {
-    factory.assertFresh(featureId, executionId);
-    const preview = factory.gate(featureId, stage);
-    if (preview.approved && preview.ready) return;
-    factory.store.updateExecution(featureId, executionId, { phase: `${stage} approval`, status: "paused" });
-    const attempt = factory.store.change(featureId, (state) => {
-        const run = state.executions.find((item) => item.id === executionId)!;
-        const key = `${stage}:${preview.scopeHash}`;
-        run.checkpoints[key] = (run.checkpoints[key] || 0) + 1;
-        return run.checkpoints[key];
-    });
-    ctx.log(`Human approval required: ${stage}; scope ${preview.scopeHash}. ${preview.blockers.join(" ")}`);
-    await ctx.pause(`software-factory-v1:${stage}:${preview.scopeHash}:${attempt}`);
-    // A native resume alone is not consent, including if this checkpoint was replayed.
-    factory.requireGate(featureId, stage);
 }
 
 export async function intakeRun(ctx: Context, dependencies?: { provider: Provider }): Promise<Json> {
@@ -103,6 +89,8 @@ export async function intakeRun(ctx: Context, dependencies?: { provider: Provide
             `${boundaries}\nHelp the engineer turn their feature brief into a short draft of checkable success criteria. ` +
             "Use plain language. Checkable does not mean numeric: do not invent metrics, thresholds, product decisions, scope, or requirements. " +
             "Preserve the stated goals, constraints and non-goals. Keep genuinely unresolved choices as open questions, not assumed answers. " +
+            "Use docs/Templates/requirements-template.md as a completeness guide for scenarios, non-regressions, dependencies, security/privacy, operational constraints and evidence. " +
+            "Do not require the user to fill every section, turn irrelevant sections into blockers, or invent missing decisions. " +
             "First investigate the relevant source, tests and existing implementations using your read-only tools. " +
             "Resolve technical details from evidence and propose justified engineering defaults with compatibility implications in your summary. " +
             "Do not turn every implementation detail into a question for the engineer. Only material scope/product choices or unresolved compatibility tradeoffs remain open. " +
@@ -127,6 +115,7 @@ export async function intakeRun(ctx: Context, dependencies?: { provider: Provide
             throw new FactoryError("source_drift", "Source changed while drafting success criteria. Review a new source snapshot.", 409);
         }
         const artifact = factory.store.artifact(featureId, "intake", execution.requirementsRevision, proposal, null, executionId);
+        await app.shared.finishRun(featureId, executionId);
         return { outcome: "intake_proposed", artifactId: artifact.id, nextAction: "Review and edit the proposal, save your chosen success criteria, then explicitly approve that revision for design." };
     } finally { app.close(); }
 }
@@ -160,16 +149,16 @@ export async function designRun(ctx: Context, dependencies?: { provider: Provide
             throw new FactoryError("source_drift", "Source changed during design. Review a new source snapshot.", 409);
         }
         const artifact = factory.store.artifact(featureId, "design", execution.requirementsRevision, packet, null, executionId);
+        await app.shared.finishRun(featureId, executionId);
         const result = object(packet, "Guarded design packet");
         if (result.recommendation !== "GO to Planning") return { outcome: "needs_clarification", artifactId: artifact.id, packet: artifact.content };
-        phase("Human design review");
-        await gate(ctx, factory, featureId, executionId, "design");
-        return { outcome: "design_approved", artifactId: artifact.id, humanApproval: "recorded_separately" };
+        phase("Ready for human design review");
+        return { outcome: "design_ready_for_review", artifactId: artifact.id, humanApproval: "pending" };
     } finally { app.close(); }
 }
 
-export async function lifecycleRun(ctx: Context, dependencies?: { provider: Provider }): Promise<Json> {
-    const { app, factory, featureId, executionId, execution, phase, agent } = await open(ctx, "lifecycle", dependencies?.provider);
+export async function planRun(ctx: Context, dependencies?: { provider: Provider }): Promise<Json> {
+    const { app, factory, featureId, executionId, execution, phase, agent } = await open(ctx, "plan", dependencies?.provider);
     try {
         factory.requireGate(featureId, "design");
         const design = factory.store.latest(featureId, "design")!;
@@ -199,6 +188,7 @@ export async function lifecycleRun(ctx: Context, dependencies?: { provider: Prov
                     reviewHistory.push({ attempt, validationError: error.message, candidate: jsonValue(generated) });
                     if (attempt === 2) {
                         factory.store.artifact(featureId, "planning_attempt", execution.requirementsRevision, { recommendation: "NO-GO", reviewHistory }, design.id, executionId);
+                        await app.shared.finishRun(featureId, executionId);
                         throw new FactoryError("plan_no_go", "Plan semantics still failed after two fixes; inspect the saved attempt history.", 409);
                     }
                     plan = generated;
@@ -221,6 +211,7 @@ export async function lifecycleRun(ctx: Context, dependencies?: { provider: Prov
                 if (checked.pass === true && !issues.length) { plan = { ...parsed, reviewHistory }; break; }
                 if (attempt === 2) {
                     factory.store.artifact(featureId, "planning_attempt", execution.requirementsRevision, { recommendation: "NO-GO", reviewHistory }, design.id, executionId);
+                    await app.shared.finishRun(featureId, executionId);
                     throw new FactoryError("plan_no_go", "Independent planning review still failed after two fixes; inspect its saved history.", 409);
                 }
                 findings.splice(0, findings.length, ...(issues.length ? issues : ["Independent review did not pass; verify every approved requirement and criterion."]));
@@ -231,23 +222,9 @@ export async function lifecycleRun(ctx: Context, dependencies?: { provider: Prov
             }
             planArtifact = factory.store.artifact(featureId, "plan", execution.requirementsRevision, plan, design.id, executionId);
         }
-        phase("Human plan review");
-        await gate(ctx, factory, featureId, executionId, "plan");
-        phase("Backlog authorization");
-        await gate(ctx, factory, featureId, executionId, "backlog");
-        factory.requireGate(featureId, "backlog");
-        phase("Create and reconcile backlog");
-        await ctx.step(`${executionId}:backlog:${planArtifact.id}`, () => factory.backlog(featureId, executionId));
-        await factory.repairDispatchStatus(featureId, executionId);
-        phase("Dispatch authorization");
-        const preview = factory.gate(featureId, "dispatch");
-        if (!preview.ready && factory.store.state(featureId).operations.some((item) => item.planId === planArtifact.id && item.kind === "dispatch" && item.status === "completed")) {
-            return { outcome: "monitoring", reason: "No further eligible undispatched work; monitor dependencies before approving another wave." };
-        }
-        await gate(ctx, factory, featureId, executionId, "dispatch");
-        phase("Dispatch approved work");
-        const receipts = await ctx.step(`${executionId}:dispatch:${factory.gate(featureId, "dispatch").scopeHash}`, () => factory.dispatch(featureId, executionId));
-        return { outcome: "monitoring", dispatchReceipts: receipts };
+        phase("Ready for human plan review");
+        await app.shared.finishRun(featureId, executionId);
+        return { outcome: "plan_ready_for_review", artifactId: planArtifact.id, humanApproval: "pending" };
     } finally { app.close(); }
 }
 
@@ -301,13 +278,14 @@ export async function monitorRun(ctx: Context, dependencies?: { provider: Provid
         }
         factory.assertFresh(featureId, executionId);
         const saved = factory.store.artifact(featureId, "monitor", execution.requirementsRevision, report, artifact.id, executionId);
+        await app.shared.finishRun(featureId, executionId);
         return { outcome: "observed", artifactId: saved.id, report: jsonValue(report) };
     } finally { app.close(); }
 }
 
 const argsSchema = { type: "object", required: ["featureId", "executionId"], properties: { featureId: schemaString, executionId: schemaString } };
 export const designWorkflow: WorkflowDefinition = {
-    meta: { ...guardedDesign.meta, name: "software-factory-design", description: "Run the existing guarded design algorithm and pause for genuine design approval.", argsSchema,
+    meta: { ...guardedDesign.meta, name: "software-factory-design", description: "Return an evidence-backed design for human review, then end.", argsSchema,
         limits: {
             maxConcurrentSubagents: guardedDesign.meta.limits.maxConcurrentSubagents,
             maxTotalSubagents: guardedDesign.meta.limits.maxTotalSubagents,
@@ -316,13 +294,13 @@ export const designWorkflow: WorkflowDefinition = {
     },
     run: designRun,
 };
-export const lifecycleWorkflow: WorkflowDefinition = {
+export const planWorkflow: WorkflowDefinition = {
     meta: {
-        name: "software-factory-lifecycle", description: "Plan, review, backlog, and dispatch an explicitly approved Software Factory feature.",
+        name: "software-factory-plan", description: "Return an independently reviewed implementation plan, then end before approval or delivery.",
         argsSchema,
-        phases: ["Plan and independent review", "Human plan review", "Backlog authorization", "Create and reconcile backlog", "Dispatch authorization", "Dispatch approved work"].map((title) => ({ title })),
+        phases: ["Plan and independent review", "Ready for human plan review"].map((title) => ({ title })),
     },
-    run: lifecycleRun,
+    run: planRun,
 };
 export const intakeWorkflow: WorkflowDefinition = {
     meta: {

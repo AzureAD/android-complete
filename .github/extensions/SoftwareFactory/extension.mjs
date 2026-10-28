@@ -25,12 +25,13 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
     const { createCommands } = await import("../../../tools/software-factory/chat/commands.ts");
     const { createReaderTools, readerAgents, FACTORY_READER } = await import("../../../tools/software-factory/runtime/reader.ts");
     const { checkWorkflow } = await import("../../../tools/software-factory/workflows/check.ts");
-    const { intakeWorkflow, designWorkflow, lifecycleWorkflow, monitorWorkflow, loadedWorkflowFingerprint } = await import("../../../tools/software-factory/workflows/lifecycle.ts");
+    const { designEvaluationWorkflow, evaluationAgent } = await import("../../../tools/software-factory/evals/design.mjs");
+    const { intakeWorkflow, designWorkflow, planWorkflow, monitorWorkflow, loadedWorkflowFingerprint } = await import("../../../tools/software-factory/workflows/lifecycle.ts");
     let application;
     let session;
     let ready = false;
     const getApplication = () => application ??= new Application({ workspace: process.env.SOFTWARE_FACTORY_WORKSPACE });
-    const definitions = [checkWorkflow, intakeWorkflow, designWorkflow, lifecycleWorkflow, monitorWorkflow];
+    const definitions = [checkWorkflow, intakeWorkflow, designWorkflow, planWorkflow, monitorWorkflow, designEvaluationWorkflow];
     const tools = createChatTools(
         getApplication,
         () => {
@@ -54,7 +55,7 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
                 readerAgent: FACTORY_READER,
             } : { ready: false }),
         }],
-        customAgents: readerAgents,
+        customAgents: [...readerAgents, evaluationAgent],
         commands: createCommands(
             getApplication,
             () => {

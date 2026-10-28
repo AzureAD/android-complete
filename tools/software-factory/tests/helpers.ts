@@ -21,3 +21,11 @@ export function fixture() {
     const app = new Application(options);
     return { directory, workspace, options, app, cleanup: () => { app.close(); rmSync(directory, { recursive: true }); } };
 }
+
+export function transportFixture() {
+    const result = fixture();
+    // These unit tests isolate confirmation/UI transport; shared.test.ts exercises the real ADO boundary.
+    result.app.preview = async (input) => result.app.prepare(input);
+    result.app.submit = (input, actor, consent) => result.app.dispatch(input, actor, consent);
+    return result;
+}

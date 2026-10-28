@@ -8,7 +8,7 @@ description: "Authorize and create the exact approved Software Factory backlog"
 Read the current feature, plan, configuration, and `backlog` gate. Confirm board,
 area, iteration, assignee, parent, exact work items, and dependency links.
 Use the shared `approve_stage` command for the exact backlog scope, then
-explicitly resume its owning native lifecycle run.
+separately preview and confirm `create_backlog`.
 
 Report actual receipts and partial failures. Reconcile uncertain outcomes instead
 of creating duplicates. Do not create ADO items directly through an agent or

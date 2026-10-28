@@ -5,7 +5,7 @@ import { writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { createCommands, type CommandHost } from "../chat/commands.ts";
-import { actor, fixture, requirements } from "./helpers.ts";
+import { actor, transportFixture as fixture, requirements } from "./helpers.ts";
 import { sessionConfiguration } from "../runtime/host.ts";
 import { FactoryError, object } from "../core/contracts.ts";
 import { Application } from "../core/application.ts";

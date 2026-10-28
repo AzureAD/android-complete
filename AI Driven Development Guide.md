@@ -2,8 +2,9 @@
 
 # Software Factory Developer Guide
 
-Software Factory replaces Feature Orchestrator. Use one lifecycle, one local
-registry, and native Copilot Dynamic Workflows from app/interactive CLI chat or
+Software Factory replaces Feature Orchestrator. Use one lifecycle, ADO Feature
+attachments for shared requirements/artifacts/approvals, and separate native
+Copilot Dynamic Workflows from app/interactive CLI chat or
 the optional dashboard. There is no separate editor orchestration mode.
 
 ## Setup
@@ -35,6 +36,13 @@ Scope approval does not start paid work. A generated artifact, a chat message,
 or a native resume is not human approval. The agent should clearly state when
 work is running versus when a form needs your input.
 
+Publish a private draft deliberately to an existing ADO Feature before approval.
+Chat/dashboard confirmations are attributed to the authenticated ADO user and
+require edit permission on that Feature; the session's user may approve their
+own AI-assisted work. SQLite is only a draft/cache/local execution store.
+Design and planning finish before human review. Backlog creation and dispatch
+are separate confirmed commands, not steps in a paused lifecycle workflow.
+
 Existing `feature-design`, `feature-plan`, `feature-backlog`, `feature-dispatch`,
 `feature-status`, `feature-continue`, and `feature-pr-iterate` commands all route
 to Software Factory. Design/planning/backlog/dispatch skills are entry points
@@ -46,9 +54,12 @@ No hook infers an active feature from the most recently updated JSON record.
 
 ## Continuing work
 
-Use the stable feature and its recorded owning session/run. Say, for example,
+Open the shared ADO Feature to continue with the team's current artifacts and
+approvals, using your own local checkout and account mappings. Say, for example,
 "Continue Broker throttling." Read current status before retrying a failure.
-An offline chat owner must reconnect; a dashboard must not create another owner.
+An interrupted native run still belongs to its original owner. Reconnect that
+owner or explicitly reconcile/release its shared claim; never silently take over.
+After a stage finishes, another teammate can start the next in their own session.
 App discovery of dashboard-owned SDK sessions is still unverified. Shared
 registry visibility alone is not proof of app session attachment.
 

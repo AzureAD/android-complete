@@ -8,7 +8,7 @@ import { FactoryError, type Actor } from "./contracts.ts";
 import type { Registry } from "./registry.ts";
 import { currentChatProgress, featureActivity } from "./progress.ts";
 import {
-    analysisConfiguration, jsonValue, parseConfiguration, type Artifact, type Configuration, type ConfigRevision,
+    analysisConfiguration, jsonValue, parseConfiguration, sharedConfiguration, type Artifact, type Configuration, type ConfigRevision,
     type Execution, type FactoryFeature, type FactoryState, type Json,
 } from "./lifecycle-contracts.ts";
 
@@ -30,6 +30,9 @@ export function lifecycleSchema(db: DatabaseSync): void {
         );
         CREATE TABLE IF NOT EXISTS factory_resident_owner (
             session_id TEXT PRIMARY KEY, token TEXT NOT NULL, heartbeat INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS factory_local_configuration (
+            project_id TEXT PRIMARY KEY, configuration_id TEXT NOT NULL, mappings_json TEXT NOT NULL
         );
         CREATE TRIGGER IF NOT EXISTS factory_configuration_immutable_update
             BEFORE UPDATE ON factory_configuration BEGIN SELECT RAISE(ABORT, 'Immutable configuration history'); END;
@@ -99,6 +102,8 @@ export class LifecycleStore {
     }
 
     configuration(id?: string): ConfigRevision | null {
+        const mapping = this.registry.connection.prepare("SELECT configuration_id, mappings_json FROM factory_local_configuration WHERE project_id=?").get(this.registry.project.id);
+        id ||= typeof mapping?.configuration_id === "string" ? mapping.configuration_id : undefined;
         const row = id
             ? this.registry.connection.prepare("SELECT * FROM factory_configuration WHERE project_id = ? AND id = ?").get(this.registry.project.id, id)
             : this.registry.connection.prepare("SELECT * FROM factory_configuration WHERE project_id = ? ORDER BY rowid DESC LIMIT 1").get(this.registry.project.id);
@@ -106,18 +111,30 @@ export class LifecycleStore {
         if (![row.id, row.hash, row.content_json, row.created_at].every((value) => typeof value === "string")) {
             throw new FactoryError("storage_corrupt", "Invalid configuration record.", 500);
         }
+        const value = parseConfiguration(JSON.parse(String(row.content_json)));
+        if (typeof mapping?.mappings_json === "string") {
+            const local = parseConfiguration(JSON.parse(mapping.mappings_json));
+            for (const [key, repo] of Object.entries(value.repositories)) {
+                const match = local.repositories[key];
+                if (match && match.hostname === repo.hostname && match.slug === repo.slug) {
+                    repo.localPath = match.localPath; repo.account = match.account;
+                }
+            }
+        }
         return {
             id: String(row.id), hash: String(row.hash), createdAt: String(row.created_at),
-            value: parseConfiguration(JSON.parse(String(row.content_json))),
+            value,
         };
     }
 
     configure(value: Configuration, actor: Actor): ConfigRevision {
         const existing = this.configuration();
-        if (existing?.hash === hash(value)) return existing;
-        const config = { id: randomUUID(), hash: hash(value), value, createdAt: now() };
-        this.registry.connection.prepare("INSERT INTO factory_configuration VALUES (?, ?, ?, ?, ?, ?)")
+        if (existing && hash(existing.value) === hash(value)) return existing;
+        const config = { id: hash(sharedConfiguration(value)), hash: hash(sharedConfiguration(value)), value, createdAt: now() };
+        this.registry.connection.prepare("INSERT OR IGNORE INTO factory_configuration VALUES (?, ?, ?, ?, ?, ?)")
             .run(config.id, this.registry.project.id, config.hash, JSON.stringify(value), JSON.stringify(actor), config.createdAt);
+        this.registry.connection.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
+            .run(this.registry.project.id, config.id, JSON.stringify(value));
         return config;
     }
 
@@ -225,10 +242,20 @@ export class LifecycleStore {
         if (factory.completed?.revision === feature.current.id) lifecycleStatus = "completed";
         if (factory.cancelled) lifecycleStatus = "cancelled";
         return { ...feature, factory, lifecycleStatus,
+            ...this.sharedSummary(featureId),
             sessionOwnerOnline: factory.sessionBinding?.kind === "chat" ? this.ownerOnline(factory.sessionBinding.sessionId) : null,
             activity: featureActivity(feature, factory), currentProgress: currentChatProgress(feature, factory), currentArtifacts: {
             intake: this.latest(featureId, "intake")?.id || null, design: design?.id || null, plan: plan?.id || null, monitor: this.latest(featureId, "monitor")?.id || null,
         } };
+    }
+
+    private sharedSummary(featureId: string): Partial<FactoryFeature> {
+        const table = this.registry.connection.prepare("SELECT name FROM sqlite_master WHERE name='shared_features'").get();
+        if (!table) return {};
+        const row = this.registry.connection.prepare("SELECT record_json FROM shared_features WHERE feature_id=?").get(featureId);
+        if (!row) return {};
+        const record = JSON.parse(String(row.record_json));
+        return { shared: { target: record.target, revision: record.revision, digest: record.digest, lock: record.snapshot.lock } };
     }
 
     outcome(value: unknown): Json { return jsonValue(value); }

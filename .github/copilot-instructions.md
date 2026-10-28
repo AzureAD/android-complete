@@ -153,12 +153,12 @@ This project uses Azure DevOps (`IdentityDivision/Engineering`). The **Azure Dev
 ### 13.1 Software Factory
 Software Factory is the single feature-development lifecycle. Follow
 `.github/agents/software-factory.agent.md` and use the shared `software_factory_*`
-tools, local registry, and native Dynamic Workflows. Feature skills and prompt
+tools, ADO-backed shared authority, local drafts/run records, and native Dynamic Workflows. Feature skills and prompt
 commands route to the same core; they do not coordinate phase agents themselves.
 
 1. Capture the brief, review/save criteria and engineering design tasks, and obtain exact scope approval.
 2. Separately authorize the native design workflow, then review its saved design and approval gate.
-3. Use the lifecycle workflow for planning and independent review. Plan, backlog, and dispatch have separate human gates.
+3. Use the separate `plan` workflow for planning and independent review. Stage runs end before human approval; `create_backlog` and `dispatch_work` are separate guarded commands. Publish local drafts to an existing ADO Feature before approval; record the authenticated ADO editor and exact revision.
 4. Let guarded provider adapters create/link work items and dispatch dependency-ready coding tasks with durable receipts.
 5. Monitor actual runs/PRs; post feedback only through the exact confirmed command.
 

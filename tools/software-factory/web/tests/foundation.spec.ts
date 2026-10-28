@@ -8,16 +8,27 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Feature } from "../../core/contracts.ts";
+import type { FactoryFeature } from "../../core/lifecycle-contracts.ts";
 
-const cli = fileURLToPath(new URL("../../cli.ts", import.meta.url));
+const cli = fileURLToPath(new URL("../../tests/browser-server.ts", import.meta.url));
 let child: ChildProcess;
 let directory: string;
 let url: string;
 
+function cachedFeatures(): { features: FactoryFeature[] } {
+    return JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+        const { Application } = await import(process.argv[1]);
+        const app = new Application();
+        try { console.log(JSON.stringify({features: app.registry.list().map(feature => app.lifecycle.store.view(feature.id))})); } finally { app.close(); }
+    `, new URL("../../core/application.ts", import.meta.url).href], {
+        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8",
+    }));
+}
+
 test.beforeAll(async () => {
     directory = mkdtempSync(path.join(os.tmpdir(), "software-factory-browser-"));
     child = spawn(process.execPath, [cli, "serve"], {
-        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     url = await new Promise<string>((resolve, reject) => {
         let output = "";
@@ -60,11 +71,16 @@ test("requirements, approval, shared-core reads, stale edits, and mobile layout"
     await expect(page.getByRole("heading", { name: "IPC retry policy", exact: true })).toBeVisible();
     await expect(page.locator(".requirement")).toHaveCount(2);
     await expect(page.locator(".requirement").first()).toContainText("Retry only transient IPC errors.");
-    await expect(page.getByRole("button", { name: "Approve for design", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Publish before approving", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "Edit brief and criteria", exact: true }).click();
     await page.getByLabel("Scope decisions needed from you").fill("");
     await page.getByRole("button", { name: "Save new revision", exact: true }).click();
     await expect(page.locator(".feature-detail .eyebrow")).toContainText("REVISION 2");
+    await page.getByLabel("ADO Feature work item ID").fill("123");
+    await page.getByRole("button", { name: "Publish draft to ADO", exact: true }).click();
+    await expect(page.getByRole("dialog")).toContainText("local history is preserved");
+    await page.getByRole("button", { name: "Publish to ADO", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Shared ADO Feature #123" })).toBeVisible();
     await page.getByRole("button", { name: "Approve for design", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("Does not start AI work");
     await page.getByRole("button", { name: "Approve scope", exact: true }).click();
@@ -76,12 +92,10 @@ test("requirements, approval, shared-core reads, stale edits, and mobile layout"
     await page.getByRole("button", { name: "Not now", exact: true }).click();
     await expect(page.getByRole("region", { name: "Workflow lifecycle" })).toContainText("Not started.");
 
-    const saved: { features: Feature[] } = JSON.parse(execFileSync(process.execPath, [cli, "list"], {
-        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8",
-    }));
+    const saved = cachedFeatures();
     const feature = saved.features[0];
     expect(feature?.status).toBe("ready_for_design");
-    expect(feature?.history).toHaveLength(2);
+    expect(feature?.history).toHaveLength(1);
     expect(feature?.approvals).toHaveLength(1);
     if (!feature) throw new Error("Saved feature was missing.");
     await page.screenshot({ path: test.info().outputPath("software-factory-desktop.png"), fullPage: true });
@@ -126,15 +140,13 @@ test("a plain-language brief saves without criteria and Factory suggestions stay
     await page.getByRole("button", { name: "Create feature", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Document local testing", exact: true })).toBeVisible();
     await expect(page.locator(".feature-brief")).toContainText("Help a new contributor");
-    await expect(page.getByRole("button", { name: "Approve for design", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Publish before approving", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Run guarded design", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Draft success criteria with Factory", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("may consume AI credits");
     await expect(page.getByRole("dialog")).toContainText("Does not edit or approve the brief");
     await page.getByRole("button", { name: "Not now", exact: true }).click();
-    const saved: { features: Feature[] } = JSON.parse(execFileSync(process.execPath, [cli, "list"], {
-        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8",
-    }));
+    const saved = cachedFeatures();
     const feature = saved.features.find((item) => item.current.title === "Document local testing")!;
     expect(feature.current.requirements).toEqual([]);
     expect(feature.approvals).toEqual([]);
@@ -158,7 +170,7 @@ test("a plain-language brief saves without criteria and Factory suggestions stay
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(page.getByRole("region", { name: "Factory suggestions" })).toBeVisible();
     await expect(page.locator(".requirement")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Approve for design", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Publish before approving", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "Review and edit suggestions", exact: true }).click();
     await expect(page.getByLabel("What are you trying to achieve?")).toHaveValue(description);
     await expect(page.getByLabel("What would success look like?")).toHaveValue(
@@ -171,7 +183,7 @@ test("a plain-language brief saves without criteria and Factory suggestions stay
     await expect(page.locator(".requirement")).toHaveCount(2);
     await expect(page.getByRole("region", { name: "Factory suggestions" })).toHaveCount(0);
     await expect(page.locator(".feature-detail .tag")).toHaveText("Needs review");
-    await expect(page.getByRole("button", { name: "Approve for design", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Publish before approving", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Run guarded design", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Edit brief and criteria", exact: true }).click();
     await expect(page.getByLabel("What would success look like?")).toHaveValue(
@@ -229,52 +241,39 @@ test("idle dashboards discover chat work, show progress and failures, and preser
     `, state.featureId);
     await expect(page.getByRole("alert")).toContainText("This feature changed since you started editing.", { timeout: 8000 });
     await expect(page.getByLabel("Feature title")).toHaveValue("Unsaved work stays here");
-    await page.route("**/api/features", (route) => route.fulfill({ status: 503, contentType: "application/json",
+    await page.route("**/api/features*", (route) => route.fulfill({ status: 503, contentType: "application/json",
         body: JSON.stringify({ error: { code: "unavailable", message: "Connection lost" } }) }));
     await expect(page.getByRole("status").filter({ hasText: "Updates disconnected" })).toBeVisible({ timeout: 8000 });
     await expect(page.getByLabel("Feature title")).toHaveValue("Unsaved work stays here");
-    await page.unroute("**/api/features");
-    await expect(page.getByText(/^Synced /)).toBeVisible({ timeout: 8000 });
+    await page.unroute("**/api/features*");
+    await expect(page.getByText(/^Synced /)).toBeVisible({ timeout: 20000 });
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
-test("a design review is readable before approval and approval never auto-resumes the owning run", async ({ page }) => {
-    const application = new URL("../../core/application.ts", import.meta.url).href;
-    const id = execFileSync(process.execPath, ["--input-type=module", "-e", `
-        const { Application } = await import(process.argv[1]);
-        const app = new Application();
-        const actor = { channel: "chat", sessionId: "chat-fixture", reference: crypto.randomUUID() };
-        try {
-            const feature = app.execute({ kind: "create_feature", requestId: "readable-design", input: {
-                title: "Readable design review", description: "Preserve the response contract.",
-                requirements: [{ text: "Existing clients keep the response format." }]
-            } }, actor);
-            app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor,
-                { granted: true, revisionId: feature.current.id, actor });
-            const run = app.lifecycle.begin(feature.id, "design", actor);
-            app.lifecycle.store.artifact(feature.id, "design", feature.current.id, { recommendation: "GO to Planning",
-                design: { sections: { overview: "Keep the existing response contract intact.\\n\\nReview the compatibility evidence before continuing." } } });
-            app.lifecycle.store.updateExecution(feature.id, run.id, { status: "paused", phase: "design approval", runtimeId: "fixture-native-run-not-resumed" });
-            console.log(feature.id);
-        } finally { app.close(); }
-    `, application], { env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8" }).trim();
+test("a completed design is readable before approval and approval offers a separate planning run", async ({ page }) => {
+    const id = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Design fixture timed out.")), 10_000);
+        child.once("message", (message: { featureId?: string; error?: string }) => {
+            clearTimeout(timer);
+            if (message.featureId) resolve(message.featureId); else reject(new Error(message.error || "Invalid fixture response."));
+        });
+        child.send("seed-design");
+    });
     await page.goto(url);
-    await page.getByRole("navigation", { name: "Features" }).getByRole("button", { name: /Readable design review/ }).click();
-    await expect(page.getByRole("heading", { name: "Review design before continuing" })).toBeVisible();
+    await page.getByRole("navigation", { name: "Features" }).getByRole("button", { name: /Readable design review/ }).first().click();
+    await expect(page.getByRole("heading", { name: "Review the design" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Review design" })).toContainText("Keep the existing response contract intact.");
     await page.getByRole("button", { name: "Approve design", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("Does not start planning");
     await page.getByRole("dialog").getByRole("button", { name: "Approve design", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Ready to continue", exact: true })).toBeVisible();
-    const saved: { features: import("../../core/lifecycle-contracts.ts").FactoryFeature[] } = JSON.parse(execFileSync(process.execPath, [cli, "list"], {
-        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8",
-    }));
+    await expect(page.getByRole("button", { name: "Create implementation plan", exact: true })).toBeVisible();
+    const saved = cachedFeatures();
     const feature = saved.features.find((entry) => entry.id === id)!;
-    expect(feature.factory.executions[0]?.status).toBe("paused");
+    expect(feature.factory.executions[0]?.status).toBe("completed");
     expect(feature.factory.controls).toHaveLength(0);
-    await page.getByRole("button", { name: "Continue workflow", exact: true }).click();
-    await expect(page.getByRole("dialog")).toContainText("Resume workflow?");
+    await page.getByRole("button", { name: "Create implementation plan", exact: true }).click();
+    await expect(page.getByRole("dialog")).toContainText("Start implementation planning");
     await page.getByRole("button", { name: "Not now", exact: true }).click();
 });
 
@@ -337,7 +336,7 @@ test("chat research and question rationale are visible before any native workflo
         } }, actor);
     `, featureId);
     await expect(progress).toHaveCount(0, { timeout: 8000 });
-    await expect(page.getByRole("button", { name: "Approve for design", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Publish before approving", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Run guarded design", exact: true })).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -354,6 +353,9 @@ test("scope approval carries unresolved engineering tasks into design instead of
     );
     await page.getByRole("button", { name: "Create feature", exact: true }).click();
     await expect(page.getByRole("region", { name: "Design obligations" })).toContainText("bounded-cache overflow");
+    await page.getByLabel("ADO Feature work item ID").fill("789");
+    await page.getByRole("button", { name: "Publish draft to ADO", exact: true }).click();
+    await page.getByRole("button", { name: "Publish to ADO", exact: true }).click();
     await expect(page.getByRole("button", { name: "Approve for design", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "Approve for design", exact: true }).click();
     await expect(page.getByRole("dialog").getByRole("heading", { name: "Approve feature scope?" })).toBeVisible();
@@ -368,9 +370,7 @@ test("scope approval carries unresolved engineering tasks into design instead of
     await expect(page.getByRole("heading", { name: "Ready, not running.", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Run guarded design", exact: true })).toBeEnabled();
     await page.screenshot({ path: test.info().outputPath("software-factory-design-obligations.png"), fullPage: true });
-    const saved: { features: import("../../core/lifecycle-contracts.ts").FactoryFeature[] } = JSON.parse(execFileSync(process.execPath, [cli, "list"], {
-        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8",
-    }));
+    const saved = cachedFeatures();
     const feature = saved.features.find((entry) => entry.current.title === "Design-owned throttling tasks")!;
     expect(feature.current.designTasks).toHaveLength(2);
     expect(feature.current.blockingUnknowns).toEqual([]);

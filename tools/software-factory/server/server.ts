@@ -75,14 +75,18 @@ export async function startServer(options: { application: Application; port?: nu
                 .find((value) => value.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
             if (!matches(cookie, sessionToken)) throw new FactoryError("session_required", "Reload the local application to establish a session.", 401);
             if (request.method === "GET" && url.pathname === "/api/features") {
-                json(response, 200, { project: options.application.registry.project, features: options.application.registry.list().map((feature) => options.application.lifecycle.store.view(feature.id)) });
+                json(response, 200, { project: options.application.registry.project,
+                    features: url.searchParams.get("cached") === "1"
+                        ? options.application.registry.list().map((feature) => options.application.lifecycle.store.view(feature.id))
+                        : await options.application.features(),
+                    cached: url.searchParams.get("cached") === "1" });
             } else if (request.method === "GET" && url.pathname === "/api/doctor") {
                 json(response, 200, runtimeReport());
             } else if (request.method === "GET" && url.pathname === "/api/configuration") {
                 json(response, 200, { configuration: options.application.lifecycle.store.configuration() });
             } else if (request.method === "GET" && url.pathname.startsWith("/api/gates/")) {
                 const featureId = url.pathname.slice("/api/gates/".length);
-                options.application.registry.get(featureId);
+                await options.application.feature(featureId);
                 json(response, 200, { gates: ["design", "plan", "backlog", "dispatch", "complete"].map((stage) => {
                     try { return { available: true, ...options.application.lifecycle.gate(featureId, stage as "design" | "plan" | "backlog" | "dispatch" | "complete") }; }
                     catch (error) {
@@ -98,7 +102,7 @@ export async function startServer(options: { application: Application; port?: nu
                     throw new FactoryError("invalid_content_type", "Commands must use application/json.", 415);
                 }
                 const command = await readBody(request);
-                const preview = options.application.prepare(command);
+                const preview = await options.application.preview(command);
                 if (url.pathname === "/api/commands/preview") { json(response, 200, preview); return; }
                 if (preview.consentKey && request.headers["x-software-factory-scope"] !== preview.consentKey) {
                     throw new FactoryError("scope_confirmation_required", "Confirm the current exact command preview before submitting it.", 409);
@@ -107,7 +111,7 @@ export async function startServer(options: { application: Application; port?: nu
                 const consent = preview.consentKey
                     ? { granted: true as const, revisionId: preview.consentKey, actor }
                     : undefined;
-                json(response, 200, await options.application.dispatch(command, actor, consent));
+                json(response, 200, await options.application.submit(command, actor, consent));
             } else {
                 throw new FactoryError("route_not_found", "API route or method not found.", 404);
             }

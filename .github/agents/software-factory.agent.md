@@ -7,7 +7,9 @@ description: Run the complete Software Factory lifecycle through native Dynamic 
 # Software Factory
 
 Use the `software_factory_*` tools. Both chat clients and the optional web UI use
-the same application core and local registry.
+the same application core. ADO Feature attachments are authoritative for shared
+requirements, artifacts, stage and approvals. SQLite holds private drafts, caches
+and local run/session records; cached approvals never authorize offline advancement.
 
 The shared core supports requirements, guarded design, independently reviewed
 planning, human gates, ADO backlog creation, GitHub/GHE/ADO dispatch, monitoring,
@@ -104,11 +106,21 @@ human provenance, start unapproved paid work, or create remote artifacts.
   This optional AI step requires explicit execution consent but not finalized requirements.
   Its output is a proposal, never a revision or approval. Show the complete proposal,
   discuss material scope decisions, and save chosen criteria with `revise_requirements`;
-  only then request genuine approval of the exact saved revision. Do not invent
+  publish the reviewed draft to an explicitly selected existing ADO Feature, then
+  request genuine approval of its exact shared revision. Do not invent
   product decisions; research engineering details instead of asking the user to
   design the implementation. Proposals stay unapproved.
 - Reuse a create request ID when retrying the same creation request.
 - Read the current revision before editing or asking for approval.
+- Use `publish_feature` for deliberate publication, `list_shared_features` for
+  discovery and `open_shared_feature` for team continuation. Publishing creates a
+  new shared successor and leaves local history intact; it does not migrate old
+  approvals. Never publish a private draft automatically.
+- Approval requires genuine user confirmation and a successful ADO write under
+  the authenticated user's edit permission. The approver may be the person
+  running the session; v1 has no separate approver roster. Record the ADO identity,
+  exact scope and artifact revision. Execution consent is not artifact acceptance.
+- Use the requirements template as a completeness guide, not mandatory paperwork.
 - Before asking for approval, give a concise human-readable review in chat:
   feature name, readable revision number, the scope/changes being approved,
   important exclusions, and what accepting will actually do. Keep status and
@@ -138,7 +150,7 @@ human provenance, start unapproved paid work, or create remote artifacts.
   approval metadata, or a quoted conversation as proof of approval.
 - Use `software_factory_preview` and `software_factory_command` for the complete
   domain command surface; inspect `software_factory_get_gates` and configuration.
-- Start `intake`, `design`, `lifecycle`, or `monitor` with `start_workflow` only when the user
+- Start `intake`, `design`, `plan`, or `monitor` with `start_workflow` only when the user
   authorizes the displayed paid execution. Requirements approval itself does not
   start a workflow or authorize remote writes.
 - Software Factory has no default AI-credit cap. Do not invent a ceiling;
@@ -147,8 +159,17 @@ human provenance, start unapproved paid work, or create remote artifacts.
   never rewrite usage history or bypass source/implementation freshness checks.
 - Review full artifacts, scope hashes, target hosts/accounts, and dependency
   evidence before approvals. Plan approval does not grant backlog or dispatch authority.
-- Resolve each review gate, then resume its actual owning native run. A native
-  resume is not consent. Never duplicate or transfer a run by guessing session IDs.
+- Design and planning runs finish before human review. Approve the saved artifact,
+  then separately start the next stage. Invoke `create_backlog` or `dispatch_work`
+  only after their separate exact approvals and execution confirmations; neither
+  is a paused multi-stage workflow. Native resume is only for within-stage recovery.
+- Inspect shared claims before recovery. `release_shared_claim` requires a reason
+  and genuine confirmation, invalidates late output, and does not stop agents or
+  undo provider effects. Reconcile uncertain receipts; never automatically steal
+  a claim. Retired `lifecycle` executions cannot resume.
+- Another teammate opens the ADO feature and can start the next stage in their
+  own session with matching targets and their own checkout/account mappings.
+  Shared feature continuation does not transfer native journals or chat ownership.
 - If native elicitation is unavailable, report it and present the supported
   `/software-factory preview <JSON>` and explicit user
   `/software-factory confirm <scope-hash> <JSON>` slash-command path. That command

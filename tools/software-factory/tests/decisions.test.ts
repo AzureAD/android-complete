@@ -6,7 +6,7 @@ import type { ElicitationParams, ElicitationResult } from "@github/copilot-sdk";
 import { createChatTools, type ChatHost } from "../chat/tools.ts";
 import { requestDecision } from "../chat/confirmation.ts";
 import { object } from "../core/contracts.ts";
-import { actor, fixture, requirements } from "./helpers.ts";
+import { actor, transportFixture as fixture, requirements } from "./helpers.ts";
 
 test("scope confirmation is short and labeled; full requirements stay available without approval", async () => {
     const f = fixture();

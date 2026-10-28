@@ -17,6 +17,7 @@ import { requireRuntime } from "../core/runtime-health.ts";
 import { awaitWorkflowRegistration } from "./registration.ts";
 import { resolveExtensionInterpreter } from "./interpreter.ts";
 import { FACTORY_READER, initializeReaderPipeline } from "./reader.ts";
+import type { SharedAuthority } from "../core/shared.ts";
 
 export interface NativeSession {
     sessionId: string;
@@ -53,6 +54,7 @@ export class NativeRuntime {
     private readonly launching = new Set<string>();
     private readonly ownerToken = randomUUID();
     private readonly joined?: NativeSession;
+    private readonly shared?: SharedAuthority;
     private readonly leaseSessions = new Set<string>();
     private readonly activeControls = new Set<string>();
     private readonly timer: NodeJS.Timeout;
@@ -61,9 +63,10 @@ export class NativeRuntime {
     private stopping = false;
     private readonly pending = new Set<Promise<void>>();
 
-    constructor(factory: Lifecycle, joined?: NativeSession) {
+    constructor(factory: Lifecycle, joined?: NativeSession, shared?: SharedAuthority) {
         this.factory = factory;
         this.joined = joined;
+        this.shared = shared;
         if (joined) {
             factory.store.heartbeat(joined.sessionId, this.ownerToken);
             this.leaseSessions.add(joined.sessionId);
@@ -74,8 +77,10 @@ export class NativeRuntime {
 
     async start(featureId: string, kind: WorkflowKind, actor: Actor, limits: ExecutionLimits = {},
         admission?: WorkflowAdmission): Promise<Execution> {
+        await this.shared?.pull(featureId);
         const execution = this.factory.begin(featureId, kind, actor, {}, limits, admission,
             this.joined ? { sessionId: this.joined.sessionId, kind: "chat", established: true } : undefined);
+        if (this.shared && kind !== "check" && (kind !== "intake" || this.shared.cached(featureId))) await this.shared.claimRun(featureId, execution);
         this.launch(featureId, execution);
         return execution;
     }
@@ -98,6 +103,7 @@ export class NativeRuntime {
         if (this.launching.has(execution.id)) return;
         this.launching.add(execution.id);
         const pending = (async () => {
+            await this.shared?.assertRun(featureId, execution.id);
             this.factory.store.updateExecution(featureId, execution.id, { phase: this.joined ? "Using the current Copilot chat" : "Checking local Copilot runtime" });
             if (execution.sessionKind !== "chat") {
                 const runtime = requireRuntime();
@@ -231,10 +237,11 @@ export class NativeRuntime {
         if (this.stopping) throw new FactoryError("runtime_stopping", "The host stopped before native workflow admission. No workflow was launched.", 409);
         this.factory.assertFresh(featureId, execution.id);
         const names: Record<WorkflowKind, string> = {
-            intake: "software-factory-intake", design: "software-factory-design", lifecycle: "software-factory-lifecycle",
+            intake: "software-factory-intake", design: "software-factory-design", plan: "software-factory-plan", lifecycle: "software-factory-lifecycle",
             monitor: "software-factory-monitor", check: "software-factory-check",
         };
         await this.registration(featureId, execution, session);
+        await this.shared?.assertRun(featureId, execution.id);
         this.factory.store.change(featureId, (state) => {
             const current = state.executions.find((item) => item.id === execution.id)!;
             if (current.admissionClaim || current.runtimeId) throw new FactoryError("native_admission_exists", "This execution was already submitted or its admission is uncertain. Inspect the owning run; do not submit it twice.", 409);
@@ -275,6 +282,7 @@ export class NativeRuntime {
             throw new FactoryError("run_not_running", "Only an active run can be paused.", 409);
         }
         if (action === "resume") {
+            await this.shared?.assertRun(featureId, executionId);
             this.factory.assertFresh(featureId, executionId);
             if (!execution.runtimeId || !["paused", "error"].includes(execution.status)) throw new FactoryError("run_not_resumable", "Only a paused or limit/interruption-stopped native run can be resumed.", 409);
             if ((execution.kind === "intake" || execution.kind === "design" || !this.factory.store.latest(featureId, "plan")) &&
@@ -337,6 +345,7 @@ export class NativeRuntime {
                             if (control.action === "resume") {
                                 this.factory.assertFresh(feature.id, execution.id);
                                 await this.registration(feature.id, execution, session);
+                                await this.shared?.assertRun(feature.id, execution.id);
                                 this.factory.store.updateExecution(feature.id, execution.id, { status: "running" });
                                 this.markControl(feature.id, control.id);
                                 const result = await session.workflow.resume(execution.runtimeId, { limits: control.limits,

@@ -10,7 +10,7 @@ description: Dispatch a Software Factory feature's approved backlog through depe
 Follow `.github/agents/software-factory.agent.md`. Resolve the stable feature,
 read the backlog receipts, target hosts/accounts/base branches, dependency
 evidence, and exact dispatch gate. Obtain genuine dispatch confirmation, then
-resume the owning lifecycle run through shared commands.
+separately preview and confirm `dispatch_work`. No paused lifecycle run is involved.
 
 Read persisted dispatch receipts and actual run/provider status before reporting
 success. Reconcile uncertain operations instead of re-sending them. Respect

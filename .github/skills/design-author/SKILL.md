@@ -13,10 +13,12 @@ feature lifecycle; this skill is an entry point, not a phase coordinator.
 1. Read the actual host capabilities and resolve the stable feature ID, or save
    the new brief with `software_factory_create_feature`.
 2. Review requirements and engineering design tasks. Save chosen criteria and
-   obtain genuine approval of the exact scope with the requirements approval tool.
+   explicitly publish to an existing ADO Feature, then obtain genuine approval
+   of the exact shared scope with the requirements approval tool.
 3. Preview `start_workflow` with `workflow: "design"` and obtain the separate
    execution confirmation. Continue only through the owning native run.
-4. Present the saved design artifact and its genuine design approval gate.
+4. The design run ends before approval. Present its saved ADO-backed artifact and
+   genuine design approval gate. Approval allows a separate planning run, not resume.
 
 Never manually launch a research/design agent, write a local spec as the canonical
 artifact, open an ADO design PR, or infer approval from chat. Report missing host

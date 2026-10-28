@@ -5,7 +5,7 @@ import type { ActivityEntry } from "./progress.ts";
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Stage = "design" | "plan" | "backlog" | "dispatch" | "complete";
-export type WorkflowKind = "intake" | "design" | "lifecycle" | "monitor" | "check";
+export type WorkflowKind = "intake" | "design" | "plan" | "lifecycle" | "monitor" | "check";
 export interface RepositoryTarget {
     provider: "github" | "ado";
     hostname: string;
@@ -126,6 +126,8 @@ export interface FactoryFeature extends Feature {
     activity: ActivityEntry[];
     currentProgress: ChatProgress | null;
     currentArtifacts: { intake: string | null; design: string | null; plan: string | null; monitor: string | null };
+    shared?: { target: { organization: string; project: string; workItemId: number }; revision: number; digest: string;
+        lock: { id: string; kind: string; actor: { id: string; displayName: string }; createdAt: string } | null };
 }
 export interface GatePreview {
     stage: Stage; targetId: string; scopeHash: string; scope: Json;
@@ -215,9 +217,15 @@ export function parseConfiguration(value: unknown): Configuration {
 }
 
 export function analysisConfiguration(config: Configuration | null): Json {
-    return { repositories: Object.fromEntries(Object.entries(config?.repositories || {}).map(([key, repo]) => [key, {
-        provider: repo.provider, hostname: repo.hostname, slug: repo.slug, baseBranch: repo.baseBranch, localPath: repo.localPath,
+    return { repositories: Object.fromEntries(Object.entries(config?.repositories || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, repo]) => [key, {
+        provider: repo.provider, hostname: repo.hostname, slug: repo.slug, baseBranch: repo.baseBranch,
     }])) };
+}
+
+export function sharedConfiguration(config: Configuration): Configuration {
+    const normalized = parseConfiguration(config);
+    return { boards: { ...normalized.boards }, repositories: Object.fromEntries(Object.entries(normalized.repositories).sort(([a], [b]) => a.localeCompare(b)).map(([key, repo]) =>
+        [key, { ...repo, localPath: ".", account: repo.provider === "github" ? "local-account-required" : "" }])) };
 }
 
 export function parsePlan(value: unknown, config: Configuration, requirementIds: string[]): Plan {

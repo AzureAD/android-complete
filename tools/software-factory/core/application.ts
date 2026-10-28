@@ -3,13 +3,16 @@
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FactoryError, parseCommand, validateActor, type Actor, type Consent, type Feature } from "./contracts.ts";
+import { FactoryError, parseCommand, text, validateActor, type Actor, type Consent, type Feature } from "./contracts.ts";
 import { Registry } from "./registry.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import type { Provider } from "../providers/provider.ts";
 import type { NativeRuntime, NativeSession } from "../runtime/controller.ts";
 import type { Execution, ExecutionLimits, WorkflowAdmission, WorkflowKind } from "./lifecycle-contracts.ts";
 import { dispatch, prepare } from "./commands.ts";
+import { SharedAuthority } from "./shared.ts";
+import type { SharedProvider } from "./shared-contracts.ts";
+import { object } from "./contracts.ts";
 
 export function defaultWorkspace(): string {
     return fileURLToPath(new URL("../../../", import.meta.url));
@@ -24,13 +27,15 @@ export function defaultDatabase(): string {
 export class Application {
     readonly registry: Registry;
     readonly lifecycle: Lifecycle;
+    readonly shared: SharedAuthority;
     private native?: NativeRuntime;
     private joinedSession?: NativeSession;
     private closed = false;
 
-    constructor(options: { database?: string; workspace?: string; provider?: Provider } = {}) {
+    constructor(options: { database?: string; workspace?: string; provider?: Provider; sharedProvider?: SharedProvider } = {}) {
         this.registry = new Registry(options.database || defaultDatabase(), options.workspace || defaultWorkspace());
         this.lifecycle = new Lifecycle(this.registry, options.provider);
+        this.shared = new SharedAuthority(this, options.sharedProvider);
     }
 
     execute(input: unknown, actor: Actor, consent?: Consent): Feature {
@@ -66,6 +71,37 @@ export class Application {
     prepare(input: unknown) { return prepare(this, input); }
     async dispatch(input: unknown, actor: Actor, consent?: Consent) { return dispatch(this, input, actor, consent); }
 
+    async preview(input: unknown) {
+        const command = object(input, "Factory command");
+        if (typeof command.featureId === "string") {
+            const shared = await this.shared.pull(command.featureId);
+            if (!shared && (["approve_requirements", "approve_stage", "create_backlog", "dispatch_work", "post_pr_feedback",
+                "reconcile_operation", "confirm_operation_not_sent", "set_schedule", "accept_validation_gap"].includes(String(command.kind)) ||
+                (command.kind === "start_workflow" && command.workflow !== "intake") ||
+                (command.kind === "control_run" && command.action === "resume" &&
+                    !["intake", "check"].includes(this.lifecycle.store.execution(command.featureId, text(command.executionId, "Execution ID")).kind)))) {
+                throw new FactoryError("publish_required", "This is a local draft. Publish it to an ADO Feature before approving or advancing shared stages. Historical local approvals are not team approvals.", 409);
+            }
+        }
+        return prepare(this, input);
+    }
+
+    async submit(input: unknown, actor: Actor, consent?: Consent) {
+        await this.preview(input);
+        return this.shared.command(input, actor, consent);
+    }
+
+    async feature(featureId: string) {
+        await this.shared.pull(featureId);
+        return this.lifecycle.store.view(featureId);
+    }
+
+    async features() {
+        const result = [];
+        for (const feature of this.registry.list()) result.push(await this.feature(feature.id));
+        return result;
+    }
+
     executionOwner(featureId: string): { sessionId: string | null; kind: "chat" | "owned" } {
         const binding = this.lifecycle.store.state(featureId).sessionBinding;
         return binding ? { sessionId: binding.sessionId, kind: binding.kind }
@@ -89,7 +125,7 @@ export class Application {
     async runtime(): Promise<NativeRuntime> {
         if (!this.native) {
             const { NativeRuntime } = await import("../runtime/controller.ts");
-            this.native ??= new NativeRuntime(this.lifecycle, this.joinedSession);
+            this.native ??= new NativeRuntime(this.lifecycle, this.joinedSession, this.shared);
         }
         return this.native;
     }
@@ -98,7 +134,10 @@ export class Application {
         admission: WorkflowAdmission): Promise<Execution> {
         const execution = this.lifecycle.begin(featureId, kind, actor, {}, limits, admission,
             this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat", established: true } : undefined);
-        try { (await this.runtime()).launch(featureId, execution); }
+        try {
+            if (kind !== "check" && (kind !== "intake" || this.shared.cached(featureId))) await this.shared.claimRun(featureId, execution);
+            (await this.runtime()).launch(featureId, execution);
+        }
         catch (error) {
             this.lifecycle.store.updateExecution(featureId, execution.id, {
                 status: "error", phase: "Could not initialize Copilot",

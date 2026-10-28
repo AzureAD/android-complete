@@ -38,6 +38,7 @@ export interface Actor {
     channel: "web" | "chat";
     reference: string;
     sessionId?: string;
+    ado?: { id: string; displayName: string };
 }
 
 export interface Approval {
@@ -202,8 +203,9 @@ export function validateActor(actor: Actor): Actor {
         throw new FactoryError("invalid_actor", "A trusted UI or chat transport is required.");
     }
     const reference = text(actor.reference, "Interaction reference");
+    const ado = actor.ado ? { id: text(actor.ado.id, "ADO user ID"), displayName: text(actor.ado.displayName, "ADO user name") } : undefined;
     if (actor.channel === "chat") {
-        return { channel: "chat", reference, sessionId: text(actor.sessionId, "Owning chat session") };
+        return { channel: "chat", reference, sessionId: text(actor.sessionId, "Owning chat session"), ...(ado ? { ado } : {}) };
     }
-    return { channel: "web", reference };
+    return { channel: "web", reference, ...(ado ? { ado } : {}) };
 }

@@ -19,6 +19,7 @@ export function runtimeFingerprint(): string {
     for (const directory of ["core", "chat", "server", "runtime", "providers", "workflows"]) visit(path.join(root, directory));
     digest.update(readFileSync(path.join(root, "package-lock.json")));
     digest.update(readFileSync(path.join(root, "cli.ts")));
+    digest.update(readFileSync(path.join(root, "evals", "design.mjs")));
     for (const relative of [
         "../../../.github/extensions/DevDesignDoc/workflow.mjs",
         "../../../.github/extensions/SoftwareFactory/extension.mjs",

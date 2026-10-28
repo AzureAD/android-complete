@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createChatTools, type ChatHost } from "../chat/tools.ts";
 import { FactoryError } from "../core/contracts.ts";
-import { actor, fixture, requirements } from "./helpers.ts";
+import { actor, transportFixture as fixture, requirements } from "./helpers.ts";
 
 test("chat uses the shared registry without a server or frontend", async () => {
     const f = fixture();

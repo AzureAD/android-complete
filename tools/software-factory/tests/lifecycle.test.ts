@@ -5,10 +5,10 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import { Application } from "../core/application.ts";
-import { FactoryError } from "../core/contracts.ts";
+import { FactoryError, object } from "../core/contracts.ts";
 import { parsePlan, type Configuration, type Execution, type Json, type Plan, type PlannedItem, type PullRequest, type RepositoryTarget, type WorkItem } from "../core/lifecycle-contracts.ts";
 import type { Provider } from "../providers/provider.ts";
-import { designRun, designWorkflow, intakeWorkflow, lifecycleRun, lifecycleWorkflow, monitorRun, monitorWorkflow, type FactoryContext } from "../workflows/lifecycle.ts";
+import { designRun, designWorkflow, intakeWorkflow, planRun, planWorkflow, monitorRun, monitorWorkflow, type FactoryContext } from "../workflows/lifecycle.ts";
 import { rubric, sections, workflowDefinition as standaloneDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
 import { actor, fixture, requirements } from "./helpers.ts";
 
@@ -27,7 +27,7 @@ const plan = (): Plan => ({
 });
 
 test("Factory declares no AI-credit cap while preserving independent design bounds", () => {
-    for (const workflow of [intakeWorkflow, designWorkflow, lifecycleWorkflow, monitorWorkflow]) {
+    for (const workflow of [intakeWorkflow, designWorkflow, planWorkflow, monitorWorkflow]) {
         assert.equal(workflow.meta.limits?.maxAiCredits, undefined, workflow.meta.name);
     }
     assert.deepEqual(designWorkflow.meta.limits, {
@@ -149,10 +149,9 @@ async function feedbackFeature(app: Application) {
     approve(app, feature.id, "design");
     const artifact = app.lifecycle.store.artifact(feature.id, "plan", feature.current.id, plan(), design.id);
     approve(app, feature.id, "plan"); approve(app, feature.id, "backlog");
-    const execution = app.lifecycle.begin(feature.id, "lifecycle", actor);
-    await app.lifecycle.backlog(feature.id, execution.id);
+    await app.lifecycle.backlog(feature.id);
     approve(app, feature.id, "dispatch");
-    await app.lifecycle.dispatch(feature.id, execution.id);
+    await app.lifecycle.dispatch(feature.id);
     app.lifecycle.store.artifact(feature.id, "monitor", feature.current.id, await app.lifecycle.observe(feature.id), artifact.id);
     return feature;
 }
@@ -172,27 +171,28 @@ test("the actual workflow functions complete design -> plan -> backlog -> depend
         app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor, { granted: true, revisionId: feature.current.id, actor });
         const design = app.lifecycle.begin(feature.id, "design", actor);
         const d = harness(app, design);
-        await assert.rejects(() => designRun(d.context, { provider }), Checkpoint);
+        const designResult = await finished(app, feature.id, design, () => designRun(d.context, { provider }));
+        assert.equal(object(designResult, "Design result").outcome, "design_ready_for_review");
         assert.equal(d.labels.length, 3);
-        await assert.rejects(() => designRun(d.context, { provider }), Checkpoint);
-        assert.equal(d.labels.length, 3, "journaled guarded design must not launch more agents");
-        assert.notEqual(d.checkpoints[0], d.checkpoints[1], "resuming without consent must pause at a new checkpoint");
+        assert.equal(d.checkpoints.length, 0, "business approval must not pause a workflow");
+        assert.equal(app.lifecycle.gate(feature.id, "design").approved, false);
         approve(app, feature.id, "design");
-        await finished(app, feature.id, design, () => designRun(d.context, { provider }));
 
-        const delivery = app.lifecycle.begin(feature.id, "lifecycle", actor);
+        const delivery = app.lifecycle.begin(feature.id, "plan", actor);
         const l = harness(app, delivery);
-        await assert.rejects(() => lifecycleRun(l.context, { provider }), Checkpoint);
+        const planResult = await finished(app, feature.id, delivery, () => planRun(l.context, { provider }));
+        assert.equal(object(planResult, "Plan result").outcome, "plan_ready_for_review");
+        assert.equal(l.checkpoints.length, 0);
         assert.equal(provider.creations, 0);
         approve(app, feature.id, "plan");
-        await assert.rejects(() => lifecycleRun(l.context, { provider }), Checkpoint);
+        await assert.rejects(() => app.lifecycle.backlog(feature.id), /approval/);
         assert.equal(provider.creations, 0, "plan approval is not backlog authorization");
         approve(app, feature.id, "backlog");
 
-        await assert.rejects(() => lifecycleRun(l.context, { provider }), Checkpoint);
+        await app.lifecycle.backlog(feature.id);
         assert.equal(provider.creations, 3);
         approve(app, feature.id, "dispatch");
-        await finished(app, feature.id, delivery, () => lifecycleRun(l.context, { provider }));
+        await app.lifecycle.dispatch(feature.id);
         assert.equal(provider.sends, 2, "one approval must cover both independent roots, not only the first");
         assert.equal(app.lifecycle.gate(feature.id, "dispatch").ready, false);
 
@@ -212,12 +212,9 @@ test("the actual workflow functions complete design -> plan -> backlog -> depend
         await finished(app, feature.id, monitor, () => monitorRun(m.context, { provider }));
         assert.equal(app.lifecycle.gate(feature.id, "dispatch").ready, true);
         approve(app, feature.id, "dispatch");
-        const wave = app.lifecycle.begin(feature.id, "lifecycle", actor);
-        const w = harness(app, wave);
-        await finished(app, feature.id, wave, () => lifecycleRun(w.context, { provider }));
+        await app.lifecycle.dispatch(feature.id);
         assert.equal(provider.creations, 3);
         assert.equal(provider.sends, 3);
-        assert.equal(w.labels.length, 0, "later waves reuse the approved plan instead of regenerating it");
         provider.prs.get("C")!.status = "merged";
         const final = app.lifecycle.begin(feature.id, "monitor", actor);
         const finalContext = harness(app, final);
@@ -269,12 +266,11 @@ test("external success followed by connection loss is reconciled, never duplicat
         approve(app, feature.id, "design");
         app.lifecycle.store.artifact(feature.id, "plan", feature.current.id, plan(), design.id);
         approve(app, feature.id, "plan"); approve(app, feature.id, "backlog");
-        const run = app.lifecycle.begin(feature.id, "lifecycle", actor);
         provider.failAfterCreate = true;
-        await assert.rejects(() => app.lifecycle.backlog(feature.id, run.id), /Connection lost/);
+        await assert.rejects(() => app.lifecycle.backlog(feature.id), /Connection lost/);
         assert.equal(provider.creations, 1);
         assert.equal(app.lifecycle.store.state(feature.id).operations[0]?.status, "reconciliation_required");
-        await app.lifecycle.backlog(feature.id, run.id);
+        await app.lifecycle.backlog(feature.id);
         assert.equal(provider.creations, 3);
         const evidence = app.lifecycle.stage0(feature.id).approval.reference;
         writeFileSync(evidence, "{}");
@@ -295,13 +291,12 @@ test("revoking a parent approval stops future sends and invalidates downstream a
         approve(app, feature.id, "design");
         app.lifecycle.store.artifact(feature.id, "plan", feature.current.id, plan(), design.id);
         approve(app, feature.id, "plan"); approve(app, feature.id, "backlog");
-        const execution = app.lifecycle.begin(feature.id, "lifecycle", actor);
         provider.afterCreate = () => {
             provider.afterCreate = undefined;
             const preview = app.lifecycle.gate(feature.id, "design");
             app.lifecycle.decide(feature.id, "design", preview.scopeHash, false, { ...actor, reference: randomUUID() });
         };
-        await assert.rejects(() => app.lifecycle.backlog(feature.id, execution.id), /approval was revoked/);
+        await assert.rejects(() => app.lifecycle.backlog(feature.id), /approval was revoked/);
         assert.equal(provider.creations, 1, "an already-admitted send is retained, but no later item is created");
         assert.equal(app.lifecycle.gate(feature.id, "plan").approved, false);
         approve(app, feature.id, "design");
@@ -310,7 +305,7 @@ test("revoking a parent approval stops future sends and invalidates downstream a
 });
 
 test("PR feedback rechecks configuration, requirements, cancellation, binding and live head after asynchronous reads", async () => {
-    const cases = { configuration: "monitor_required", requirements: "plan_required", cancellation: "feature_cancelled", binding: "monitor_required", head: "stale_pr" };
+    const cases = { configuration: "stale_scope", requirements: "plan_required", cancellation: "feature_cancelled", binding: "monitor_required", head: "stale_pr" };
     for (const [change, code] of Object.entries(cases)) {
         const f = fixture();
         const provider = new FakeProvider();

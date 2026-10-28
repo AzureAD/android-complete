@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { FactoryError, object, text, validateActor, type Actor } from "./contracts.ts";
 import {
-    jsonValue, parseConfiguration, parsePlan, parseMonitor, type Artifact, type Configuration, type Execution, type ExecutionLimits,
+    jsonValue, parseConfiguration, parsePlan, parseMonitor, sharedConfiguration, type Artifact, type Configuration, type Execution, type ExecutionLimits,
     type GatePreview, type Json, type MonitorReport, type Operation, type Plan,
     type PlannedItem, type PullRequest, type SessionBinding, type Stage, type WorkflowAdmission, type WorkflowKind, type WorkItem,
 } from "./lifecycle-contracts.ts";
@@ -19,6 +19,7 @@ import { parseProgress } from "./progress.ts";
 export class Lifecycle {
     readonly store: LifecycleStore;
     readonly provider: Provider;
+    checkpoint?: (featureId: string) => Promise<void>;
     constructor(registry: Registry, provider: Provider = new ExternalProvider()) {
         this.store = new LifecycleStore(registry);
         this.provider = provider;
@@ -55,10 +56,10 @@ export class Lifecycle {
     configure(value: unknown, actor: Actor) {
         const previous = this.store.configuration();
         const config = this.store.configure(parseConfiguration(value), validateActor(actor));
-        if (previous?.id === config.id) return config;
+        if (previous && hash(previous.value) === hash(config.value)) return config;
         for (const feature of this.store.registry.list()) {
             this.store.change(feature.id, (state) => {
-                for (const run of state.executions) if (run.configurationId !== config.id && ["starting", "running", "paused"].includes(run.status)) run.status = "superseded";
+                for (const run of state.executions) if (["starting", "running", "paused"].includes(run.status)) run.status = "superseded";
                 if (state.schedule) { state.schedule = null; this.store.event(state, "schedule_invalidated_by_configuration", config.id); }
             });
         }
@@ -145,7 +146,7 @@ export class Lifecycle {
         if (existing?.manualScope && object(existing.manualScope, "Original feedback scope").body !== postedBody) throw new FactoryError("request_conflict", "This feedback request ID was already used with a different body.", 409);
         const scope = {
             key, marker, featureId, itemId, planId: artifact.id, configurationId: config.id,
-            repository: config.value.repositories[spec.repository]!, pr,
+            repository: sharedConfiguration(config.value).repositories[spec.repository]!, pr,
             body: postedBody,
             effect: "Post exactly this PR feedback. Mentions may activate a coding agent and consume separate usage. This does not approve or merge.",
         };
@@ -160,7 +161,7 @@ export class Lifecycle {
         const target = object(scope.repository, "Original feedback repository");
         const config = this.store.configuration(operation.configurationId);
         const repo = Object.values(config?.value.repositories || {}).find((entry) =>
-            (["provider", "hostname", "slug", "baseBranch", "account", "localPath"] as const).every((key) => entry[key] === target[key]));
+            (["provider", "hostname", "slug", "baseBranch"] as const).every((key) => entry[key] === target[key]));
         const pr = object(scope.pr, "Original feedback PR");
         if (!repo || !Number.isSafeInteger(pr.number) || Number(pr.number) <= 0 ||
             scope.marker !== `software-factory-feedback-${operation.key}`) {
@@ -172,8 +173,10 @@ export class Lifecycle {
     async postFeedback(featureId: string, itemId: string, requestId: string, body: string, actor: Actor, expectedScopeHash?: string): Promise<Json> {
         const scope = this.feedbackScope(featureId, itemId, requestId, body);
         const scopeHash = hash(scope);
+        const localRoutingHash = hash(this.configuration());
         const assertScope = () => {
             if ((expectedScopeHash && expectedScopeHash !== scopeHash) ||
+                hash(this.configuration()) !== localRoutingHash ||
                 hash(this.feedbackScope(featureId, itemId, requestId, body)) !== scopeHash) {
                 throw new FactoryError("stale_scope", "The feedback authority changed; review its exact current scope before posting.", 409);
             }
@@ -200,17 +203,23 @@ export class Lifecycle {
         });
         let sent = false;
         try {
-            const prior = await this.provider.findFeedback(scope.repository, scope.pr.number, scope.marker);
+            await this.checkpoint?.(featureId);
+            const repository = Object.values(this.configuration().repositories).find((repo) =>
+                repo.hostname === scope.repository.hostname && repo.slug === scope.repository.slug && repo.baseBranch === scope.repository.baseBranch);
+            if (!repository) throw new FactoryError("configuration_changed", "The approved feedback repository is no longer configured.", 409);
+            const prior = await this.provider.findFeedback(repository, scope.pr.number, scope.marker);
             let receipt = prior;
             if (!receipt) {
-                const current = await this.provider.inspectPr(scope.repository, scope.pr.number, itemId);
+                const current = await this.provider.inspectPr(repository, scope.pr.number, itemId);
                 assertScope();
                 if (current.head !== scope.pr.head || current.status !== "open" || current.baseBranch !== scope.pr.baseBranch ||
                     !scope.pr.workItemIds.every((id) => current.workItemIds.includes(id))) {
                     throw new FactoryError("stale_pr", "The PR head/state/link changed. Monitor and review feedback again.", 409);
                 }
+                await this.checkpoint?.(featureId);
+                assertScope();
                 sent = true;
-                receipt = await this.provider.postFeedback(scope.repository, scope.pr.number, scope.body);
+                receipt = await this.provider.postFeedback(repository, scope.pr.number, scope.body);
             }
             this.store.change(featureId, (state) => {
                 const entry = state.operations.find((value) => value.key === scope.key)!;
@@ -219,6 +228,7 @@ export class Lifecycle {
                 entry.receipt = receipt; entry.status = "completed"; entry.error = null; entry.updatedAt = now();
                 this.store.event(state, "feedback_completed", scope.key);
             });
+            await this.checkpoint?.(featureId);
             return receipt;
         } catch (error) {
             this.store.change(featureId, (state) => {
@@ -229,6 +239,7 @@ export class Lifecycle {
                     : "Feedback outcome is uncertain; reconcile the original operation without posting again.";
                 entry.updatedAt = now();
             });
+            await this.checkpoint?.(featureId);
             throw error;
         }
     }
@@ -293,7 +304,7 @@ export class Lifecycle {
                     }
                 }
                 scope = { requirementsRevision: feature.current.id, planId: targetId, planApprovalId: parentDecision?.id || null, configurationId: config.id,
-                    configuration: jsonValue(config.value), items: jsonValue(plan.value.items),
+                    configuration: jsonValue(sharedConfiguration(config.value)), items: jsonValue(plan.value.items),
                     effect: "Create or reconcile these ADO work items and dependency/parent links. Existing items are preserved, not moved or recreated; new settings apply to new objects." };
                 context = { existingWorkItems: jsonValue(items) };
             } else if (stage === "dispatch") {
@@ -312,7 +323,7 @@ export class Lifecycle {
                 if (links.length !== plan.value.items.length) blockers.push("Work item links are not fully reconciled.");
                 if (!eligible.length) blockers.push("No undispatched work item has satisfied all implementation dependencies.");
                 scope = { requirementsRevision: feature.current.id, planId: targetId, backlogApprovalId: parentDecision?.id || null, configurationId: config.id,
-                    configuration: jsonValue(config.value),
+                    configuration: jsonValue(sharedConfiguration(config.value)),
                     eligible: jsonValue(eligible.map((item) => ({ ...item, workItem: items.find((value) => value.key === item.id),
                         dependencyContext: item.dependsOn.map((id) => {
                             const pr = monitor!.prs.find((value) => value.key === id)!;
@@ -381,7 +392,8 @@ export class Lifecycle {
         admission?: WorkflowAdmission, preferredSession?: SessionBinding): Execution {
         const feature = this.store.registry.get(featureId);
         if (kind !== "intake" && feature.status !== "ready_for_design") throw new FactoryError("requirements_approval_required", "Review and approve the success criteria before starting design or delivery.", 409);
-        if (kind === "lifecycle" && !this.gate(featureId, "design").approved) throw new FactoryError("design_approval_required", "Explicit design approval is required before planning.", 409);
+        if (kind === "lifecycle") throw new FactoryError("workflow_retired", "The multi-stage lifecycle workflow is retired. Start plan, then explicitly create the approved backlog and dispatch approved work.", 409);
+        if (kind === "plan" && !this.gate(featureId, "design").approved) throw new FactoryError("design_approval_required", "Explicit design approval is required before planning.", 409);
         if (kind === "monitor") this.plan(featureId);
         return this.store.change(featureId, (state) => {
             if (this.store.registry.get(featureId).current.id !== feature.current.id ||
@@ -436,7 +448,8 @@ export class Lifecycle {
             execution.generation.plan !== this.store.generation(state, "plan", feature.current.id)) {
             throw new FactoryError("execution_stale", "Requirements, configuration, or revision requests changed. Reconcile and start a successor execution.", 409);
         }
-        if (execution.kind === "lifecycle" && !this.gate(featureId, "design").approved) {
+        if (execution.kind === "lifecycle") throw new FactoryError("workflow_retired", "Do not resume a legacy multi-stage run. Review its recorded effects and start a separate stage.", 409);
+        if (execution.kind === "plan" && !this.gate(featureId, "design").approved) {
             throw new FactoryError("upstream_approval_revoked", "The design approval was revoked; no further lifecycle work is authorized.", 409);
         }
         return execution;
@@ -476,7 +489,7 @@ export class Lifecycle {
         const { artifact } = this.plan(featureId);
         const config = this.store.configuration();
         if (!config) throw new FactoryError("configuration_required", "Configure providers first.", 409);
-        const target = kind === "dispatch" ? config.value.repositories[item.repository] : {
+        const target = kind === "dispatch" ? sharedConfiguration(config.value).repositories[item.repository] : {
             organization: config.value.boards.organization, project: config.value.boards.project,
         };
         const key = hash({ featureId, planId: artifact.id, target, kind, itemId: item.id });
@@ -509,11 +522,13 @@ export class Lifecycle {
         });
         let sent = false;
         try {
+            await this.checkpoint?.(featureId);
             const prior = await reconcile(marker);
             let receipt = prior;
             if (receipt === null) {
                 if (this.store.registry.get(featureId).current.id !== artifact.requirementsRevision ||
                     this.store.latest(featureId, "plan")?.id !== artifact.id || this.store.configuration()?.id !== config.id ||
+                    hash(this.configuration()) !== hash(config.value) ||
                     this.store.state(featureId).cancelled) throw new FactoryError("stale_scope", "The operation scope changed before the provider send.", 409);
                 const decisions = this.store.state(featureId).decisions.filter((entry) => entry.stage === stage && entry.targetId === artifact.id);
                 if (decisions.at(-1)?.approved === false || !this.gate(featureId, "plan").approved) {
@@ -527,6 +542,7 @@ export class Lifecycle {
                     const parent = this.requireGate(featureId, "backlog").decision;
                     if (object(grant.scope, "Dispatch grant").backlogApprovalId !== parent.id) throw new FactoryError("approval_lineage_changed", "Dispatch authorization belongs to a different backlog approval.", 409);
                 }
+                await this.checkpoint?.(featureId);
                 sent = true; receipt = await send(marker);
             }
             this.store.change(featureId, (state) => {
@@ -536,6 +552,7 @@ export class Lifecycle {
                 entry.status = "completed"; entry.receipt = jsonValue(receipt); entry.error = null; entry.updatedAt = now();
                 this.store.event(state, `${kind}_completed`, key);
             });
+            await this.checkpoint?.(featureId);
             return receipt;
         } catch (error) {
             this.store.change(featureId, (state) => {
@@ -544,17 +561,18 @@ export class Lifecycle {
                 entry.status = !sent || (error instanceof FactoryError && ["provider_rejected", "cli_unavailable"].includes(error.code)) ? "failed" : "reconciliation_required";
                 entry.error = error instanceof FactoryError ? error.message : "The provider outcome is uncertain; reconcile before retrying."; entry.updatedAt = now();
             });
+            await this.checkpoint?.(featureId);
             throw error;
         }
     }
 
-    async backlog(featureId: string, executionId: string): Promise<Json> {
-        this.assertFresh(featureId, executionId);
+    async backlog(featureId: string, executionId?: string): Promise<Json> {
+        if (executionId) this.assertFresh(featureId, executionId);
         const { decision } = this.requireGate(featureId, "backlog");
         const { artifact, value: plan } = this.plan(featureId);
         const config = this.configuration();
         for (const item of plan.items) {
-            this.assertFresh(featureId, executionId);
+            if (executionId) this.assertFresh(featureId, executionId);
             await this.operation(featureId, "work_item", item, "backlog",
                 async (marker) => {
                     const existing = await this.provider.findWorkItem(config, marker);
@@ -564,7 +582,7 @@ export class Lifecycle {
         }
         const workItems = this.workItems(featureId, artifact.id);
         for (const item of plan.items) {
-            this.assertFresh(featureId, executionId);
+            if (executionId) this.assertFresh(featureId, executionId);
             const workItem = workItems.find((entry) => entry.key === item.id)!;
             const dependencies = item.dependsOn.map((id) => {
                 const dependency = workItems.find((entry) => entry.key === id);
@@ -577,8 +595,8 @@ export class Lifecycle {
         return jsonValue({ planId: artifact.id, items: workItems });
     }
 
-    async dispatch(featureId: string, executionId: string): Promise<Json> {
-        this.assertFresh(featureId, executionId);
+    async dispatch(featureId: string, executionId?: string): Promise<Json> {
+        if (executionId) this.assertFresh(featureId, executionId);
         const { gate, decision } = this.requireGate(featureId, "dispatch");
         const { artifact, value: plan } = this.plan(featureId);
         const config = this.configuration();
@@ -587,7 +605,7 @@ export class Lifecycle {
         if (!Array.isArray(eligible)) throw new FactoryError("invalid_scope", "Dispatch scope is missing its exact work set.");
         const receipts: Json[] = [];
         for (const raw of eligible) {
-            this.assertFresh(featureId, executionId);
+            if (executionId) this.assertFresh(featureId, executionId);
             const id = text(object(raw, "Dispatch item").id, "Dispatch work item ID");
             const item = plan.items.find((entry) => entry.id === id)!;
             const workItem = workItems.find((entry) => entry.key === id)!;
@@ -611,8 +629,8 @@ export class Lifecycle {
         return receipts;
     }
 
-    async repairDispatchStatus(featureId: string, executionId: string): Promise<void> {
-        this.assertFresh(featureId, executionId);
+    async repairDispatchStatus(featureId: string, executionId?: string): Promise<void> {
+        if (executionId) this.assertFresh(featureId, executionId);
         const { artifact, value } = this.plan(featureId);
         const state = this.store.state(featureId);
         const config = this.configuration();

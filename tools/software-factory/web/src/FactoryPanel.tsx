@@ -143,7 +143,7 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
         <p className="muted">Saved artifacts and technical controls. Use the guided next step above for ordinary progress.</p>
         <div className="factory-actions">
             <button className="secondary" disabled={busy || feature.status !== "ready_for_design"} onClick={() => void start("design")}>Start a design run</button>
-            <button className="secondary" disabled={busy || feature.status !== "ready_for_design"} onClick={() => void start("lifecycle")}>Start a delivery run</button>
+            <button className="secondary" disabled={busy || feature.status !== "ready_for_design"} onClick={() => void start("plan")}>Start a planning run</button>
             <button className="secondary" disabled={busy || !latest("plan")} onClick={() => void start("monitor")}>Start a monitoring run</button>
             <button className="secondary" disabled={busy} onClick={() => void run({ kind: "export_feature", featureId: feature.id })}>Export feature</button>
             <button className="text-button" disabled={busy || feature.factory.cancelled} onClick={() => void run({ kind: "cancel_feature", featureId: feature.id })}>Cancel feature</button>

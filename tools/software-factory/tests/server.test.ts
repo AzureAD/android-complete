@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { startServer } from "../server/server.ts";
 import { MAX_COMMAND_BYTES } from "../core/contracts.ts";
-import { actor, fixture, requirements } from "./helpers.ts";
+import { actor, transportFixture as fixture, requirements } from "./helpers.ts";
 
 async function setup() {
     const f = fixture();

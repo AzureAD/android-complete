@@ -5,7 +5,7 @@ import test from "node:test";
 import type { ElicitationParams, ElicitationResult } from "@github/copilot-sdk";
 import { createChatTools, type ChatHost } from "../chat/tools.ts";
 import { object } from "../core/contracts.ts";
-import { actor, fixture, requirements } from "./helpers.ts";
+import { actor, transportFixture as fixture, requirements } from "./helpers.ts";
 
 test("full review returns an explicit next form; approving it yields the next real checkpoint without starting work", async () => {
     const f = fixture();

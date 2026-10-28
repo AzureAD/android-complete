@@ -24,7 +24,11 @@ export function describeDecision(app: Application, command: Record<string, unkno
     const gate = record(value.gate);
     const scoped = record(gate.scope || scope);
     const decisions: Record<string, [string, string, string, string]> = {
+        publish_feature: ["Publish a team feature", "Publish to ADO", "Upload the current requirements to the selected ADO Feature as a new shared successor.", "Your local history is preserved. No historical approval is transferred, and no agent starts."],
+        release_shared_claim: ["Release shared execution authority", "Release reviewed claim", "Revoke the inspected shared claim after verifying its owner and remote outcomes.", "Does not stop native work or undo provider effects. Reconcile uncertain sends before retrying."],
         approve_requirements: ["Approve feature scope", "Approve scope", "Use this brief and its success criteria as the approved input to design.", "Does not start AI work, change code, create PBIs, or dispatch coding tasks."],
+        create_backlog: ["Create approved backlog", "Create backlog", "Create and read back the approved ADO work items and links.", "No agent workflow or coding task starts."],
+        dispatch_work: ["Dispatch approved work", "Dispatch work", "Launch only the approved dependency-ready coding tasks.", "Separate coding-agent usage applies. No merge is authorized."],
         configure: ["Update connections", "Use these connections", "Use the reviewed repository, branch, account and board mappings.", "Does not change credentials, move existing work, or start a workflow."],
         request_revision: ["Request a revision", "Request revision", "Save your feedback and invalidate downstream approval for the changed work.", "Existing remote work is preserved. No new AI work starts."],
         attach_pr: ["Associate a pull request", "Associate PR", "Verify and link this PR to the selected work item.", "Does not edit, approve, or merge the PR."],
@@ -46,8 +50,8 @@ export function describeDecision(app: Application, command: Record<string, unkno
         const names: Record<string, [string, string, string]> = {
             design: ["Approve design", "Use the reviewed design as the input to planning.", "Does not start planning or authorize code changes."],
             plan: ["Approve implementation plan", "Accept the reviewed work-item plan and dependencies.", "Does not create PBIs, dispatch coding tasks, or start a workflow."],
-            backlog: ["Authorize PBI creation", "Allow creation/reconciliation of these ADO work items and links when the workflow continues.", "This grants remote-write authority for this exact backlog only. Does not dispatch coding tasks."],
-            dispatch: ["Authorize coding tasks", "Allow the reviewed dependency-ready coding tasks to be launched when the workflow continues.", "Coding tasks have separate usage. Does not merge PRs or authorize other work."],
+            backlog: ["Authorize PBI creation", "Allow the separately invoked backlog action to create/reconcile these ADO work items and links.", "This grants remote-write authority for this exact backlog only. Does not dispatch coding tasks."],
+            dispatch: ["Authorize coding tasks", "Allow the separately invoked dispatch action to launch the reviewed dependency-ready coding tasks.", "Coding tasks have separate usage. Does not merge PRs or authorize other work."],
             complete: ["Accept feature delivery", "Record your acceptance of the reviewed delivery evidence.", "Does not merge, publish, or deploy anything."],
         };
         const stage = names[String(command.stage)];
@@ -59,7 +63,7 @@ export function describeDecision(app: Application, command: Record<string, unkno
         const runs: Record<string, [string, string, string]> = {
             intake: ["Draft success criteria with Factory", "Propose draft success criteria and open questions for review.", "Does not edit or approve the brief, change code, or create remote work."],
             design: ["Start design work", "Research, draft and independently review the design for the approved scope.", "Does not change code, create PBIs, dispatch coding tasks, or approve its own design."],
-            lifecycle: ["Start planning and delivery", "Generate or reuse the implementation plan, then continue only explicitly approved backlog and dispatch work.", "Previously authorized remote work may run. No new backlog/dispatch authority or merge permission is granted."],
+            plan: ["Start implementation planning", "Generate and independently review an implementation plan, then end for human review.", "Does not create PBIs, dispatch coding tasks, or approve its own plan."],
             monitor: ["Check delivery status", "Read provider state and validate acceptance criteria.", "Does not post feedback, merge PRs, or change code."],
         };
         const run = runs[String(command.workflow)];

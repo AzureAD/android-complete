@@ -27,11 +27,11 @@ export function createCommands(application: () => Application, host: () => Comma
                 return;
             }
             if (args === "list") {
-                await host().log(JSON.stringify(application().registry.list().map((feature) => application().lifecycle.store.view(feature.id)), null, 2));
+                await host().log(JSON.stringify(await application().features(), null, 2));
                 return;
             }
             if (args.startsWith("get ")) {
-                await host().log(JSON.stringify(application().lifecycle.store.view(args.slice(4).trim()), null, 2));
+                await host().log(JSON.stringify(await application().feature(args.slice(4).trim()), null, 2));
                 return;
             }
             const confirm = args.match(/^confirm\s+([a-f0-9]{64})\s+([\s\S]+)$/);
@@ -41,7 +41,7 @@ export function createCommands(application: () => Application, host: () => Comma
             try { input = JSON.parse(source); }
             catch { throw new FactoryError("invalid_json", "The command must be valid JSON."); }
             object(input, "Domain command");
-            const preview = application().prepare(input);
+            const preview = await application().preview(input);
             if (!confirm) {
                 await host().log(JSON.stringify({ ...preview,
                     confirmCommand: preview.consentKey ? `/software-factory confirm ${preview.consentKey} ${JSON.stringify(input)}` : null,
@@ -50,7 +50,7 @@ export function createCommands(application: () => Application, host: () => Comma
             }
             if (!preview.consentKey || preview.consentKey !== confirm[1]) throw new FactoryError("stale_scope", "The typed scope hash does not match the current command. Preview and review it again.", 409);
             const actor = { channel: "chat" as const, sessionId: context.sessionId, reference: `user-slash-command:${randomUUID()}` };
-            const result = await application().dispatch(input, actor, { granted: true, revisionId: preview.consentKey, actor });
+            const result = await application().submit(input, actor, { granted: true, revisionId: preview.consentKey, actor });
             await host().log(JSON.stringify(result, null, 2));
         },
     }, ...["feature-design", "feature-plan", "feature-backlog", "feature-dispatch", "feature-status", "feature-continue", "feature-pr-iterate"].map((name): CommandDefinition => ({

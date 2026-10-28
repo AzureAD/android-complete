@@ -7,7 +7,7 @@ import { FactoryError, parseRequirements, parseSuccessCriteria } from "../core/c
 import { parseIntakeProposal, type Execution, type Json } from "../core/lifecycle-contracts.ts";
 import { createChatTools, type ChatHost } from "../chat/tools.ts";
 import { designRun, intakeRun, type FactoryContext } from "../workflows/lifecycle.ts";
-import { actor, fixture, requirements } from "./helpers.ts";
+import { actor, fixture, transportFixture, requirements } from "./helpers.ts";
 
 test("success criteria accept plain language, bullets and the pasted colon example with wrapped lines", () => {
     assert.deepEqual(parseSuccessCriteria(
@@ -73,7 +73,7 @@ test("a plain-language brief can be saved but cannot approve or start design wit
 });
 
 test("chat captures a plain brief, assigns IDs and includes the brief in genuine approval", async () => {
-    const f = fixture();
+    const f = transportFixture();
     let prompt = "";
     const host: ChatHost = { sessionId: actor.sessionId!, capabilities: { ui: { elicitation: true } }, ui: { confirm: async (message) => { prompt = message; return true; } } };
     const tools = createChatTools(() => f.app, () => host);

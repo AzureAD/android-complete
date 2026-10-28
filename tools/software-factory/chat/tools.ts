@@ -125,7 +125,7 @@ export function createChatTools(application: () => Application, host: () => Chat
     async function command(input: unknown, invocation: Invocation, reviewedScope?: string) {
         const app = application();
         const provenance = actor(invocation);
-        const preview = app.prepare(input);
+        const preview = await app.preview(input);
         const progressRevision = typeof preview.command.featureId === "string" ? app.registry.get(preview.command.featureId).current.id : null;
         const note = (status: ProgressInput["status"], summary: string, suffix: string, question?: ProgressInput["question"]) =>
             noteDecision(app, preview, provenance, status, summary, suffix, progressRevision, question);
@@ -180,7 +180,7 @@ export function createChatTools(application: () => Application, host: () => Chat
         }
         let result: Record<string, Json>;
         try {
-            result = await app.dispatch(input, provenance, preview.consentKey
+            result = await app.submit(input, provenance, preview.consentKey
                 ? { granted: true, revisionId: preview.consentKey, actor: provenance } : undefined);
         } catch (error) {
             if (preview.decision) note("blocked", `The action did not complete: ${error instanceof Error ? error.message : "Unknown action failure."} Inspect recorded outcomes before retrying.`, "action-error");
@@ -222,13 +222,13 @@ export function createChatTools(application: () => Application, host: () => Chat
             name: "software_factory_list_features",
             description: "List this project's Software Factory features, exact requirements revisions, approvals, and history from the shared registry.",
             parameters: schema({}),
-            handler: () => ({ project: application().registry.project, features: application().registry.list().map((item) => application().lifecycle.store.view(item.id)) }),
+            handler: async () => ({ project: application().registry.project, features: await application().features() }),
         },
         {
             name: "software_factory_get_feature",
             description: "Read the current conversational stage, expected output, pending question/rationale, native runs, requirements, artifacts, history and approvals. Feature IDs, not titles, identify features.",
             parameters: schema({ featureId: string }),
-            handler: (args) => application().lifecycle.store.view(text(object(args, "Arguments").featureId, "Feature ID")),
+            handler: (args) => application().feature(text(object(args, "Arguments").featureId, "Feature ID")),
         },
         {
             name: "software_factory_report_progress",
@@ -249,20 +249,17 @@ export function createChatTools(application: () => Application, host: () => Chat
             name: "software_factory_revise_requirements",
             description: "Create an immutable requirements revision using the current expectedRevision. Previous approval does not approve changed requirements.",
             parameters: schema({ featureId: string, expectedRevision: string, input: requirementsSchema }),
-            handler: (args, invocation) => {
-                const input = object(args, "Arguments");
-                return application().execute({ ...input, kind: "revise_requirements" }, actor(invocation));
-            },
+            handler: (args, invocation) => command({ ...object(args, "Arguments"), kind: "revise_requirements" }, invocation),
         },
         {
             name: "software_factory_preview",
             description: "Preview any Software Factory command and its exact approval scope without executing it. Commands: report_progress, configure, start_workflow, approve_stage, request_revision, control_run, reconcile_operation, set_schedule, preview_import, import_legacy, export_feature, preflight, cancel_feature, and the requirements commands. Use stable feature/execution IDs.",
             parameters: schema({ command: { type: "object" } }),
-            handler: (args) => application().prepare(object(args, "Arguments").command),
+            handler: (args) => application().preview(object(args, "Arguments").command),
         },
         {
             name: "software_factory_command",
-            description: "Run a shared Software Factory domain command. Start intake to propose draft success criteria from a saved brief, without approving or editing it; review proposals then revise_requirements to save chosen criteria. Also configure targets, start design/lifecycle/monitor, approve exact scopes, request revisions, control/reconcile runs, schedule, import/export. Genuine host confirmation is mandatory for paid execution and approval. Use preview and get_feature first.",
+            description: "Run a Software Factory command. Save private drafts; publish_feature to an existing ADO Feature, list_shared_features or open_shared_feature for team continuation. Start intake/design/plan/monitor as separate stage workflows that end before human review. Approve exact scopes, then separately create_backlog or dispatch_work. Also revise, recover/release inspected shared claims, control/reconcile runs and import/export. Genuine host confirmation is mandatory for approval, publication and paid work. Use preview and get_feature first.",
             parameters: schema({ command: { type: "object" } }),
             handler: (args, invocation) => command(object(args, "Arguments").command, invocation),
         },
@@ -270,9 +267,9 @@ export function createChatTools(application: () => Application, host: () => Chat
             name: "software_factory_get_gates",
             description: "Read a feature's available exact approval previews, including blockers and scope hashes. Missing artifacts are reported explicitly.",
             parameters: schema({ featureId: string }),
-            handler: (args) => {
+            handler: async (args) => {
                 const id = text(object(args, "Arguments").featureId, "Feature ID");
-                application().registry.get(id);
+                await application().feature(id);
                 return ["design", "plan", "backlog", "dispatch", "complete"].map((stage) => {
                     try { return { available: true, ...application().lifecycle.gate(id, stage as "design" | "plan" | "backlog" | "dispatch" | "complete") }; }
                     catch (error) {

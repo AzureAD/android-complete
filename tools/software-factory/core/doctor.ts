@@ -18,7 +18,7 @@ export function runtimeReport(host?: { sessionId: string; elicitation: boolean }
             parentChatVisibility: "Joined-chat runs use native phases and completion notifications. Legacy owned runs remain separate; app discovery of dashboard-owned sessions is not yet verified.",
             creditLimit: "No default AI-credit cap. Only an explicitly user-requested ceiling applies; usage is still metered.",
             readiness: "Verified in the actual owning session before start/resume. Installed binaries alone do not prove workflow registration.",
-            names: ["software-factory-intake", "software-factory-design", "software-factory-lifecycle", "software-factory-monitor", "software-factory-check"],
+            names: ["software-factory-intake", "software-factory-design", "software-factory-plan", "software-factory-monitor", "software-factory-check", "software-factory-evaluate-design"],
             reason: "Run npm run check:runtime for a real zero-agent registration/journal check. Paid runs and provider actions require exact human approval and working credentials.",
         },
         chat: host ? {

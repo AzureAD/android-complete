@@ -4,7 +4,7 @@
 
 The same feature-development application is available from **Copilot app chat,
 interactive Copilot CLI chat, and an optional local web UI**. All three use a
-transactional local registry, the same domain commands and approval scopes, and
+shared ADO Feature attachments, the same domain commands and approval scopes, and
 **native Copilot Dynamic Workflows**. There is no separate prompt-driven workflow
 engine behind the dashboard.
 
@@ -17,10 +17,11 @@ hooks are retired. Feature skills and `feature-*` commands all enter this core.
 | Workflow | Responsibility |
 |---|---|
 | `software-factory-intake` | Turns a saved plain-language brief into draft success criteria and open questions for human review; never edits or approves requirements. |
-| `software-factory-design` | Reuses the existing evidence/traceability/independent-review design algorithm and loads repository research/design guidance in scoped worker roles, then pauses for genuine human design approval. |
-| `software-factory-lifecycle` | Independently reviewed planning, plan/backlog/dispatch checkpoints, recoverable ADO creation/linking, and dependency-ready coding-agent waves. |
+| `software-factory-design` | Reuses the existing evidence/traceability/independent-review design algorithm; saves its artifact and finishes before human design approval. |
+| `software-factory-plan` | Generates and independently reviews a PBI plan, saves its artifact and finishes before human plan approval. |
 | `software-factory-monitor` | One bounded GitHub/GHE/ADO refresh and acceptance-criteria validation pass; no posting or merging. |
 | `software-factory-check` | Native registration, journaling, checkpoint, and cold-resume diagnostics with zero agents. |
+| `software-factory-evaluate-design` | Explicitly invoked synthetic evaluation trial with a tool-less agent; returns ungraded output, never feature authority. |
 
 The standalone `design-feature` workflow remains unchanged. Its Software Factory
 wrapper preserves the existing seven-agent / two-fix bound, one concurrent agent,
@@ -30,6 +31,40 @@ explicitly request an unlimited credit dimension unless the user supplies a
 ceiling; removing the cap does not make execution free or bypass human gates.
 Optional user-requested credit ceilings remain soft post-paid limits. Remote
 coding tasks have separate usage.
+
+### Team authority and publication
+
+Private drafts may remain local. Before approval, deliberately `publish_feature`
+to an **existing ADO Feature work item**. This creates a new shared successor from
+the current requirements; old local approvals/artifacts remain historical and are
+not silently promoted into team authority. Feature creation itself is not automated.
+
+ADO versioned JSON attachments contain the canonical requirements, artifacts,
+decisions and provider-operation receipts. Each update uses the work-item revision
+for compare-and-swap and verifies its attachment hash, immutable ancestry and
+authenticated ADO writer. Ordinary title/tag edits do not change Factory's stage.
+Approval requires a genuine chat/dashboard confirmation and a successful ADO
+write under the authenticated user's edit permission. The person running the
+session may approve; v1 does not impose a separate approver roster.
+
+Use `list_shared_features` and `open_shared_feature` in chat, **Find team features**
+and **Open team feature** in the dashboard, or `node cli.ts team-list` /
+`node cli.ts team-open <ADO-feature-id>`. Configure matching repository/branch/board
+targets first; checkout paths and GitHub accounts remain local. Target changes
+are not automatically propagated to existing shared records.
+
+SQLite stores private drafts, verified caches, local sessions, execution journals,
+schedules and attempt evidence. ADO outages block shared approvals/advancement;
+private draft editing remains available. Team handoff opens the shared record,
+not another person's native journal. Stages run serially per shared feature.
+An active shared claim cannot be automatically stolen. Inspect/stop its owner
+and reconcile remote outcomes before confirming `release_shared_claim` with a
+reason. Release invalidates late results but does not stop agents or undo sends.
+Failed mutation attempts retain a private `shared-attempt-*` database alongside
+the registry for recovery; do not delete it until uncertain receipts are reconciled.
+The web view refreshes local activity every two seconds and ADO on actions and
+roughly 15-second intervals; cached display state never replaces a fresh authority
+check at an action boundary. A cached refresh does not clear an ADO outage warning.
 Run observations preserve native active time, subagent count, AI usage in
 reported nano-AIU, effective resource ceilings, and requested/resolved agent
 models. The same measurements are available in chat and the UI; missing or failed
@@ -101,6 +136,34 @@ tests. Native registration, a real checkpoint, and cold resume are exercised by
 `check:runtime` without starting agents. Paid model quality, live provider writes,
 and individual account/onboarding permissions still require an approved pilot;
 offline tests are not evidence that a specific account can dispatch a real task.
+
+### Design-first evaluation and rollout gate
+
+`evals/design.mjs` reuses the unchanged `runDesignFeature` algorithm with proposed
+synthetic cases: clean control, IPC break, irreversible rollout, persuasion of
+the reviewer, and author behavior when a latency baseline is missing.
+The evaluation agent has no tools. Reviewer cases pin the seeded document across
+fix rounds to test detection, not remediation; the missing-fact case invokes the
+real author. Expected labels are never supplied to either model.
+
+After human review of these synthetic fixtures, explicitly authorize native
+`software-factory-evaluate-design` with `{caseId,trial}`. Each invocation is one
+trial, with at most seven agents and no default AI-credit ceiling. Capture its
+full result including `fixtureHash` and `resultHash`; do not launch paid trials
+as part of ordinary tests. Run repeated trials of each case before drawing conclusions.
+
+An independent human grades each captured result with
+`{resultHash,reviewer,pass,evidence}`. `summarizeGrades(results, grades)` rejects
+missing/mismatched grades and changed outputs; it does not invent a model score.
+Assess whether the exact planted flaw was caught with relevant evidence, clean
+controls were not falsely blocked, persuasive claims did not override the
+contract, and unsupported numbers remained unknown. Proposed fixture expectations
+and mocked harness tests are **not human grading or model-quality evidence**.
+
+Initial team rollout is design-first: prove live publish/revise/approve, ADO
+denial/outage handling, restart and teammate handoff on an explicitly selected
+test Feature. Broader planning/delivery capability is implemented but should not
+be declared rollout-ready before that pilot and human-graded evaluations.
 
 ## Install: chat only by default
 
@@ -330,27 +393,29 @@ configured branches and work item metadata without creating work.
 
 1. Save a plain-language feature brief. Add success criteria yourself or
    explicitly run the optional `intake` workflow and review/edit its proposal.
-   Save the chosen criteria, resolve open questions, then approve the exact
+   Save the chosen criteria, resolve open questions, publish to an ADO Feature,
+   then approve the exact
    revision for design. No IDs or special input syntax are required.
 2. Explicitly start the `design` workflow. Review the complete design packet,
    sources, traceability and independent findings. NO-GO never advances.
-3. Approve the `design` gate, then resume its owning design run to finish it.
-4. Start `lifecycle`. Review the generated repo-targeted PBI plan and approve
+3. The design run finishes before review. Approve the saved `design` gate.
+4. Separately start `plan`. Review the generated repo-targeted PBI plan and approve
    the `plan` gate. This is not permission to create remote work.
 5. Review and approve the separate `backlog` scope, including board settings and
-   dependency/parent links. Resume the native run.
-6. Review and approve the exact `dispatch` work set. Resume to create only those
+   dependency/parent links. Separately confirm `create_backlog`.
+6. Review and approve the exact `dispatch` work set. Confirm `dispatch_work` to create only those
    coding tasks; dependency PRs must actually be merged.
 7. Start a bounded `monitor` pass. Missing PR links, failed reads/checks, and
    unknown acceptance criteria remain visible.
-8. When dependencies merge, approve a fresh dispatch wave and start a successor
-   lifecycle run. It reuses the approved plan and completed operation receipts.
+8. When dependencies merge, approve a fresh dispatch wave and invoke
+   `dispatch_work`. It reuses the approved plan and completed operation receipts.
 9. Review completion evidence. Reasoned human validation waivers bind to the
    exact current monitor; they cannot waive unmerged PRs or failed delivery.
    Completion is explicit and rechecks provider delivery state.
 
-Native Resume alone is never approval. Repeated unapproved resumes pause at new
-durable checkpoints rather than passing a one-shot gate.
+Native Resume is only for within-stage recovery, never a business approval gate.
+Legacy `lifecycle` runs are retired; preserve their history and publish a reviewed
+successor rather than resuming old orchestration.
 
 ### Shared domain commands
 
@@ -361,7 +426,12 @@ All JSON commands include a `kind`:
 |---|---|
 | `report_progress` | `featureId`, `expectedRevision`, stable `requestId`, `progress` (`stage`, `status`, `summary`, `expectedOutput`, `nextStep`; waiting status also requires `question` with `text`, `whyNeeded`, `recommendation`) |
 | `configure` | `configuration` |
-| `start_workflow` | `featureId`, `workflow` (`intake`, `design`, `lifecycle`, `monitor`), optional `limits` |
+| `publish_feature` | `featureId`, `target: {organization,project,workItemId}`; confirmed new shared successor |
+| `open_shared_feature` | `target: {organization,project,workItemId}` |
+| `list_shared_features` | No fields; uses configured ADO organization/project |
+| `release_shared_claim` | `featureId`, `claimId`, `reason`; confirmed recovery, not native cancellation |
+| `start_workflow` | `featureId`, `workflow` (`intake`, `design`, `plan`, `monitor`), optional `limits` |
+| `create_backlog`, `dispatch_work` | `featureId`; exact approval plus separate execution confirmation |
 | `approve_stage` | `featureId`, `stage`, `expectedScopeHash`, `approved` |
 | `request_revision` | `featureId`, `stage` (`design` or `plan`), `expectedArtifactId`, `feedback` |
 | `control_run` | `featureId`, `executionId`, `action` (`refresh`, `pause`, `resume`, `cancel`), optional `limits` |
@@ -537,7 +607,7 @@ Ordinary tests use temporary registries, deterministic agents/providers and real
 loopback HTTP. Browser checks use installed headless Edge and save screenshots
 under ignored `web\test-results`. No credentials, real work items or paid models
 are used. `check:runtime` starts a real SDK session, verifies its registration
-handshake, and calls the actual intake/design/lifecycle/monitor names with
+handshake, and calls the actual intake/design/plan/monitor names with
 deliberately nonexistent feature/execution IDs. Each must reach its normal scope
 guard with zero agents, not merely avoid a transport error. Those intentional
 diagnostic runs end in an expected scope-guard error; they do not represent failed
