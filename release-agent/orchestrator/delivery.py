@@ -319,6 +319,9 @@ def reviewed_retry_reason(orch, item):
         successor = validate_record(orch, record)
         if successor["scope"].get("retry_of") == item["id"]:
             return "Status draft superseded by a retry generation; review the latest draft"
+    current = ledger.get(item["id"])
+    if current and current["status"] == "not_sent":
+        return "Definitively not_sent status draft requires a new retry generation and fresh owner review"
     retry_of = item["scope"].get("retry_of")
     if retry_of:
         previous = ledger.get(retry_of)

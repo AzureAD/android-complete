@@ -68,6 +68,217 @@ def execute(s):
         return R.execute(s.orch, s.args)
 
 
+@pytest.fixture
+def supported_recovery(request, integration, tmp_path, monkeypatch):
+    s = integration
+    mode, shape = request.param
+    monkeypatch.setitem(P.I.CONFIG["common"], "labels", ["reviewed-label"])
+    repo = P.I.CONFIG["common"]["gh_repo"]
+    pairs = [("working/release/1", "release/1")] if shape != "new" else []
+    if shape in ("all-reuse", "baseline-suffix"):
+        pairs.append(("release-integration/1", "dev"))
+    for head, base in pairs:
+        labels = ["keep-custom"]
+        if shape == "baseline-suffix" and base == "dev":
+            labels.append("reviewed-label")
+        PR.gh_create_pr(repo, head, base, "Existing PR", "Original reviewed body", labels)
+    reused = {value["url"] for value in s.states.values()}
+    _, args, orch, path = bound_command(tmp_path, monkeypatch, "integ_prs")
+    args.pbi = "101" if mode == "existing" else None
+    plan = P.integration_plan(orch.context("finalize", "integ_prs"), args)
+    artifact = W.preview(orch, "finalize", "integ_prs", plan)
+    args.review_hash, args.execute = artifact["review_hash"], True
+    args.original_preview = str(tmp_path / "supported-original.json")
+    with open(args.original_preview, "w", encoding="utf-8") as stream:
+        json.dump(artifact, stream)
+    args.existing_pbi = "101" if mode == "create" and shape == "mixed" else None
+    args.recovery_hash, args.confirm_no_inflight = None, True
+    create, labels = PR.gh_create_pr, PR.gh_ensure_labels
+
+    def lost_labels(*a, **kw):
+        labels(*a, **kw)
+        raise ValueError("lost response after labels were applied")
+
+    def lost_create(*a, **kw):
+        create(*a, **kw)
+        return False, "", "lost response after PR creation"
+
+    with monkeypatch.context() as partial:
+        partial.setattr(PR, "gh_ensure_labels", lost_labels)
+        if shape == "new":
+            partial.setattr(PR, "gh_create_pr", lost_create)
+        with C.state_lock(args.runs_root, args.release):
+            if shape == "baseline-suffix":
+                C.load_orch(args.runs_root, args.release, args.config)
+                auth = W.authorize(args, orch, "finalize", "integ_prs", lambda: plan)
+                orch.record_scout_step("finalize", "integ_prs", "attention", "legacy interrupted writer",
+                                       execution_id=auth.execution_id)
+                C.save_state(orch.state, args.runs_root, args.release)
+            else:
+                assert IC.cmd_create_integration_prs(args) == 2
+    started = orch.step_execution("finalize", "integ_prs")["started_at"]
+
+    def pbi(target, wid, title, started_at):
+        assert mode == "create" and shape == "mixed"
+        assert wid == "101" and started_at == started
+        return {"id": wid, **target, "title": title, "type": "Product Backlog Item",
+                "created_at": started, "url": "https://example.test/pbi/101"}
+
+    def pr(target, *, number=None):
+        value = deepcopy(s.states.get((target["gh_repo"], target["head"], target["base"])))
+        if value is None:
+            return None
+        if number is not None and value["number"] != number:
+            raise ValueError("Reviewed PR number changed")
+        return {**value, "head": target["head"], "base": target["base"],
+                "head_tip": P._tip(target, target["head"]), "state": "open",
+                "repository": target["gh_repo"],
+                "created_at": "2000-01-01T00:00:00Z" if value["url"] in reused else started}
+
+    monkeypatch.setattr(reads, "pbi_receipt", pbi)
+    monkeypatch.setattr(reads, "pr_receipt", pr)
+    s.args, s.orch, s.path, s.original = args, orch, path, artifact["plan"]
+    s.reused, s.shape = reused, shape
+    s.calls.clear()
+    return s
+
+
+@pytest.mark.parametrize("supported_recovery", [
+    ("existing", "new"), ("existing", "mixed"), ("create", "mixed"),
+    ("create", "all-reuse"), ("create", "baseline-suffix"),
+], indirect=True)
+def test_existing_pbi_and_reuse_plans_recover_only_the_owned_remaining_operations(supported_recovery):
+    s = supported_recovery
+    execution = deepcopy(s.orch.step_execution("finalize", "integ_prs"))
+    before, disk = deepcopy(asdict(s.orch.state)), s.path.read_bytes()
+    review = R.preview(s.orch, s.args)
+    expected = ["integration.reuse"] if s.shape in ("all-reuse", "baseline-suffix") else [
+        "integration.push", "integration.create"]
+    assert [op["kind"] for op in review["plan"]["remaining"]] == expected
+    assert not review["permission_to_execute"]
+    assert asdict(s.orch.state) == before and s.path.read_bytes() == disk and not s.calls
+    s.args.recovery_hash = review["recovery_hash"]
+    execute(s)
+    record = ReleaseState.load(str(s.path)).get_step("finalize", "integ_prs")
+    assert record.status == "done" and record.execution is None
+    assert record.data[R.DATA_KEY]["execution_id"] == execution["id"]
+    assert record.data["last_write_review"]["hash"] == execution["write_review"]["hash"]
+    assert all(receipt["status"] == "applied" for receipt in record.data[R.DATA_KEY]["receipts"])
+    assert [call[0] for call in s.calls] == (
+        ["labels"] if s.shape in ("all-reuse", "baseline-suffix") else ["push", "create"])
+    for value in s.states.values():
+        if value["url"] in s.reused:
+            assert value["title"] == "Existing PR" and value["body"] == "Original reviewed body"
+            assert value["labels"] == ["keep-custom", "reviewed-label"]
+
+
+@pytest.mark.parametrize("supported_recovery", [("existing", "mixed")], indirect=True)
+def test_recovery_cannot_substitute_an_existing_pbi_identity(supported_recovery):
+    s = supported_recovery
+    s.args.existing_pbi = "102"
+    with pytest.raises(ValueError, match="PBI"):
+        R.preview(s.orch, s.args)
+    assert not s.calls
+
+
+@pytest.mark.parametrize("supported_recovery", [("existing", "mixed")], indirect=True)
+@pytest.mark.parametrize("change", ["number", "url", "title", "body", "labels", "missing"])
+def test_reuse_recovery_rejects_identity_content_and_label_drift(supported_recovery, monkeypatch, change):
+    s = supported_recovery
+    original_read = reads.pr_receipt
+
+    def changed(target, **kw):
+        value = original_read(target, **kw)
+        if kw.get("number") is not None:
+            if change == "missing":
+                return None
+            value[change] = (
+                999 if change == "number" else ["unreviewed"] if change == "labels" else "unreviewed")
+        return value
+
+    monkeypatch.setattr(reads, "pr_receipt", changed)
+    before = deepcopy(asdict(s.orch.state))
+    with pytest.raises(ValueError):
+        R.preview(s.orch, s.args)
+    assert asdict(s.orch.state) == before and not s.calls
+
+
+@pytest.mark.parametrize("supported_recovery", [("create", "all-reuse")], indirect=True)
+def test_reuse_recovery_never_replays_an_uncertain_missing_label_write(supported_recovery):
+    s = supported_recovery
+    record = s.orch.state.get_step("finalize", "integ_prs")
+    record.data["integration_write_journal"]["operations"]["1"] = {
+        "operation_hash": revision.digest(s.original["operations"][1]),
+        "status": "in_flight", "evidence": None,
+    }
+    s.orch.state.set_step("finalize", "integ_prs", record)
+    with pytest.raises(ValueError, match="blind replay"):
+        R.preview(s.orch, s.args)
+    assert not s.calls
+
+
+@pytest.mark.parametrize("supported_recovery", [("create", "all-reuse")], indirect=True)
+def test_reuse_label_response_loss_needs_fresh_review_not_another_write(supported_recovery, monkeypatch):
+    s = supported_recovery
+    labels = PR.gh_ensure_labels
+
+    def lost(*a, **kw):
+        labels(*a, **kw)
+        raise ValueError("lost applied label response")
+
+    monkeypatch.setattr(PR, "gh_ensure_labels", lost)
+    s.args.recovery_hash = R.preview(s.orch, s.args)["recovery_hash"]
+    with pytest.raises(ValueError, match="lost applied label response"):
+        execute(s)
+    saved = ReleaseState.load(str(s.path)).get_step("finalize", "integ_prs")
+    assert saved.data[R.DATA_KEY]["receipts"][1]["status"] == "in_flight"
+    assert [call[0] for call in s.calls] == ["labels"]
+    review = R.preview(s.orch, s.args)
+    assert review["plan"]["remaining"] == []
+    with pytest.raises(ValueError, match="stale"):
+        execute(s)
+    s.args.recovery_hash = review["recovery_hash"]
+    execute(s)
+    assert [call[0] for call in s.calls] == ["labels"]
+    assert s.orch.state.get_step("finalize", "integ_prs").status == "done"
+
+
+@pytest.mark.parametrize("supported_recovery", [("create", "baseline-suffix")], indirect=True)
+def test_ado_reuse_recovery_preserves_reviewed_identity_without_relinking_work_items(
+        supported_recovery, monkeypatch):
+    s = supported_recovery
+    repository = {"org": "https://example.test/ado", "project": "Project", "repository": "android"}
+    cfg = P.I.CONFIG["common"]
+    monkeypatch.setitem(cfg, "tool", "ado")
+    monkeypatch.setitem(cfg, "ado", repository)
+
+    def find(org, project, repo, head, base):
+        value = s.states[(cfg["gh_repo"], head, base)]
+        return True, {key: value[key] for key in ("number", "title", "body")} | {
+            "url": f"{org}/{project}/_git/{repo}/pullrequest/{value['number']}"}, ""
+
+    monkeypatch.setattr(PR, "az_find_open_pr", find)
+    plan = P.integration_plan(s.orch.context("finalize", "integ_prs"), s.args)
+    artifact = W.preview(s.orch, "finalize", "integ_prs", plan)
+    s.orch.state.steps["finalize.integ_prs"]["execution"]["write_review"]["hash"] = artifact["review_hash"]
+    with open(s.args.original_preview, "w", encoding="utf-8") as stream:
+        json.dump(artifact, stream)
+
+    def read(target, *, number=None):
+        _, value, _ = find(repository["org"], repository["project"], repository["repository"],
+                           target["head"], target["base"])
+        assert value["number"] == number
+        return {**value, "head": target["head"], "base": target["base"],
+                "head_tip": P._tip(target, target["head"]), "repository": repository,
+                "state": "open", "created_at": "2000-01-01T00:00:00Z", "work_items": ["999"]}
+
+    monkeypatch.setattr(reads, "pr_receipt", read)
+    s.args.recovery_hash = R.preview(s.orch, s.args)["recovery_hash"]
+    execute(s)
+    assert not s.calls
+    assert s.orch.state.get_step("finalize", "integ_prs").status == "done"
+
+
 def test_preview_is_read_only_and_reports_only_unapplied_suffix(recovery):
     s = recovery
     before, disk = deepcopy(asdict(s.orch.state)), s.path.read_bytes()
@@ -641,3 +852,11 @@ def test_cli_has_no_auto_approval_or_new_attempt_switch():
                               "--execution-id", "id", "--executor", "owner",
                               "--original-preview", "plan.json", "--existing-pbi", "101"])
     assert not args.execute and not hasattr(args, "auto_approve") and not hasattr(args, "reserve")
+
+
+def test_recovery_cli_can_omit_an_unneeded_pbi():
+    from orchestrator.cli import build_parser
+    args = build_parser().parse_args([
+        "recover-integration-prs", "--release", "r", "--execution-id", "id",
+        "--executor", "owner", "--original-preview", "plan.json"])
+    assert args.existing_pbi is None

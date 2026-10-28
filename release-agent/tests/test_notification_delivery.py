@@ -1032,6 +1032,29 @@ def _record_unsent_draft(orch, item):
 
 
 @pytest.mark.parametrize("source", ["phase-status-email", "ad-hoc-status-email"])
+def test_unsent_reviewed_draft_requires_new_generation_even_without_snapshot_changes(
+        orch, reviewed_email_args, source):
+    reviewed_email_args.source = source
+    reviewed_email_args.request_id = "same-request" if source.startswith("ad-hoc") else None
+    original = _reviewed_drafts(orch, reviewed_email_args)[0]
+    _record_unsent_draft(orch, original)
+    failed = copy.deepcopy(orch.state.notification_deliveries[original["id"]])
+    assert not D.available(orch, original)
+    assert "retry generation" in D.preview(orch, failed)["stop_reason"]
+    with pytest.raises(ValueError, match="retry generation"):
+        D.claim(orch, original["id"], original["hash"], "worker",
+                approved_by=orch.state.owner_email)
+    assert orch.state.notification_deliveries[original["id"]] == failed
+    retry = _reviewed_drafts(orch, reviewed_email_args)[0]
+    assert retry["scope"]["retry_of"] == original["id"] and retry["hash"] != original["hash"]
+    D.offer(orch, retry)
+    with pytest.raises(ValueError, match="release-owner approval"):
+        D.claim(orch, retry["id"], retry["hash"], "worker")
+    _send_reviewed_draft(orch, retry)
+    assert orch.state.notification_deliveries[original["id"]] == failed
+
+
+@pytest.mark.parametrize("source", ["phase-status-email", "ad-hoc-status-email"])
 @pytest.mark.parametrize("change", ["midnight", "progress"])
 def test_reviewed_status_retry_refreshes_snapshot_without_losing_failed_attempt(
         orch, reviewed_email_args, tmp_path, source, change):

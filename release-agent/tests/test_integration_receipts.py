@@ -86,6 +86,32 @@ def test_azure_receipt_checks_active_source_and_work_item_link(monkeypatch):
     assert calls[1][:6] == ["az", "repos", "pr", "work-item", "list", "--org"]
 
 
+@pytest.mark.parametrize("provider", ["gh", "ado"])
+@pytest.mark.parametrize("wrong_id", [False, True])
+def test_reused_pr_receipt_reads_the_exact_reviewed_number(monkeypatch, provider, wrong_id):
+    calls = []
+    value = github() if provider == "gh" else azure()
+    key = "number" if provider == "gh" else "pullRequestId"
+    number = value[key]
+    if wrong_id:
+        value[key] += 1
+
+    def read(args):
+        calls.append(args)
+        return [{"id": 101}] if "work-item" in args else value
+
+    monkeypatch.setattr(R, "_json", read)
+    if wrong_id:
+        with pytest.raises(ValueError):
+            R.pr_receipt(GH if provider == "gh" else ADO, number=number)
+    else:
+        receipt = R.pr_receipt(GH if provider == "gh" else ADO, number=number)
+        assert receipt["number"] == number
+        assert (f"pulls/{number}" in calls[0][2] if provider == "gh"
+                else "show" in calls[0] and str(number) in calls[0])
+        assert "--paginate" not in calls[0] and "--status" not in calls[0]
+
+
 @pytest.mark.parametrize("change", ["abandoned", "draft", "project", "repo", "source", "ambiguous", "cap"])
 def test_azure_history_and_identity_mismatches_hold(monkeypatch, change):
     value = azure()

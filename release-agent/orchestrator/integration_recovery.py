@@ -63,13 +63,45 @@ def load_original(orch, args):
             or not original_revision_matches
             or original.get("generation") != (record.invalidated_at or record.completed_at or "initial")):
         raise ValueError("Original frozen preview does not match the active execution's approved review")
-    operations = original["operations"]
-    if (not operations or operations[0]["kind"] != "pbi.create"
-            or any(op["kind"] not in ("pbi.create", "integration.create", "integration.push")
-                   for op in operations)
-            or sum(op["kind"] == "pbi.create" for op in operations) != 1):
-        raise ValueError("Recovery supports one created PBI and new integration PRs only")
+    _validate_operations(original)
     return original
+
+
+def _validate_operations(original):
+    pbi, operations = original["parameters"]["pbi"], original["operations"]
+    if not operations or any(op["kind"] not in (
+            "pbi.create", "integration.create", "integration.push", "integration.reuse")
+            for op in operations):
+        raise ValueError("Recovery requires supported original integration operations")
+    created = operations[0]["kind"] == "pbi.create"
+    if (pbi["mode"] not in ("create", "existing")
+            or sum(op["kind"] == "pbi.create" for op in operations) != int(created)
+            or created != (pbi["mode"] == "create" and any(
+                op["kind"] == "integration.create" for op in operations))):
+        raise ValueError("Original PBI mode and operation sequence disagree")
+    return created
+
+
+def _pbi_id(original, args):
+    created = _validate_operations(original)
+    pbi, operations = original["parameters"]["pbi"], original["operations"]
+
+    def positive_id(value):
+        if not str(value).isdigit() or int(value) <= 0:
+            raise ValueError("Recovery requires an explicit positive existing PBI ID")
+        return str(int(value))
+
+    supplied = getattr(args, "existing_pbi", None)
+    if created:
+        return positive_id(supplied)
+    if pbi["mode"] == "existing":
+        expected = positive_id(pbi["id"])
+        if supplied is not None and positive_id(supplied) != expected:
+            raise ValueError("Existing PBI differs from the original approved ID")
+        return expected
+    if supplied is not None or any(op["kind"] != "integration.reuse" for op in operations):
+        raise ValueError("Original reuse-only plan does not reference a PBI")
+    return None
 
 
 def _body(operation, wid):
@@ -84,6 +116,8 @@ def _content_change(operation, receipt, wid):
     actual = {key: receipt[key] for key in expected}
     if actual == expected:
         return None
+    if operation["kind"] == "integration.reuse":
+        raise ValueError("Reused PR content differs from the approved snapshot")
     token = "AB#" + wid
     linked = "[" + token + "](" + PBI_LINK + wid + ")"
     linked_body = expected["body"].replace(token, linked)
@@ -98,6 +132,9 @@ def _content_change(operation, receipt, wid):
 
 
 def _labels_match(operation, labels):
+    if operation["kind"] == "integration.reuse":
+        return labels == sorted(set(operation["content"]["labels"])
+                                | set(operation["content"]["existing"]["labels"]))
     required = sorted(set(operation["content"]["labels"]))
     return labels == required or (
         operation["target"].get("gh_repo") in (COMMON, MSAL)
@@ -160,9 +197,10 @@ def observe(orch, args, original, *, active_index=None, push_root=None, remap=No
     record = _record(orch, args)
     operations, repos = original["operations"], original["preconditions"]["repos"]
     first = operations[0]
-    pbi = providers.pbi_receipt(first["target"], args.existing_pbi,
-                                first["content"]["title"], record.execution["started_at"])
-    wid = pbi["id"]
+    wid = _pbi_id(original, args)
+    pbi = (providers.pbi_receipt(first["target"], wid, first["content"]["title"],
+                               record.execution["started_at"])
+           if first["kind"] == "pbi.create" else None)
     receipts, changes, current_tips = [], [], {}
     pushes = {(op["target"]["key"], op["target"]["head"]): op for op in operations
               if op["kind"] == "integration.push"}
@@ -195,25 +233,33 @@ def observe(orch, args, original, *, active_index=None, push_root=None, remap=No
             elif tip != op["preconditions"]["head_tip"]:
                 raise ValueError("Integration push cannot be reconciled")
         else:
-            evidence = providers.pr_receipt(target)
+            existing = op["content"]["existing"] if kind == "integration.reuse" else None
+            evidence = (providers.pr_receipt(target, number=existing["number"])
+                        if existing else providers.pr_receipt(target))
+            if existing and (evidence is None
+                    or evidence["number"] != existing["number"] or evidence["url"] != existing["url"]):
+                raise ValueError("Reviewed reuse PR identity is missing or changed")
             if evidence is not None:
                 if (str(evidence.get("number", "")).isdigit() is False
                         or not isinstance(evidence.get("url"), str)
                         or not evidence["url"]
                         or evidence["head_tip"] != op["preconditions"]["head_tip"]
                         or current_tips[target["key"], target["head"]] != evidence["head_tip"]
-                        or evidence["state"] not in ("open", "merged")
+                        or evidence["state"] not in (("open",) if existing else ("open", "merged"))
                         or evidence["head"] != target["head"] or evidence["base"] != target["base"]
                         or evidence["repository"] != target.get("gh_repo", target.get("ado"))
-                        or datetime.fromisoformat(evidence["created_at"].replace("Z", "+00:00"))
+                        or not existing and datetime.fromisoformat(evidence["created_at"].replace("Z", "+00:00"))
                         < datetime.fromisoformat(record.execution["started_at"].replace("Z", "+00:00"))):
                     raise ValueError("PR source commit or identity differs from approved plan")
+                change = _content_change(op, evidence, wid)
                 if target["tool"] == "gh":
                     if not _labels_match(op, evidence["labels"]):
-                        raise ValueError("PR labels differ from exact approved labels")
-                elif evidence["work_items"] != [wid]:
+                        if existing and evidence["labels"] == sorted(set(existing["labels"])):
+                            evidence = None
+                        else:
+                            raise ValueError("PR labels differ from exact approved labels")
+                elif not existing and evidence["work_items"] != [wid]:
                     raise ValueError("ADO PR work-item links differ from approved PBI")
-                change = _content_change(op, evidence, wid)
         receipt = {"index": index, "operation_hash": revision.digest(op),
                    "status": "applied" if evidence is not None else "pending",
                    "evidence": evidence}
@@ -237,10 +283,12 @@ def observe(orch, args, original, *, active_index=None, push_root=None, remap=No
             raise ValueError("Unexplained branch change: " + key + "/" + branch)
     # This writer is sequential. A hole followed by a remote effect is not its suffix.
     pending_seen = False
-    for receipt in receipts:
+    for receipt, op in zip(receipts, operations):
         if receipt["status"] == "pending":
             pending_seen = True
-        elif pending_seen:
+        elif pending_seen and not (
+                op["kind"] == "integration.reuse" and (op["target"]["tool"] != "gh"
+                    or set(op["content"]["labels"]).issubset(op["content"]["existing"]["labels"]))):
             raise ValueError("Provider effects are not a contiguous prefix of this execution")
     previous = record.data.get(DATA_KEY)
     if previous:
@@ -308,12 +356,12 @@ def preview(orch, args, original=None):
     ]
     if merged:
         plan["external_merges_requiring_approval"] = merged
+    wid = _pbi_id(effective, args)
     edits = [
         {"operation_hash": revision.digest(op), "repository": op["target"]["gh_repo"],
-         "title_suffix": ", Fixes AB#" + str(int(args.existing_pbi)),
-         "plain_reference": "AB#" + str(int(args.existing_pbi)),
-         "linked_reference": "[AB#" + str(int(args.existing_pbi)) + "]("
-                             + PBI_LINK + str(int(args.existing_pbi)) + ")",
+         "title_suffix": ", Fixes AB#" + wid,
+         "plain_reference": "AB#" + wid,
+         "linked_reference": "[AB#" + wid + "](" + PBI_LINK + wid + ")",
          "line_endings": ["LF", "CRLF"], "optional_added_label": "changelog:none"}
         for op in effective["operations"] if op["kind"] == "integration.create"
         and op["target"].get("gh_repo") in (COMMON, MSAL)
@@ -408,7 +456,7 @@ def execute(orch, args):
                                 # own isolated scratch immediately before callback.
                                 lambda: check(index, target["root"]))
             elif op["kind"] == "integration.create":
-                wid = str(int(args.existing_pbi))
+                wid = _pbi_id(effective, args)
                 if target["tool"] == "gh":
                     result = PR.gh_create_pr(target["gh_repo"], target["head"], target["base"],
                                              content["title"], _body(op, wid), labels=content["labels"])
@@ -420,6 +468,11 @@ def execute(orch, args):
                 url = _read(result, "Recovery PR creation failed or uncertain")
                 if not url:
                     raise ValueError("Recovery PR creation returned no receipt")
+            elif op["kind"] == "integration.reuse":
+                ok, detail = PR.gh_ensure_labels(
+                    target["gh_repo"], content["existing"]["number"], content["labels"])
+                if not ok:
+                    raise ValueError("Recovery label update failed or uncertain: " + detail)
             else:
                 raise ValueError("Recovery never creates another PBI")
             receipts, changes = observe(orch, args, effective)

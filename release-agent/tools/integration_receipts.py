@@ -69,20 +69,31 @@ def pbi_receipt(target, wid, title, started_at):
             "url": url}
 
 
-def pr_receipt(target):
-    """Return at most one exact source/base PR, including closed/abandoned history."""
+def pr_receipt(target, *, number=None):
+    """Read the reviewed PR number, or exhaustive source/base history for a new PR."""
+    if number is not None:
+        if not str(number).isdigit() or int(number) <= 0:
+            raise ValueError("Reviewed PR number must be positive")
+        number = int(number)
     head, base = target["head"], target["base"]
     if target["tool"] == "gh":
         host, slug = PR._gh_repo_parts(target["gh_repo"])
-        args = ["gh", "api", "--paginate", "--slurp",
+        args = (["gh", "api", f"repos/{slug}/pulls/{number}"] if number is not None else
+                ["gh", "api", "--paginate", "--slurp",
                 f"repos/{slug}/pulls?state=all&head={quote(slug.split('/')[0] + ':' + head, safe='')}"
-                f"&base={quote(base, safe='')}&per_page=100"]
+                f"&base={quote(base, safe='')}&per_page=100"])
         if host:
             args += ["--hostname", host]
-        pages = _json(args)
-        if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
-            raise ValueError("Incomplete paginated PR history")
-        values = [value for page in pages for value in page]
+        if number is not None:
+            value = _json(args)
+            if not isinstance(value, dict) or value.get("number") != number:
+                raise ValueError("Provider PR number differs from the approved reuse")
+            values = [value]
+        else:
+            pages = _json(args)
+            if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+                raise ValueError("Incomplete paginated PR history")
+            values = [value for page in pages for value in page]
         if not values:
             return None
         if len(values) != 1:
@@ -105,9 +116,16 @@ def pr_receipt(target):
                            merged_at=value["merged_at"])
         return receipt
     a = target["ado"]
-    values = _json(["az", "repos", "pr", "list", "--org", a["org"], "--project", a["project"],
-                    "--repository", a["repository"], "--source-branch", head,
-                    "--target-branch", base, "--status", "all", "--top", "1000", "--output", "json"])
+    if number is not None:
+        value = _json(["az", "repos", "pr", "show", "--org", a["org"],
+                       "--id", str(number), "--output", "json"])
+        if not isinstance(value, dict) or value.get("pullRequestId") != number:
+            raise ValueError("Provider PR number differs from the approved reuse")
+        values = [value]
+    else:
+        values = _json(["az", "repos", "pr", "list", "--org", a["org"], "--project", a["project"],
+                        "--repository", a["repository"], "--source-branch", head,
+                        "--target-branch", base, "--status", "all", "--top", "1000", "--output", "json"])
     if not isinstance(values, list) or len(values) >= 1000:
         raise ValueError("Incomplete ADO PR history")
     if not values:

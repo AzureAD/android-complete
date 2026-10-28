@@ -99,8 +99,9 @@ def register(sub):
     r.add_argument("--executor", required=True)
     r.add_argument("--original-preview", required=True,
                    help="Original exact approved preview JSON, not a new remaining-PR plan")
-    r.add_argument("--existing-pbi", required=True,
-                   help="Explicit existing PBI to verify; recovery never creates another")
+    r.add_argument("--existing-pbi",
+                   help="Required for an originally created PBI; otherwise retain the approved existing ID "
+                        "or omit for reuse-only plans. Recovery never creates another PBI.")
     r.add_argument("--execute", action="store_true")
     r.add_argument("--recovery-hash", help="Exact fresh recovery preview hash manually approved")
     r.add_argument("--broker-target-tip",

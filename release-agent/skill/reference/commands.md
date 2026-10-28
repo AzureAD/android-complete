@@ -330,12 +330,21 @@ python -m orchestrator.cli --runs-root <canonical-runs-root> recover-integration
 
 The preview binds the original active execution's review (never archived
 `last_write_review`), exact owner/generation/revision, current runtime and fresh
-provider receipts. It verifies the PBI's exact organization/project/type/title,
-creation time and unique title lookup; PR source/base/repository/source commit,
-open/unmerged/non-draft state, exact content/labels and ADO work-item links; every
-approved branch tip; and resolution-file bytes. Complete all-state PR history is
-required: closed/abandoned PRs, duplicate candidates, lookup errors, changed inputs
-or unexplained effects hold. Only a contiguous applied prefix can be adopted.
+provider receipts. An originally created PBI requires `--existing-pbi` and exact
+organization/project/type/title, creation time and unique title lookup. An original
+`--pbi <id>` plan retains that hash-bound existing ID; an optional `--existing-pbi`
+must match it. Reuse-only plans that never referenced a PBI omit the argument.
+Recovery never creates a PBI.
+
+All PRs retain reviewed source/base/repository/source-commit and non-draft checks,
+along with approved branch tips and resolution-file bytes. New PR operations require
+complete all-state history, exact content/labels, creation after the execution
+started, and exact ADO work-item links. Reused PRs are read by their exact reviewed
+number and URL, may predate the execution, and must remain open with the reviewed
+title/body. Existing labels are preserved; only the originally reviewed label additions
+can remain pending and be executed. ADO reuse never relinks work items. Missing,
+ambiguous or unexplained evidence holds. New effects must form a contiguous applied
+prefix; unchanged, already-reviewed reuse resources may exist later in the suffix.
 
 Only Common's exact `, Fixes AB#<id>` title suffix and the known Engineering
 work-item Markdown-link substitution are eligible content differences. Both
@@ -895,7 +904,9 @@ The failed descriptor and attempts remain frozen in their original ledger record
 the new scope's `retry_of` binds that exact failed record. Present the new draft and
 hash and obtain fresh **Send this draft** approval, even when its body is unchanged.
 An already-prepared retry refreshes in place until claimed. Once its successor is
-prepared, the old generation cannot be claimed again, even if its old scope is valid.
+prepared, the old generation remains fenced. A definitively `not_sent` reviewed
+generation cannot be claimed again even before a successor exists, with an unchanged
+date/state and the original approval hash. Prepare and review a new retry generation.
 No generation may bypass a claimed/uncertain delivery or a successful send. Reuse
 the original ad-hoc request ID for this recovery; do not invent another request.
 
