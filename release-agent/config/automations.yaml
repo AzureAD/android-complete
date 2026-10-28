@@ -48,7 +48,7 @@ version: 2
 
 # Complete explicit defaults passed to m_create_automation (no implicit global model).
 provider_defaults:
-  model: gpt-5.4
+  model: auto
   enabled: true
   triggerType: schedule
   conditionCheckInterval: 15
