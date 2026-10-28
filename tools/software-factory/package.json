@@ -1,0 +1,21 @@
+{
+  "name": "software-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "doctor": "node cli.ts doctor",
+    "check:runtime": "node runtime-check.ts",
+    "start": "node cli.ts serve",
+    "check": "tsc --noEmit",
+    "test": "node --test tests/core.test.ts tests/chat.test.ts tests/server.test.ts tests/lifecycle.test.ts tests/providers.test.ts tests/commands.test.ts tests/intake.test.ts tests/progress.test.ts tests/chat-progress.test.ts tests/design-tasks.test.ts tests/sdk-host.test.ts tests/decisions.test.ts tests/review-handoff.test.ts tests/nested-registration.test.ts tests/registration.test.ts tests/interpreter.test.ts tests/publication.test.ts tests/reader.test.ts tests/joined-session.test.ts"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "^1.0.26"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~5.9.3"
+  }
+}

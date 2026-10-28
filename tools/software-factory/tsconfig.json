@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "allowJs": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"]
+  },
+  "include": ["core/**/*.ts", "chat/**/*.ts", "server/**/*.ts", "workflows/**/*.ts", "runtime/**/*.ts", "providers/**/*.ts", "tests/**/*.ts", "cli.ts", "runtime-check.ts"]
+}

@@ -1,33 +1,15 @@
 ---
-agent: feature-orchestrator
-description: "Create approved PBIs as work items in Azure DevOps"
+agent: software-factory
+description: "Authorize and create the exact approved Software Factory backlog"
 ---
 
-# Backlog Phase
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 
-Read the PBI creator skill from #file:.github/skills/pbi-creator/SKILL.md
+Read the current feature, plan, configuration, and `backlog` gate. Confirm board,
+area, iteration, assignee, parent, exact work items, and dependency links.
+Use the shared `approve_stage` command for the exact backlog scope, then
+explicitly resume its owning native lifecycle run.
 
-## Your Task
-
-You are in the **Backlog** phase. The plan has been approved and you need to create PBIs in ADO.
-
-**Step 1**: Read the feature state:
-```powershell
-node .github/hooks/state-utils.js get-feature "<feature name>"
-```
-
-**Step 2**: Follow the **Creation Phase** instructions from the orchestrator agent:
-1. Pass the FULL plan to the `pbi-creator` subagent
-2. The pbi-creator will discover ADO defaults, present options via `askQuestion`, and create work items
-3. Present the creation summary with AB# IDs
-4. Use `askQuestion` to gate the next stage
-
-**Pipeline**: ✅ Design → ✅ Plan → 📝 **Backlog** → ○ Dispatch → ○ Monitor
-
-After PBIs are created, update state for EACH PBI:
-```powershell
-node .github/hooks/state-utils.js set-step "<feature name>" backlog_review
-node .github/hooks/state-utils.js add-pbi "<feature name>" '{"adoId":<id>,"title":"...","module":"...","status":"Committed","dependsOn":[<dep-ids>]}'
-```
-
-**IMPORTANT**: Use single quotes for JSON args in PowerShell.
+Report actual receipts and partial failures. Reconcile uncertain outcomes instead
+of creating duplicates. Do not create ADO items directly through an agent or
+update legacy state. Do not proceed to dispatch without its separate approval.

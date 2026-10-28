@@ -1,0 +1,30 @@
+/* Copyright (c) Microsoft Corporation. All rights reserved. */
+.factory-panel { margin-top: 24px; }
+.factory-panel pre { font-size: 11px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 650px; overflow: auto; padding: 14px; background: #f5f7f1; border-radius: 6px; }
+.factory-panel details { border: 1px solid #e1e6d9; border-radius: 6px; padding: 12px; margin: 12px 0; min-width: 0; }
+.factory-panel summary { font-size: 11px; cursor: pointer; overflow-wrap: anywhere; }
+.factory-actions { display: flex; gap: 9px; flex-wrap: wrap; margin: 14px 0; }
+.gate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 13px; margin: 24px 0; }
+.gate-card { min-width: 0; background: #f8faf5; border: 1px solid #dfe6d5; border-radius: 7px; padding: 16px; }
+.gate-card h3 { text-transform: capitalize; }
+.gate-card p { color: #78856b; font-size: 11px; }
+.factory-tabs { display: flex; gap: 10px; padding: 16px 0; border-top: 1px solid #e2e8d9; }
+.factory-tabs button { text-transform: capitalize; }
+.factory-tabs .active { background: #e6eddd; }
+.factory-artifacts { margin-bottom: 20px; }
+.run-card { border: 1px solid #e0e7d5; padding: 17px; border-radius: 7px; margin-bottom: 14px; min-width: 0; }
+.run-card code { display: block; font-size: 10px; overflow-wrap: anywhere; }
+.run-card dl { display: grid; grid-template-columns: 90px minmax(0, 1fr); font-size: 10px; gap: 7px; }
+.run-card dd { margin: 0; overflow-wrap: anywhere; }
+.run-card .card-heading > span { font-size: 10px; color: #6b7b60; }
+.factory-panel > label { display: block; margin: 18px 0 8px; font-size: 12px; font-weight: 600; }
+.factory-panel input[type="checkbox"] { display: inline-block; width: auto; margin-right: 8px; }
+.design-document { font-size: 13px; line-height: 1.8; }
+.design-document h3 { text-transform: capitalize; margin-top: 24px; }
+.design-document table, .plan-document table { border-collapse: collapse; width: 100%; font-size: 11px; }
+.design-document th, .design-document td, .plan-document th, .plan-document td { border: 1px solid #dfe6d5; padding: 10px; text-align: left; vertical-align: top; }
+.plan-table { overflow-x: auto; }
+.plan-document td ul { margin: 0; padding-left: 15px; }
+.dependency-graph { border: 1px solid #dfe6d5; border-radius: 6px; padding: 15px; margin-top: 18px; background: #f7faf1; }
+.dependency-graph p { font-size: 12px; }
+@media (max-width: 600px) { .gate-grid { grid-template-columns: minmax(0, 1fr); } .run-card .card-heading { align-items: flex-start; } }

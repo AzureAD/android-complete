@@ -1,41 +1,15 @@
 ---
-agent: feature-orchestrator
-description: "Resume working on a feature from its current pipeline step"
+agent: software-factory
+description: "Continue the actual owning Software Factory workflow safely"
 ---
 
-# Continue Feature
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 
-## Your Task
+Resolve a stable feature ID and inspect its native run, checkpoints, and current
+gate. Review and approve the exact outstanding scope before resuming; resume alone
+is not consent. Use the actual persisted execution/session/run IDs.
 
-Resume working on a feature. The user will provide the feature name below.
-
-**Step 1**: Read the feature state:
-```powershell
-node .github/hooks/state-utils.js get-feature "<feature name>"
-```
-
-**Step 2**: Determine the current step from the `step` field and resume from there:
-
-| Step | What to do |
-|------|-----------|
-| `designing` | Continue writing the design spec |
-| `design_review` | Design is done — ask user if they want to plan PBIs. Use `askQuestion`. |
-| `planning` | Continue planning PBIs |
-| `plan_review` | Plan is done — ask user if they want to backlog in ADO. Use `askQuestion`. |
-| `backlogging` | Continue creating PBIs in ADO |
-| `backlog_review` | PBIs created — ask user if they want to dispatch. Use `askQuestion`. |
-| `dispatching` | Continue dispatching |
-| `monitoring` | Check PR status (follow Monitor phase instructions) |
-
-**Step 3**: Show the pipeline progress header:
-```
-## 🚀 Feature Orchestration: [Phase Name]
-
-**Feature**: [feature name]
-**Pipeline**: [show ✅/📋/○ for each stage based on current step]
-```
-
-Read `.github/copilot-instructions.md` for project context.
-
-**IMPORTANT**: Use single quotes for JSON args in PowerShell.
-Always update state after completing a phase step.
+Raise only a user-approved limit that was reached. Reject source/configuration
+drift or superseded requirements and explain successor/reconciliation actions.
+Never fabricate ownership, copy journals, silently restart, or use legacy JSON as
+an execution checkpoint. Chat-only operation must not require the browser.

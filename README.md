@@ -5,12 +5,20 @@ This repository contains a build gradle and git alias commands for building ADAL
 
 ## AI-Driven Feature Development
 
-This repo supports an AI-driven development pipeline powered by GitHub Copilot agents. Design, plan, create work items, dispatch to coding agents, and monitor PRs — all from VS Code.
+Software Factory supports AI-driven feature development through native Copilot
+Dynamic Workflows from Copilot app chat, Copilot CLI chat, or an optional local UI.
 
-**Get started**: See the [AI Driven Development Guide](AI%20Driven%20Development%20Guide.md) for full instructions, or run:
+**Get started**: See [Software Factory](tools/software-factory/README.md), or install
+the shared core without the optional frontend:
 ```powershell
-.\scripts\setup-ai-orchestrator.ps1
+.\tools\software-factory\install.ps1
 ```
+
+The shared core covers requirements, guarded design, reviewed planning, separate
+backlog/dispatch approvals, provider operations, monitoring, and native recovery.
+See the [implementation plan](docs/software-factory-implementation-plan.md).
+The [older VS Code guide](AI%20Driven%20Development%20Guide.md) describes the
+explicit legacy backend for unmigrated work.
 
 ## Pre-requisites
 

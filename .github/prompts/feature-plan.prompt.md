@@ -1,32 +1,14 @@
 ---
-agent: feature-orchestrator
-description: "Decompose an approved design into repo-targeted PBIs"
+agent: software-factory
+description: "Plan an explicitly approved design through native Dynamic Workflows"
 ---
 
-# Plan Phase
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 
-## Your Task
+Resolve the exact Software Factory feature. Review its design gate and obtain
+genuine approval if outstanding. Finish/resume the owning design run before
+starting the `lifecycle` workflow for planning.
 
-You are in the **Plan** phase. The design has been approved and you need to break it into PBIs.
-
-**Step 1**: Read the feature state to find the design doc:
-```powershell
-node .github/hooks/state-utils.js get-feature "<feature name>"
-```
-
-**Step 2**: Read the design spec from `design-docs/` (the path is in the feature state).
-
-**Step 3**: Follow the **Planning Phase** instructions from the orchestrator agent:
-1. Pass BOTH research findings AND the design spec to the `feature-planner` subagent
-2. Present the structured plan with Summary Table + PBI Details
-3. Use `askQuestion` to gate the next stage
-
-**Pipeline**: ✅ Design → 📋 **Plan** → ○ Backlog → ○ Dispatch → ○ Monitor
-
-After planning is complete, update state:
-```powershell
-node .github/hooks/state-utils.js set-step "<feature name>" plan_review
-```
-
-**IMPORTANT**: Do NOT create ADO work items in this phase. Only produce the structured plan.
-Use single quotes for JSON args in PowerShell.
+Use shared command previews and host confirmation. Present the full resulting
+PBI plan and dependency graph. Plan approval does not grant backlog or dispatch
+authority. Do not manually launch planner agents or write legacy state-utils.

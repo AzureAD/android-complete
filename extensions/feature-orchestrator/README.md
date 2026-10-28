@@ -1,5 +1,10 @@
 # Feature Orchestrator Extension
 
+> **Legacy VS Code UI.** This extension reads legacy JSON, not the Software
+> Factory registry. New features use the [shared chat/web application](../../tools/software-factory/README.md).
+> Compatibility prompt names now route to Software Factory; this sidebar is not
+> a second writer or an automatic fallback for those features.
+
 VS Code extension for the AI-driven feature development pipeline. Provides the dashboard UI,
 feature detail panel, and design review system.
 

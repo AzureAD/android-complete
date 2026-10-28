@@ -1,5 +1,11 @@
 # AI-Driven Development Guide
 
+> **Legacy backend reference.** New Software Factory features use native Dynamic
+> Workflows and the shared chat/UI core. See [Software Factory](tools/software-factory/README.md).
+> The repository's `/feature-*` compatibility prompts now route there. Do not use
+> the JSON state/hook instructions below for migrated Software Factory features.
+> The old standalone plugin remains an explicit option for unmigrated work only.
+
 This guide covers the AI-driven feature development system for the Android Auth multi-repo project. It automates the full lifecycle: **Design → Plan → Backlog → Dispatch → Monitor**.
 
 ## Quick Start
