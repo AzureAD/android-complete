@@ -49,6 +49,13 @@ def memory(monkeypatch):
 
 
 @pytest.fixture
+def beta_clock(monkeypatch):
+    now = datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(signoff.schedule, "now_local", lambda tz=None: now)
+    return now
+
+
+@pytest.fixture
 def distribution_inputs(monkeypatch):
     inputs = {
         "roster": [{"name": "Alice", "upn": "alice@example.com"},
@@ -491,7 +498,8 @@ def test_stage_start_commands_bind_their_stage(step, stage, command, approver, m
     assert args.review_hash == record.data["last_write_review"]["hash"]
 
 
-def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypatch, capsys):
+def test_beta_stage_start_requires_exact_release_owner_approval(
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -514,10 +522,6 @@ def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypa
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
-
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -569,7 +573,7 @@ def test_beta_stage_execution_rejects_simulated_clock(memory, monkeypatch, capsy
 
 
 def test_beta_stage_rechecks_trusted_date_immediately_before_write(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -586,7 +590,7 @@ def test_beta_stage_rechecks_trusted_date_immediately_before_write(
 
     monkeypatch.setattr(
         signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 22, 0, 1, tzinfo=timezone.utc))
+        lambda tz=None: beta_clock + timedelta(days=1))
     execute = arguments(
         "start-beta-play-store",
         "--execute",
@@ -599,7 +603,7 @@ def test_beta_stage_rechecks_trusted_date_immediately_before_write(
 
 
 def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -610,9 +614,6 @@ def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -634,7 +635,7 @@ def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
 
 
 def test_beta_stage_uncertain_failure_keeps_exact_run_link(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -645,9 +646,6 @@ def test_beta_stage_uncertain_failure_keeps_exact_run_link(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -671,7 +669,7 @@ def test_beta_stage_uncertain_failure_keeps_exact_run_link(
 
 
 def test_beta_stage_verified_failure_is_blocked_not_uncertain(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -682,9 +680,6 @@ def test_beta_stage_verified_failure_is_blocked_not_uncertain(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     monkeypatch.setattr(
         signoff.P,
         "start_auth_signoff_stage",
