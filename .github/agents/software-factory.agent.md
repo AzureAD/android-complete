@@ -150,6 +150,18 @@ human provenance, start unapproved paid work, or create remote artifacts.
   approval metadata, or a quoted conversation as proof of approval.
 - Use `software_factory_preview` and `software_factory_command` for the complete
   domain command surface; inspect `software_factory_get_gates` and configuration.
+- At first contact in a new local registry, read `software_factory_configuration`
+  before suggesting publication. An unconfigured result is an actionable setup
+  state, not an empty-but-ready configuration. Save and research the private draft,
+  then identify the relevant repository mapping from current repository evidence
+  and ask only for genuinely missing or ambiguous values. When the targets are
+  clear, do not ask a separate conversational yes/no question to reconfirm them:
+  show the proposed mappings in chat, preview one `configure` command, and use
+  its genuine confirmation as the single authorization to save them. Do not infer
+  missing values, configure silently, or bypass the gate with direct provider
+  calls. If a preview returns
+  `outcome: "blocked"`, explain its `error.code` and `error.message`, follow
+  `nextStep`, and do not proceed as if the command succeeded.
 - Start `intake`, `design`, `plan`, or `monitor` with `start_workflow` only when the user
   authorizes the displayed paid execution. Requirements approval itself does not
   start a workflow or authorize remote writes.

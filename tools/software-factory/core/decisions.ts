@@ -24,12 +24,12 @@ export function describeDecision(app: Application, command: Record<string, unkno
     const gate = record(value.gate);
     const scoped = record(gate.scope || scope);
     const decisions: Record<string, [string, string, string, string]> = {
-        publish_feature: ["Publish a team feature", "Publish to ADO", "Upload the current requirements to the selected ADO Feature as a new shared successor.", "Your local history is preserved. No historical approval is transferred, and no agent starts."],
+        publish_feature: ["Publish this draft?", "Publish to ADO", "", "Your local draft stays intact. This does not approve the scope or start design."],
         release_shared_claim: ["Release shared execution authority", "Release reviewed claim", "Revoke the inspected shared claim after verifying its owner and remote outcomes.", "Does not stop native work or undo provider effects. Reconcile uncertain sends before retrying."],
         approve_requirements: ["Approve feature scope", "Approve scope", "Use this brief and its success criteria as the approved input to design.", "Does not start AI work, change code, create PBIs, or dispatch coding tasks."],
         create_backlog: ["Create approved backlog", "Create backlog", "Create and read back the approved ADO work items and links.", "No agent workflow or coding task starts."],
         dispatch_work: ["Dispatch approved work", "Dispatch work", "Launch only the approved dependency-ready coding tasks.", "Separate coding-agent usage applies. No merge is authorized."],
-        configure: ["Update connections", "Use these connections", "Use the reviewed repository, branch, account and board mappings.", "Does not change credentials, move existing work, or start a workflow."],
+        configure: ["Save these project connections?", "Save connections", "Remember these repository and ADO mappings for this project.", "No credentials or ADO work items are changed, and no workflow starts. Changed settings may invalidate active runs or scheduled checks."],
         request_revision: ["Request a revision", "Request revision", "Save your feedback and invalidate downstream approval for the changed work.", "Existing remote work is preserved. No new AI work starts."],
         attach_pr: ["Associate a pull request", "Associate PR", "Verify and link this PR to the selected work item.", "Does not edit, approve, or merge the PR."],
         post_pr_feedback: ["Post PR feedback", "Post this feedback", "Publish the reviewed feedback on the current PR head.", "Mentions may start coding-agent work and consume separate usage. Does not approve or merge."],
@@ -78,6 +78,32 @@ export function describeDecision(app: Application, command: Record<string, unkno
         boundaries = "Does not grant new scope authority or undo existing remote work.";
     }
     const facts: string[] = [];
+    if (command.kind === "publish_feature") {
+        const target = record(value.target);
+        const itemId = target.workItemId;
+        const organization = typeof target.organization === "string" ? target.organization : "";
+        const project = typeof target.project === "string" ? target.project : "";
+        const location = [organization, project].filter(Boolean).join("/");
+        const destination = typeof itemId === "number" ? `ADO Feature ${itemId}` : "the selected ADO Feature";
+        effect = `Save this draft to ${destination}${location ? ` (${location})` : ""} so your team can access it.`;
+    }
+    if (command.kind === "configure") {
+        const repositories = record(value.repositories);
+        for (const [alias, raw] of Object.entries(repositories)) {
+            const repository = record(raw);
+            const host = typeof repository.hostname === "string" ? repository.hostname : "";
+            const slug = typeof repository.slug === "string" ? repository.slug : "";
+            const branch = typeof repository.baseBranch === "string" ? repository.baseBranch : "";
+            const account = typeof repository.account === "string" && repository.account ? repository.account : null;
+            const localPath = typeof repository.localPath === "string" ? repository.localPath : "";
+            facts.push(`${alias}: ${host}/${slug}; branch ${branch}${account ? `; account ${account}` : ""}; local folder ${localPath}`);
+        }
+        const boards = record(value.boards);
+        const organization = typeof boards.organization === "string" ? boards.organization : "";
+        const project = typeof boards.project === "string" ? boards.project : "";
+        const areaPath = typeof boards.areaPath === "string" ? boards.areaPath : "";
+        if (organization || project) facts.push(`ADO backlog: ${organization}/${project}${areaPath ? `; area ${areaPath}` : ""}`);
+    }
     if (command.kind === "approve_requirements" && feature) {
         facts.push(`${feature.current.requirements.length} success ${feature.current.requirements.length === 1 ? "criterion" : "criteria"}`);
         if (feature.current.designTasks?.length) facts.push(`${feature.current.designTasks.length} engineering tasks assigned to design`);
@@ -101,7 +127,10 @@ export function describeDecision(app: Application, command: Record<string, unkno
             "", "Success criteria", ...brief.requirements.map((entry, index) => `${index + 1}. ${entry.text}`),
             ...(brief.designTasks?.length ? ["", "Work for the design agents", ...brief.designTasks.map((task, index) => `${index + 1}. ${task}`)] : [])].join("\n")
         : readable(scope);
-    return { title, subject: feature?.current.title || "Software Factory", context: feature ? `Scope revision ${feature.current.number}` : "Local project",
+    const context = feature
+        ? command.kind === "publish_feature" ? `Draft revision ${feature.current.number}` : `Scope revision ${feature.current.number}`
+        : "Local project";
+    return { title, subject: feature?.current.title || "Software Factory", context,
         approveLabel, effect, boundaries, facts, review,
         canRequestChanges: command.kind === "approve_requirements" ||
             (command.kind === "approve_stage" && command.approved === true && ["design", "plan"].includes(String(command.stage))) };

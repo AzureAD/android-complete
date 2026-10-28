@@ -255,7 +255,21 @@ export function createChatTools(application: () => Application, host: () => Chat
             name: "software_factory_preview",
             description: "Preview any Software Factory command and its exact approval scope without executing it. Commands: report_progress, configure, start_workflow, approve_stage, request_revision, control_run, reconcile_operation, set_schedule, preview_import, import_legacy, export_feature, preflight, cancel_feature, and the requirements commands. Use stable feature/execution IDs.",
             parameters: schema({ command: { type: "object" } }),
-            handler: (args) => application().preview(object(args, "Arguments").command),
+            handler: async (args) => {
+                try {
+                    return await application().preview(object(args, "Arguments").command);
+                } catch (error) {
+                    if (!(error instanceof FactoryError)) throw error;
+                    return {
+                        outcome: "blocked",
+                        executed: false,
+                        error: { code: error.code, message: error.message },
+                        nextStep: error.code === "configuration_required"
+                            ? "Read software_factory_configuration, gather the missing repository and board mappings, and preview a configure command. Do not retry this preview until configuration is confirmed."
+                            : "Resolve the reported blocker, then prepare a fresh preview. No action was executed.",
+                    };
+                }
+            },
         },
         {
             name: "software_factory_command",
@@ -281,9 +295,19 @@ export function createChatTools(application: () => Application, host: () => Chat
         },
         {
             name: "software_factory_configuration",
-            description: "Read this project's configured provider, hostname, repository, branch, account, and ADO board mappings. No credentials are returned.",
+            description: "Read this project's configuration status and configured provider, hostname, repository, branch, account, and ADO board mappings. If unconfigured, returns the missing setup steps. No credentials are returned.",
             parameters: schema({}),
-            handler: () => application().lifecycle.store.configuration(),
+            handler: () => {
+                const configuration = application().lifecycle.store.configuration();
+                return configuration
+                    ? { configured: true, configuration }
+                    : {
+                        configured: false,
+                        configuration: null,
+                        message: "Software Factory has no repository or ADO board configuration in this local registry.",
+                        nextStep: "Research the current repository and ask the engineer to confirm its repository alias, provider, host, slug, base branch, authenticated account, and local path, plus the ADO organization and project. Then preview and request genuine confirmation for a configure command. Do not infer missing account or branch values or publish before configuration succeeds.",
+                    };
+            },
         },
         {
             name: "software_factory_approve_requirements",
