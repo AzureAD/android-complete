@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -976,6 +976,95 @@ def test_phase_completion_draft_requires_explicit_owner_review(orch, reviewed_em
     assert orch.state.last_status_email_date is None
     assert not _reviewed_drafts(orch, reviewed_email_args)
     assert not D.claim(orch, item["id"], item["hash"], "worker")["permission_to_send"]
+
+
+def _record_unsent_draft(orch, item):
+    D.offer(orch, item)
+    claim = D.claim(orch, item["id"], item["hash"], "engineer-session",
+                    approved_by=orch.state.owner_email)
+    D.result(orch, item["id"], claim["execution_id"], "not_sent", "MCP confirmed no send occurred")
+    return claim
+
+
+@pytest.mark.parametrize("source", ["phase-status-email", "ad-hoc-status-email"])
+@pytest.mark.parametrize("change", ["midnight", "progress"])
+def test_reviewed_status_retry_refreshes_snapshot_without_losing_failed_attempt(
+        orch, reviewed_email_args, tmp_path, source, change):
+    reviewed_email_args.source = source
+    reviewed_email_args.request_id = "same-request" if source.startswith("ad-hoc") else None
+    original = _reviewed_drafts(orch, reviewed_email_args)[0]
+    _record_unsent_draft(orch, original)
+    failed = copy.deepcopy(orch.state.notification_deliveries[original["id"]])
+    if change == "midnight":
+        orch.now_local += timedelta(days=1)
+    else:
+        from tests._harness import _active_phase
+        _active_phase(orch.state, "bug_bash")
+    base = original["id"].removesuffix(":email")
+    retry = next(item for item in _reviewed_drafts(orch, reviewed_email_args)
+                 if item["id"] == f"{base}:retry:1:email")
+    assert retry["scope"]["retry_of"] == original["id"]
+    shown = D.offer(orch, retry)
+    assert shown["requires_owner_approval"] and not shown["permission_to_send"]
+    C.save_state(orch.state, str(tmp_path), orch.state.release_id)
+    restored = C.load_state(str(tmp_path), orch.state.release_id)
+    assert restored.notification_deliveries[original["id"]] == failed
+    assert restored.notification_deliveries[retry["id"]]["descriptor"] == retry
+    with pytest.raises(ValueError, match="release-owner approval"):
+        D.claim(orch, retry["id"], retry["hash"], "worker")
+    with pytest.raises(ValueError, match="hash"):
+        D.claim(orch, retry["id"], original["hash"], "worker", approved_by=orch.state.owner_email)
+    _send_reviewed_draft(orch, retry)
+    assert orch.state.notification_deliveries[original["id"]] == failed
+    assert not any(item["id"].startswith(base + ":") for item in _reviewed_drafts(orch, reviewed_email_args))
+
+
+def test_reviewed_retry_generations_fence_older_attempts_even_if_their_scope_is_valid(
+        orch, reviewed_email_args):
+    original = _reviewed_drafts(orch, reviewed_email_args)[0]
+    original_claim = _record_unsent_draft(orch, original)
+    base = original["id"].removesuffix(":email")
+    retry = _reviewed_drafts(orch, reviewed_email_args)[0]
+    assert retry["id"] == f"{base}:retry:1:email"
+    D.offer(orch, retry)
+    assert _reviewed_drafts(orch, reviewed_email_args)[0]["id"] == retry["id"]
+    assert "retry generation" in D.preview(orch, orch.state.notification_deliveries[original["id"]])["stop_reason"]
+    with pytest.raises(ValueError, match="retry generation"):
+        D.claim(orch, original["id"], original["hash"], "old-worker", approved_by=orch.state.owner_email)
+    _record_unsent_draft(orch, retry)
+    second = _reviewed_drafts(orch, reviewed_email_args)[0]
+    assert second["id"] == f"{base}:retry:2:email"
+    assert second["scope"]["retry_of"] == retry["id"]
+    D.offer(orch, second)
+    with pytest.raises(ValueError, match="retry generation"):
+        D.claim(orch, retry["id"], retry["hash"], "old-worker", approved_by=orch.state.owner_email)
+    with pytest.raises(ValueError, match="already finished"):
+        D.result(orch, original["id"], original_claim["execution_id"], "sent", "late contradictory receipt")
+    _send_reviewed_draft(orch, second)
+
+
+@pytest.mark.parametrize("outcome", ["claimed", "uncertain", "sent"])
+def test_reviewed_retry_never_bypasses_an_owned_or_sent_generation(orch, reviewed_email_args, outcome):
+    original = _reviewed_drafts(orch, reviewed_email_args)[0]
+    _record_unsent_draft(orch, original)
+    retry = _reviewed_drafts(orch, reviewed_email_args)[0]
+    assert retry["scope"]["retry_of"] == original["id"]
+    D.offer(orch, retry)
+    claim = D.claim(orch, retry["id"], retry["hash"], "worker", approved_by=orch.state.owner_email)
+    if outcome != "claimed":
+        D.result(orch, retry["id"], claim["execution_id"], outcome, "Observed provider outcome",
+                 receipt=D.exact_payload_receipt(retry) if outcome == "sent" else None)
+    before = copy.deepcopy(orch.state.notification_deliveries)
+    assert not _reviewed_drafts(orch, reviewed_email_args)
+    assert orch.state.notification_deliveries == before
+
+
+def test_reviewed_retry_requires_positive_not_sent_evidence(orch, reviewed_email_args):
+    original = _reviewed_drafts(orch, reviewed_email_args)[0]
+    _record_unsent_draft(orch, original)
+    del orch.state.notification_deliveries[original["id"]]["attempts"][-1]["evidence"]
+    with pytest.raises(ValueError, match="transport evidence"):
+        _reviewed_drafts(orch, reviewed_email_args)
 
 
 @pytest.mark.parametrize("change", ["hash", "snapshot", "reopen", "midnight"])

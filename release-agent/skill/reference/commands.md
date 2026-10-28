@@ -840,7 +840,7 @@ the actual gate decisions, never a guessed cursor or a successful-looking DUMMY 
 Show skipped work and DUMMY limitations in the rendered status. These emails report
 workflow completion; they do not prove unfinished operations occurred.
 
-Each phase identity is sent at most once per release, independently of daily and
+Each phase is sent at most once per release across all retry generations, independently of daily and
 step-required notices. The complete snapshot stays in the normal delivery ledger.
 On an existing release, previously completed phases without a receipt are surfaced as
 drafts for explicit engineer review, not silently sent as historical catch-up.
@@ -877,6 +877,16 @@ HTML through MCP and record its exact-payload receipt through the usual result/f
 protocol. A claim, uncertain result or successful delivery never permits a duplicate.
 **Not now** leaves the draft prepared without blocking independent release work.
 Unattended workers prepare and surface drafts but never approve them.
+
+After a definitively `not_sent` result with explicit transport evidence, preparing the
+same phase/request produces a separately owner-reviewed `:retry:<n>:email` generation.
+The failed descriptor and attempts remain frozen in their original ledger record;
+the new scope's `retry_of` binds that exact failed record. Present the new draft and
+hash and obtain fresh **Send this draft** approval, even when its body is unchanged.
+An already-prepared retry refreshes in place until claimed. Once its successor is
+prepared, the old generation cannot be claimed again, even if its old scope is valid.
+No generation may bypass a claimed/uncertain delivery or a successful send. Reuse
+the original ad-hoc request ID for this recovery; do not invent another request.
 
 Schema v1 adds `notification_deliveries`, an empty map for a new release. Each
 release-local `logical-checkpoint:channel` maps to `descriptor`, `prepared_at`, `status`,

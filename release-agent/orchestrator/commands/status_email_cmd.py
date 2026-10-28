@@ -118,6 +118,29 @@ def _review_scope(st, orch, *, phase=None):
     return scope
 
 
+def _reviewed_generation(orch, logical_id):
+    pattern = re.compile(re.escape(logical_id) + r"(?::retry:([1-9][0-9]*))?:email")
+    generations = []
+    for key, record in orch.state.notification_deliveries.items():
+        match = pattern.fullmatch(key)
+        if not match:
+            continue
+        item = D.validate_record(orch, record)
+        if item["id"] != key:
+            raise ValueError("Notification ledger identity mismatch; owner recovery required")
+        generations.append((int(match.group(1) or 0), item, record))
+    if any(record["status"] in ("claimed", "uncertain", "sent")
+           for _, _, record in generations):
+        return None
+    if not generations:
+        return logical_id, None
+    generation, item, record = max(generations, key=lambda value: value[0])
+    if record["status"] == "not_sent":
+        D.require_receipt(record)
+        return f"{logical_id}:retry:{generation + 1}", item["id"]
+    return item["id"].removesuffix(":email"), item["scope"].get("retry_of")
+
+
 def prepare_reviewed_status_emails(args, st, orch):
     """Prepare independent, owner-reviewed drafts without advancing release work."""
     ad_hoc = args.source == "ad-hoc-status-email"
@@ -141,12 +164,19 @@ def prepare_reviewed_status_emails(args, st, orch):
         ]
     items, reason, changes = [], "", None
     for logical_id, phase in candidates:
+        generation = _reviewed_generation(orch, logical_id)
+        if generation is None:
+            continue
+        logical_id, retry_of = generation
         scope = _review_scope(st, orch, phase=phase)
+        if retry_of:
+            scope["retry_of"] = retry_of
+            scope["state_matches"].append({
+                "path": ["notification_deliveries", retry_of],
+                "hash": D.fingerprint(st.notification_deliveries[retry_of]),
+            })
         reason = D.scope_reason(orch, scope)
-        previous = st.notification_deliveries.get(logical_id + ":email")
-        if previous:
-            D.validate_record(orch, previous)
-        if reason or previous and previous["status"] not in ("prepared", "not_sent"):
+        if reason:
             continue
         if changes is None:
             changes = _broker_changes(st)

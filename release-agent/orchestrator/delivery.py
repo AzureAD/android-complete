@@ -276,6 +276,11 @@ def validate_record_state(state, record):
                 raise ValueError("Status email attempt lacks explicit owner approval")
     elif scope.get("kind") == "phase_completion":
         raise ValueError("Phase-completion email requires owner review")
+    if "retry_of" in scope and (
+            scope.get("requires_owner_approval") is not True
+            or not isinstance(scope["retry_of"], str) or not scope["retry_of"].strip()
+            or scope["retry_of"] == item["id"]):
+        raise ValueError("Invalid owner-reviewed retry generation")
     if item["completion"].get("kind") == "step" and (
             item["scope"].get("kind") != "step"
             or not item["scope"].get("step")
@@ -306,8 +311,32 @@ def require_receipt(record):
         raise ValueError("Notification receipt lacks explicit transport evidence; owner recovery required")
 
 
+def reviewed_retry_reason(orch, item):
+    if not item["scope"].get("requires_owner_approval"):
+        return ""
+    ledger = orch.state.notification_deliveries
+    for record in ledger.values():
+        successor = validate_record(orch, record)
+        if successor["scope"].get("retry_of") == item["id"]:
+            return "Status draft superseded by a retry generation; review the latest draft"
+    retry_of = item["scope"].get("retry_of")
+    if retry_of:
+        previous = ledger.get(retry_of)
+        if not previous:
+            return "Retry generation is missing its original delivery evidence"
+        original = validate_record(orch, previous)
+        if previous["status"] != "not_sent":
+            return "Retry generation requires a definitively not_sent original delivery"
+        if (original["scope"].get("requires_owner_approval") is not True
+                or original["scope"].get("kind") != item["scope"].get("kind")
+                or original["scope"].get("phase") != item["scope"].get("phase")):
+            raise ValueError("Retry generation does not match its original status draft")
+        require_receipt(previous)
+    return ""
+
+
 def available(orch, item):
-    if scope_reason(orch, item["scope"]):
+    if reviewed_retry_reason(orch, item) or scope_reason(orch, item["scope"]):
         return False
     old = orch.state.notification_deliveries.get(item["id"])
     return not old or old.get("status") in ("prepared", "not_sent")
@@ -353,7 +382,8 @@ def preview(orch, record):
             "completion_status": deepcopy(record.get("completion")),
             "stop_reason": ("Owner-reviewed different delivery; never resend or complete"
                            if record.get("mismatch_resolution")
-                           else scope_reason(orch, item["scope"])), "permission_to_send": False}
+                           else reviewed_retry_reason(orch, item) or scope_reason(orch, item["scope"])),
+            "permission_to_send": False}
 
 
 def claim(orch, notification_id, approved_hash, executor, *, approved_by=None):
@@ -373,7 +403,7 @@ def claim(orch, notification_id, approved_hash, executor, *, approved_by=None):
         return {"status": "already_sent", "permission_to_send": False}
     if record["status"] not in ("prepared", "not_sent"):
         raise ValueError("Delivery already claimed or uncertain; do not resend. Owner review required")
-    reason = scope_reason(orch, item["scope"])
+    reason = reviewed_retry_reason(orch, item) or scope_reason(orch, item["scope"])
     if reason:
         raise ValueError(reason)
     if not isinstance(executor, str) or not executor.strip():
@@ -471,6 +501,9 @@ PROTOCOL = (
     "--approved-by <release-owner-email> to claim. Unattended workers must leave these "
     "drafts prepared and surface them to the owner; never self-approve or treat a request "
     "for status as approval to send. Ordinary notifications retain their existing policy. "
+    "Only positive not_sent evidence permits a new :retry:<n> generation of a reviewed "
+    "status draft. Keep the failed generation frozen and obtain fresh owner approval of "
+    "the new draft; claimed/uncertain or sent generations never permit another generation. "
     "Claims and acknowledgements use the trusted current clock, never --as-of. "
     "A changed preparation can replace only "
     "never-claimed work; review its new hash. Immediately run "

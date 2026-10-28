@@ -157,16 +157,29 @@ def test_provider_reader_forces_utf8_and_never_replaces_unreadable_bytes(monkeyp
         R._json(["az", "boards", "query"])
 
 
-def test_windows_azure_cli_uses_strict_native_encoding_when_utf8_is_unavailable(monkeypatch):
+@pytest.mark.parametrize("has_getencoding", [True, False])
+def test_windows_azure_cli_uses_strict_native_encoding_when_utf8_is_unavailable(monkeypatch, has_getencoding):
+    used_codecs = []
+
+    class WindowsOutput(bytes):
+        def decode(self, encoding="utf-8", errors="strict"):
+            assert errors == "strict"
+            used_codecs.append(encoding)
+            return super().decode("cp1252" if encoding == "mbcs" else encoding, errors)
+
     monkeypatch.setattr(R.sys, "platform", "win32")
-    monkeypatch.setattr(R.locale, "getencoding", lambda: "cp1252")
+    if has_getencoding:
+        monkeypatch.setattr(R.locale, "getencoding", lambda: "cp1252", raising=False)
+    else:
+        monkeypatch.delattr(R.locale, "getencoding", raising=False)
     monkeypatch.setattr(R, "find_azure_cli", lambda: "az.cmd")
     monkeypatch.setattr(R.subprocess, "run", lambda *a, **kw: SimpleNamespace(
-        returncode=0, stdout=b'{"title":"release \x97 integration"}', stderr=b""))
+        returncode=0, stdout=WindowsOutput(b'{"title":"release \x97 integration"}'), stderr=b""))
     assert R._json(["az", "boards", "query"])["title"] == "release — integration"
+    assert used_codecs == ["utf-8", "cp1252" if has_getencoding else "mbcs"]
     with pytest.raises(UnicodeDecodeError):
         R._json(["gh", "api", "example"])
     monkeypatch.setattr(R.subprocess, "run", lambda *a, **kw: SimpleNamespace(
-        returncode=0, stdout=b'{"title":"\x81"}', stderr=b""))
+        returncode=0, stdout=WindowsOutput(b'{"title":"\x81"}'), stderr=b""))
     with pytest.raises(UnicodeDecodeError):
         R._json(["az", "boards", "query"])

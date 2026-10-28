@@ -31,7 +31,8 @@ def _json(args):
         if not azure_cli or sys.platform != "win32":
             raise
         # Bundled Windows Azure CLI can ignore PYTHONIOENCODING and emit ANSI.
-        text = result.stdout.decode(locale.getencoding(), "strict")
+        native_encoding = locale.getencoding() if hasattr(locale, "getencoding") else "mbcs"
+        text = result.stdout.decode(native_encoding, "strict")
     return json.loads(text)
 
 
