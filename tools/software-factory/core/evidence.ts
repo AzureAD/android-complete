@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { workerGuidanceFiles } from "../runtime/guidance.ts";
 
 export function runtimeFingerprint(): string {
     const root = fileURLToPath(new URL("../", import.meta.url));
@@ -21,8 +22,7 @@ export function runtimeFingerprint(): string {
     for (const relative of [
         "../../../.github/extensions/DevDesignDoc/workflow.mjs",
         "../../../.github/extensions/SoftwareFactory/extension.mjs",
-        "../../../.github/agents/feature-planner.agent.md",
-        "../../../.github/skills/feature-planner/SKILL.md",
+        ...workerGuidanceFiles.map((file) => `../../../${file}`),
     ]) digest.update(readFileSync(fileURLToPath(new URL(relative, import.meta.url))));
     return digest.digest("hex");
 }

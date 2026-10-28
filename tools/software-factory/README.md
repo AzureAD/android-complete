@@ -8,12 +8,16 @@ transactional local registry, the same domain commands and approval scopes, and
 **native Copilot Dynamic Workflows**. There is no separate prompt-driven workflow
 engine behind the dashboard.
 
+Software Factory is the evolution of Feature Orchestrator, not a parallel mode.
+The former plugin, VS Code extension, root orchestrator agent, and global-state
+hooks are retired. Feature skills and `feature-*` commands all enter this core.
+
 ## What is connected
 
 | Workflow | Responsibility |
 |---|---|
 | `software-factory-intake` | Turns a saved plain-language brief into draft success criteria and open questions for human review; never edits or approves requirements. |
-| `software-factory-design` | Reuses the existing evidence/traceability/independent-review design algorithm, then pauses for genuine human design approval. |
+| `software-factory-design` | Reuses the existing evidence/traceability/independent-review design algorithm and loads repository research/design guidance in scoped worker roles, then pauses for genuine human design approval. |
 | `software-factory-lifecycle` | Independently reviewed planning, plan/backlog/dispatch checkpoints, recoverable ADO creation/linking, and dependency-ready coding-agent waves. |
 | `software-factory-monitor` | One bounded GitHub/GHE/ADO refresh and acceptance-criteria validation pass; no posting or merging. |
 | `software-factory-check` | Native registration, journaling, checkpoint, and cold-resume diagnostics with zero agents. |
@@ -39,6 +43,15 @@ tools; actual reads still pass through the native host's permission/content-poli
 pipeline. Normal chat tools and permissions are not replaced with the workers'
 read-only policy. Native phases and completion/failure notifications are enabled
 in that same chat; usage snapshots also reach the dashboard while work runs.
+
+Read-only roles cover repository evidence, design authoring/revision, independent
+review, and implementation planning. Their assigned agent files and domain
+references contain one worker contract: return the supplied schema, never start
+another phase or mutate anything. Workers do not load user-facing `SKILL.md`
+entry points. The guidance manifest in `runtime/guidance.ts` supplies both their
+required read lists and the runtime fingerprint inputs, including the PBI
+template. The independent reviewer also uses the guarded workflow's fixed rubric.
+Editing loaded guidance invalidates stale executions.
 
 The feature records a canonical session binding across phase executions.
 Dashboard starts/controls for a chat-bound feature route to its resident owner,
@@ -132,8 +145,8 @@ the host, selected Node and native-runtime executables; the successful
 registration receipt also reports the interpreter actually running the extension.
 
 Open a **new trusted repository session** in the Copilot app or CLI. For CLI,
-start `copilot --experimental` in the repository. Select `software-factory`, use
-the compatibility `feature-orchestrator` agent, or ask for Software Factory tools.
+start `copilot --experimental` in the repository. Select `software-factory`
+or ask for Software Factory tools.
 The project extension supplies its workflows, tools, and CLI slash commands.
 Restart the owning host after editing workflow implementation or updating SDK
 dependencies; do not hot-resume old code against new journals.
@@ -491,10 +504,23 @@ success-shaped fallback occurs.
 - No automatic PR approval, merge, checkout/stash/reset, deployment, or legacy
   backend fallback. No credentials or app-internal Copilot DB edits.
 
-Import previews never modify old files. Imports require real requirements and
-mark old artifacts/approvals historical and untrusted. Stop old active writers
-before importing. The legacy standalone plugin remains for explicitly unmigrated
-work; never run it concurrently for a Software Factory feature.
+### Migrating from Feature Orchestrator
+
+Disable/uninstall previously installed `feature-orchestrator` plugin and
+`AzureAD.feature-orchestrator` VS Code extension copies. Remove their configured
+plugin paths/hooks if your client retained them. A repository update removes
+the tracked registrations and writers, not installed or globally configured
+copies. The old setup script stops with a migration message and installs nothing.
+
+Reload the integration/start a fresh trusted chat so cached agent instructions
+are replaced. Use Software Factory for new and existing feature work; the old
+agent name and manual phase pipeline are no longer available.
+
+Keep historical JSON/design documents: this change never deletes user data.
+Stop old active writers before using `preview_import` and separately confirmed
+`import_legacy`. Previews never modify old files. Imports require real requirements
+and mark old artifacts/approvals historical and untrusted. Neither import nor
+reload retries a failed execution, transfers ownership, or approves new work.
 
 ## Verification
 

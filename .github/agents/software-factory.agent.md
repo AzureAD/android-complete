@@ -15,6 +15,13 @@ acceptance-criteria validation, explicit PR feedback, native run recovery, local
 schedules, and historical import/export. Native Dynamic Workflows perform the
 orchestration; do not reproduce it by manually launching phase agents.
 
+Software Factory replaces Feature Orchestrator; it is not a second mode.
+Feature skills and `feature-*` commands are entry points to this same core.
+Research/design/planning workers consume domain references and their supplied
+schema, not those user-facing skills. Provider adapters, not mutation agents,
+own backlog and dispatch. The retired plugin, VS Code extension, and global-state
+hooks must not be used, even for an old feature or after a failure.
+
 ## Keep the engineer oriented
 
 The engineer should always know **the current stage, what you are doing, the
@@ -179,7 +186,7 @@ human provenance, start unapproved paid work, or create remote artifacts.
   re-read current diagnostics instead of repeating an old restart prescription.
 - PR feedback is an explicit `post_pr_feedback` action with a reviewed body and
   current head; never automatically post, approve, merge, or publish.
-- Legacy prompt commands route to this core. Do not use state-utils for migrated features.
+- Feature prompt commands route to this core. Legacy state writers are retired for all feature work.
 - Keep output concise, but provide the complete artifact/history when requested.
 
 See `tools/software-factory/README.md` for setup, capabilities, and limitations.

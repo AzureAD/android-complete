@@ -1,250 +1,69 @@
-# AI-Driven Development Guide
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 
-> **Legacy backend reference.** New Software Factory features use native Dynamic
-> Workflows and the shared chat/UI core. See [Software Factory](tools/software-factory/README.md).
-> The repository's `/feature-*` compatibility prompts now route there. Do not use
-> the JSON state/hook instructions below for migrated Software Factory features.
-> The old standalone plugin remains an explicit option for unmigrated work only.
+# Software Factory Developer Guide
 
-This guide covers the AI-driven feature development system for the Android Auth multi-repo project. It automates the full lifecycle: **Design → Plan → Backlog → Dispatch → Monitor**.
+Software Factory replaces Feature Orchestrator. Use one lifecycle, one local
+registry, and native Copilot Dynamic Workflows from app/interactive CLI chat or
+the optional dashboard. There is no separate editor orchestration mode.
 
-## Quick Start
+## Setup
 
-### 1. Run the setup script
+From the repository root with Node.js 24+:
 
 ```powershell
-.\scripts\setup-ai-orchestrator.ps1
+.\tools\software-factory\install.ps1
 ```
 
-This checks/installs all prerequisites, configures GitHub accounts, clones design-docs, and builds + installs the Feature Orchestrator VS Code extension.
-
-### 2. Reload VS Code
-
-After setup completes, press `Ctrl+Shift+P` → "Reload Window".
-
-### 3. Start a feature
-
-Either:
-- Click the **+** button in the Feature Orchestrator sidebar (rocket icon in the activity bar)
-- Type `/feature-design <description>` in Copilot Chat
-- Switch to the **feature-orchestrator** agent in the agents dropdown and describe your feature
-
----
-
-## The Pipeline
-
-Every feature goes through these stages:
-
-```
-Design → Plan → Backlog → Dispatch → Monitor
-```
-
-| Stage | What happens | Who does the work |
-|-------|-------------|-------------------|
-| **Design** | Researches codebase, writes a design spec, opens ADO PR for review | AI (codebase-researcher + design-writer agents) |
-| **Plan** | Decomposes the approved design into repo-targeted PBIs | AI (feature-planner agent) |
-| **Backlog** | Creates PBIs as work items in Azure DevOps | AI (pbi-creator agent) + you (confirming area path, iteration, assignee) |
-| **Dispatch** | Sends PBIs to GitHub Copilot coding agent for implementation | AI (agent-dispatcher) |
-| **Monitor** | Tracks agent PRs, reviews code, iterates on feedback | You + AI |
-
-### Approval Gates
-
-The pipeline **stops between stages** and asks for your approval before proceeding. You stay in control — the AI proposes, you decide.
-
----
-
-## Prompt Commands
-
-Type these in Copilot Chat to invoke each stage:
-
-| Command | Purpose |
-|---------|---------|
-| `/feature-design <description>` | Start a new feature — research + design spec |
-| `/feature-plan` | Decompose approved design into PBIs |
-| `/feature-backlog` | Create PBIs in Azure DevOps |
-| `/feature-dispatch` | Dispatch PBIs to Copilot coding agent |
-| `/feature-status` | Check tracked PR statuses |
-| `/feature-continue` | Resume from current pipeline step |
-| `/feature-pr-iterate` | Review a PR, analyze comments, send feedback to `@copilot` |
-
----
-
-## The Dashboard
-
-The Feature Orchestrator sidebar shows:
-
-- **Metrics** — active/completed features, PBI count, PRs merged
-- **Active Features** — cards with progress dots and action buttons
-- **Completed Features** — archived features with all artifacts
-- **My Open PRs** — your PRs + Copilot agent PRs across all repos
-
-Click any feature card to open the **Feature Detail Panel**.
-
-### Feature Detail Panel
-
-Shows everything about a feature in one place:
-
-- **Pipeline progress** — visual stage tracker
-- **Phase durations** — how long each stage took
-- **Design Spec** — link to doc + ADO PR
-- **PBI table** — order, dependencies, status, dispatch button (🚀)
-- **Agent PRs** — status, comments, iterate (💬) and checkout (📥) buttons
-- **Manual entry** — add design specs, PBIs, or PRs via + buttons
-- **Live refresh** — fetches latest PBI status from ADO and PR status from GitHub
-
----
-
-## Working with Agent PRs
-
-When the Copilot coding agent creates a PR:
-
-### Review
-
-1. Click **📥** (Checkout) in the detail panel to get the branch locally
-2. Review the code in VS Code
-3. Click **💬** (Iterate) to analyze reviewer comments and send feedback
-
-### Iterate
-
-The `/feature-pr-iterate` command:
-1. Fetches the PR diff and all review comments
-2. Presents options: delegate to `@copilot`, analyze first, or approve
-3. If analyzing: shows each reviewer comment with a proposed resolution
-4. Posts `@copilot` comments on the PR to trigger another round of agent coding
-
-### Auto-Completion
-
-When all PBIs for a feature are resolved/done:
-- The feature automatically moves to "Complete"
-- You get a notification: "🎉 Feature is complete!"
-
----
-
-## Manual Artifact Entry
-
-Not everything has to go through the AI pipeline. You can manually register:
-
-- **Design specs** — Browse for a local file or paste an ADO PR URL
-- **PBIs** — Enter an AB# ID (auto-fetches title and status from ADO)
-- **PRs** — Enter repo + PR number (auto-fetches from GitHub)
-
-Use the **+** buttons on each section header in the detail panel.
-
----
-
-## State Management
-
-Feature state is stored at `~/.android-auth-orchestrator/state.json` (not in the repo — each developer has their own state).
-
-### CLI Commands
-
-The AI agent calls these automatically during the pipeline — you don't need to run them
-yourself. They're documented here for reference and manual troubleshooting.
-
-```powershell
-# List all features
-node .github/hooks/state-utils.js list-features
-
-# Get full feature details
-node .github/hooks/state-utils.js get-feature "<feature name>"
-
-# Update step
-node .github/hooks/state-utils.js set-step "<feature name>" <step>
-
-# Add artifacts
-node .github/hooks/state-utils.js set-design "<feature name>" '{"docPath":"...","status":"approved"}'
-node .github/hooks/state-utils.js add-pbi "<feature name>" '{"adoId":123,"title":"...","module":"common","status":"Committed"}'
-node .github/hooks/state-utils.js add-agent-pr "<feature name>" '{"repo":"common","prNumber":123,"prUrl":"...","status":"open"}'
-```
-
-**Note**: Use single quotes for JSON args in PowerShell.
-
----
-
-## Prerequisites
-
-The setup script handles all of these, but for reference:
-
-| Requirement | Purpose | Required? |
-|------------|---------|-----------|
-| VS Code ≥ 1.109 | Agent mode, skills, prompt files, askQuestion | **Yes** |
-| GitHub Copilot extension | Chat, agents | **Yes** |
-| Node.js | Hooks, state management, extension build | **Yes** |
-| GitHub CLI (`gh`) | Dispatch, PR status, checkout | **Yes** |
-| Azure CLI (`az`) + devops extension | Live PBI status refresh | Optional |
-| `design-docs/` repo | Design spec authoring + PR creation | Recommended |
-
-### GitHub Authentication
-
-You need two GitHub hosts authenticated via `gh`:
-- **github.com** (e.g., `johndoe`) — for AzureAD/* repos (common, msal, adal)
-- **msft.ghe.com** (e.g., `johndoe_microsoft`) — for `security/ad-accounts-for-android` (broker). Sign in with `gh auth login --hostname msft.ghe.com`.
-
-The setup script discovers logged-in accounts and saves them to `.github/developer-local.json`.
-
----
-
-## Works Without the Extension
-
-The entire pipeline works without the VS Code extension installed. Prompt files, agents, hooks, and state management are all independent. The extension only provides:
-- Dashboard sidebar with metrics and feature cards
-- Feature detail panel with artifact tracking
-- Local design spec review (inline comments via gutter icons + the **design-reviewer** skill that reads and addresses your comments)
-- Live refresh, auto-completion detection
-
-Without it, you use `/feature-design`, `/feature-plan`, etc. directly in chat. The AI agent manages state automatically via the CLI.
-
----
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|---------|
-| `/feature-design` not recognized | Ensure VS Code ≥ 1.109 and check `.github/prompts/` folder exists |
-| Agent doesn't follow orchestrator instructions | Check `.github/agents/feature-orchestrator.agent.md` is present |
-| State commands return "Feature not found" | Check feature name matches exactly (case-insensitive) |
-| Dashboard shows wrong step | Click ↻ Refresh or check `~/.android-auth-orchestrator/state.json` |
-| `gh agent-task create` fails | Verify `gh auth status` shows both accounts authenticated |
-| PBI status not updating | Ensure `az` CLI is installed and authenticated (`az login`) |
-| Extension not loading | Run `.\scripts\setup-ai-orchestrator.ps1` to rebuild |
-
----
-
-## Architecture Overview
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                    VS Code Extension                     │
-│  Dashboard │ Feature Detail │ Design Review │ State Mgmt │
-└──────────────────────┬───────────────────────────────────┘
-                       │
-┌──────────────────────┴───────────────────────────────────┐
-│                    Prompt Files                          │
-│  /feature-design │ /feature-plan │ /feature-status │ ... │
-└──────────────────────┬───────────────────────────────────┘
-                       │
-┌──────────────────────┴──────────────────────────────────┐
-│              feature-orchestrator Agent                 │
-│         Conductor — delegates to subagents              │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-        ┌──────────────┼──────────────┐
-        │              │              │
-   Researcher    Design Writer   Planner
-        │              │              │
-   PBI Creator   Dispatcher    (skills)
-```
-
-### Key Files
-
-| Component | Location |
-|-----------|----------|
-| Setup script | `scripts/setup-ai-orchestrator.ps1` |
-| Agents | `.github/agents/*.agent.md` |
-| Skills | `.github/skills/*/SKILL.md` |
-| Prompt files | `.github/prompts/*.prompt.md` |
-| Hooks | `.github/hooks/orchestrator.json` |
-| State CLI | `.github/hooks/state-utils.js` |
-| Extension source | `extensions/feature-orchestrator/src/` |
-| MCP config | `.vscode/mcp.json` |
-| Project instructions | `.github/copilot-instructions.md` |
+Open a fresh trusted repository chat and select `software-factory`. In Copilot
+CLI, start `copilot --experimental`. Begin with a plain-language feature brief;
+you do not need criterion IDs, finalized requirements, or a local design file.
+Use Doctor to check the actual host rather than assuming old chat instructions
+or another process prove readiness.
+
+## Lifecycle
+
+| Stage | What happens | Human boundary |
+|---|---|---|
+| Brief/intake | Save intent; optionally research and propose criteria | Save/review criteria, then exact scope approval |
+| Design | Evidence, alternatives, traceability, independent review and bounded fixes | Separate execution consent, then design approval |
+| Plan | Repo-targeted self-contained PBIs and independent review | Plan approval |
+| Backlog | Guarded adapters create/link ADO work items with durable receipts | Separate backlog approval |
+| Dispatch | Dependency-ready coding tasks on configured targets | Separate dispatch approval |
+| Monitor/revision | Inspect results, validate criteria, request changes | Exact feedback/revision actions; no automatic PR approval or merge |
+
+Scope approval does not start paid work. A generated artifact, a chat message,
+or a native resume is not human approval. The agent should clearly state when
+work is running versus when a form needs your input.
+
+Existing `feature-design`, `feature-plan`, `feature-backlog`, `feature-dispatch`,
+`feature-status`, `feature-continue`, and `feature-pr-iterate` commands all route
+to Software Factory. Design/planning/backlog/dispatch skills are entry points
+to the same tools, not instructions to manually launch specialist agents.
+
+Research/design/planning workers consume domain references and return structured
+data under a single read-only contract. Provider adapters perform mutations.
+No hook infers an active feature from the most recently updated JSON record.
+
+## Continuing work
+
+Use the stable feature and its recorded owning session/run. Say, for example,
+"Continue Broker throttling." Read current status before retrying a failure.
+An offline chat owner must reconnect; a dashboard must not create another owner.
+App discovery of dashboard-owned SDK sessions is still unverified. Shared
+registry visibility alone is not proof of app session attachment.
+
+## Upgrading from Feature Orchestrator
+
+Disable/uninstall any old `feature-orchestrator` plugin or
+`AzureAD.feature-orchestrator` VS Code extension and remove retained plugin-path
+or hook registrations in that client. Their tracked sources/registrations are
+retired; installed copies are not automatically removed by pulling this repo.
+The old setup script no longer installs or authenticates anything.
+
+Start a fresh chat/reload the integration to replace cached instructions.
+Preserve old feature JSON and design documents. Use explicit `preview_import`
+and `import_legacy` commands if you need historical records; imported approval
+text is not authority, and old runs are not automatically resumed.
+
+See [Software Factory](tools/software-factory/README.md) for command schemas,
+approval scopes, setup, recovery, storage, and remaining platform limitations.

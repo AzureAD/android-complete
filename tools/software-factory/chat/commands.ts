@@ -55,7 +55,7 @@ export function createCommands(application: () => Application, host: () => Comma
         },
     }, ...["feature-design", "feature-plan", "feature-backlog", "feature-dispatch", "feature-status", "feature-continue", "feature-pr-iterate"].map((name): CommandDefinition => ({
         name,
-        description: `Software Factory compatibility entry point: ${name}. Uses shared commands and native workflows, never legacy state writers.`,
+        description: `Software Factory feature action: ${name}. Uses shared commands and native workflows, never legacy state writers.`,
         handler: async (context) => {
             if (context.sessionId !== host().sessionId) throw new FactoryError("wrong_session", "Command belongs to another session.", 403);
             await host().send({

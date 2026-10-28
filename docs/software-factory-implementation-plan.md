@@ -151,16 +151,23 @@ on a separately authorized resume; historical usage and approvals are preserved.
 
 The previous feature-orchestrator research inspected a different branch. Its finding that no Dynamic Workflow implementation was present does not describe this new default-branch baseline.
 
-### Existing components to reuse or replace
+### Existing components and retirement outcome
+
+**User-directed consolidation (2026-10-28):** Software Factory replaces Feature
+Orchestrator. Remove the old plugin/VS Code registrations, mutation agents,
+global-state hooks and setup workflow. User-facing feature skills route to
+Factory; workers read domain references with a single schema-bound read-only
+contract, not mode-switching skills. Preserve historical user files and explicit
+import. Installed copies and cached chats require user-side removal/reload.
 
 | Component | Current responsibility | Planned treatment |
 |---|---|---|
-| [Workspace orchestrator agent](../.github/agents/feature-orchestrator.agent.md) | Prompt-driven phase selection and context handoffs | Preserve conversational entry points; route them through shared commands and workflows rather than a separate prompt-driven execution path. |
-| [Reusable agent plugin](../feature-orchestrator-plugin/README.md) | Project configuration, specialist agents, dispatch skills | Reuse policies and agents; consolidate duplicated contracts after migration. |
+| [Software Factory agent](../.github/agents/software-factory.agent.md) | Shared feature entry point | Replaces the removed root orchestrator agent; feature commands/skills route here. |
+| [Retired agent plugin](../feature-orchestrator-plugin/README.md) | Former duplicated agents, skills, commands and hooks | Removed registration and executable paths; migration notice only. |
 | `DevDesignDoc` / `design-feature` | Guarded, evidence-backed design generation | Reuse its design algorithm and preserve its standalone contract. |
-| [Workspace state CLI](../.github/hooks/state-utils.js) and [plugin state CLI](../feature-orchestrator-plugin/hooks/state-utils.js) | Feature JSON and artifact tracking | Import through an explicit migration; do not retain competing writers for migrated features. |
-| [Subagent stop hook](../.github/hooks/subagent-stop.js) | Advances the most recently updated active feature | Do not use this inference for new workflow-owned executions. |
-| [VS Code extension](../extensions/feature-orchestrator/README.md) | Dashboard, review comments, manual artifacts | Reuse UX concepts, not editor-specific command wiring. |
+| Removed workspace/plugin state CLIs | Former JSON artifact tracking | Preserve user JSON and explicit import, not competing writers. |
+| Removed subagent start/stop hooks | Inferred the most recently updated active feature | No automatic context injection or phase advancement. |
+| [Retired VS Code extension](../extensions/feature-orchestrator/README.md) | Former dashboard, review comments, manual artifacts | Removed source/package registration; migration notice only. |
 | Personal operational dashboards | Durable requests, background workers, structured findings, explicit human actions | Reuse architectural lessons, not private data, machine-specific configuration, or wholesale copies. |
 
 Existing migration hazards include two state directories, `artifacts.design` versus `artifacts.designSpec`, and inconsistent completion rules. The new registry must handle these explicitly instead of making another incompatible variant.
@@ -838,11 +845,11 @@ Before implementation beyond M0, settle both chat-host integrations, the support
 - [Copilot app canvas extensions](https://docs.github.com/en/copilot/how-tos/github-copilot-app/working-with-canvas-extensions)
 - [SDK workflow authoring documentation](https://github.com/github/copilot-sdk/blob/main/nodejs/docs/workflows.md); verify against the installed preview runtime during M0.
 - [Current guarded design workflow and constraints](../.github/extensions/DevDesignDoc/README.md)
-- [Current orchestrator and context handoffs](../.github/agents/feature-orchestrator.agent.md)
-- [Current planning rules](../.github/skills/feature-planner/SKILL.md)
-- [Reusable plugin and provider dispatch policies](../feature-orchestrator-plugin/README.md)
-- [Legacy developer guide](../AI%20Driven%20Development%20Guide.md)
-- [Legacy VS Code extension](../extensions/feature-orchestrator/README.md)
+- [Software Factory entry point](../.github/agents/software-factory.agent.md)
+- [Planning domain standards](../.github/skills/feature-planner/references/planning-standards.md)
+- [Plugin retirement notice](../feature-orchestrator-plugin/README.md)
+- [Software Factory developer guide](../AI%20Driven%20Development%20Guide.md)
+- [VS Code extension retirement notice](../extensions/feature-orchestrator/README.md)
 - [Broker host migration guidance](broker-remote-migration.md)
 
 `icm-tracker` and `pr-reviewer` were inspected as local architectural precedents. Their private source, runtime data, machine paths, and internal Copilot synchronization code are deliberately not dependencies or copied artifacts in this plan.

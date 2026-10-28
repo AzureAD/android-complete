@@ -150,14 +150,23 @@ For complex investigation tasks, use these skills (read the skill file for detai
 
 This project uses Azure DevOps (`IdentityDivision/Engineering`). The **Azure DevOps MCP Server** is configured in `.vscode/mcp.json` for work item management. Always check to see if the Azure DevOps MCP server has a tool relevant to the user's request.
 
-### 13.1 AI-Driven Development Pipeline
-This project supports an AI-driven development workflow:
-1. **Design**: Use the `design-author` skill to create a detailed design spec in the `AuthLibrariesApiReview` ADO repo and open a PR for team review
-2. **Plan**: After design approval, use the `feature-planner` skill to decompose the approved design into repo-targeted PBIs. Developer reviews and approves the plan.
-3. **Backlog**: After plan approval, use the `pbi-creator` skill to discover ADO defaults (area path, iteration) and create work items in ADO with dependency links.
-4. **Dispatch**: Use the `pbi-dispatcher` skill or `scripts/agent-pipeline/orchestrate.py` to assign PBIs to GitHub Copilot coding agent
-5. **Implement**: Copilot coding agent creates PRs in the target repos (`msal`, `common`, `broker`, `adal`)
-6. **Review**: Use `@copilot` in PR comments for automated feedback iteration
+### 13.1 Software Factory
+Software Factory is the single feature-development lifecycle. Follow
+`.github/agents/software-factory.agent.md` and use the shared `software_factory_*`
+tools, local registry, and native Dynamic Workflows. Feature skills and prompt
+commands route to the same core; they do not coordinate phase agents themselves.
+
+1. Capture the brief, review/save criteria and engineering design tasks, and obtain exact scope approval.
+2. Separately authorize the native design workflow, then review its saved design and approval gate.
+3. Use the lifecycle workflow for planning and independent review. Plan, backlog, and dispatch have separate human gates.
+4. Let guarded provider adapters create/link work items and dispatch dependency-ready coding tasks with durable receipts.
+5. Monitor actual runs/PRs; post feedback only through the exact confirmed command.
+
+Workers use domain references and schema-bound read-only contracts, never the
+user-facing entry skills. Do not run mutation subagents, legacy state writers,
+the retired plugin/VS Code extension, or a parallel dispatch script for a Factory
+feature. Historical JSON requires explicit preview/import; it is not approval.
+ADO MCP remains appropriate for unrelated ADO tasks, not bypassing Factory gates.
 
 ### 13.2 Design Docs
 The `design-docs/` folder contains the `AuthLibrariesApiReview` ADO repo (cloned via `git droidSetup`). It holds ~150+ design specs for the Android Auth platform. **Designs may be outdated** — always verify against the current codebase. Use them as historical context and style reference.

@@ -1,13 +1,21 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import assert from "node:assert/strict";
-import { writeFileSync, symlinkSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import type { CopilotSession } from "@github/copilot-sdk";
-import { createReaderTools, readerAgent, readerAgents, readerToolNames } from "../runtime/reader.ts";
+import {
+    createReaderTools, FACTORY_DESIGN_AUTHOR, FACTORY_DESIGN_REVIEWER, FACTORY_PLANNER, FACTORY_RESEARCHER,
+    readerAgent, readerAgents, readerToolNames, runReader,
+} from "../runtime/reader.ts";
 import { blankState } from "../core/lifecycle-store.ts";
 import { actor, fixture, requirements } from "./helpers.ts";
+import { workerGuidance, workerGuidanceFiles } from "../runtime/guidance.ts";
+
+const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 test("workers get only scoped native read tools; host denial is never replaced with filesystem access", async () => {
     const f = fixture();
@@ -54,6 +62,122 @@ test("workers get only scoped native read tools; host denial is never replaced w
         await assert.rejects(() => read.handler(scope), /does not offer the native/);
         assert.equal(calls.length, 2);
     } finally { f.cleanup(); }
+});
+
+test("Factory planner uses its single structured contract without legacy file or handoff requirements", async () => {
+    let captured: { prompt: string; options: { agent?: string } } | undefined;
+    const ctx = { agent: async (prompt: string, options: { agent?: string }) => {
+        captured = { prompt, options };
+        return "planned";
+    } };
+    assert.equal(await runReader(ctx, "feature-id", "execution-id", "Produce the plan.", {
+        agent: "feature-planner", schema: { type: "object" },
+    }), "planned");
+    assert.equal(captured?.options.agent, FACTORY_PLANNER);
+    assert.match(captured!.prompt, /"featureId":"feature-id","executionId":"execution-id"/);
+    const plannerPrompt = readerAgents.find((candidate) => candidate.name === FACTORY_PLANNER)!.prompt!;
+    assert.match(plannerPrompt, /authoritative approved design, requirements, configuration and evidence/);
+    assert.match(plannerPrompt, /only JSON matching the supplied schema/);
+    assert.match(plannerPrompt, /Do not require a separate local design\/research artifact/);
+    assert.match(plannerPrompt, /Do not execute user-facing skills.*create work items, dispatch/);
+});
+
+test("Factory design roles load specialist guidance without granting workers mutation or approval", async () => {
+    const agentNames: string[] = [];
+    const ctx = { agent: async (_prompt: string, options: { agent?: string }) => {
+        agentNames.push(options.agent!);
+        return "result";
+    } };
+    for (const [label, expected] of [
+        ["Repository evidence", FACTORY_RESEARCHER],
+        ["Draft success criteria", FACTORY_RESEARCHER],
+        ["Design author", FACTORY_DESIGN_AUTHOR],
+        ["Design revision", FACTORY_DESIGN_AUTHOR],
+        ["Independent design reviewer", FACTORY_DESIGN_REVIEWER],
+    ]) {
+        await runReader(ctx, "feature-id", "execution-id", "Perform the role.", { label });
+        assert.equal(agentNames.at(-1), expected);
+    }
+    for (const name of [FACTORY_RESEARCHER, FACTORY_DESIGN_AUTHOR, FACTORY_DESIGN_REVIEWER]) {
+        const worker = readerAgents.find((candidate) => candidate.name === name)!;
+        assert.deepEqual(worker.tools, readerToolNames);
+        assert.match(worker.prompt!, /scoped (?:native|Factory)/);
+    }
+    assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_RESEARCHER)!.prompt!, /codebase-researcher\.agent\.md/);
+    assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_RESEARCHER)!.prompt!, /codebase-researcher\/references\/research-standards\.md/);
+    assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_DESIGN_AUTHOR)!.prompt!, /design-writer\.agent\.md/);
+    assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_DESIGN_AUTHOR)!.prompt!, /design-author\/references\/design-standards\.md/);
+    assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_DESIGN_REVIEWER)!.prompt!, /independent-review rubric/);
+});
+
+test("workers consume domain guidance, never phase-entry skills or mode-switching instructions", () => {
+    for (const [role, name] of [
+        ["research", FACTORY_RESEARCHER], ["design", FACTORY_DESIGN_AUTHOR],
+        ["review", FACTORY_DESIGN_REVIEWER], ["plan", FACTORY_PLANNER],
+    ] as const) {
+        const prompt = readerAgents.find((candidate) => candidate.name === name)!.prompt!;
+        for (const file of workerGuidance[role]) assert.ok(prompt.includes(file), `${name} must load ${file}`);
+        assert.doesNotMatch(prompt, /\/SKILL\.md|Factory mode|standalone mode/i);
+    }
+    for (const file of workerGuidanceFiles) {
+        assert.doesNotMatch(file, /\/SKILL\.md$/);
+        const content = readFileSync(path.join(repositoryRoot, file), "utf8");
+        assert.doesNotMatch(content, /Factory mode|standalone mode|askQuestion|state-utils|gh auth switch|software_factory_command/i, file);
+    }
+});
+
+test("feature entry skills route only to Factory and legacy registrations/writers stay retired", () => {
+    for (const name of ["design-author", "design-reviewer", "feature-planner", "pbi-creator", "pbi-dispatcher"]) {
+        const content = readFileSync(path.join(repositoryRoot, ".github", "skills", name, "SKILL.md"), "utf8");
+        assert.ok(content.includes(".github/agents/software-factory.agent.md"), name);
+        assert.doesNotMatch(content, /Factory mode|standalone mode|askQuestion|state-utils\.js|gh auth switch/i, name);
+    }
+    for (const file of [
+        ".github/agents/feature-orchestrator.agent.md", ".github/agents/pbi-creator.agent.md",
+        ".github/agents/agent-dispatcher.agent.md", ".github/hooks/orchestrator.json",
+        ".github/hooks/subagent-start.js", ".github/hooks/subagent-stop.js", ".github/hooks/state-utils.js",
+        "feature-orchestrator-plugin/.github/plugin/plugin.json", "feature-orchestrator-plugin/hooks/hooks.json",
+        "feature-orchestrator-plugin/hooks/state-utils.js", "extensions/feature-orchestrator/package.json",
+        "extensions/feature-orchestrator/src/extension.ts",
+        ".github/skills/feature-planner/references/dispatch-workflow.md",
+    ]) assert.equal(existsSync(path.join(repositoryRoot, file)), false, `${file} must not reactivate the old pipeline`);
+});
+
+test("every assigned domain guide changes the runtime fingerprint and a missing guide fails closed", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "factory-guidance-"));
+    try {
+        const appRoot = path.join(directory, "tools", "software-factory");
+        for (const name of ["core", "chat", "server", "runtime", "providers", "workflows"]) {
+            mkdirSync(path.join(appRoot, name), { recursive: true });
+        }
+        for (const file of [
+            "tools/software-factory/core/evidence.ts", "tools/software-factory/runtime/guidance.ts", ...workerGuidanceFiles,
+        ]) {
+            const target = path.join(directory, file);
+            mkdirSync(path.dirname(target), { recursive: true });
+            copyFileSync(path.join(repositoryRoot, file), target);
+        }
+        for (const file of [
+            "tools/software-factory/package-lock.json", "tools/software-factory/cli.ts",
+            ".github/extensions/DevDesignDoc/workflow.mjs", ".github/extensions/SoftwareFactory/extension.mjs",
+        ]) {
+            const target = path.join(directory, file);
+            mkdirSync(path.dirname(target), { recursive: true });
+            writeFileSync(target, "");
+        }
+        const { runtimeFingerprint } = await import(pathToFileURL(path.join(appRoot, "core", "evidence.ts")).href);
+        const initial = runtimeFingerprint();
+        for (const file of workerGuidanceFiles) {
+            const target = path.join(directory, file);
+            const original = readFileSync(target);
+            writeFileSync(target, Buffer.concat([original, Buffer.from("\nChanged guidance\n")]));
+            assert.notEqual(runtimeFingerprint(), initial, `${file} must invalidate stale execution authority`);
+            writeFileSync(target, original);
+            assert.equal(runtimeFingerprint(), initial);
+        }
+        rmSync(path.join(directory, workerGuidanceFiles[0]!));
+        assert.throws(() => runtimeFingerprint(), /ENOENT/);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("an uncertain native admission cannot automatically become another paid submission", () => {
