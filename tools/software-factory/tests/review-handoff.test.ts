@@ -42,9 +42,9 @@ test("full review returns an explicit next form; approving it yields the next re
         assert.equal(forms.length, 2);
         const field = forms[1]!.requestedSchema.properties.decision;
         assert.ok(field?.type === "string" && "oneOf" in field);
-        assert.equal(field.title, "How would you like to proceed?");
-        assert.equal(field.default, "not_now");
-        assert.deepEqual(field.oneOf.map((entry) => entry.const), ["not_now", "revise", "approve"]);
+        assert.equal(field.title, "Next step");
+        assert.equal(field.default, "approve");
+        assert.deepEqual(field.oneOf.map((entry) => entry.const), ["approve", "revise", "not_now"]);
         assert.equal(f.app.registry.get(feature.id).approvals[0]?.actor.reference, "decide-reviewed-scope");
         assert.equal(f.app.lifecycle.store.state(feature.id).executions.length, 0);
         const following = object(approved.nextAction, "Next protected checkpoint");

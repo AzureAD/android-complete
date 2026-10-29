@@ -162,8 +162,10 @@ export function describeDecision(app: Application, command: Record<string, unkno
 }
 
 export function decisionMessage(decision: DecisionPresentation, afterReview = false): string {
-    return [decision.title, `${decision.subject} / ${decision.context}`, "", decision.effect, "", decision.boundaries,
-        ...(decision.facts.length ? ["", ...decision.facts.map((fact) => `- ${fact}`)] : []),
-        "", afterReview ? "The full review is shown above. Waiting for your decision: approve, request changes where available, or decide later."
-            : "Review full details if needed, or choose your decision below."].join("\n");
+    return [
+        `${decision.title} — ${decision.subject} (${decision.context})`,
+        `${decision.effect} ${decision.boundaries}`.trim(),
+        ...(decision.facts.length ? ["", ...decision.facts.map((fact) => `• ${fact}`)] : []),
+        ...(afterReview ? ["", "Full details are shown above in chat."] : []),
+    ].join("\n");
 }

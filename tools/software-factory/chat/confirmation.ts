@@ -10,10 +10,10 @@ export async function requestDecision(ui: { confirm: SessionUiApi["confirm"]; el
         return await ui.confirm(`${decisionMessage(decision)}\n\nFull review\n${decision.review}`) ? "approve" : "not_now";
     }
     const choices = [
-        { const: "not_now", title: afterReview ? "Decide later - pause here" : "Not now - leave everything unchanged" },
+        { const: "approve", title: decision.approveLabel },
         ...(!afterReview ? [{ const: "review", title: "Review full details in chat" }] : []),
         ...(decision.canRequestChanges ? [{ const: "revise", title: "Request changes" }] : []),
-        { const: "approve", title: decision.approveLabel },
+        { const: "not_now", title: afterReview ? "Decide later - pause here" : "Not now - leave everything unchanged" },
     ];
     const response = await ui.elicitation({
         message: decisionMessage(decision, afterReview),
@@ -21,7 +21,7 @@ export async function requestDecision(ui: { confirm: SessionUiApi["confirm"]; el
             type: "object", required: ["decision"],
             properties: {
                 decision: {
-                    type: "string", title: afterReview ? "How would you like to proceed?" : "Your decision", default: "not_now",
+                    type: "string", title: afterReview ? "Next step" : "Action", default: "approve",
                     oneOf: choices,
                 },
             },

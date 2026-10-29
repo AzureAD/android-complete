@@ -74,8 +74,9 @@ test("scope confirmation is short and labeled; full requirements stay available 
         assert.ok(!prompt.message.includes("Scope hash") && !prompt.message.includes('"requirements"'));
         const decision = prompt.requestedSchema.properties.decision;
         assert.ok(decision && decision.type === "string" && "oneOf" in decision);
-        assert.equal(decision.title, "Your decision");
-        assert.equal(decision.default, "not_now");
+        assert.equal(decision.title, "Action");
+        assert.equal(decision.default, "approve");
+        assert.equal(decision.oneOf[0]?.const, "approve");
         assert.ok(decision.oneOf.some((option) => option.title === "Approve scope"));
         assert.ok(decision.oneOf.some((option) => option.title === "Review full details in chat"));
         assert.deepEqual(Object.keys(prompt.requestedSchema.properties), ["decision"]);
