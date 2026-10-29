@@ -528,12 +528,12 @@ test("customAgents enforce read-only reviewer permissions and workflow metadata 
     assert.deepEqual(evidenceWorker.tools, ["view", "glob", "grep", "skill"]);
     assert.ok(builder.tools.includes("edit") && builder.tools.includes("skill"));
     assert.ok(resolveRoleSkillGuides("evidence").includes(".github/skills/codebase-researcher/SKILL.md"));
-    assert.ok(resolveRoleSkillGuides("evidence").includes(".github/skills/code-author/SKILL.md"));
     assert.ok(resolveRoleSkillGuides("builder", [{ repository: "common" }]).includes(".github/skills/code-author/SKILL.md"));
     assert.ok(resolveRoleSkillGuides("builder", [{ repository: "common" }]).includes("common/.github/copilot-instructions.md"));
-    assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "common" }]).includes(".github/skills/code-author/references/implementation-standards.md"));
+    assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "common" }]).includes(".github/skills/code-author/SKILL.md"));
     assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "common" }]).includes("common/.github/skills/code-review/SKILL.md"));
     assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "broker" }]).includes("broker/.github/skills/code-review/SKILL.md"));
+    assert.equal(workflowDefinition.meta.limits.maxAiCredits, undefined);
     assert.equal(workflowDefinition.meta.name, "code-feature");
     assert.equal(formatPrTitle("Add cache", 12345), "Add cache, Fixes AB#12345");
     assert.equal(formatPrTitle("Add cache, Fixes AB#12345", 12345), "Add cache, Fixes AB#12345");

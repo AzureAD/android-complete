@@ -3,7 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const text = { type: "string" };
@@ -212,89 +212,52 @@ ${commonBoundaries}`;
 export const SKILL_GUIDES = Object.freeze({
     evidence: Object.freeze([
         ".github/skills/codebase-researcher/SKILL.md",
-        ".github/skills/codebase-researcher/references/search-patterns.md",
-        ".github/skills/code-author/SKILL.md",
-        ".github/skills/code-author/references/implementation-standards.md",
-        ".github/skills/feature-planner/SKILL.md",
-        ".github/skills/feature-planner/references/pbi-template.md",
     ]),
     builder: Object.freeze({
         common: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
-            ".github/copilot-instructions.md",
             "common/.github/copilot-instructions.md",
-            ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         broker: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
-            ".github/copilot-instructions.md",
             "broker/.github/copilot-instructions.md",
-            ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         msal: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
-            ".github/copilot-instructions.md",
             "msal/.github/copilot-instructions.md",
-            ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         adal: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
-            ".github/copilot-instructions.md",
             "adal/.github/copilot-instructions.md",
-            ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         default: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
             ".github/copilot-instructions.md",
-            ".github/skills/feature-planner/references/pbi-template.md",
         ]),
     }),
     reviewer: Object.freeze({
         common: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
             "common/.github/skills/code-review/SKILL.md",
-            "common/.github/skills/code-review/references/domain-context.md",
             "common/.github/skills/code-review/references/correctness-api-compatibility.md",
             "common/.github/skills/code-review/references/concurrency-threading.md",
             "common/.github/skills/code-review/references/security-privacy-crypto.md",
-            "common/.github/skills/code-review/references/performance-resources-dependencies.md",
-            "common/.github/skills/code-review/references/telemetry-observability.md",
-            "common/.github/skills/code-review/references/testing-documentation.md",
-            "common/.github/skills/code-review/references/comment-quality-severity.md",
             "common/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
         broker: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
             "broker/.github/skills/code-review/SKILL.md",
-            "broker/.github/skills/code-review/references/domain-context.md",
             "broker/.github/skills/code-review/references/correctness-api-ipc.md",
             "broker/.github/skills/code-review/references/concurrency-threading.md",
             "broker/.github/skills/code-review/references/security-privacy-crypto.md",
-            "broker/.github/skills/code-review/references/performance-resources-dependencies.md",
-            "broker/.github/skills/code-review/references/telemetry-observability.md",
-            "broker/.github/skills/code-review/references/testing-documentation.md",
-            "broker/.github/skills/code-review/references/comment-quality-severity.md",
             "broker/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
         default: Object.freeze([
             ".github/skills/code-author/SKILL.md",
-            ".github/skills/code-author/references/implementation-standards.md",
-            ".github/copilot-instructions.md",
             "common/.github/skills/code-review/SKILL.md",
             "common/.github/skills/code-review/references/correctness-api-compatibility.md",
             "common/.github/skills/code-review/references/concurrency-threading.md",
             "common/.github/skills/code-review/references/security-privacy-crypto.md",
-            "common/.github/skills/code-review/references/performance-resources-dependencies.md",
-            "common/.github/skills/code-review/references/telemetry-observability.md",
-            "common/.github/skills/code-review/references/testing-documentation.md",
-            "common/.github/skills/code-review/references/comment-quality-severity.md",
             "common/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
     }),
@@ -432,7 +395,42 @@ function normalizeTargetObject(target, fallbackRaw = {}, index = 0) {
     };
 }
 
+export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = defaultExec) {
+    if (!existsSync(workspaceRoot)) return [];
+    let mainCheckout = null;
+    try {
+        const commonGitDir = exec("git", ["rev-parse", "--git-common-dir"], { cwd: workspaceRoot });
+        if (nonempty(commonGitDir)) {
+            const resolvedGitDir = path.resolve(workspaceRoot, commonGitDir.trim());
+            if (path.basename(resolvedGitDir).toLowerCase() === ".git") {
+                const candidateMain = path.dirname(resolvedGitDir);
+                if (existsSync(candidateMain) && path.resolve(candidateMain) !== path.resolve(workspaceRoot)) {
+                    mainCheckout = candidateMain;
+                }
+            }
+        }
+    } catch {
+        // Not a git worktree or git unavailable; skip junction linking.
+    }
+    if (!mainCheckout) return [];
+    const linked = [];
+    for (const subrepo of ["common", "broker", "msal", "adal", "design-docs", "1ES-Pipelines"]) {
+        const dest = path.join(workspaceRoot, subrepo);
+        const src = path.join(mainCheckout, subrepo);
+        if (!existsSync(dest) && existsSync(src)) {
+            try {
+                symlinkSync(src, dest, "junction");
+                linked.push(subrepo);
+            } catch {
+                // Ignore if junction creation is unsupported or races.
+            }
+        }
+    }
+    return linked;
+}
+
 export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem } = {}) {
+    ensureSubrepoCheckouts(workspaceRoot, exec);
     if (typeof args === "string") {
         return { prompt: args };
     }
@@ -1575,7 +1573,6 @@ export const workflowDefinition = {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 9,
             timeoutSeconds: 3600,
-            maxAiCredits: 30,
         },
     },
     run: runCodeFeature,
