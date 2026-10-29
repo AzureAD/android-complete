@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { FactoryError, type Actor } from "../core/contracts.ts";
-import { jsonValue, type Execution, type ExecutionLimits, type Json, type WorkflowAdmission, type WorkflowKind } from "../core/lifecycle-contracts.ts";
+import { jsonValue, type DeliverySettings, type Execution, type ExecutionLimits, type Json, type WorkflowAdmission, type WorkflowKind } from "../core/lifecycle-contracts.ts";
 import type { Lifecycle } from "../core/lifecycle.ts";
 import { now } from "../core/lifecycle-store.ts";
 import { hash } from "../core/lifecycle-store.ts";
@@ -76,10 +76,10 @@ export class NativeRuntime {
     }
 
     async start(featureId: string, kind: WorkflowKind, actor: Actor, limits: ExecutionLimits = {},
-        admission?: WorkflowAdmission): Promise<Execution> {
+        admission?: WorkflowAdmission, delivery?: Partial<DeliverySettings>): Promise<Execution> {
         await this.shared?.pull(featureId);
         const execution = this.factory.begin(featureId, kind, actor, {}, limits, admission,
-            this.joined ? { sessionId: this.joined.sessionId, kind: "chat", established: true } : undefined);
+            this.joined ? { sessionId: this.joined.sessionId, kind: "chat", established: true } : undefined, delivery);
         if (this.shared && kind !== "check" && (kind !== "intake" || this.shared.cached(featureId))) await this.shared.claimRun(featureId, execution);
         this.launch(featureId, execution);
         return execution;
@@ -237,7 +237,8 @@ export class NativeRuntime {
         if (this.stopping) throw new FactoryError("runtime_stopping", "The host stopped before native workflow admission. No workflow was launched.", 409);
         this.factory.assertFresh(featureId, execution.id);
         const names: Record<WorkflowKind, string> = {
-            intake: "software-factory-intake", design: "software-factory-design", plan: "software-factory-plan", lifecycle: "software-factory-lifecycle",
+            intake: "software-factory-intake", design: "software-factory-design", plan: "software-factory-plan",
+            implement: "software-factory-implement", lifecycle: "software-factory-lifecycle",
             monitor: "software-factory-monitor", check: "software-factory-check",
         };
         await this.registration(featureId, execution, session);

@@ -150,9 +150,10 @@ human provenance, start unapproved paid work, or create remote artifacts.
   approval metadata, or a quoted conversation as proof of approval.
 - Use `software_factory_preview` and `software_factory_command` for the complete
   domain command surface; inspect `software_factory_get_gates` and configuration.
-- Start `intake`, `design`, `plan`, or `monitor` with `start_workflow` only when the user
+- Start `intake`, `design`, `plan`, `implement`, or `monitor` with `start_workflow` only when the user
   authorizes the displayed paid execution. Requirements approval itself does not
   start a workflow or authorize remote writes.
+- Stage 3 coding defaults to `local` mode (`mode: "local"`, `maxReviewRounds: 3`, configurable down to `2` or `1..10`), where the local builder agent (`software-factory-coder`) implements the PBI in the target repository's `localPath`, an independent AI code reviewer (`software-factory-code-reviewer`) reviews the diff in a separate agent session and sends findings back to the builder for up to `maxReviewRounds` rounds, and once the reviewer passes, Factory commits, pushes a branch, and opens a PR. `remote` mode (`mode: "remote"`) dispatches to GitHub/GHE/ADO coding agents and runs the same multi-round independent reviewer loop against the remote PR.
 - Software Factory has no default AI-credit cap. Do not invent a ceiling;
   include one only if the user requested it. Usage remains metered. An explicit
   `maxAiCredits: null` can clear a ceiling on a separately confirmed resume;

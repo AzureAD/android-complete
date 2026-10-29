@@ -7,8 +7,8 @@ import test from "node:test";
 import { Application } from "../core/application.ts";
 import { FactoryError, object } from "../core/contracts.ts";
 import { parsePlan, type Configuration, type Execution, type Json, type Plan, type PlannedItem, type PullRequest, type RepositoryTarget, type WorkItem } from "../core/lifecycle-contracts.ts";
-import type { Provider } from "../providers/provider.ts";
-import { designRun, designWorkflow, intakeWorkflow, planRun, planWorkflow, monitorRun, monitorWorkflow, type FactoryContext } from "../workflows/lifecycle.ts";
+import type { LocalImplementationInput, Provider } from "../providers/provider.ts";
+import { designRun, designWorkflow, implementRun, implementWorkflow, intakeWorkflow, planRun, planWorkflow, monitorRun, monitorWorkflow, type FactoryContext } from "../workflows/lifecycle.ts";
 import { rubric, sections, workflowDefinition as standaloneDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
 import { actor, fixture, requirements } from "./helpers.ts";
 
@@ -27,7 +27,7 @@ const plan = (): Plan => ({
 });
 
 test("Factory declares no AI-credit cap while preserving independent design bounds", () => {
-    for (const workflow of [intakeWorkflow, designWorkflow, planWorkflow, monitorWorkflow]) {
+    for (const workflow of [intakeWorkflow, designWorkflow, planWorkflow, implementWorkflow, monitorWorkflow]) {
         assert.equal(workflow.meta.limits?.maxAiCredits, undefined, workflow.meta.name);
     }
     assert.deepEqual(designWorkflow.meta.limits, {
@@ -41,12 +41,15 @@ test("Factory declares no AI-credit cap while preserving independent design boun
 class FakeProvider implements Provider {
     items = new Map<string, WorkItem>();
     dispatches = new Map<string, Json>();
+    localPublications = new Map<string, LocalImplementationInput>();
     prs = new Map<string, PullRequest>();
     creations = 0;
     sends = 0;
+    localPublishes = 0;
     comments = 0;
     failAfterCreate = false;
     afterCreate?: () => void;
+    onFeedbackPosted?: (repo: RepositoryTarget, number: number, body: string) => void;
     async findWorkItem(_config: Configuration, marker: string) { return this.items.get(marker) || null; }
     async createWorkItem(_config: Configuration, item: PlannedItem, marker: string) {
         const result: WorkItem = { key: item.id, adoId: 1000 + ++this.creations, title: item.title, repository: item.repository, url: `https://dev.azure.com/example/Engineering/_workitems/edit/${1000 + this.creations}`, status: "Committed" };
@@ -67,6 +70,21 @@ class FakeProvider implements Provider {
         });
         return result;
     }
+    async publishLocal(_config: Configuration, item: PlannedItem, workItem: WorkItem, marker: string, implementation: LocalImplementationInput) {
+        this.localPublishes++;
+        this.localPublications.set(item.id, implementation);
+        const result = {
+            submitted: true, mode: "local", marker, itemId: item.id,
+            branch: implementation.branch, prNumber: workItem.adoId,
+            roundsCompleted: implementation.roundsCompleted, maxRounds: implementation.maxRounds,
+        };
+        this.dispatches.set(marker, result);
+        this.prs.set(item.id, {
+            key: item.id, repository: "example/common", number: workItem.adoId, url: `https://github.com/example/common/pull/${workItem.adoId}`,
+            status: "open", head: `local-sha-${item.id}-r${implementation.roundsCompleted}`, title: item.title, checks: "passing", baseBranch: "dev", workItemIds: [workItem.adoId],
+        });
+        return result;
+    }
     async findDispatch(_config: Configuration, _item: PlannedItem, _workItem: WorkItem, marker: string) { return this.dispatches.get(marker) || null; }
     async inspectPr(_repo: unknown, number: number) {
         const pr = [...this.prs.values()].find((item) => item.number === number);
@@ -77,7 +95,11 @@ class FakeProvider implements Provider {
     async diff() { return "Verified implementation and tests for the exact acceptance criterion."; }
     async preflight() { return { verified: true }; }
     async findFeedback(_repo: RepositoryTarget, _number: number, _marker: string): Promise<Json | null> { return null; }
-    async postFeedback() { this.comments++; return { posted: true, commentId: this.comments }; }
+    async postFeedback(repo: RepositoryTarget, number: number, body: string) {
+        this.comments++;
+        this.onFeedbackPosted?.(repo, number, body);
+        return { posted: true, commentId: this.comments };
+    }
     async markDispatched(_config: Configuration, item: WorkItem) { return { adoId: item.adoId, state: "Active", tagged: true }; }
     async review() { return { comments: [] }; }
 }
@@ -373,4 +395,233 @@ test("uncertain feedback reconciles its original target after canonical PR and c
         assert.equal(provider.comments, 1, "reconciliation only reads the original target");
         assert.equal(app.lifecycle.store.state(feature.id).operations.find((entry) => entry.key === operation.key)?.status, "completed");
     } finally { app.close(); f.cleanup(); }
+});
+
+test("Stage 3 defaults to local coding mode and runs the multi-round builder <-> independent reviewer loop before publishing a PR", async () => {
+    const f = fixture();
+    const provider = new FakeProvider();
+    const app = new Application({ ...f.options, provider });
+    const oldHome = process.env.SOFTWARE_FACTORY_HOME;
+    const oldWorkspace = process.env.SOFTWARE_FACTORY_WORKSPACE;
+    process.env.SOFTWARE_FACTORY_HOME = f.directory;
+    process.env.SOFTWARE_FACTORY_WORKSPACE = f.workspace;
+    try {
+        app.lifecycle.configure(config(), actor);
+        const feature = app.execute({ kind: "create_feature", requestId: "local-loop", input: requirements() }, actor);
+        app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor, { granted: true, revisionId: feature.current.id, actor });
+        const design = app.lifecycle.store.artifact(feature.id, "design", feature.current.id, { recommendation: "GO to Planning" });
+        approve(app, feature.id, "design");
+        const singleItemPlan: Plan = {
+            summary: "Implement A locally.",
+            items: [plan().items[0]!],
+            blockingUnknowns: [],
+        };
+        app.lifecycle.store.artifact(feature.id, "plan", feature.current.id, singleItemPlan, design.id);
+        approve(app, feature.id, "plan");
+        approve(app, feature.id, "backlog");
+        await app.lifecycle.backlog(feature.id);
+
+        const dispatchGate = app.lifecycle.gate(feature.id, "dispatch");
+        const dispatchScope = object(dispatchGate.scope, "Dispatch scope");
+        assert.deepEqual(dispatchScope.delivery, { mode: "local", maxReviewRounds: 3 }, "local coding mode with 3 review rounds must be the default");
+        approve(app, feature.id, "dispatch");
+        const preparedDispatch = app.prepare({ kind: "dispatch_work", featureId: feature.id });
+        assert.deepEqual(object(preparedDispatch.scope, "Prepared dispatch_work scope").delivery, { mode: "local", maxReviewRounds: 3 });
+
+        const implementExec = app.lifecycle.begin(feature.id, "implement", actor);
+        assert.deepEqual(implementExec.delivery, { mode: "local", maxReviewRounds: 3 });
+        const h = harness(app, implementExec);
+        const baseAgent = h.context.agent;
+        h.context.agent = async (prompt, options) => {
+            const label = options?.label || "";
+            h.labels.push(label);
+            if (label === "Factory:coder:A:round-1") {
+                return {
+                    summary: "Initial implementation of A.",
+                    files: [{ path: "A.kt", action: "write", content: "class A { fun call() = \"v1\" }\n" }],
+                    testsAddedOrUpdated: ["ATest.kt"],
+                    blockingUnknowns: [],
+                };
+            }
+            if (label === "Factory:code-reviewer:A:round-1") {
+                assert.match(prompt, /\+class A \{ fun call\(\) = \\"v1\\" \}/, "independent reviewer must receive the actual diff from round 1");
+                return {
+                    pass: false,
+                    summary: "Missing null-safety guard for legacy response shape.",
+                    criteria: [{ criterion: "A preserves the response contract.", status: "partial", evidence: "A.kt omits null-check on legacy field." }],
+                    findings: [{
+                        id: "F1", severity: "major", category: "compatibility",
+                        file: "A.kt", location: "A.call",
+                        evidence: "Null legacy field causes NPE.",
+                        requiredChange: "Preserve null-safe response shape in A.call.",
+                    }],
+                };
+            }
+            if (label === "Factory:coder:A:round-2") {
+                assert.match(prompt, /Preserve null-safe response shape in A\.call/, "builder round 2 must receive reviewer findings from round 1");
+                return {
+                    summary: "Fixed null-safety guard in A.kt per independent reviewer.",
+                    files: [{ path: "A.kt", action: "write", content: "class A { fun call(input: String?) = input ?: \"default\" }\n" }],
+                    testsAddedOrUpdated: ["ATest.kt"],
+                    blockingUnknowns: [],
+                };
+            }
+            if (label === "Factory:code-reviewer:A:round-2") {
+                assert.match(prompt, /input \?: \\"default\\"/, "independent reviewer round 2 must inspect the updated diff");
+                return {
+                    pass: true,
+                    summary: "All findings resolved and compatibility contract verified.",
+                    criteria: [{ criterion: "A preserves the response contract.", status: "addressed", evidence: "A.kt handles null inputs safely." }],
+                    findings: [],
+                };
+            }
+            return baseAgent(prompt, options);
+        };
+
+        const result = object(await finished(app, feature.id, implementExec, () => implementRun(h.context, { provider })), "Implement result");
+        assert.equal(result.outcome, "implementation_reviewed");
+        assert.equal(result.mode, "local");
+        assert.equal(result.maxRounds, 3);
+        assert.equal(provider.localPublishes, 1, "local mode must publish the branch and open a PR after reviewer passes");
+        assert.equal(provider.sends, 0, "local mode must not invoke remote coding-agent dispatch");
+        assert.equal(provider.localPublications.get("A")?.roundsCompleted, 2);
+        assert.equal(readFileSync(`${f.workspace}/A.kt`, "utf8"), "class A { fun call(input: String?) = input ?: \"default\" }\n");
+    } finally {
+        if (oldHome === undefined) delete process.env.SOFTWARE_FACTORY_HOME; else process.env.SOFTWARE_FACTORY_HOME = oldHome;
+        if (oldWorkspace === undefined) delete process.env.SOFTWARE_FACTORY_WORKSPACE; else process.env.SOFTWARE_FACTORY_WORKSPACE = oldWorkspace;
+        app.close(); f.cleanup();
+    }
+});
+
+test("Stage 3 configurable 2-round limit fails closed and restores local files when findings remain unresolved", async () => {
+    const f = fixture();
+    const provider = new FakeProvider();
+    const app = new Application({ ...f.options, provider });
+    const oldHome = process.env.SOFTWARE_FACTORY_HOME;
+    const oldWorkspace = process.env.SOFTWARE_FACTORY_WORKSPACE;
+    process.env.SOFTWARE_FACTORY_HOME = f.directory;
+    process.env.SOFTWARE_FACTORY_WORKSPACE = f.workspace;
+    try {
+        writeFileSync(`${f.workspace}/A.kt`, "// original baseline\n", "utf8");
+        app.lifecycle.configure({ ...config(), delivery: { mode: "local", maxReviewRounds: 2 } }, actor);
+        const feature = app.execute({ kind: "create_feature", requestId: "two-round-cap", input: requirements() }, actor);
+        app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor, { granted: true, revisionId: feature.current.id, actor });
+        const design = app.lifecycle.store.artifact(feature.id, "design", feature.current.id, { recommendation: "GO to Planning" });
+        approve(app, feature.id, "design");
+        app.lifecycle.store.artifact(feature.id, "plan", feature.current.id, { summary: "Implement A.", items: [plan().items[0]!], blockingUnknowns: [] }, design.id);
+        approve(app, feature.id, "plan");
+        approve(app, feature.id, "backlog");
+        await app.lifecycle.backlog(feature.id);
+        approve(app, feature.id, "dispatch");
+
+        const implementExec = app.lifecycle.begin(feature.id, "implement", actor, {}, {}, undefined, undefined, { mode: "local", maxReviewRounds: 2 });
+        const h = harness(app, implementExec);
+        h.context.agent = async (_prompt, options) => {
+            const label = options?.label || "";
+            if (label.startsWith("Factory:coder:A:")) {
+                return {
+                    summary: "Attempted implementation.",
+                    files: [{ path: "A.kt", action: "write", content: "// incomplete implementation\n" }],
+                    testsAddedOrUpdated: ["ATest.kt"],
+                    blockingUnknowns: [],
+                };
+            }
+            if (label.startsWith("Factory:code-reviewer:A:")) {
+                return {
+                    pass: false,
+                    summary: "Still missing required regression test.",
+                    criteria: [{ criterion: "A preserves the response contract.", status: "partial", evidence: "Regression test is missing." }],
+                    findings: [{
+                        id: "F-TEST", severity: "blocker", category: "tests",
+                        file: "ATest.kt", location: "suite",
+                        evidence: "No assertion for legacy error code.",
+                        requiredChange: "Add legacy error code assertion.",
+                    }],
+                };
+            }
+            throw new Error(`Unexpected label: ${label}`);
+        };
+
+        await assert.rejects(() => implementRun(h.context, { provider }),
+            (error: unknown) => error instanceof FactoryError && error.code === "implementation_review_no_go");
+        assert.equal(provider.localPublishes, 0, "NO-GO must never push a branch or open a PR");
+        assert.equal(readFileSync(`${f.workspace}/A.kt`, "utf8"), "// original baseline\n", "failed local loop must restore original working tree file");
+        const attempt = app.lifecycle.store.latest(feature.id, "implementation_attempt");
+        assert.ok(attempt);
+        assert.equal(object(attempt.content, "Attempt").recommendation, "NO-GO");
+        assert.equal(object(attempt.content, "Attempt").maxRounds, 2);
+        assert.equal(object(attempt.content, "Attempt").roundsCompleted, 2);
+    } finally {
+        if (oldHome === undefined) delete process.env.SOFTWARE_FACTORY_HOME; else process.env.SOFTWARE_FACTORY_HOME = oldHome;
+        if (oldWorkspace === undefined) delete process.env.SOFTWARE_FACTORY_WORKSPACE; else process.env.SOFTWARE_FACTORY_WORKSPACE = oldWorkspace;
+        app.close(); f.cleanup();
+    }
+});
+
+test("Stage 3 remote PR mode runs the independent reviewer loop and posts feedback to the remote builder across rounds", async () => {
+    const f = fixture();
+    const provider = new FakeProvider();
+    const app = new Application({ ...f.options, provider });
+    const oldHome = process.env.SOFTWARE_FACTORY_HOME;
+    const oldWorkspace = process.env.SOFTWARE_FACTORY_WORKSPACE;
+    process.env.SOFTWARE_FACTORY_HOME = f.directory;
+    process.env.SOFTWARE_FACTORY_WORKSPACE = f.workspace;
+    try {
+        app.lifecycle.configure({ ...config(), delivery: { mode: "remote", maxReviewRounds: 3 } }, actor);
+        const feature = app.execute({ kind: "create_feature", requestId: "remote-loop", input: requirements() }, actor);
+        app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor, { granted: true, revisionId: feature.current.id, actor });
+        const design = app.lifecycle.store.artifact(feature.id, "design", feature.current.id, { recommendation: "GO to Planning" });
+        approve(app, feature.id, "design");
+        app.lifecycle.store.artifact(feature.id, "plan", feature.current.id, { summary: "Implement A remotely.", items: [plan().items[0]!], blockingUnknowns: [] }, design.id);
+        approve(app, feature.id, "plan");
+        approve(app, feature.id, "backlog");
+        await app.lifecycle.backlog(feature.id);
+        approve(app, feature.id, "dispatch");
+
+        provider.onFeedbackPosted = () => {
+            const pr = provider.prs.get("A");
+            if (pr) pr.head = "sha-A-round-2";
+        };
+
+        const implementExec = app.lifecycle.begin(feature.id, "implement", actor, {}, {}, undefined, undefined, { mode: "remote", maxReviewRounds: 3 });
+        const h = harness(app, implementExec);
+        h.context.agent = async (_prompt, options) => {
+            const label = options?.label || "";
+            if (label === "Factory:code-reviewer:A:round-1") {
+                return {
+                    pass: false,
+                    summary: "Remote PR needs thread-safety fix.",
+                    criteria: [{ criterion: "A preserves the response contract.", status: "partial", evidence: "Shared map is unsynchronized." }],
+                    findings: [{
+                        id: "F-SYNC", severity: "major", category: "concurrency",
+                        file: "A.kt", location: "cache",
+                        evidence: "HashMap mutated concurrently.",
+                        requiredChange: "Use ConcurrentHashMap.",
+                    }],
+                };
+            }
+            if (label === "Factory:code-reviewer:A:round-2") {
+                return {
+                    pass: true,
+                    summary: "Remote PR fixed concurrency issue.",
+                    criteria: [{ criterion: "A preserves the response contract.", status: "addressed", evidence: "ConcurrentHashMap used and tested." }],
+                    findings: [],
+                };
+            }
+            throw new Error(`Unexpected label: ${label}`);
+        };
+
+        const result = object(await finished(app, feature.id, implementExec, () => implementRun(h.context, { provider })), "Remote implement result");
+        assert.equal(result.outcome, "implementation_reviewed");
+        assert.equal(result.mode, "remote");
+        assert.equal(provider.sends, 1, "remote mode must dispatch to the remote coding agent once");
+        assert.equal(provider.comments, 1, "remote mode must post round-1 reviewer findings back to the PR");
+        const items = result.items as Record<string, unknown>[];
+        assert.equal(items[0]?.status, "review_passed");
+        assert.equal(items[0]?.roundsCompleted, 2);
+    } finally {
+        if (oldHome === undefined) delete process.env.SOFTWARE_FACTORY_HOME; else process.env.SOFTWARE_FACTORY_HOME = oldHome;
+        if (oldWorkspace === undefined) delete process.env.SOFTWARE_FACTORY_WORKSPACE; else process.env.SOFTWARE_FACTORY_WORKSPACE = oldWorkspace;
+        app.close(); f.cleanup();
+    }
 });

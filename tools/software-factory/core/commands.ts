@@ -5,7 +5,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync, mkdirSync } from
 import path from "node:path";
 import type { Application } from "./application.ts";
 import { exactKeys, FactoryError, MAX_COMMAND_BYTES, object, parseCommand, parseRequirements, text, validateActor, type Actor, type Consent } from "./contracts.ts";
-import { jsonValue, parseConfiguration, parseMonitor, type ExecutionLimits, type Json, type Stage, type WorkflowKind } from "./lifecycle-contracts.ts";
+import { deliverySettings, jsonValue, parseConfiguration, parseMonitor, type ExecutionLimits, type Json, type Stage, type WorkflowKind } from "./lifecycle-contracts.ts";
 import { hash, now } from "./lifecycle-store.ts";
 import { createBackup, inspectBackup, restoreClone } from "./backups.ts";
 import { runtimeFingerprint } from "./evidence.ts";
@@ -180,13 +180,22 @@ export function prepare(app: Application, input: unknown): PreparedCommand {
             text(command.itemId, "Planned work item key");
             break;
         case "start_workflow": {
-            exactKeys(command, ["kind", "featureId", "workflow", "limits"], "Command");
-            if (!["intake", "design", "plan", "monitor"].includes(String(command.workflow))) throw new FactoryError("invalid_workflow", "Choose intake, design, plan, or monitor. Multi-stage lifecycle runs are retired.");
+            exactKeys(command, ["kind", "featureId", "workflow", "limits", "mode", "maxReviewRounds"], "Command");
+            if (!["intake", "design", "plan", "implement", "monitor"].includes(String(command.workflow))) throw new FactoryError("invalid_workflow", "Choose intake, design, plan, implement, or monitor. Multi-stage lifecycle runs are retired.");
             const feature = app.registry.get(text(command.featureId, "Feature ID"));
             if (command.workflow !== "intake" && feature.status !== "ready_for_design") throw new FactoryError("approval_required", "Review and approve success criteria before starting design or delivery.", 409);
+            if (command.workflow === "implement") app.lifecycle.requireDispatchDecision(feature.id);
+            const hasDeliveryOptions = command.workflow === "implement" || command.mode !== undefined || command.maxReviewRounds !== undefined;
+            if (hasDeliveryOptions && !["implement", "monitor"].includes(String(command.workflow))) {
+                throw new FactoryError("invalid_input", "Coding mode and maxReviewRounds apply only to implement or monitor workflows.");
+            }
+            const delivery = hasDeliveryOptions
+                ? deliverySettings(app.lifecycle.store.configuration()?.value, { mode: command.mode, maxReviewRounds: command.maxReviewRounds })
+                : undefined;
             const requestedLimits = limits(command.limits);
             scope = { action: "Start native Dynamic Workflow; this may consume AI credits", featureId: feature.id, requirementsRevision: feature.current.id,
                 ...(command.workflow === "intake" ? { brief: jsonValue(feature.current), effect: "Propose draft success criteria and open questions only. Do not edit or approve the brief, start design, or create remote work." } : {}),
+                ...(delivery ? { delivery: jsonValue(delivery) } : {}),
                 configurationId: app.lifecycle.store.configuration()?.id || null, workflow: String(command.workflow),
                 userRequestedLimits: jsonValue(requestedLimits), effectiveAiCreditLimit: requestedLimits.maxAiCredits ?? null,
                 executionOwner: app.executionOwner(feature.id) };
@@ -200,11 +209,31 @@ export function prepare(app: Application, input: unknown): PreparedCommand {
             limits(command.limits);
             scope = jsonValue(command); confirm = command.action !== "refresh";
             break;
-        case "create_backlog": case "dispatch_work": {
+        case "create_backlog": {
             exactKeys(command, ["kind", "featureId"], "Command");
-            const preview = app.lifecycle.gate(text(command.featureId, "Feature ID"), command.kind === "create_backlog" ? "backlog" : "dispatch");
+            const preview = app.lifecycle.gate(text(command.featureId, "Feature ID"), "backlog");
             if (!preview.ready || !preview.approved) throw new FactoryError("approval_required", "Approve the exact current operation scope first.", 409);
             scope = { command: jsonValue(command), gate: jsonValue(preview) };
+            confirm = true;
+            break;
+        }
+        case "dispatch_work": {
+            exactKeys(command, ["kind", "featureId", "mode", "maxReviewRounds", "limits"], "Command");
+            const featureId = text(command.featureId, "Feature ID");
+            const preview = app.lifecycle.gate(featureId, "dispatch");
+            if (!preview.ready || !preview.approved) throw new FactoryError("approval_required", "Approve the exact current operation scope first.", 409);
+            const delivery = deliverySettings(app.lifecycle.store.configuration()?.value, { mode: command.mode, maxReviewRounds: command.maxReviewRounds });
+            const requestedLimits = limits(command.limits);
+            scope = {
+                command: jsonValue(command),
+                gate: jsonValue(preview),
+                delivery: jsonValue(delivery),
+                ...(delivery.mode === "local" ? {
+                    executionOwner: app.executionOwner(featureId),
+                    userRequestedLimits: jsonValue(requestedLimits),
+                    effectiveAiCreditLimit: requestedLimits.maxAiCredits ?? null,
+                } : {}),
+            };
             confirm = true;
             break;
         }
@@ -371,7 +400,10 @@ export async function dispatch(app: Application, input: unknown, actor: Actor, c
                 configurationId: scope.configurationId === null ? null : text(scope.configurationId, "Approved execution configuration"),
                 sessionOwner: { sessionId: owner.sessionId === null ? null : text(owner.sessionId, "Owning session"),
                     kind: owner.kind === "chat" ? "chat" as const : "owned" as const } };
-            const execution = await app.startWorkflow(id(), command.workflow as WorkflowKind, actor, limits(command.limits), admission);
+            const delivery = scope.delivery !== undefined
+                ? deliverySettings(app.lifecycle.store.configuration()?.value, object(scope.delivery, "Delivery settings"))
+                : undefined;
+            const execution = await app.startWorkflow(id(), command.workflow as WorkflowKind, actor, limits(command.limits), admission, delivery);
             return { execution: jsonValue(execution), feature: jsonValue(app.lifecycle.store.view(id())),
                 outcome: execution.status === "error" ? "workflow_failed" : "workflow_requested" };
         }
@@ -380,9 +412,34 @@ export async function dispatch(app: Application, input: unknown, actor: Actor, c
                 command.action as "pause" | "resume" | "cancel" | "refresh", actor, limits(command.limits)) };
         case "create_backlog":
             return { receipt: await app.lifecycle.backlog(id()), feature: jsonValue(app.lifecycle.store.view(id())) };
-        case "dispatch_work":
+        case "dispatch_work": {
+            const scope = object(prepared.scope, "Dispatch execution scope");
+            const delivery = deliverySettings(app.lifecycle.store.configuration()?.value, object(scope.delivery, "Delivery settings"));
+            if (delivery.mode === "local") {
+                const owner = object(scope.executionOwner, "Execution owner");
+                const feature = app.registry.get(id());
+                const admission = {
+                    requirementsRevision: feature.current.id,
+                    configurationId: app.lifecycle.store.configuration()?.id || null,
+                    sessionOwner: {
+                        sessionId: owner.sessionId === null ? null : text(owner.sessionId, "Owning session"),
+                        kind: owner.kind === "chat" ? "chat" as const : "owned" as const,
+                    },
+                };
+                const execution = await app.startWorkflow(id(), "implement", actor, limits(command.limits), admission, delivery);
+                return {
+                    mode: "local", maxReviewRounds: delivery.maxReviewRounds,
+                    execution: jsonValue(execution), feature: jsonValue(app.lifecycle.store.view(id())),
+                    outcome: execution.status === "error" ? "workflow_failed" : "workflow_requested",
+                };
+            }
             await app.lifecycle.repairDispatchStatus(id());
-            return { receipts: await app.lifecycle.dispatch(id()), feature: jsonValue(app.lifecycle.store.view(id())) };
+            return {
+                mode: "remote", maxReviewRounds: delivery.maxReviewRounds,
+                receipts: await app.lifecycle.dispatch(id()),
+                feature: jsonValue(app.lifecycle.store.view(id())),
+            };
+        }
         case "reconcile_operation":
             return { receipt: await app.lifecycle.reconcile(id(), text(command.operationKey, "Operation key")), feature: jsonValue(app.lifecycle.store.view(id())) };
         case "confirm_operation_not_sent":

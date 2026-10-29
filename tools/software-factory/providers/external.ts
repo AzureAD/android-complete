@@ -1,9 +1,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { FactoryError, object, text } from "../core/contracts.ts";
 import { jsonValue, type Configuration, type Json, type PlannedItem, type PullRequest, type RepositoryTarget, type WorkItem } from "../core/lifecycle-contracts.ts";
-import type { Provider } from "./provider.ts";
+import type { LocalImplementationInput, Provider } from "./provider.ts";
 import { systemRunner, type CommandRunner } from "./cli.ts";
+
+const defaultWorkspaceRoot = () => fileURLToPath(new URL("../../../", import.meta.url));
 
 const escapeHtml = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const segment = (value: string) => encodeURIComponent(value);
@@ -139,6 +144,114 @@ export class ExternalProvider implements Provider {
             { op: "add", path: "/fields/System.State", value: "Active" },
         ], true);
         return { submitted: true, provider: "ado", marker, adoId: workItem.adoId };
+    }
+
+    async publishLocal(config: Configuration, item: PlannedItem, workItem: WorkItem, marker: string, implementation: LocalImplementationInput): Promise<Json> {
+        const repo = config.repositories[item.repository];
+        if (!repo) throw new FactoryError("invalid_configuration", "Dispatch repository is missing.");
+        const workspace = process.env.SOFTWARE_FACTORY_WORKSPACE || defaultWorkspaceRoot();
+        const repoRoot = path.resolve(workspace, repo.localPath);
+        if (!existsSync(repoRoot)) throw new FactoryError("local_repository_missing", `Configured localPath for ${item.repository} does not exist: ${repoRoot}.`, 409);
+        const canonicalRoot = realpathSync(repoRoot);
+        const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+        const normalizedRoot = normalize(canonicalRoot);
+        if (!implementation.files.length) throw new FactoryError("invalid_implementation", "Local implementation has no file changes to publish.");
+        for (const file of implementation.files) {
+            const target = path.resolve(canonicalRoot, file.path);
+            if (normalize(target) === normalizedRoot || !normalize(target).startsWith(normalizedRoot + path.sep)) {
+                throw new FactoryError("invalid_implementation", `File path escapes repository root: ${file.path}.`, 403);
+            }
+            if (file.action === "delete") {
+                if (existsSync(target)) rmSync(target, { force: true });
+            } else {
+                mkdirSync(path.dirname(target), { recursive: true });
+                const resolvedParent = normalize(realpathSync(path.dirname(target)));
+                if (resolvedParent !== normalizedRoot && !resolvedParent.startsWith(normalizedRoot + path.sep)) {
+                    throw new FactoryError("invalid_implementation", `Symlink parent escapes repository root: ${file.path}.`, 403);
+                }
+                writeFileSync(target, file.content, "utf8");
+            }
+        }
+        const branch = text(implementation.branch, "Implementation branch");
+        if (/[\s~^:?*[\]\\]/.test(branch) || branch.includes("..") || branch.startsWith("-")) {
+            throw new FactoryError("invalid_implementation", "Invalid implementation branch name.");
+        }
+        await this.runner.run("git", ["checkout", "-B", branch], { cwd: canonicalRoot });
+        await this.runner.run("git", ["add", "--", ...implementation.files.map((file) => file.path)], { cwd: canonicalRoot });
+        const commitMessage = [
+            item.title,
+            "",
+            implementation.summary,
+            "",
+            `Fixes AB#${workItem.adoId}`,
+            `Software Factory operation: ${marker}`,
+            "",
+            "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+        ].join("\n");
+        await this.runner.run("git", ["commit", "-m", commitMessage], { cwd: canonicalRoot });
+        const prBody = [
+            implementation.summary,
+            "",
+            "### Acceptance Criteria",
+            ...item.acceptanceCriteria.map((criterion) => `- [x] ${criterion}`),
+            "",
+            "### Expected Tests",
+            ...item.tests.map((testName) => `- ${testName}`),
+            "",
+            "### Independent Code Review",
+            `- Passed independent AI code review in ${implementation.roundsCompleted} of ${implementation.maxRounds} round(s) (mode: local).`,
+            "",
+            `Fixes AB#${workItem.adoId}`,
+            `Software Factory operation: ${marker}`,
+        ].join("\n");
+
+        if (repo.provider === "github") {
+            await this.github(repo, `repos/${repo.slug}/branches/${segment(repo.baseBranch)}`);
+            const token = await this.runner.run("gh", ["auth", "token", "--hostname", repo.hostname, "--user", repo.account]);
+            const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+            await this.runner.run("git", [
+                "-c", `http.https://${repo.hostname}/.extraheader=AUTHORIZATION: basic ${basic}`,
+                "push", "-u", "origin", branch, "--force-with-lease",
+            ], {
+                cwd: canonicalRoot,
+                env: { ...process.env, GH_HOST: repo.hostname, GH_TOKEN: token, GH_ENTERPRISE_TOKEN: token },
+            });
+            const created = object(await this.github(repo, `repos/${repo.slug}/pulls`, "POST", {
+                title: item.title,
+                head: branch,
+                base: repo.baseBranch,
+                body: prBody,
+            }), "Created GitHub PR");
+            return {
+                submitted: true, mode: "local", provider: "github", marker, branch,
+                prNumber: Number(created.number),
+                url: text(created.html_url, "PR URL"),
+                roundsCompleted: implementation.roundsCompleted,
+                maxRounds: implementation.maxRounds,
+            };
+        }
+
+        const [organization, project, repository] = repo.slug.split("/");
+        if (!organization || !project || !repository) throw new FactoryError("invalid_configuration", "ADO repository mapping is incomplete.");
+        const tokenText = await this.runner.run("az", ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798", "--query", "accessToken", "-o", "tsv"]);
+        await this.runner.run("git", [
+            "-c", `http.https://dev.azure.com/.extraheader=AUTHORIZATION: bearer ${tokenText}`,
+            "push", "-u", "origin", branch, "--force-with-lease",
+        ], { cwd: canonicalRoot });
+        const created = object(await this.ado(organization, project, `git/repositories/${segment(repository)}/pullrequests`, "POST", {
+            sourceRefName: `refs/heads/${branch}`,
+            targetRefName: `refs/heads/${repo.baseBranch}`,
+            title: item.title,
+            description: prBody,
+            workItemRefs: [{ id: String(workItem.adoId) }],
+        }), "Created ADO PR");
+        return {
+            submitted: true, mode: "local", provider: "ado", marker, branch,
+            prNumber: Number(created.pullRequestId),
+            adoId: workItem.adoId,
+            roundsCompleted: implementation.roundsCompleted,
+            maxRounds: implementation.maxRounds,
+        };
     }
 
     async markDispatched(config: Configuration, item: WorkItem, marker: string): Promise<Json> {

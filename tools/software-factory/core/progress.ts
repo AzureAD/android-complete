@@ -4,7 +4,8 @@ import { exactKeys, FactoryError, object, text, type Feature } from "./contracts
 import type { ChatProgress, Execution, FactoryFeature, FactoryState, GatePreview, ProgressInput, Stage, WorkflowKind } from "./lifecycle-contracts.ts";
 
 export const workflowLabels: Record<WorkflowKind, string> = {
-    intake: "Draft success criteria", design: "Create design", plan: "Create implementation plan", lifecycle: "Retired delivery workflow", monitor: "Check delivery", check: "Runtime check",
+    intake: "Draft success criteria", design: "Create design", plan: "Create implementation plan",
+    implement: "Implement and review code", lifecycle: "Retired delivery workflow", monitor: "Check delivery", check: "Runtime check",
 };
 export const stageLabels = ["Define success", "Design", "Plan", "Backlog", "Implementation", "Verify & finish"];
 export interface ActivityEntry { id: string; createdAt: string; title: string; detail: string; source: string }

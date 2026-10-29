@@ -20,6 +20,14 @@ export const workerGuidance = {
         ".github/skills/feature-planner/references/planning-standards.md",
         ".github/skills/feature-planner/references/pbi-template.md",
     ],
+    code: [
+        ".github/skills/feature-planner/references/planning-standards.md",
+        ".github/skills/codebase-researcher/references/research-standards.md",
+    ],
+    codeReview: [
+        ".github/skills/codebase-researcher/references/research-standards.md",
+        ".github/skills/design-author/references/design-standards.md",
+    ],
 } as const;
 
 export const workerGuidanceFiles = [...new Set(Object.values(workerGuidance).flat())];

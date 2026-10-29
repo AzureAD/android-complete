@@ -1,6 +1,15 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
-import type { Configuration, Json, PlannedItem, PullRequest, RepositoryTarget, WorkItem } from "../core/lifecycle-contracts.ts";
+import type { CodeImplementationFile, Configuration, Json, PlannedItem, PullRequest, RepositoryTarget, WorkItem } from "../core/lifecycle-contracts.ts";
+
+export interface LocalImplementationInput {
+    branch: string;
+    summary: string;
+    files: CodeImplementationFile[];
+    roundsCompleted: number;
+    maxRounds: number;
+    reviewHistory: Json[];
+}
 
 export interface Provider {
     findWorkItem(config: Configuration, marker: string): Promise<WorkItem | null>;
@@ -8,6 +17,7 @@ export interface Provider {
     linkWorkItem(config: Configuration, item: WorkItem, dependencies: WorkItem[]): Promise<Json>;
     inspectWorkItem(config: Configuration, item: WorkItem): Promise<WorkItem>;
     dispatch(config: Configuration, item: PlannedItem, workItem: WorkItem, marker: string): Promise<Json>;
+    publishLocal?(config: Configuration, item: PlannedItem, workItem: WorkItem, marker: string, implementation: LocalImplementationInput): Promise<Json>;
     findDispatch(config: Configuration, item: PlannedItem, workItem: WorkItem, marker: string): Promise<Json | null>;
     inspectPr(repo: RepositoryTarget, number: number, itemId: string): Promise<PullRequest>;
     findPr(config: Configuration, item: PlannedItem, workItem: WorkItem): Promise<PullRequest | null>;

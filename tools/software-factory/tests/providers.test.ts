@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import { fixture } from "./helpers.ts";
 import test from "node:test";
 import { ExternalProvider } from "../providers/external.ts";
 import type { CommandRunner } from "../providers/cli.ts";
@@ -95,4 +98,54 @@ test("provider rejection is explicit and redirecting authenticated requests is f
         return new Response("Not allowed", { status: 403 });
     });
     await assert.rejects(() => provider.createWorkItem(config(), item, "marker"), /HTTP 403/);
+});
+
+test("local coding publication writes reviewed files, commits, pushes with scoped credentials, and opens a PR", async () => {
+    const f = fixture();
+    const oldWorkspace = process.env.SOFTWARE_FACTORY_WORKSPACE;
+    process.env.SOFTWARE_FACTORY_WORKSPACE = f.workspace;
+    const repoDir = path.join(f.workspace, "broker");
+    mkdirSync(repoDir, { recursive: true });
+    const calls: { command: string; args: string[]; cwd?: string; input?: string }[] = [];
+    const runner: CommandRunner = {
+        run: async (command, args, options = {}) => {
+            calls.push({ command, args, cwd: options.cwd, input: options.input });
+            if (command === "gh" && args[0] === "auth") return "scoped-ghe-token";
+            if (command === "gh" && args[0] === "api") {
+                if (args.includes("POST")) return JSON.stringify({ number: 77, html_url: "https://msft.ghe.com/example/broker/pull/77" });
+                return JSON.stringify({ name: "dev" });
+            }
+            return "";
+        },
+    };
+    try {
+        const provider = new ExternalProvider(runner, async () => { throw new Error("No ADO call expected."); });
+        const localConfig: Configuration = {
+            ...config(),
+            repositories: { broker: { ...config().repositories.broker!, localPath: "broker" } },
+        };
+        const receipt = await provider.publishLocal(localConfig, item, wi, "local-op-marker", {
+            branch: "factory/ab-42-a",
+            summary: "Implemented compatibility guard locally.",
+            files: [{ path: "src/A.kt", action: "write", content: "package example\nclass A\n" }],
+            roundsCompleted: 2,
+            maxRounds: 3,
+            reviewHistory: [],
+        });
+        assert.deepEqual(receipt, {
+            submitted: true, mode: "local", provider: "github", marker: "local-op-marker",
+            branch: "factory/ab-42-a", prNumber: 77, url: "https://msft.ghe.com/example/broker/pull/77",
+            roundsCompleted: 2, maxRounds: 3,
+        });
+        assert.ok(calls.some((call) => call.command === "git" && call.args[0] === "checkout" && call.args[2] === "factory/ab-42-a"));
+        assert.ok(calls.some((call) => call.command === "git" && call.args[0] === "commit" && call.args[2]?.includes("Fixes AB#42")));
+        assert.ok(calls.some((call) => call.command === "git" && call.args.includes("push") && call.args.includes("factory/ab-42-a")));
+        const prCall = calls.find((call) => call.command === "gh" && call.args.includes("POST"));
+        assert.ok(prCall);
+        assert.match(prCall.input || "", /Passed independent AI code review in 2 of 3 round\(s\)/);
+        assert.match(prCall.input || "", /local-op-marker/);
+    } finally {
+        if (oldWorkspace === undefined) delete process.env.SOFTWARE_FACTORY_WORKSPACE; else process.env.SOFTWARE_FACTORY_WORKSPACE = oldWorkspace;
+        f.cleanup();
+    }
 });

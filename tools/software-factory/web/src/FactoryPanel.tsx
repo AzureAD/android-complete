@@ -144,6 +144,7 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
         <div className="factory-actions">
             <button className="secondary" disabled={busy || feature.status !== "ready_for_design"} onClick={() => void start("design")}>Start a design run</button>
             <button className="secondary" disabled={busy || feature.status !== "ready_for_design"} onClick={() => void start("plan")}>Start a planning run</button>
+            <button className="secondary" disabled={busy || !latest("plan")} onClick={() => void start("implement")}>Start a coding &amp; review run</button>
             <button className="secondary" disabled={busy || !latest("plan")} onClick={() => void start("monitor")}>Start a monitoring run</button>
             <button className="secondary" disabled={busy} onClick={() => void run({ kind: "export_feature", featureId: feature.id })}>Export feature</button>
             <button className="text-button" disabled={busy || feature.factory.cancelled} onClick={() => void run({ kind: "cancel_feature", featureId: feature.id })}>Cancel feature</button>
@@ -281,6 +282,7 @@ const configurationTemplate = {
         example: { provider: "github", hostname: "github.com", slug: "OWNER/REPOSITORY", baseBranch: "CONFIGURED_BASE", account: "YOUR_ACCOUNT", localPath: "." },
     },
     boards: { organization: "YOUR_ORG", project: "YOUR_PROJECT", workItemType: "Product Backlog Item", areaPath: "CONFIRM_AREA", iterationPath: "CONFIRM_ITERATION", assignee: "", parentId: null },
+    delivery: { mode: "local", maxReviewRounds: 3 },
 };
 
 export function FactorySettings({ execute }: { execute: Execute }) {

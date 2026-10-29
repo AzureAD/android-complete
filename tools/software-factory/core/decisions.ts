@@ -28,7 +28,7 @@ export function describeDecision(app: Application, command: Record<string, unkno
         release_shared_claim: ["Release shared execution authority", "Release reviewed claim", "Revoke the inspected shared claim after verifying its owner and remote outcomes.", "Does not stop native work or undo provider effects. Reconcile uncertain sends before retrying."],
         approve_requirements: ["Approve feature scope", "Approve scope", "Use this brief and its success criteria as the approved input to design.", "Does not start AI work, change code, create PBIs, or dispatch coding tasks."],
         create_backlog: ["Create approved backlog", "Create backlog", "Create and read back the approved ADO work items and links.", "No agent workflow or coding task starts."],
-        dispatch_work: ["Dispatch approved work", "Dispatch work", "Launch only the approved dependency-ready coding tasks.", "Separate coding-agent usage applies. No merge is authorized."],
+        dispatch_work: ["Dispatch approved work", "Dispatch work", "Run the approved dependency-ready coding tasks in local mode by default (with an independent reviewer loop, then branch push and PR creation) or remote dispatch mode.", "Does not merge PRs automatically."],
         configure: ["Update connections", "Use these connections", "Use the reviewed repository, branch, account and board mappings.", "Does not change credentials, move existing work, or start a workflow."],
         request_revision: ["Request a revision", "Request revision", "Save your feedback and invalidate downstream approval for the changed work.", "Existing remote work is preserved. No new AI work starts."],
         attach_pr: ["Associate a pull request", "Associate PR", "Verify and link this PR to the selected work item.", "Does not edit, approve, or merge the PR."],
@@ -64,7 +64,8 @@ export function describeDecision(app: Application, command: Record<string, unkno
             intake: ["Draft success criteria with Factory", "Propose draft success criteria and open questions for review.", "Does not edit or approve the brief, change code, or create remote work."],
             design: ["Start design work", "Research, draft and independently review the design for the approved scope.", "Does not change code, create PBIs, dispatch coding tasks, or approve its own design."],
             plan: ["Start implementation planning", "Generate and independently review an implementation plan, then end for human review.", "Does not create PBIs, dispatch coding tasks, or approve its own plan."],
-            monitor: ["Check delivery status", "Read provider state and validate acceptance criteria.", "Does not post feedback, merge PRs, or change code."],
+            implement: ["Start Stage 3 coding and independent review", "Run the builder and independent code reviewer loop (local mode by default, up to 3 rounds), then push the reviewed branch and open the PR.", "Does not merge PRs or bypass acceptance criteria."],
+            monitor: ["Check delivery status", "Read provider state and validate acceptance criteria and independent review rounds.", "Does not merge PRs or change code."],
         };
         const run = runs[String(command.workflow)];
         if (run) [title, effect, boundaries] = run;
@@ -89,6 +90,15 @@ export function describeDecision(app: Application, command: Record<string, unkno
         facts.push(record(scoped.executionOwner).kind === "chat"
             ? "Execution stays in its bound Copilot chat; dashboard controls go to that same owner."
             : "Execution uses a Factory-owned SDK session; app discovery/attachment is not yet verified.");
+    }
+    if (command.kind === "start_workflow" || command.kind === "dispatch_work" || (command.kind === "approve_stage" && command.stage === "dispatch")) {
+        const delivery = record(value.delivery || scoped.delivery);
+        if (typeof delivery.mode === "string") {
+            facts.push(`Coding mode: ${delivery.mode} (${delivery.mode === "local" ? "default local Copilot CLI/app builder" : "remote provider coding agent"})`);
+        }
+        if (typeof delivery.maxReviewRounds === "number") {
+            facts.push(`Independent code review loop: up to ${String(delivery.maxReviewRounds)} round(s)`);
+        }
     }
     if (command.kind === "attach_pr") facts.push(`PR #${String(command.number)} / work item ${String(command.itemId)}`);
     if (typeof scoped.pr === "object" && scoped.pr !== null) {

@@ -8,7 +8,7 @@ import { Registry } from "./registry.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import type { Provider } from "../providers/provider.ts";
 import type { NativeRuntime, NativeSession } from "../runtime/controller.ts";
-import type { Execution, ExecutionLimits, WorkflowAdmission, WorkflowKind } from "./lifecycle-contracts.ts";
+import type { DeliverySettings, Execution, ExecutionLimits, WorkflowAdmission, WorkflowKind } from "./lifecycle-contracts.ts";
 import { dispatch, prepare } from "./commands.ts";
 import { SharedAuthority } from "./shared.ts";
 import type { SharedProvider } from "./shared-contracts.ts";
@@ -131,9 +131,9 @@ export class Application {
     }
 
     async startWorkflow(featureId: string, kind: WorkflowKind, actor: Actor, limits: ExecutionLimits,
-        admission: WorkflowAdmission): Promise<Execution> {
+        admission: WorkflowAdmission, delivery?: Partial<DeliverySettings>): Promise<Execution> {
         const execution = this.lifecycle.begin(featureId, kind, actor, {}, limits, admission,
-            this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat", established: true } : undefined);
+            this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat", established: true } : undefined, delivery);
         try {
             if (kind !== "check" && (kind !== "intake" || this.shared.cached(featureId))) await this.shared.claimRun(featureId, execution);
             (await this.runtime()).launch(featureId, execution);

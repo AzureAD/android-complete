@@ -85,7 +85,7 @@ export function parseSnapshot(value: unknown): SharedSnapshot {
         const id = text(artifact.id, "Artifact ID");
         if (artifactIds.has(id) || !revisionIds.has(String(artifact.requirementsRevision)) ||
             (artifact.parentId !== null && !artifactIds.has(String(artifact.parentId))) ||
-            !["intake", "design", "plan", "monitor", "legacy", "planning_attempt"].includes(String(artifact.kind)) ||
+            !["intake", "design", "plan", "implementation", "implementation_attempt", "monitor", "legacy", "planning_attempt"].includes(String(artifact.kind)) ||
             !Number.isSafeInteger(artifact.generation) || Number(artifact.generation) < 0) throw new FactoryError("shared_corrupt", "Invalid artifact lineage.", 409);
         artifactIds.add(id);
         text(artifact.createdAt, "Artifact time");

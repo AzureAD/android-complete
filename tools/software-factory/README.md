@@ -19,7 +19,8 @@ hooks are retired. Feature skills and `feature-*` commands all enter this core.
 | `software-factory-intake` | Turns a saved plain-language brief into draft success criteria and open questions for human review; never edits or approves requirements. |
 | `software-factory-design` | Reuses the existing evidence/traceability/independent-review design algorithm; saves its artifact and finishes before human design approval. |
 | `software-factory-plan` | Generates and independently reviews a PBI plan, saves its artifact and finishes before human plan approval. |
-| `software-factory-monitor` | One bounded GitHub/GHE/ADO refresh and acceptance-criteria validation pass; no posting or merging. |
+| `software-factory-implement` | Runs the Stage 3 builder ↔ independent code reviewer loop (`local` mode by default in the current Copilot CLI/app session, or `remote` PR mode; default 3 rounds, configurable e.g. to 2), commits/pushes the reviewed branch and opens the PR. |
+| `software-factory-monitor` | One bounded GitHub/GHE/ADO refresh, acceptance-criteria validation and independent code-review round check; no automatic merging. |
 | `software-factory-check` | Native registration, journaling, checkpoint, and cold-resume diagnostics with zero agents. |
 | `software-factory-evaluate-design` | Explicitly invoked synthetic evaluation trial with a tool-less agent; returns ungraded output, never feature authority. |
 
@@ -430,8 +431,8 @@ All JSON commands include a `kind`:
 | `open_shared_feature` | `target: {organization,project,workItemId}` |
 | `list_shared_features` | No fields; uses configured ADO organization/project |
 | `release_shared_claim` | `featureId`, `claimId`, `reason`; confirmed recovery, not native cancellation |
-| `start_workflow` | `featureId`, `workflow` (`intake`, `design`, `plan`, `monitor`), optional `limits` |
-| `create_backlog`, `dispatch_work` | `featureId`; exact approval plus separate execution confirmation |
+| `start_workflow` | `featureId`, `workflow` (`intake`, `design`, `plan`, `implement`, `monitor`), optional `mode` (`local` or `remote`), optional `maxReviewRounds` (default `3`), optional `limits` |
+| `create_backlog`, `dispatch_work` | `featureId`, optional `mode` (`local` default, or `remote`), optional `maxReviewRounds` (default `3`), optional `limits`; exact approval plus separate execution confirmation |
 | `approve_stage` | `featureId`, `stage`, `expectedScopeHash`, `approved` |
 | `request_revision` | `featureId`, `stage` (`design` or `plan`), `expectedArtifactId`, `feedback` |
 | `control_run` | `featureId`, `executionId`, `action` (`refresh`, `pause`, `resume`, `cancel`), optional `limits` |

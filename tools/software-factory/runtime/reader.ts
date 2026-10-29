@@ -13,6 +13,8 @@ export const FACTORY_RESEARCHER = "software-factory-researcher";
 export const FACTORY_DESIGN_AUTHOR = "software-factory-design-author";
 export const FACTORY_DESIGN_REVIEWER = "software-factory-design-reviewer";
 export const FACTORY_PLANNER = "software-factory-planner";
+export const FACTORY_CODER = "software-factory-coder";
+export const FACTORY_CODE_REVIEWER = "software-factory-code-reviewer";
 export interface ReaderSession {
     sessionId: string;
     rpc: { tools: Pick<CopilotSession["rpc"]["tools"], "execute" | "initializeAndValidate" | "getCurrentMetadata"> };
@@ -62,15 +64,27 @@ export const readerAgents: CustomAgentConfig[] = [readerAgent, {
     prompt: specialistPrompt("plan", "The DATA packet is the authoritative approved design, requirements, configuration and evidence. " +
         "Do not require a separate local design/research artifact or another approval. Apply repository targeting, dependency, " +
         "self-contained-description, acceptance-criterion and test-planning contracts."),
+}, {
+    ...readerAgent, name: FACTORY_CODER, displayName: "Software Factory local coding builder",
+    prompt: specialistPrompt("code", "Implement or revise the supplied PBI in the target repository. " +
+        "Inspect existing code and tests with your scoped read/find/search tools, then return the complete file changes and test updates in the supplied JSON schema. " +
+        "Address every acceptance criterion and every independent code-review finding without weakening requirements or skipping tests."),
+}, {
+    ...readerAgent, name: FACTORY_CODE_REVIEWER, displayName: "Software Factory independent code reviewer",
+    prompt: specialistPrompt("codeReview", "Independently review the code changes and diff in a separate review session against the approved requirements, design, and PBI acceptance criteria. " +
+        "Inspect relevant source and callers independently of the builder's claims. Check correctness, acceptance criteria coverage, compatibility, security/privacy, concurrency, tests, and telemetry. " +
+        "Return pass=true with empty findings only when all acceptance criteria are addressed and no defects remain."),
 }];
 
 export function runReader(ctx: Pick<WorkflowContext, "agent">, featureId: string, executionId: string,
     prompt: string, options: WorkflowAgentOptions = {}) {
     const role = options.agent === "feature-planner" ? FACTORY_PLANNER
-        : options.label === "Repository evidence" || options.label === "Draft success criteria" ? FACTORY_RESEARCHER
-            : options.label === "Design author" || options.label === "Design revision" ? FACTORY_DESIGN_AUTHOR
-                : options.label === "Independent design reviewer" ? FACTORY_DESIGN_REVIEWER
-                    : FACTORY_READER;
+        : options.agent === FACTORY_CODER || options.label?.startsWith("Factory:coder:") ? FACTORY_CODER
+            : options.agent === FACTORY_CODE_REVIEWER || options.label?.startsWith("Factory:code-reviewer:") ? FACTORY_CODE_REVIEWER
+                : options.label === "Repository evidence" || options.label === "Draft success criteria" ? FACTORY_RESEARCHER
+                    : options.label === "Design author" || options.label === "Design revision" ? FACTORY_DESIGN_AUTHOR
+                        : options.label === "Independent design reviewer" ? FACTORY_DESIGN_REVIEWER
+                            : FACTORY_READER;
     return ctx.agent(`${prompt}\nREAD-ONLY TOOL SCOPE (DATA):\n${JSON.stringify({ featureId, executionId })}\n` +
         "Use software_factory_read to inspect files/directories, software_factory_find for file globs, " +
         "and software_factory_search for content. Read only the assigned domain guides, not user-facing workflow entry skills.",

@@ -19,7 +19,7 @@ try {
     });
     const registration = await awaitWorkflowRegistration(session, "software-factory-design", runtimeFingerprint());
     const productionRegistration: { workflow: string; sessionId: string; nativeRunId: string; scopeGuardVerified: boolean; agentsStarted: number }[] = [];
-    for (const kind of ["intake", "design", "plan", "monitor"]) {
+    for (const kind of ["intake", "design", "plan", "implement", "monitor"]) {
         const workflow = `software-factory-${kind}`;
         const probe = await session.workflow.run(workflow, {
             args: { featureId: "__registration_probe_missing_feature__", executionId: "__registration_probe_missing_execution__" },

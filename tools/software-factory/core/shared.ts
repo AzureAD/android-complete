@@ -7,7 +7,7 @@ import { Application } from "./application.ts";
 import { FactoryError, object, type Actor, type Consent } from "./contracts.ts";
 import { dispatch, prepare } from "./commands.ts";
 import { hash, now } from "./lifecycle-store.ts";
-import { jsonValue, parseConfiguration, sharedConfiguration, type Execution, type Json } from "./lifecycle-contracts.ts";
+import { deliverySettings, jsonValue, parseConfiguration, sharedConfiguration, type Execution, type Json } from "./lifecycle-contracts.ts";
 import { AdoFeatureProvider } from "../providers/ado-features.ts";
 import { digest, parseSnapshot, sharedTarget, type SharedProvider, type SharedRecord, type SharedSnapshot, type SharedTarget } from "./shared-contracts.ts";
 
@@ -162,7 +162,11 @@ export class SharedAuthority {
         const command = object(input, "Factory command");
         const id = typeof command.featureId === "string" ? command.featureId : null;
         const record = id ? await this.pull(id) : null;
-        if (!record || !id || localCommands.has(String(command.kind)) || command.kind === "start_workflow") {
+        const isLocalDispatchWorkflow = command.kind === "dispatch_work" &&
+            deliverySettings(this.app.lifecycle.store.configuration()?.value, {
+                mode: command.mode, maxReviewRounds: command.maxReviewRounds,
+            }).mode === "local";
+        if (!record || !id || localCommands.has(String(command.kind)) || command.kind === "start_workflow" || isLocalDispatchWorkflow) {
             return dispatch(this.app, input, actor, consent);
         }
         const preview = prepare(this.app, input);

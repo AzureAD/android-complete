@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import type { CopilotSession } from "@github/copilot-sdk";
 import {
-    createReaderTools, FACTORY_DESIGN_AUTHOR, FACTORY_DESIGN_REVIEWER, FACTORY_PLANNER, FACTORY_RESEARCHER,
+    createReaderTools, FACTORY_CODER, FACTORY_CODE_REVIEWER, FACTORY_DESIGN_AUTHOR, FACTORY_DESIGN_REVIEWER, FACTORY_PLANNER, FACTORY_RESEARCHER,
     readerAgent, readerAgents, readerToolNames, runReader,
 } from "../runtime/reader.ts";
 import { blankState } from "../core/lifecycle-store.ts";
@@ -94,11 +94,13 @@ test("Factory design roles load specialist guidance without granting workers mut
         ["Design author", FACTORY_DESIGN_AUTHOR],
         ["Design revision", FACTORY_DESIGN_AUTHOR],
         ["Independent design reviewer", FACTORY_DESIGN_REVIEWER],
+        ["Factory:coder:A:round-1", FACTORY_CODER],
+        ["Factory:code-reviewer:A:round-1", FACTORY_CODE_REVIEWER],
     ]) {
         await runReader(ctx, "feature-id", "execution-id", "Perform the role.", { label });
         assert.equal(agentNames.at(-1), expected);
     }
-    for (const name of [FACTORY_RESEARCHER, FACTORY_DESIGN_AUTHOR, FACTORY_DESIGN_REVIEWER]) {
+    for (const name of [FACTORY_RESEARCHER, FACTORY_DESIGN_AUTHOR, FACTORY_DESIGN_REVIEWER, FACTORY_CODER, FACTORY_CODE_REVIEWER]) {
         const worker = readerAgents.find((candidate) => candidate.name === name)!;
         assert.deepEqual(worker.tools, readerToolNames);
         assert.match(worker.prompt!, /scoped (?:native|Factory)/);

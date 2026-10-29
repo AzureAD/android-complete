@@ -5,14 +5,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { FactoryError, object, text, validateActor, type Actor } from "./contracts.ts";
 import {
-    jsonValue, parseConfiguration, parsePlan, parseMonitor, sharedConfiguration, type Artifact, type Configuration, type Execution, type ExecutionLimits,
+    deliverySettings, jsonValue, parseConfiguration, parsePlan, parseMonitor, sharedConfiguration, type Artifact, type Configuration, type DeliverySettings, type Execution, type ExecutionLimits,
     type GatePreview, type Json, type MonitorReport, type Operation, type Plan,
     type PlannedItem, type PullRequest, type SessionBinding, type Stage, type WorkflowAdmission, type WorkflowKind, type WorkItem,
 } from "./lifecycle-contracts.ts";
 import { hash, LifecycleStore, now } from "./lifecycle-store.ts";
 import type { Registry } from "./registry.ts";
 import { ExternalProvider } from "../providers/external.ts";
-import type { Provider } from "../providers/provider.ts";
+import type { LocalImplementationInput, Provider } from "../providers/provider.ts";
 import { runtimeFingerprint } from "./evidence.ts";
 import { parseProgress } from "./progress.ts";
 
@@ -322,15 +322,19 @@ export class Lifecycle {
                 const links = state.operations.filter((operation) => operation.planId === targetId && operation.kind === "links" && operation.status === "completed");
                 if (links.length !== plan.value.items.length) blockers.push("Work item links are not fully reconciled.");
                 if (!eligible.length) blockers.push("No undispatched work item has satisfied all implementation dependencies.");
+                const delivery = deliverySettings(config.value);
                 scope = { requirementsRevision: feature.current.id, planId: targetId, backlogApprovalId: parentDecision?.id || null, configurationId: config.id,
                     configuration: jsonValue(sharedConfiguration(config.value)),
+                    delivery: jsonValue(delivery),
                     eligible: jsonValue(eligible.map((item) => ({ ...item, workItem: items.find((value) => value.key === item.id),
                         dependencyContext: item.dependsOn.map((id) => {
                             const pr = monitor!.prs.find((value) => value.key === id)!;
                             return { itemId: id, url: pr.url, head: pr.head, title: pr.title };
                         }),
                     }))),
-                    effect: "Launch these remote coding tasks and mark the work items Active with agent-dispatched tags. Their costs are separate from workflow subagents; do not merge." };
+                    effect: delivery.mode === "local"
+                        ? `Implement these dependency-ready work items locally in this Copilot CLI/app session with an independent reviewer loop (up to ${delivery.maxReviewRounds} rounds), then push a branch, open a PR, and mark the work items Active. Do not merge.`
+                        : `Launch these remote coding tasks with an independent reviewer loop (up to ${delivery.maxReviewRounds} rounds) and mark the work items Active with agent-dispatched tags. Their costs are separate from workflow subagents; do not merge.` };
             } else {
                 const artifact = this.store.latest(featureId, "monitor");
                 const monitor = this.monitor(featureId);
@@ -389,12 +393,16 @@ export class Lifecycle {
     }
 
     begin(featureId: string, kind: WorkflowKind, actor: Actor, sourcePins: Record<string, string> = {}, limits: ExecutionLimits = {},
-        admission?: WorkflowAdmission, preferredSession?: SessionBinding): Execution {
+        admission?: WorkflowAdmission, preferredSession?: SessionBinding, deliveryOverride?: Partial<DeliverySettings>): Execution {
         const feature = this.store.registry.get(featureId);
         if (kind !== "intake" && feature.status !== "ready_for_design") throw new FactoryError("requirements_approval_required", "Review and approve the success criteria before starting design or delivery.", 409);
         if (kind === "lifecycle") throw new FactoryError("workflow_retired", "The multi-stage lifecycle workflow is retired. Start plan, then explicitly create the approved backlog and dispatch approved work.", 409);
         if (kind === "plan" && !this.gate(featureId, "design").approved) throw new FactoryError("design_approval_required", "Explicit design approval is required before planning.", 409);
+        if (kind === "implement") this.requireDispatchDecision(featureId);
         if (kind === "monitor") this.plan(featureId);
+        const resolvedDelivery = kind === "implement" || kind === "monitor"
+            ? deliverySettings(this.store.configuration()?.value, deliveryOverride)
+            : undefined;
         return this.store.change(featureId, (state) => {
             if (this.store.registry.get(featureId).current.id !== feature.current.id ||
                 (admission && (admission.requirementsRevision !== feature.current.id ||
@@ -427,6 +435,7 @@ export class Lifecycle {
                 status: "starting", phase: "Starting native workflow",
                 generation: { design: this.store.generation(state, "design", feature.current.id), plan: this.store.generation(state, "plan", feature.current.id) },
                 sourcePins, runtimeFingerprint: runtimeFingerprint(), requestedBy: validateActor(actor),
+                ...(resolvedDelivery ? { delivery: resolvedDelivery } : {}),
                 limits: { maxAiCredits: null, ...limits }, checkpoints: {}, outcome: null, error: null, createdAt: timestamp, updatedAt: timestamp,
             };
             state.sessionBinding = binding;
@@ -452,7 +461,28 @@ export class Lifecycle {
         if (execution.kind === "plan" && !this.gate(featureId, "design").approved) {
             throw new FactoryError("upstream_approval_revoked", "The design approval was revoked; no further lifecycle work is authorized.", 409);
         }
+        if (execution.kind === "implement") {
+            this.requireDispatchDecision(featureId);
+        }
         return execution;
+    }
+
+    requireDispatchDecision(featureId: string) {
+        if (!this.gate(featureId, "design").approved || !this.gate(featureId, "plan").approved) {
+            throw new FactoryError("upstream_approval_revoked", "Upstream design or plan approval was revoked.", 409);
+        }
+        const backlogDecision = this.requireGate(featureId, "backlog").decision;
+        const { artifact } = this.plan(featureId);
+        const decisions = this.store.state(featureId).decisions.filter((entry) => entry.stage === "dispatch" && entry.targetId === artifact.id);
+        const latest = decisions.at(-1);
+        if (!latest || !latest.approved) {
+            throw new FactoryError("approval_required", "Explicit approval of the current dispatch scope is required.", 409);
+        }
+        const scope = object(latest.scope, "Dispatch scope");
+        if (scope.backlogApprovalId !== backlogDecision.id) {
+            throw new FactoryError("approval_lineage_changed", "Dispatch authorization belongs to a different backlog approval.", 409);
+        }
+        return { decision: latest, scope };
     }
 
     stage0(featureId: string) {
@@ -595,12 +625,138 @@ export class Lifecycle {
         return jsonValue({ planId: artifact.id, items: workItems });
     }
 
+    async verifyItemDependencies(featureId: string, item: PlannedItem, approvedDependencyContext: unknown): Promise<Record<string, unknown>[]> {
+        const { artifact, value: plan } = this.plan(featureId);
+        const workItems = this.workItems(featureId, artifact.id);
+        if (!Array.isArray(approvedDependencyContext)) throw new FactoryError("invalid_scope", "Dependency context was not included in the dispatch approval.");
+        const verified: Record<string, unknown>[] = [];
+        for (const dependency of item.dependsOn) {
+            const spec = plan.items.find((entry) => entry.id === dependency)!;
+            const wi = workItems.find((entry) => entry.key === dependency)!;
+            const pr = await this.linkedPr(featureId, spec, wi);
+            if (!pr || pr.status !== "merged") throw new FactoryError("dependency_not_delivered", `Dependency ${dependency} has not actually merged.`, 409);
+            const approved = approvedDependencyContext.map((entry) => object(entry, "Dependency context")).find((entry) => entry.itemId === dependency);
+            if (!approved || approved.head !== pr.head || approved.url !== pr.url) throw new FactoryError("dependency_changed", "Dependency evidence changed after dispatch approval; review a fresh scope.", 409);
+            verified.push(approved);
+        }
+        return verified;
+    }
+
+    async dispatchItem(featureId: string, item: PlannedItem, approvedDependencyContext: unknown,
+        decision: { id: string; scopeHash: string }, executionId?: string): Promise<Json> {
+        if (executionId) this.assertFresh(featureId, executionId);
+        const { artifact } = this.plan(featureId);
+        const config = this.configuration();
+        const workItem = this.workItems(featureId, artifact.id).find((entry) => entry.key === item.id);
+        if (!workItem) throw new FactoryError("work_item_required", `Missing work item for ${item.id}.`, 409);
+        await this.verifyItemDependencies(featureId, item, approvedDependencyContext);
+        const enriched = { ...item, description: `${item.description}\n\nApproved merged dependency context:\n${JSON.stringify(approvedDependencyContext, null, 2)}\nBuild on these merged changes; do not duplicate them. No private source diff is transferred automatically.` };
+        const receipt = await this.operation(featureId, "dispatch", item, "dispatch",
+            (marker) => this.provider.findDispatch(config, item, workItem, marker),
+            (marker) => this.provider.dispatch(config, enriched, workItem, marker), false, decision);
+        await this.operation(featureId, "dispatch_status", item, "dispatch", async () => null,
+            (marker) => this.provider.markDispatched(config, workItem, marker), true, decision);
+        return receipt;
+    }
+
+    async publishLocalItem(featureId: string, item: PlannedItem, approvedDependencyContext: unknown,
+        implementation: LocalImplementationInput, decision: { id: string; scopeHash: string }, executionId?: string): Promise<Json> {
+        if (executionId) this.assertFresh(featureId, executionId);
+        const { artifact } = this.plan(featureId);
+        const config = this.configuration();
+        const workItem = this.workItems(featureId, artifact.id).find((entry) => entry.key === item.id);
+        if (!workItem) throw new FactoryError("work_item_required", `Missing work item for ${item.id}.`, 409);
+        await this.verifyItemDependencies(featureId, item, approvedDependencyContext);
+        const enriched = { ...item, description: `${item.description}\n\nApproved merged dependency context:\n${JSON.stringify(approvedDependencyContext, null, 2)}\nBuild on these merged changes; do not duplicate them. No private source diff is transferred automatically.` };
+        const receipt = await this.operation(featureId, "dispatch", item, "dispatch",
+            (marker) => this.provider.findDispatch(config, item, workItem, marker),
+            async (marker) => {
+                if (this.provider.publishLocal) {
+                    return this.provider.publishLocal(config, enriched, workItem, marker, implementation);
+                }
+                const fallback = await this.provider.dispatch(config, enriched, workItem, marker);
+                return jsonValue({
+                    ...(typeof fallback === "object" && fallback !== null && !Array.isArray(fallback) ? fallback : { receipt: fallback }),
+                    mode: "local",
+                    branch: implementation.branch,
+                    roundsCompleted: implementation.roundsCompleted,
+                    maxRounds: implementation.maxRounds,
+                });
+            }, false, decision);
+        await this.operation(featureId, "dispatch_status", item, "dispatch", async () => null,
+            (marker) => this.provider.markDispatched(config, workItem, marker), true, decision);
+        return receipt;
+    }
+
+    async postReviewRoundFeedback(featureId: string, item: PlannedItem, pr: PullRequest, round: number,
+        body: string, actor: Actor, executionId?: string): Promise<Json> {
+        if (executionId) this.assertFresh(featureId, executionId);
+        const { artifact } = this.plan(featureId);
+        const config = this.store.configuration();
+        if (!config) throw new FactoryError("configuration_required", "Configure providers first.", 409);
+        const requestId = `auto-review-${artifact.id}-${item.id}-round-${round}-${pr.head}`;
+        const key = hash({ featureId, planId: artifact.id, itemId: item.id, requestId });
+        const marker = `software-factory-feedback-${key}`;
+        const postedBody = `${text(body, "Feedback body")}\n\nSoftware Factory operation: ${marker}`;
+        const existing = this.store.state(featureId).operations.find((entry) => entry.key === key);
+        if (existing?.status === "completed") return existing.receipt!;
+        const repo = config.value.repositories[item.repository];
+        if (!repo) throw new FactoryError("invalid_configuration", "Feedback repository is missing.", 409);
+        const scope = {
+            key, marker, featureId, itemId: item.id, planId: artifact.id, configurationId: config.id,
+            repository: sharedConfiguration(config.value).repositories[item.repository]!, pr,
+            body: postedBody,
+            effect: `Post independent reviewer findings (round ${round}) to PR #${pr.number}.`,
+        };
+        const scopeHash = hash(scope);
+        const claimId = randomUUID();
+        this.store.change(featureId, (state) => {
+            const entry = state.operations.find((value) => value.key === key);
+            if (entry && entry.status === "completed") return;
+            if (entry) { entry.claimId = claimId; entry.status = "inflight"; }
+            else state.operations.push({
+                key, kind: "feedback", itemId: item.id, planId: artifact.id, configurationId: config.id,
+                claimId, approvalId: actor.reference, manualConsent: { scopeHash, actor },
+                manualScope: jsonValue(scope), status: "inflight", receipt: null, error: null, updatedAt: now(),
+            });
+        });
+        let sent = false;
+        try {
+            await this.checkpoint?.(featureId);
+            let receipt = await this.provider.findFeedback(repo, pr.number, marker);
+            if (!receipt) {
+                const current = await this.provider.inspectPr(repo, pr.number, item.id);
+                if (current.head !== pr.head || current.status !== "open") {
+                    throw new FactoryError("stale_pr", "The PR head or state changed before review feedback was posted.", 409);
+                }
+                sent = true;
+                receipt = await this.provider.postFeedback(repo, pr.number, postedBody);
+            }
+            this.store.change(featureId, (state) => {
+                const entry = state.operations.find((value) => value.key === key)!;
+                if (entry.status === "completed") return;
+                entry.receipt = jsonValue(receipt); entry.status = "completed"; entry.error = null; entry.updatedAt = now();
+                this.store.event(state, "feedback_completed", key);
+            });
+            await this.checkpoint?.(featureId);
+            return receipt;
+        } catch (error) {
+            this.store.change(featureId, (state) => {
+                const entry = state.operations.find((value) => value.key === key)!;
+                if (entry.status === "completed" || entry.claimId !== claimId) return;
+                entry.status = !sent || (error instanceof FactoryError && error.code === "provider_rejected") ? "failed" : "reconciliation_required";
+                entry.error = entry.status === "failed" ? "No feedback was posted." : "Feedback outcome is uncertain; reconcile before reposting.";
+                entry.updatedAt = now();
+            });
+            await this.checkpoint?.(featureId);
+            throw error;
+        }
+    }
+
     async dispatch(featureId: string, executionId?: string): Promise<Json> {
         if (executionId) this.assertFresh(featureId, executionId);
         const { gate, decision } = this.requireGate(featureId, "dispatch");
-        const { artifact, value: plan } = this.plan(featureId);
-        const config = this.configuration();
-        const workItems = this.workItems(featureId, artifact.id);
+        const { value: plan } = this.plan(featureId);
         const eligible = object(gate.scope, "Dispatch scope").eligible;
         if (!Array.isArray(eligible)) throw new FactoryError("invalid_scope", "Dispatch scope is missing its exact work set.");
         const receipts: Json[] = [];
@@ -608,23 +764,8 @@ export class Lifecycle {
             if (executionId) this.assertFresh(featureId, executionId);
             const id = text(object(raw, "Dispatch item").id, "Dispatch work item ID");
             const item = plan.items.find((entry) => entry.id === id)!;
-            const workItem = workItems.find((entry) => entry.key === id)!;
             const approvedDependencyContext = object(raw, "Dispatch item").dependencyContext;
-            if (!Array.isArray(approvedDependencyContext)) throw new FactoryError("invalid_scope", "Dependency context was not included in the dispatch approval.");
-            for (const dependency of item.dependsOn) {
-                const spec = plan.items.find((entry) => entry.id === dependency)!;
-                const wi = workItems.find((entry) => entry.key === dependency)!;
-                const pr = await this.linkedPr(featureId, spec, wi);
-                if (!pr || pr.status !== "merged") throw new FactoryError("dependency_not_delivered", `Dependency ${dependency} has not actually merged.`, 409);
-                const approved = approvedDependencyContext.map((entry) => object(entry, "Dependency context")).find((entry) => entry.itemId === dependency);
-                if (!approved || approved.head !== pr.head || approved.url !== pr.url) throw new FactoryError("dependency_changed", "Dependency evidence changed after dispatch approval; review a fresh scope.", 409);
-            }
-            const enriched = { ...item, description: `${item.description}\n\nApproved merged dependency context:\n${JSON.stringify(approvedDependencyContext, null, 2)}\nBuild on these merged changes; do not duplicate them. No private source diff is transferred automatically.` };
-            receipts.push(await this.operation(featureId, "dispatch", item, "dispatch",
-                (marker) => this.provider.findDispatch(config, item, workItem, marker),
-                (marker) => this.provider.dispatch(config, enriched, workItem, marker), false, decision));
-            await this.operation(featureId, "dispatch_status", item, "dispatch", async () => null,
-                (marker) => this.provider.markDispatched(config, workItem, marker), true, decision);
+            receipts.push(await this.dispatchItem(featureId, item, approvedDependencyContext, decision, executionId));
         }
         return receipts;
     }

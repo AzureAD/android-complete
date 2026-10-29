@@ -26,12 +26,12 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
     const { createReaderTools, readerAgents, FACTORY_READER } = await import("../../../tools/software-factory/runtime/reader.ts");
     const { checkWorkflow } = await import("../../../tools/software-factory/workflows/check.ts");
     const { designEvaluationWorkflow, evaluationAgent } = await import("../../../tools/software-factory/evals/design.mjs");
-    const { intakeWorkflow, designWorkflow, planWorkflow, monitorWorkflow, loadedWorkflowFingerprint } = await import("../../../tools/software-factory/workflows/lifecycle.ts");
+    const { intakeWorkflow, designWorkflow, planWorkflow, implementWorkflow, monitorWorkflow, loadedWorkflowFingerprint } = await import("../../../tools/software-factory/workflows/lifecycle.ts");
     let application;
     let session;
     let ready = false;
     const getApplication = () => application ??= new Application({ workspace: process.env.SOFTWARE_FACTORY_WORKSPACE });
-    const definitions = [checkWorkflow, intakeWorkflow, designWorkflow, planWorkflow, monitorWorkflow, designEvaluationWorkflow];
+    const definitions = [checkWorkflow, intakeWorkflow, designWorkflow, planWorkflow, implementWorkflow, monitorWorkflow, designEvaluationWorkflow];
     const tools = createChatTools(
         getApplication,
         () => {

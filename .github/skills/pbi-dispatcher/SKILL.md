@@ -8,9 +8,14 @@ description: Dispatch a Software Factory feature's approved backlog through depe
 # Software Factory Dispatch
 
 Follow `.github/agents/software-factory.agent.md`. Resolve the stable feature,
-read the backlog receipts, target hosts/accounts/base branches, dependency
-evidence, and exact dispatch gate. Obtain genuine dispatch confirmation, then
-separately preview and confirm `dispatch_work`. No paused lifecycle run is involved.
+read the backlog receipts, target hosts/accounts/base branches, coding mode
+(`local` by default, or `remote`), independent reviewer round limit
+(`maxReviewRounds`, default 3, configurable e.g. to 2), dependency evidence, and
+exact dispatch gate. Obtain genuine dispatch confirmation, then separately
+preview and confirm `dispatch_work`. By default (`mode: "local"`), coding runs
+locally in the current Copilot CLI/app session with a builder ↔ independent
+reviewer loop in `localPath`, then pushes a branch and opens a PR after the
+reviewer passes.
 
 Read persisted dispatch receipts and actual run/provider status before reporting
 success. Reconcile uncertain operations instead of re-sending them. Respect

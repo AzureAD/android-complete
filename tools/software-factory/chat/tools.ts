@@ -259,7 +259,7 @@ export function createChatTools(application: () => Application, host: () => Chat
         },
         {
             name: "software_factory_command",
-            description: "Run a Software Factory command. Save private drafts; publish_feature to an existing ADO Feature, list_shared_features or open_shared_feature for team continuation. Start intake/design/plan/monitor as separate stage workflows that end before human review. Approve exact scopes, then separately create_backlog or dispatch_work. Also revise, recover/release inspected shared claims, control/reconcile runs and import/export. Genuine host confirmation is mandatory for approval, publication and paid work. Use preview and get_feature first.",
+            description: "Run a Software Factory command. Save private drafts; publish_feature to an existing ADO Feature, list_shared_features or open_shared_feature for team continuation. Start intake/design/plan/implement/monitor as separate stage workflows that end before human review. Approve exact scopes, then separately create_backlog or dispatch_work (which defaults to local coding mode with an independent reviewer loop in this Copilot CLI/app session, or supports remote dispatch mode). Also revise, recover/release inspected shared claims, control/reconcile runs and import/export. Genuine host confirmation is mandatory for approval, publication and paid work. Use preview and get_feature first.",
             parameters: schema({ command: { type: "object" } }),
             handler: (args, invocation) => command(object(args, "Arguments").command, invocation),
         },

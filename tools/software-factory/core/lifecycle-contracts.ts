@@ -5,7 +5,14 @@ import type { ActivityEntry } from "./progress.ts";
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Stage = "design" | "plan" | "backlog" | "dispatch" | "complete";
-export type WorkflowKind = "intake" | "design" | "plan" | "lifecycle" | "monitor" | "check";
+export type WorkflowKind = "intake" | "design" | "plan" | "implement" | "lifecycle" | "monitor" | "check";
+export type CodingMode = "local" | "remote";
+export const DEFAULT_CODING_MODE: CodingMode = "local";
+export const DEFAULT_REVIEW_ROUNDS = 3;
+export interface DeliverySettings {
+    mode: CodingMode;
+    maxReviewRounds: number;
+}
 export interface RepositoryTarget {
     provider: "github" | "ado";
     hostname: string;
@@ -20,6 +27,7 @@ export interface Configuration {
         organization: string; project: string; workItemType: string; areaPath: string;
         iterationPath: string; assignee: string; parentId: number | null;
     };
+    delivery?: DeliverySettings;
 }
 export interface ConfigRevision { id: string; value: Configuration; hash: string; createdAt: string }
 export interface PlannedItem {
@@ -29,8 +37,53 @@ export interface PlannedItem {
 }
 export interface Plan { summary: string; items: PlannedItem[]; blockingUnknowns: string[]; reviewHistory?: Json[] }
 export interface IntakeProposal { summary: string; requirements: Requirement[]; blockingUnknowns: string[]; designTasks?: string[] }
+export interface CodeImplementationFile {
+    path: string;
+    action: "write" | "delete";
+    content: string;
+}
+export interface CodeImplementationProposal {
+    summary: string;
+    files: CodeImplementationFile[];
+    testsAddedOrUpdated: string[];
+    blockingUnknowns: string[];
+}
+export const CODE_REVIEW_CATEGORIES = [
+    "correctness", "acceptance_criteria", "compatibility", "security_privacy", "concurrency", "tests", "telemetry",
+] as const;
+export type CodeReviewCategory = (typeof CODE_REVIEW_CATEGORIES)[number];
+export interface CodeReviewFinding {
+    id: string;
+    severity: "blocker" | "major" | "minor";
+    category: CodeReviewCategory;
+    file: string;
+    location: string;
+    evidence: string;
+    requiredChange: string;
+}
+export interface CodeReviewCriterionResult {
+    criterion: string;
+    status: "addressed" | "partial" | "missing" | "unknown";
+    evidence: string;
+}
+export interface CodeReviewResult {
+    pass: boolean;
+    summary: string;
+    criteria: CodeReviewCriterionResult[];
+    findings: CodeReviewFinding[];
+}
+export interface CodeReviewRoundSummary {
+    itemId: string;
+    head: string;
+    round: number;
+    maxRounds: number;
+    pass: boolean;
+    status: "approved" | "changes_requested" | "max_rounds_exceeded";
+    findings: CodeReviewFinding[];
+    suggestedFeedback: string | null;
+}
 export interface Artifact {
-    id: string; kind: "intake" | "design" | "plan" | "monitor" | "legacy" | "planning_attempt";
+    id: string; kind: "intake" | "design" | "plan" | "implementation" | "implementation_attempt" | "monitor" | "legacy" | "planning_attempt";
     requirementsRevision: string; parentId: string | null; generation: number;
     configurationId: string | null;
     analysisHash: string;
@@ -77,6 +130,7 @@ export interface Execution {
     phase: string; generation: { design: number; plan: number }; sourcePins: Record<string, string>;
     runtimeFingerprint: string;
     requestedBy?: Actor;
+    delivery?: DeliverySettings;
     errorCode?: string | null;
     registration?: WorkflowRegistration;
     launchContext?: { hostExecutable: string; extensionNode: string; nodeVersion: string; nativeRuntime: string };
@@ -137,6 +191,7 @@ export interface GatePreview {
 export interface MonitorReport {
     observedAt: string; items: WorkItem[]; prs: PullRequest[];
     validation: { itemId: string; criterion: string; status: "addressed" | "partial" | "missing" | "unknown"; evidence: string }[];
+    reviews?: CodeReviewRoundSummary[];
     errors: string[]; delivered: boolean;
 }
 
@@ -165,9 +220,21 @@ export function parseIntakeProposal(value: unknown, previous: Requirement[] = []
         ...(designTasks.length ? { designTasks } : {}) };
 }
 
+export function deliverySettings(config?: Configuration | null, overrides?: { mode?: unknown; maxReviewRounds?: unknown }): DeliverySettings {
+    const rawMode = overrides?.mode !== undefined ? overrides.mode : config?.delivery?.mode ?? DEFAULT_CODING_MODE;
+    if (rawMode !== "local" && rawMode !== "remote") {
+        throw new FactoryError("invalid_configuration", "Coding mode must be local or remote.");
+    }
+    const rawRounds = overrides?.maxReviewRounds !== undefined ? overrides.maxReviewRounds : config?.delivery?.maxReviewRounds ?? DEFAULT_REVIEW_ROUNDS;
+    if (typeof rawRounds !== "number" || !Number.isSafeInteger(rawRounds) || rawRounds < 1 || rawRounds > 10) {
+        throw new FactoryError("invalid_configuration", "maxReviewRounds must be an integer between 1 and 10.");
+    }
+    return { mode: rawMode, maxReviewRounds: rawRounds };
+}
+
 export function parseConfiguration(value: unknown): Configuration {
     const config = object(value, "Configuration");
-    exactKeys(config, ["repositories", "boards"], "Configuration");
+    exactKeys(config, ["repositories", "boards", "delivery"], "Configuration");
     const repositories: Record<string, RepositoryTarget> = {};
     for (const [key, raw] of Object.entries(object(config.repositories, "Repositories"))) {
         if (!/^[a-zA-Z0-9_-]+$/.test(key) || ["__proto__", "constructor", "prototype"].includes(key)) throw new FactoryError("invalid_configuration", "Repository keys must use safe, non-reserved aliases.");
@@ -205,6 +272,12 @@ export function parseConfiguration(value: unknown): Configuration {
     const organization = metadata(boards.organization, "Boards organization");
     if (organization && !/^[a-zA-Z0-9_-]+$/.test(organization)) throw new FactoryError("invalid_configuration", "Boards organization must be a name, not a URL.");
     if (boards.parentId !== null && (!Number.isSafeInteger(boards.parentId) || Number(boards.parentId) <= 0)) throw new FactoryError("invalid_configuration", "Parent ID must be a positive integer or null.");
+    let delivery: DeliverySettings | undefined;
+    if (config.delivery !== undefined) {
+        const rawDelivery = object(config.delivery, "Delivery settings");
+        exactKeys(rawDelivery, ["mode", "maxReviewRounds"], "Delivery settings");
+        delivery = deliverySettings(null, rawDelivery);
+    }
     return {
         repositories,
         boards: {
@@ -213,6 +286,7 @@ export function parseConfiguration(value: unknown): Configuration {
             assignee: typeof boards.assignee === "string" ? boards.assignee.trim() : text(boards.assignee, "Assignee"),
             parentId: boards.parentId === null ? null : Number(boards.parentId),
         },
+        ...(delivery ? { delivery } : {}),
     };
 }
 
@@ -224,8 +298,12 @@ export function analysisConfiguration(config: Configuration | null): Json {
 
 export function sharedConfiguration(config: Configuration): Configuration {
     const normalized = parseConfiguration(config);
-    return { boards: { ...normalized.boards }, repositories: Object.fromEntries(Object.entries(normalized.repositories).sort(([a], [b]) => a.localeCompare(b)).map(([key, repo]) =>
-        [key, { ...repo, localPath: ".", account: repo.provider === "github" ? "local-account-required" : "" }])) };
+    return {
+        boards: { ...normalized.boards },
+        repositories: Object.fromEntries(Object.entries(normalized.repositories).sort(([a], [b]) => a.localeCompare(b)).map(([key, repo]) =>
+            [key, { ...repo, localPath: ".", account: repo.provider === "github" ? "local-account-required" : "" }])),
+        ...(normalized.delivery ? { delivery: { ...normalized.delivery } } : {}),
+    };
 }
 
 export function parsePlan(value: unknown, config: Configuration, requirementIds: string[]): Plan {
@@ -299,5 +377,129 @@ export function parseMonitor(value: unknown): MonitorReport {
     });
     const observedAt = text(report.observedAt, "Observation timestamp");
     if (!Number.isFinite(Date.parse(observedAt))) throw new FactoryError("invalid_monitor", "Observation timestamp is invalid.");
-    return { observedAt, items, prs, validation, errors: strings(report.errors, "Observation errors"), delivered: report.delivered };
+    const reviews = Array.isArray(report.reviews) ? report.reviews.map((raw: unknown): CodeReviewRoundSummary => {
+        const entry = object(raw, "Code review summary");
+        const round = Number(entry.round);
+        const maxRounds = Number(entry.maxRounds);
+        if (!Number.isSafeInteger(round) || round < 1 || !Number.isSafeInteger(maxRounds) || maxRounds < 1 ||
+            typeof entry.pass !== "boolean" || !["approved", "changes_requested", "max_rounds_exceeded"].includes(String(entry.status))) {
+            throw new FactoryError("invalid_monitor", "Code review summary is invalid.");
+        }
+        return {
+            itemId: text(entry.itemId, "Review item ID"),
+            head: text(entry.head, "Reviewed PR head"),
+            round, maxRounds, pass: entry.pass,
+            status: entry.status as CodeReviewRoundSummary["status"],
+            findings: parseCodeReviewFindings(entry.findings),
+            suggestedFeedback: entry.suggestedFeedback === null || entry.suggestedFeedback === undefined ? null : text(entry.suggestedFeedback, "Suggested feedback"),
+        };
+    }) : undefined;
+    return {
+        observedAt, items, prs, validation,
+        ...(reviews ? { reviews } : {}),
+        errors: strings(report.errors, "Observation errors"), delivered: report.delivered,
+    };
+}
+
+export function parseCodeImplementation(value: unknown): CodeImplementationProposal {
+    const raw = object(value, "Code implementation");
+    const blockingUnknowns = raw.blockingUnknowns === undefined ? [] : strings(raw.blockingUnknowns, "Blocking unknowns");
+    const summary = text(raw.summary, "Implementation summary");
+    if (!Array.isArray(raw.files) || (!raw.files.length && !blockingUnknowns.length)) {
+        throw new FactoryError("invalid_implementation", "Builder must return at least one file change or a blocking unknown.");
+    }
+    const seen = new Set<string>();
+    const files: CodeImplementationFile[] = raw.files.map((entry: unknown) => {
+        const file = object(entry, "Implementation file");
+        const filePath = text(file.path, "File path").replaceAll("\\", "/");
+        if (filePath.startsWith("/") || /^[A-Za-z]:/.test(filePath) ||
+            filePath.split("/").some((segment) => !segment || segment === "." || segment === ".." || segment === ".git")) {
+            throw new FactoryError("invalid_implementation", `File path must stay within the target repository: ${filePath}.`);
+        }
+        if (seen.has(filePath)) throw new FactoryError("invalid_implementation", `Duplicate file entry in builder output: ${filePath}.`);
+        seen.add(filePath);
+        const action = file.action === undefined ? "write" : file.action;
+        if (action !== "write" && action !== "delete") {
+            throw new FactoryError("invalid_implementation", `Unsupported file action for ${filePath}.`);
+        }
+        if (typeof file.content !== "string" || (action === "write" && !file.content.length)) {
+            throw new FactoryError("invalid_implementation", `Nonempty string content is required when writing ${filePath}.`);
+        }
+        return { path: filePath, action, content: file.content };
+    });
+    const testsAddedOrUpdated = raw.testsAddedOrUpdated === undefined ? [] : strings(raw.testsAddedOrUpdated, "Tests added or updated");
+    return { summary, files, testsAddedOrUpdated, blockingUnknowns };
+}
+
+export function parseCodeReviewFindings(value: unknown): CodeReviewFinding[] {
+    if (!Array.isArray(value)) throw new FactoryError("invalid_code_review", "Review findings must be an array.");
+    const ids = new Set<string>();
+    return value.map((raw: unknown): CodeReviewFinding => {
+        const finding = object(raw, "Code review finding");
+        const id = text(finding.id, "Finding ID");
+        if (ids.has(id)) throw new FactoryError("invalid_code_review", `Duplicate finding ID: ${id}.`);
+        ids.add(id);
+        if (!["blocker", "major", "minor"].includes(String(finding.severity))) {
+            throw new FactoryError("invalid_code_review", `Invalid finding severity for ${id}.`);
+        }
+        const category = finding.category === undefined ? "correctness" : String(finding.category);
+        if (!CODE_REVIEW_CATEGORIES.includes(category as CodeReviewCategory)) {
+            throw new FactoryError("invalid_code_review", `Invalid finding category for ${id}.`);
+        }
+        return {
+            id,
+            severity: finding.severity as CodeReviewFinding["severity"],
+            category: category as CodeReviewCategory,
+            file: text(finding.file, "Finding file"),
+            location: text(finding.location, "Finding location"),
+            evidence: text(finding.evidence, "Finding evidence"),
+            requiredChange: text(finding.requiredChange, "Required change"),
+        };
+    });
+}
+
+export function parseCodeReview(value: unknown, expectedCriteria: string[]): CodeReviewResult {
+    const raw = object(value, "Independent code review");
+    if (typeof raw.pass !== "boolean") throw new FactoryError("invalid_code_review", "Independent code review must include a boolean pass field.");
+    if (!Array.isArray(raw.criteria) || raw.criteria.length !== expectedCriteria.length) {
+        throw new FactoryError("invalid_code_review", "Independent code review did not cover every acceptance criterion.");
+    }
+    const criteria: CodeReviewCriterionResult[] = raw.criteria.map((entry: unknown) => {
+        const item = object(entry, "Acceptance-criteria result");
+        const criterion = text(item.criterion, "Criterion");
+        if (!expectedCriteria.includes(criterion) || !["addressed", "partial", "missing", "unknown"].includes(String(item.status))) {
+            throw new FactoryError("invalid_code_review", "Independent code review returned an unknown criterion or status.");
+        }
+        return {
+            criterion,
+            status: item.status as CodeReviewCriterionResult["status"],
+            evidence: text(item.evidence, "Evidence"),
+        };
+    });
+    if (new Set(criteria.map((entry) => entry.criterion)).size !== expectedCriteria.length) {
+        throw new FactoryError("invalid_code_review", "Independent code review duplicated or omitted an acceptance criterion.");
+    }
+    const findings = parseCodeReviewFindings(raw.findings ?? []);
+    const summary = typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim()
+        : findings.length ? `${findings.length} finding(s) require builder revision.` : "All acceptance criteria and independent review checks passed.";
+    return { pass: raw.pass, summary, criteria, findings };
+}
+
+export function formatReviewFeedback(item: PlannedItem, round: number, maxRounds: number, review: CodeReviewResult): string {
+    const unaddressed = review.criteria.filter((entry) => entry.status !== "addressed");
+    return [
+        `@copilot Independent code review round ${round}/${maxRounds} for ${item.id} (${item.title}) requested changes:`,
+        "",
+        review.summary,
+        ...(review.findings.length ? [
+            "",
+            "### Required Code Changes",
+            ...review.findings.map((finding) => `- **[${finding.severity.toUpperCase()}] ${finding.id} (${finding.category})** in \`${finding.file}\` (${finding.location}): ${finding.evidence} -> **Fix:** ${finding.requiredChange}`),
+        ] : []),
+        ...(unaddressed.length ? [
+            "",
+            "### Unresolved Acceptance Criteria",
+            ...unaddressed.map((entry) => `- **${entry.criterion}** (${entry.status}): ${entry.evidence}`),
+        ] : []),
+    ].join("\n");
 }
