@@ -121,7 +121,45 @@ async function open(ctx: Context, kind: WorkflowKind, provider?: Provider) {
         };
         const agent = async (prompt: string, options: WorkflowAgentOptions = {}) => {
             await app.shared.assertRun(featureId, executionId);
-            return runReader(ctx, featureId, executionId, prompt, options);
+            const turnId = `${executionId}:turn:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+            const startedAt = Date.now();
+            const label = options.label || options.agent || "Factory worker";
+            const role = options.agent === "feature-planner" ? "software-factory-planner"
+                : options.agent === FACTORY_CODER || options.label?.startsWith("Factory:coder:") ? FACTORY_CODER
+                    : options.agent === FACTORY_CODE_REVIEWER || options.label?.startsWith("Factory:code-reviewer:") ? FACTORY_CODE_REVIEWER
+                        : options.label === "Repository evidence" || options.label === "Draft success criteria" ? "software-factory-researcher"
+                            : options.label === "Design author" || options.label === "Design revision" ? "software-factory-design-author"
+                                : options.label === "Independent design reviewer" ? "software-factory-design-reviewer"
+                                    : "software-factory-reader";
+            app.lifecycle.store.recordTrace(featureId, executionId, {
+                id: turnId, kind: "agent_turn", timestamp: new Date(startedAt).toISOString(),
+                role, label, target: role,
+                detail: prompt.slice(0, 400),
+                status: "running",
+            });
+            try {
+                const result = await runReader(ctx, featureId, executionId, prompt, options);
+                const preview = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+                app.lifecycle.store.recordTrace(featureId, executionId, {
+                    id: turnId, kind: "agent_turn", timestamp: new Date(startedAt).toISOString(),
+                    role, label, target: role,
+                    detail: prompt.slice(0, 400),
+                    status: "completed",
+                    durationMs: Date.now() - startedAt,
+                    outputPreview: preview ? preview.slice(0, 1200) : "null",
+                });
+                return result;
+            } catch (err) {
+                app.lifecycle.store.recordTrace(featureId, executionId, {
+                    id: turnId, kind: "agent_turn", timestamp: new Date(startedAt).toISOString(),
+                    role, label, target: role,
+                    detail: prompt.slice(0, 400),
+                    status: "failed",
+                    durationMs: Date.now() - startedAt,
+                    outputPreview: err instanceof Error ? err.message : String(err),
+                });
+                throw err;
+            }
         };
         return { app, factory: app.lifecycle, featureId, executionId, execution, phase, agent };
     } catch (error) {

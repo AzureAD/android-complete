@@ -125,6 +125,20 @@ export interface WorkflowAdmission {
     sessionOwner?: { sessionId: string | null; kind: "chat" | "owned" };
 }
 
+export interface ExecutionTraceEntry {
+    id: string;
+    kind: "tool_call" | "agent_turn";
+    timestamp: string;
+    role?: string;
+    label?: string;
+    tool?: string;
+    target?: string;
+    detail?: string;
+    status: "running" | "completed" | "failed";
+    durationMs?: number;
+    outputPreview?: string;
+}
+
 export interface Execution {
     id: string; kind: WorkflowKind; requirementsRevision: string; configurationId: string | null;
     sessionId: string; runtimeId: string | null; parentSessionId: string | null;
@@ -145,6 +159,7 @@ export interface Execution {
         declaredLimits: Record<string, number>; approvedLimits: Record<string, number> | null;
         agents: { label: string; status: string; requestedModel: string | null; resolvedModel: string | null; activeMs: number }[];
     };
+    trace?: ExecutionTraceEntry[];
     observationError?: string | null;
     checkpoints: Record<string, number>; outcome: Json | null; error: string | null;
     createdAt: string; updatedAt: string;

@@ -377,3 +377,203 @@ test("scope approval carries unresolved engineering tasks into design instead of
     expect(feature.approvals).toHaveLength(1);
     expect(feature.factory.executions).toHaveLength(0);
 });
+
+test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DAG, Code Arena, Delivery Center, and Flight Recorder transcripts", async ({ page }) => {
+    const application = new URL("../../core/application.ts", import.meta.url).href;
+    execFileSync(process.execPath, ["--input-type=module", "-e", `
+        const { Application } = await import(process.argv[1]);
+        const { teamConfig } = await import(process.argv[2]);
+        const app = new Application();
+        const actor = { channel: "chat", sessionId: "studio-fixture", reference: "studio-seed" };
+        try {
+            app.lifecycle.configure(teamConfig(), actor);
+            const feature = app.execute({ kind: "create_feature", requestId: "studio-showcase", input: {
+                title: "Studio Control Plane Showcase",
+                description: "End-to-end showcase of Design, Plan DAG, Code Arena, and Subagent Flight Recorder.",
+                requirements: [
+                    { id: "R1", text: "Preserve IPC response envelope compatibility." },
+                    { id: "R2", text: "Emit structured telemetry for retry outcomes." }
+                ],
+                blockingUnknowns: []
+            } }, actor);
+            app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor,
+                { granted: true, revisionId: feature.current.id, actor });
+            const run = app.lifecycle.begin(feature.id, "design", actor);
+            app.lifecycle.store.updateExecution(feature.id, run.id, {
+                runtimeId: "native-run-1", status: "Running".toLowerCase(), phase: "Independent review",
+                usage: {
+                    observedAt: Date.now(), activeMs: 14200, subagents: 3, nanoAiu: 48500,
+                    declaredLimits: { maxTotalSubagents: 7 }, approvedLimits: null,
+                    agents: [
+                        { label: "Repository evidence", status: "completed", requestedModel: null, resolvedModel: "gpt-5.3-codex", activeMs: 4100 },
+                        { label: "Design author", status: "completed", requestedModel: null, resolvedModel: "gpt-5.3-codex", activeMs: 6200 },
+                        { label: "Independent design reviewer", status: "completed", requestedModel: null, resolvedModel: "gpt-5.3-codex", activeMs: 3900 }
+                    ]
+                }
+            });
+            app.lifecycle.store.recordTrace(feature.id, run.id, {
+                id: "trace-tool-1", kind: "tool_call", timestamp: new Date().toISOString(),
+                tool: "software_factory_read", target: "common/src/BrokerController.kt:10-90",
+                detail: "VIEW (80 lines, 2,450 chars)", status: "completed",
+                outputPreview: "class BrokerController { fun execute() {} }"
+            });
+            app.lifecycle.store.recordTrace(feature.id, run.id, {
+                id: "trace-turn-1", kind: "agent_turn", timestamp: new Date().toISOString(),
+                role: "software-factory-design-author", label: "Design author", target: "software-factory-design-author",
+                detail: "Author complete Android design for R1 and R2.", status: "completed", durationMs: 6200,
+                outputPreview: "{\\"stage0Revision\\": \\"rev-1\\", \\"sections\\": {\\"architectureAndDataControlFlow\\": \\"IPC flow...\\"}}"
+            });
+            const designArt = app.lifecycle.store.artifact(feature.id, "design", feature.current.id, {
+                recommendation: "GO to Planning",
+                fixIterations: 1,
+                stage0: { title: "Studio Control Plane Showcase", revision: feature.current.id, requirements: feature.current.requirements },
+                evidence: {
+                    approvalVerification: { verified: true, revision: feature.current.id, reference: "approval-1", rationale: "Verified Stage 0 signature" },
+                    references: [
+                        { id: "E1", repository: "common", revision: "abcdef123456", path: "common/src/BrokerController.kt", locator: "L10-L90" }
+                    ],
+                    facts: [
+                        { statement: "BrokerController serializes IPC envelopes with versioned headers.", referenceIds: ["E1"] }
+                    ],
+                    conflicts: [], assumptions: ["IPC version remains v3"], unknowns: [], blockingUnknowns: []
+                },
+                design: {
+                    stage0Revision: feature.current.id,
+                    sections: {
+                        problemAndScope: "Ensure IPC retries preserve envelope format.",
+                        architectureAndDataControlFlow: "Route retry telemetry through Common IPC dispatcher."
+                    },
+                    traceability: [
+                        { requirementId: "R1", sectionIds: ["problemAndScope"], evidenceIds: ["E1"], verification: "Unit test BrokerControllerTest" },
+                        { requirementId: "R2", sectionIds: ["architectureAndDataControlFlow"], evidenceIds: ["E1"], verification: "Telemetry span assertion" }
+                    ],
+                    assumptions: ["IPC version remains v3"], openDecisions: ["Whether to batch retry metrics"], blockingUnknowns: []
+                },
+                reviews: [
+                    {
+                        round: 0,
+                        review: {
+                            criteria: [{ id: "approvedRequirementsUnchanged", pass: true }, { id: "measurableTelemetryAndSuccess", pass: false }],
+                            findings: [{
+                                id: "F1", rubricId: "measurableTelemetryAndSuccess", severity: "major",
+                                location: "architectureAndDataControlFlow", evidence: "Missing span attribute name for retry count.",
+                                requiredChange: "Specify retry_count attribute on IPC span."
+                            }],
+                            blockingUnknowns: []
+                        }
+                    },
+                    {
+                        round: 1,
+                        review: {
+                            criteria: [{ id: "approvedRequirementsUnchanged", pass: true }, { id: "measurableTelemetryAndSuccess", pass: true }],
+                            findings: [],
+                            blockingUnknowns: []
+                        }
+                    }
+                ]
+            }, null, run.id);
+            app.lifecycle.store.updateExecution(feature.id, run.id, { status: "completed", phase: "Ready for human design review" });
+            const planArt = app.lifecycle.store.artifact(feature.id, "plan", feature.current.id, {
+                summary: "Two-wave cross-repo implementation plan.",
+                items: [
+                    {
+                        id: "PBI-1", title: "Add IPC retry envelope header in Common", repository: "example",
+                        description: "Implement retry header in BrokerController.", requirementIds: ["R1"],
+                        acceptanceCriteria: ["Existing callers receive identical envelope keys."],
+                        dependsOn: [], files: ["common/src/BrokerController.kt"], tests: ["BrokerControllerTest"]
+                    },
+                    {
+                        id: "PBI-2", title: "Emit retry_count telemetry span", repository: "example",
+                        description: "Record retry_count on IPC spans.", requirementIds: ["R2"],
+                        acceptanceCriteria: ["Span includes retry_count attribute."],
+                        dependsOn: ["PBI-1"], files: ["common/src/Telemetry.kt"], tests: ["TelemetryTest"]
+                    }
+                ],
+                blockingUnknowns: [],
+                reviewHistory: [{ attempt: 0, review: { pass: true, findings: [] } }]
+            }, designArt.id);
+            app.lifecycle.store.artifact(feature.id, "implementation", feature.current.id, {
+                mode: "local", maxRounds: 3,
+                items: [{
+                    itemId: "PBI-1", mode: "local", status: "published", branch: "factory/ab-101-pbi-1",
+                    roundsCompleted: 2, maxRounds: 3,
+                    receipt: { pr: { number: 42, url: "https://github.com/example/repo/pull/42", status: "open" }, files: ["common/src/BrokerController.kt"] },
+                    reviewHistory: [
+                        {
+                            round: 1, mode: "local", builderSummary: "Initial retry header implementation.",
+                            files: ["common/src/BrokerController.kt"], testsAddedOrUpdated: ["BrokerControllerTest"],
+                            review: {
+                                pass: false, summary: "Missing null-safety guard on legacy header.",
+                                criteria: [{ criterion: "Existing callers receive identical envelope keys.", status: "partial", evidence: "Null header throws NPE." }],
+                                findings: [{
+                                    id: "CR-1", severity: "major", category: "compatibility",
+                                    file: "common/src/BrokerController.kt", location: "L44",
+                                    evidence: "Unchecked header cast.", requiredChange: "Use safe fallback when header is absent."
+                                }]
+                            }
+                        },
+                        {
+                            round: 2, mode: "local", builderSummary: "Added safe fallback for absent legacy header.",
+                            files: ["common/src/BrokerController.kt"], testsAddedOrUpdated: ["BrokerControllerTest"],
+                            review: {
+                                pass: true, summary: "All acceptance criteria and compatibility checks passed.",
+                                criteria: [{ criterion: "Existing callers receive identical envelope keys.", status: "addressed", evidence: "Verified in BrokerControllerTest." }],
+                                findings: []
+                            }
+                        }
+                    ]
+                }]
+            }, planArt.id);
+        } finally { app.close(); }
+    `, application, new URL("../../tests/team-provider.ts", import.meta.url).href], {
+        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8",
+    });
+
+    await page.goto(url);
+    await page.getByRole("navigation", { name: "Features" }).getByRole("button", { name: /Studio Control Plane Showcase/ }).click();
+
+    // 1. Verify Design Studio & Author vs. Reviewer Arena
+    const designReview = page.getByRole("region", { name: "Review design" });
+    await expect(designReview.getByText("Stage 0 Provenance Verified")).toBeVisible();
+    await designReview.getByRole("button", { name: /Author vs\. Reviewer/ }).click();
+    await expect(designReview.getByRole("button", { name: /Round 1/ })).toContainText("1 Finding(s)");
+    await designReview.getByRole("button", { name: /Round 1/ }).click();
+    await expect(designReview.locator(".finding-card")).toContainText("Missing span attribute name for retry count.");
+    await expect(designReview.locator(".finding-card")).toContainText("Addressed in next round ✓");
+
+    // 2. Verify Traceability Matrix & Source Evidence Ledger
+    await designReview.getByRole("button", { name: /Traceability & Evidence/ }).click();
+    await expect(designReview.locator(".evidence-card")).toContainText("BrokerController serializes IPC envelopes with versioned headers.");
+
+    // 3. Verify Studio Workspace Lens Bar -> Plan & DAG Studio
+    await page.getByRole("navigation", { name: "Feature studio workspaces" }).getByRole("button", { name: "Plan & DAG Studio" }).click();
+    const planStudio = page.getByRole("region", { name: "Plan Studio" });
+    await expect(planStudio.getByText("WAVE 1", { exact: true })).toBeVisible();
+    await expect(planStudio.getByText("WAVE 2", { exact: true })).toBeVisible();
+    await planStudio.locator(".dag-node-card", { hasText: "PBI-2" }).click();
+    await expect(planStudio.getByRole("complementary", { name: "Selected PBI Inspector" })).toContainText("Record retry_count on IPC spans.");
+
+    // 4. Verify Code Builder vs. Reviewer Arena
+    await page.getByRole("navigation", { name: "Feature studio workspaces" }).getByRole("button", { name: "Code Builder vs. Reviewer" }).click();
+    const codeArena = page.getByRole("region", { name: "Code Arena Studio" });
+    await expect(codeArena.getByText("branch: factory/ab-101-pbi-1")).toBeVisible();
+    await codeArena.getByRole("button", { name: /Round 1/ }).click();
+    await expect(codeArena.locator(".finding-card")).toContainText("Unchecked header cast.");
+    await codeArena.getByRole("button", { name: /Round 2/ }).click();
+    await expect(codeArena.locator(".reviewer-pane")).toContainText("All acceptance criteria and compatibility checks passed.");
+
+    // 5. Verify Subagent Flight Recorder & Live Transcripts
+    const flightDock = page.getByRole("region", { name: "Live subagents and transcripts" });
+    await expect(flightDock.getByText("48,500")).toBeVisible();
+    await expect(flightDock.getByText("common/src/BrokerController.kt:10-90")).toBeVisible();
+    await flightDock.getByText("common/src/BrokerController.kt:10-90").click();
+    await expect(flightDock.getByText("class BrokerController { fun execute() {} }")).toBeVisible();
+
+    // 6. Verify Dark Studio theme toggle & Visual Connections Mapper
+    await page.getByRole("button", { name: "Dark Studio", exact: true }).click();
+    await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "dark");
+    await page.getByRole("button", { name: "Connections", exact: true }).click();
+    await expect(page.getByRole("heading", { name: /Target Repositories/ })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath("software-factory-studio-dark.png"), fullPage: true });
+});
+

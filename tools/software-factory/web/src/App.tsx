@@ -6,6 +6,7 @@ import { parseRequirements, parseSuccessCriteria, type Command, type Feature, ty
 import { parseIntakeProposal, type Artifact, type FactoryFeature, type Json, type ConfigRevision } from "../../core/lifecycle-contracts.ts";
 import type { SharedTarget } from "../../core/shared-contracts.ts";
 import { FactoryPanel, FactorySettings } from "./FactoryPanel";
+import { SubagentFlightRecorder } from "./StudioExplorers";
 import { Confirmation, type ConfirmationRequest } from "./Confirmation";
 import { nextStep } from "../../core/progress.ts";
 import type { runtimeReport } from "../../core/doctor.ts";
@@ -80,6 +81,8 @@ export function App() {
     const [confirmation, setConfirmation] = useState<ConfirmationRequest>();
     const [syncedAt, setSyncedAt] = useState<number>();
     const [syncError, setSyncError] = useState("");
+    const [theme, setTheme] = useState<"light" | "dark">("light");
+    const [featureFilter, setFeatureFilter] = useState("");
     const refreshing = useRef(false);
     const refreshSequence = useRef(0);
     const authorityReadAt = useRef(0);
@@ -248,25 +251,51 @@ export function App() {
         setNotice("Review and edit these suggestions. Saving creates a draft revision, not an approval.");
     };
 
-    return <div className="app-shell">
+    return <div className="app-shell" data-theme={theme}>
         <aside className="sidebar">
             <a className="brand" href="/" aria-label="Software Factory home"><span className="brand-mark"><FactoryMark /></span><span>Software<br /><strong>Factory</strong></span></a>
             <div className="workspace"><span className="eyebrow">WORKSPACE</span><strong>{workspace}</strong><span>Private drafts. Shared team features in ADO.</span></div>
             <div className="sidebar-heading"><span>FEATURES</span><span>{features.length.toString().padStart(2, "0")}</span></div>
             <button className="new-feature" onClick={newFeature} disabled={busy}><span aria-hidden="true">+</span> New feature</button>
+            {features.length > 2 && (
+                <input
+                    className="sidebar-search"
+                    type="search"
+                    placeholder="Filter features..."
+                    aria-label="Filter features"
+                    value={featureFilter}
+                    onChange={(e) => setFeatureFilter(e.target.value)}
+                />
+            )}
             <nav aria-label="Features" className="feature-nav">
-                {features.map((feature) => <button key={feature.id} className={selectedId === feature.id && !creating ? "feature-link selected" : "feature-link"} onClick={() => navigate(feature.id)} disabled={busy}>
-                    <span className={feature.status === "ready_for_design" ? "status-dot ready" : "status-dot"} />
-                    <span><strong>{feature.current.title}</strong><small>{nextStep(feature, []).title}</small></span>
-                </button>)}
+                {features
+                    .filter((f) => !featureFilter.trim() || f.current.title.toLowerCase().includes(featureFilter.toLowerCase()))
+                    .map((feature) => {
+                        const step = nextStep(feature, []);
+                        const isRunning = feature.factory.executions.some((e) => ["starting", "running"].includes(e.status));
+                        return <button key={feature.id} className={selectedId === feature.id && !creating ? "feature-link selected" : "feature-link"} onClick={() => navigate(feature.id)} disabled={busy}>
+                            <span className={isRunning ? "status-dot pulse" : feature.status === "ready_for_design" ? "status-dot ready" : "status-dot"} />
+                            <span className="feature-link-body">
+                                <strong>{feature.current.title}</strong>
+                                <small>{step.title}</small>
+                                <span className="feature-link-badges">
+                                    <span className="mini-stage-pill">Stage {step.stage + 1}/6</span>
+                                    {feature.shared && <span className="mini-ado-pill">ADO #{feature.shared.target.workItemId}</span>}
+                                </span>
+                            </span>
+                        </button>;
+                    })}
                 {!busy && features.length === 0 && <p className="sidebar-empty">Your next idea starts here.</p>}
             </nav>
             <div className="chat-note"><span className="eyebrow">CHAT + DASHBOARD</span><p>Saved chat actions appear here automatically. Free-form chat messages are not copied.</p></div>
-            <div className="sidebar-footer"><span className="status-dot ready" /> Native Dynamic Workflows <span>0.1</span></div>
+            <div className="sidebar-footer"><span className="status-dot ready" /> Native Dynamic Workflows <span>0.2 Studio</span></div>
         </aside>
 
         <main>
             <header className="topbar"><span>WORKSPACE <span className="slash">/</span> {workspace} <span className="slash">/</span> Features</span><div>
+                <button className="text-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")}>
+                    {theme === "light" ? "Dark Studio" : "Light Mode"}
+                </button>
                 <button className="text-button" onClick={() => setSettings(!settings)}>Connections</button>
                 <button className="text-button" disabled={busy} onClick={() => void act(async () => { setDoctor(await request("/api/doctor")); })}>Check setup</button>
                 <button className="text-button" disabled={busy} onClick={() => void act(async () => { await refresh(); setNotice("Registry refreshed. Unsaved edits are preserved."); })}>Refresh</button>
@@ -362,7 +391,13 @@ export function App() {
                         </div>
                         <p className="approval-help">Approval applies only to this revision. It does not start a workflow or authorize remote changes.</p>
                     </section>
-                    <aside className="detail-aside"><section className="card activity" aria-label="Feature activity"><span className="eyebrow">SHARED ACTIVITY</span><h3>Chat and UI, one history</h3>
+                    <aside className="detail-aside">
+                        <section className="card flight-dock-card" aria-label="Live subagents and transcripts">
+                            <span className="eyebrow">AGENT TELEMETRY &amp; TRANSCRIPTS</span>
+                            <h3>Subagent Flight Recorder</h3>
+                            <SubagentFlightRecorder feature={selected} />
+                        </section>
+                        <section className="card activity" aria-label="Feature activity"><span className="eyebrow">SHARED ACTIVITY</span><h3>Chat and UI, one history</h3>
                         <p className="field-help">Saved scope changes, approvals, runs and failures. Not a chat transcript.</p>
                         <ol className="timeline">{selected.activity.slice(0, 20).map((event) => <li key={event.id}><strong>{event.title}</strong>
                             <span>{event.source} / {new Date(event.createdAt).toLocaleString()}</span>

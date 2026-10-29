@@ -1,50 +1,67 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { useEffect, useRef, useState } from "react";
-import type { ConfigRevision, FactoryFeature, GatePreview, Json } from "../../core/lifecycle-contracts.ts";
+import type { Artifact, Configuration, ConfigRevision, FactoryFeature, Json, RepositoryTarget } from "../../core/lifecycle-contracts.ts";
 import { request } from "./api";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Artifact } from "../../core/lifecycle-contracts.ts";
 import { nextStep, stageLabels, type AvailableGate } from "../../core/progress.ts";
 import { ScopeSummary } from "./Confirmation";
+import {
+    CodeArenaExplorer,
+    DeliveryCommandCenter,
+    DesignStudioExplorer,
+    PlanStudioExplorer,
+    SubagentFlightRecorder,
+} from "./StudioExplorers";
 
 type Execute = (command: Record<string, unknown>) => Promise<Record<string, Json>>;
 type GateResult = AvailableGate;
 
-function ArtifactDocument({ artifact }: { artifact: Artifact }) {
+export function ArtifactDocument({
+    artifact,
+    feature,
+    onAppendFeedback,
+    onSelectItemForOps,
+    onPrefillWaiver,
+    onPrefillPrFeedback,
+}: {
+    artifact: Artifact;
+    feature?: FactoryFeature;
+    onAppendFeedback?: (snippet: string) => void;
+    onSelectItemForOps?: (itemId: string) => void;
+    onPrefillWaiver?: (itemId: string, criterion: string) => void;
+    onPrefillPrFeedback?: (itemId: string, feedbackBody: string) => void;
+}) {
     const body = artifact.content;
     if (!body || typeof body !== "object" || Array.isArray(body)) return <pre>{JSON.stringify(body, null, 2)}</pre>;
     if (artifact.kind === "design" && body.design && typeof body.design === "object" && !Array.isArray(body.design)) {
         const sections = body.design.sections;
-        if (sections && typeof sections === "object" && !Array.isArray(sections)) return <article className="design-document">
-            {Object.entries(sections).map(([name, content]) => <section key={name}>
-                <h3>{name.replace(/([A-Z])/g, " $1")}</h3>
-                <Markdown remarkPlugins={[remarkGfm]} skipHtml components={{ img: ({ alt }) => <span>[Image: {alt || "not loaded"}]</span> }}>
-                    {typeof content === "string" ? content : JSON.stringify(content)}
-                </Markdown>
-            </section>)}
-            <details><summary>Full evidence, traceability, and review packet</summary><pre>{JSON.stringify(body, null, 2)}</pre></details>
-        </article>;
+        if (sections && typeof sections === "object" && !Array.isArray(sections)) {
+            return <DesignStudioExplorer artifact={artifact} onAppendFeedback={onAppendFeedback} />;
+        }
     }
-    if (artifact.kind === "plan" && Array.isArray(body.items)) return <div className="plan-document">
-        <p>{typeof body.summary === "string" ? body.summary : ""}</p>
-        <div className="plan-table"><table><thead><tr><th>PBI</th><th>Repository</th><th>Dependencies</th><th>Acceptance criteria</th></tr></thead><tbody>
-            {body.items.map((raw, index) => {
-                if (!raw || typeof raw !== "object" || Array.isArray(raw)) return <tr key={index}><td>Invalid item</td></tr>;
-                return <tr key={String(raw.id)}><td><strong>{String(raw.id)}</strong><br />{String(raw.title)}</td><td>{String(raw.repository)}</td>
-                    <td>{Array.isArray(raw.dependsOn) && raw.dependsOn.length ? raw.dependsOn.map(String).join(", ") : "Independent"}</td>
-                    <td><ul>{Array.isArray(raw.acceptanceCriteria) && raw.acceptanceCriteria.map((criterion, criterionIndex) => <li key={criterionIndex}>{String(criterion)}</li>)}</ul></td></tr>;
-            })}
-        </tbody></table></div>
-        <section aria-label="Dependency graph" className="dependency-graph"><h3>Dependency graph</h3>
-            {body.items.map((raw, index) => {
-                if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-                return <p key={index}><code>{Array.isArray(raw.dependsOn) && raw.dependsOn.length ? `${raw.dependsOn.map(String).join(" + ")} -> ` : "Start -> "}{String(raw.id)}</code></p>;
-            })}
-        </section>
-        <details><summary>Complete PBI specifications, files, tests, and traceability</summary><pre>{JSON.stringify(body, null, 2)}</pre></details>
-    </div>;
+    if ((artifact.kind === "plan" || artifact.kind === "planning_attempt") && Array.isArray(body.items)) {
+        return (
+            <PlanStudioExplorer
+                artifact={artifact}
+                feature={feature}
+                onAppendFeedback={onAppendFeedback}
+                onSelectItemForOps={onSelectItemForOps}
+            />
+        );
+    }
+    if (artifact.kind === "implementation" || artifact.kind === "implementation_attempt") {
+        return <CodeArenaExplorer artifact={artifact} />;
+    }
+    if (artifact.kind === "monitor" && feature) {
+        return (
+            <DeliveryCommandCenter
+                artifact={artifact}
+                feature={feature}
+                onPrefillWaiver={onPrefillWaiver}
+                onPrefillPrFeedback={onPrefillPrFeedback}
+            />
+        );
+    }
     return <pre>{JSON.stringify(body, null, 2)}</pre>;
 }
 
@@ -68,6 +85,10 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     const [recoveryReason, setRecoveryReason] = useState("");
     const feedbackRequest = useRef(crypto.randomUUID());
     const [tab, setTab] = useState<"artifacts" | "runs" | "operations">("artifacts");
+    const [studioLens, setStudioLens] = useState<"gate" | "design" | "plan" | "code" | "delivery" | "flight">("gate");
+    const [selectedExecId, setSelectedExecId] = useState<string>();
+    const feedbackInputRef = useRef<HTMLTextAreaElement>(null);
+
     useEffect(() => {
         let cancelled = false;
         setGatesLoaded(false);
@@ -85,13 +106,54 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     }
 
     const latest = (kind: "design" | "plan" | "monitor") => feature.factory.artifacts.find((artifact) => artifact.id === feature.currentArtifacts[kind]);
+    const latestImpl = () => [...feature.factory.artifacts].reverse().find((a) =>
+        (a.kind === "implementation" || a.kind === "implementation_attempt") && a.requirementsRevision === feature.current.id);
     const start = (workflow: string) => {
         try { return run({ kind: "start_workflow", featureId: feature.id, workflow, limits: JSON.parse(limits) }); }
         catch { setError("Execution limit overrides must be valid JSON."); return Promise.resolve(); }
     };
     const progress = nextStep(feature, gates);
     const currentGate = progress.gate;
-    const showRuns = () => { setTab("runs"); if (advanced.current) { advanced.current.open = true; advanced.current.scrollIntoView({ block: "nearest", behavior: "smooth" }); } };
+    const showRuns = () => {
+        setTab("runs");
+        if (advanced.current) {
+            advanced.current.open = true;
+            advanced.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+    };
+    const appendFeedback = (snippet: string) => {
+        setFeedback((prev) => (prev.trim() ? `${prev.trim()}\n${snippet}` : snippet));
+        setTab("artifacts");
+        if (advanced.current) advanced.current.open = true;
+        setTimeout(() => feedbackInputRef.current?.focus(), 50);
+    };
+    const selectItemForOps = (targetItemId: string) => {
+        setItemId(targetItemId);
+        setTab("operations");
+        if (advanced.current) {
+            advanced.current.open = true;
+            advanced.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+    };
+    const prefillWaiver = (targetItemId: string, targetCriterion: string) => {
+        setItemId(targetItemId);
+        setCriterion(targetCriterion);
+        setTab("artifacts");
+        if (advanced.current) {
+            advanced.current.open = true;
+            advanced.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+    };
+    const prefillPrFeedback = (targetItemId: string, bodyText: string) => {
+        setItemId(targetItemId);
+        setPrFeedback(bodyText);
+        feedbackRequest.current = crypto.randomUUID();
+        setTab("operations");
+        if (advanced.current) {
+            advanced.current.open = true;
+            advanced.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+    };
     const actNext = () => {
         const action = progress.action;
         if (action?.target === "edit") onEdit();
@@ -99,10 +161,54 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
         else if (action?.target === "runs") showRuns();
         else if (action?.command) void run(action.command);
     };
+
+    const designArtifact = latest("design");
+    const planArtifact = latest("plan") || [...feature.factory.artifacts].reverse().find((a) => a.kind === "planning_attempt" && a.requirementsRevision === feature.current.id);
+    const codeArtifact = latestImpl();
+    const monitorArtifact = latest("monitor");
+    const hasStudioArtifacts = Boolean(designArtifact || planArtifact || codeArtifact || monitorArtifact || feature.factory.executions.length > 0);
+
     return <section className="card factory-panel" aria-label="Workflow lifecycle">
         <div className="phase-track" aria-label="Feature progress">{stageLabels.map((label, index) => <div key={label} aria-current={index === progress.stage ? "step" : undefined}
             className={`phase ${index === progress.stage ? "current" : index < progress.stage ? "past" : ""}`}><span>{index + 1}</span><strong>{label}</strong>
             <small>{index === progress.stage ? "CURRENT STEP" : index < progress.stage ? "EARLIER STEP" : "LATER"}</small></div>)}</div>
+
+        {hasStudioArtifacts && (
+            <div className="studio-lens-bar" role="navigation" aria-label="Feature studio workspaces">
+                <span className="eyebrow">STUDIO WORKSPACE</span>
+                <div className="studio-lens-buttons">
+                    <button type="button" className={studioLens === "gate" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("gate")}>
+                        Active Gate &amp; Next Step
+                    </button>
+                    {designArtifact && (
+                        <button type="button" className={studioLens === "design" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("design")}>
+                            Design Studio
+                        </button>
+                    )}
+                    {planArtifact && (
+                        <button type="button" className={studioLens === "plan" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("plan")}>
+                            Plan &amp; DAG Studio
+                        </button>
+                    )}
+                    {codeArtifact && (
+                        <button type="button" className={studioLens === "code" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("code")}>
+                            Code Builder vs. Reviewer
+                        </button>
+                    )}
+                    {monitorArtifact && (
+                        <button type="button" className={studioLens === "delivery" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("delivery")}>
+                            Delivery &amp; PR Center
+                        </button>
+                    )}
+                    {feature.factory.executions.length > 0 && (
+                        <button type="button" className={studioLens === "flight" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("flight")}>
+                            Subagent Flight Recorder ({feature.factory.executions.length})
+                        </button>
+                    )}
+                </div>
+            </div>
+        )}
+
         <div className={`next-action ${progress.failed ? "failed" : ""}`} aria-label="Next step">
             <span className="eyebrow">{progress.failed ? "NEEDS ATTENTION" : progress.report ? "CHAT PROGRESS" : progress.run?.status === "running" || progress.run?.status === "starting" ? "IN PROGRESS" : "NEXT STEP"}</span>
             <h2>{progress.title}</h2><p role={progress.failed ? "alert" : undefined}>{progress.description}</p>
@@ -126,9 +232,49 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
         </div>
         {error && <div role="alert" className="message error">{error}</div>}
         {result?.outcome === "not_approved" && <p className="message notice" role="status">Not started. You chose not to approve this action.</p>}
+
+        {studioLens === "design" && designArtifact && currentGate?.stage !== "design" && (
+            <section className="studio-spotlight" aria-label="Design Studio">
+                <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} />
+            </section>
+        )}
+        {studioLens === "plan" && planArtifact && currentGate?.stage !== "plan" && (
+            <section className="studio-spotlight" aria-label="Plan Studio">
+                <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+            </section>
+        )}
+        {studioLens === "code" && codeArtifact && (
+            <section className="studio-spotlight" aria-label="Code Arena Studio">
+                <ArtifactDocument artifact={codeArtifact} feature={feature} />
+            </section>
+        )}
+        {studioLens === "delivery" && monitorArtifact && (
+            <section className="studio-spotlight" aria-label="Delivery Studio">
+                <ArtifactDocument artifact={monitorArtifact} feature={feature} onPrefillWaiver={prefillWaiver} onPrefillPrFeedback={prefillPrFeedback} />
+            </section>
+        )}
+        {studioLens === "flight" && (
+            <section className="studio-spotlight" aria-label="Flight Recorder Studio">
+                <SubagentFlightRecorder feature={feature} selectedExecutionId={selectedExecId} onSelectExecution={setSelectedExecId} />
+            </section>
+        )}
+
         {currentGate && <section className="current-review" aria-label={`Review ${currentGate.stage}`}>
             {["design", "plan"].includes(currentGate.stage) && latest(currentGate.stage as "design" | "plan") &&
-                <ArtifactDocument artifact={latest(currentGate.stage as "design" | "plan")!} />}
+                <ArtifactDocument
+                    artifact={latest(currentGate.stage as "design" | "plan")!}
+                    feature={feature}
+                    onAppendFeedback={appendFeedback}
+                    onSelectItemForOps={selectItemForOps}
+                />}
+            {currentGate.stage === "complete" && monitorArtifact && (
+                <ArtifactDocument
+                    artifact={monitorArtifact}
+                    feature={feature}
+                    onPrefillWaiver={prefillWaiver}
+                    onPrefillPrFeedback={prefillPrFeedback}
+                />
+            )}
             {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
             <details><summary>Exact approval scope and targets</summary><pre>{JSON.stringify({ scope: currentGate.scope, context: currentGate.context || null }, null, 2)}</pre></details>
             {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
@@ -170,10 +316,17 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
         {tab === "artifacts" && <>
             <div className="factory-artifacts">{feature.factory.artifacts.length ? [...feature.factory.artifacts].reverse().map((artifact) => <details key={artifact.id}>
                 <summary>{artifact.kind} / {new Date(artifact.createdAt).toLocaleString()} / {artifact.id}</summary>
-                <ArtifactDocument artifact={artifact} />
+                <ArtifactDocument
+                    artifact={artifact}
+                    feature={feature}
+                    onAppendFeedback={appendFeedback}
+                    onSelectItemForOps={selectItemForOps}
+                    onPrefillWaiver={prefillWaiver}
+                    onPrefillPrFeedback={prefillPrFeedback}
+                />
             </details>) : <p className="muted">No generated artifacts yet. Ask Factory for draft success criteria above, or approve your own criteria before starting design.</p>}</div>
             <label htmlFor={`feedback-${feature.id}`}>Revision feedback</label>
-            <textarea id={`feedback-${feature.id}`} value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={3} placeholder="What should change? Approved requirements cannot be rewritten by an agent." />
+            <textarea ref={feedbackInputRef} id={`feedback-${feature.id}`} value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={3} placeholder="What should change? Approved requirements cannot be rewritten by an agent." />
             <div className="factory-actions">{(["design", "plan"] as const).map((stage) => <button key={stage} className="secondary" disabled={busy || !feedback.trim() || !latest(stage)} onClick={() => void run({
                 kind: "request_revision", featureId: feature.id, stage, expectedArtifactId: latest(stage)?.id, feedback,
             })}>Request {stage} revision</button>)}</div>
@@ -188,6 +341,7 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
             </details>
         </>}
         {tab === "runs" && <>
+            <SubagentFlightRecorder feature={feature} selectedExecutionId={selectedExecId} onSelectExecution={setSelectedExecId} />
             <label htmlFor="resume-limits">Explicit execution/resume-limit overrides (JSON, optional)</label><input id="resume-limits" value={limits} onChange={(event) => setLimits(event.target.value)} />
             <p className="field-help">New runs have no AI-credit cap unless you set one. Copilot usage is still metered. To remove an existing run's credit cap, use {"{\"maxAiCredits\":null}"} in a confirmed resume.</p>
             {feature.factory.executions.length ? [...feature.factory.executions].reverse().map((execution) => <section className="run-card" key={execution.id}>
@@ -242,7 +396,7 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
             {feature.factory.schedule && <p className="muted">Next local check: {new Date(feature.factory.schedule.nextAt).toLocaleString()}</p>}
         </>}
         {tab === "operations" && <div className="factory-artifacts">
-            <details><summary>Associate a canonical PR or post reviewed feedback</summary>
+            <details open={Boolean(itemId || prFeedback)}><summary>Associate a canonical PR or post reviewed feedback</summary>
                 <label htmlFor="pr-item">Planned work item key</label><input id="pr-item" value={itemId} onChange={(event) => setItemId(event.target.value)} />
                 <label htmlFor="pr-number">PR number in its configured repository</label><input id="pr-number" type="number" min="1" value={prNumber} onChange={(event) => setPrNumber(event.target.value)} />
                 <button className="secondary" disabled={busy || !itemId || !prNumber} onClick={() => void run({ kind: "attach_pr", featureId: feature.id, itemId, number: Number(prNumber) })}>Verify &amp; associate PR</button>
@@ -277,7 +431,7 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     </section>;
 }
 
-const configurationTemplate = {
+const configurationTemplate: Configuration = {
     repositories: {
         example: { provider: "github", hostname: "github.com", slug: "OWNER/REPOSITORY", baseBranch: "CONFIGURED_BASE", account: "YOUR_ACCOUNT", localPath: "." },
     },
@@ -287,6 +441,7 @@ const configurationTemplate = {
 
 export function FactorySettings({ execute }: { execute: Execute }) {
     const [configuration, setConfiguration] = useState(JSON.stringify(configurationTemplate, null, 2));
+    const [newAlias, setNewAlias] = useState("");
     const [file, setFile] = useState("");
     const [mappings, setMappings] = useState("[]");
     const [importHash, setImportHash] = useState("");
@@ -313,10 +468,180 @@ export function FactorySettings({ execute }: { execute: Execute }) {
         } catch (failure) { setError(failure instanceof Error ? failure.message : "Configuration command failed."); }
         finally { setBusy(false); }
     }
+
+    let parsedConfig: Configuration | null = null;
+    try {
+        const raw = JSON.parse(configuration) as Configuration;
+        if (raw && typeof raw === "object" && raw.repositories && raw.boards) parsedConfig = raw;
+    } catch {
+        parsedConfig = null;
+    }
+
+    const updateConfigObject = (mutator: (draft: Configuration) => void) => {
+        const base: Configuration = parsedConfig
+            ? JSON.parse(JSON.stringify(parsedConfig)) as Configuration
+            : JSON.parse(JSON.stringify(configurationTemplate)) as Configuration;
+        mutator(base);
+        setConfiguration(JSON.stringify(base, null, 2));
+    };
+
     return <section className="card factory-panel" aria-label="Connections and migration">
         <span className="eyebrow">SHARED CHAT / UI CONFIGURATION</span><h2>Connect the right targets.</h2>
         <p className="muted">Provider and hostname are separate. GitHub accounts are scoped to each request; credentials are never stored here. ADO board and repository projects may differ.</p>
-        <label htmlFor="configuration-json">Repository and ADO settings</label><textarea id="configuration-json" rows={17} value={configuration} onChange={(event) => setConfiguration(event.target.value)} spellCheck={false} />
+
+        {parsedConfig && (
+            <div className="visual-config-studio">
+                <div className="visual-config-section">
+                    <div className="studio-section-head">
+                        <h3>Target Repositories ({Object.keys(parsedConfig.repositories).length})</h3>
+                        <div className="add-repo-inline">
+                            <input
+                                placeholder="New repo alias (e.g. common)"
+                                value={newAlias}
+                                onChange={(e) => setNewAlias(e.target.value)}
+                                aria-label="New repository alias"
+                            />
+                            <button
+                                type="button"
+                                className="secondary"
+                                disabled={!newAlias.trim()}
+                                onClick={() => {
+                                    const key = newAlias.trim().replace(/[^a-zA-Z0-9_-]/g, "");
+                                    if (!key) return;
+                                    updateConfigObject((cfg) => {
+                                        cfg.repositories[key] = {
+                                            provider: "github", hostname: "github.com", slug: "AzureAD/repo",
+                                            baseBranch: "dev", account: "shjameel_microsoft", localPath: key,
+                                        };
+                                    });
+                                    setNewAlias("");
+                                }}
+                            >
+                                + Add repo
+                            </button>
+                        </div>
+                    </div>
+                    <div className="repo-mapper-grid">
+                        {Object.entries(parsedConfig.repositories).map(([alias, repo]: [string, RepositoryTarget]) => (
+                            <div key={alias} className="repo-mapper-card">
+                                <div className="repo-mapper-head">
+                                    <span className="mono-chip blue">{alias}</span>
+                                    <span className="mono-chip">{repo.provider.toUpperCase()}</span>
+                                    {Object.keys(parsedConfig!.repositories).length > 1 && (
+                                        <button
+                                            type="button"
+                                            className="ghost-chip-btn"
+                                            onClick={() => updateConfigObject((cfg) => { delete cfg.repositories[alias]; })}
+                                        >
+                                            Remove
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="repo-mapper-fields">
+                                    <label>Provider
+                                        <select
+                                            value={repo.provider}
+                                            onChange={(e) => updateConfigObject((cfg) => {
+                                                const p = e.target.value as "github" | "ado";
+                                                cfg.repositories[alias]!.provider = p;
+                                                if (p === "ado") {
+                                                    cfg.repositories[alias]!.hostname = "dev.azure.com";
+                                                    cfg.repositories[alias]!.account = "";
+                                                }
+                                            })}
+                                        >
+                                            <option value="github">GitHub / GHE</option>
+                                            <option value="ado">Azure DevOps</option>
+                                        </select>
+                                    </label>
+                                    <label>Hostname
+                                        <input value={repo.hostname} onChange={(e) => updateConfigObject((cfg) => { cfg.repositories[alias]!.hostname = e.target.value; })} />
+                                    </label>
+                                    <label>Slug (owner/repo)
+                                        <input value={repo.slug} onChange={(e) => updateConfigObject((cfg) => { cfg.repositories[alias]!.slug = e.target.value; })} />
+                                    </label>
+                                    <label>Base Branch
+                                        <input value={repo.baseBranch} onChange={(e) => updateConfigObject((cfg) => { cfg.repositories[alias]!.baseBranch = e.target.value; })} />
+                                    </label>
+                                    <label>GitHub Account
+                                        <input
+                                            value={repo.account}
+                                            disabled={repo.provider === "ado"}
+                                            onChange={(e) => updateConfigObject((cfg) => { cfg.repositories[alias]!.account = e.target.value; })}
+                                        />
+                                    </label>
+                                    <label>Local Path
+                                        <input value={repo.localPath} onChange={(e) => updateConfigObject((cfg) => { cfg.repositories[alias]!.localPath = e.target.value; })} />
+                                    </label>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="visual-config-split">
+                    <div className="visual-config-section">
+                        <h3>Azure DevOps Board Routing</h3>
+                        <div className="repo-mapper-fields">
+                            <label>Organization
+                                <input value={parsedConfig.boards.organization} onChange={(e) => updateConfigObject((cfg) => { cfg.boards.organization = e.target.value; })} />
+                            </label>
+                            <label>Project
+                                <input value={parsedConfig.boards.project} onChange={(e) => updateConfigObject((cfg) => { cfg.boards.project = e.target.value; })} />
+                            </label>
+                            <label>Work Item Type
+                                <input value={parsedConfig.boards.workItemType} onChange={(e) => updateConfigObject((cfg) => { cfg.boards.workItemType = e.target.value; })} />
+                            </label>
+                            <label>Area Path
+                                <input value={parsedConfig.boards.areaPath} onChange={(e) => updateConfigObject((cfg) => { cfg.boards.areaPath = e.target.value; })} />
+                            </label>
+                            <label>Iteration Path
+                                <input value={parsedConfig.boards.iterationPath} onChange={(e) => updateConfigObject((cfg) => { cfg.boards.iterationPath = e.target.value; })} />
+                            </label>
+                            <label>Assignee
+                                <input value={parsedConfig.boards.assignee} onChange={(e) => updateConfigObject((cfg) => { cfg.boards.assignee = e.target.value; })} />
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="visual-config-section">
+                        <h3>Stage 3 Coding &amp; Review Loop</h3>
+                        <div className="repo-mapper-fields">
+                            <label>Execution Mode
+                                <select
+                                    value={parsedConfig.delivery?.mode || "local"}
+                                    onChange={(e) => updateConfigObject((cfg) => {
+                                        cfg.delivery = {
+                                            mode: e.target.value as "local" | "remote",
+                                            maxReviewRounds: cfg.delivery?.maxReviewRounds ?? 3,
+                                        };
+                                    })}
+                                >
+                                    <option value="local">Local Builder + Independent Reviewer</option>
+                                    <option value="remote">Remote Coding Agent + PR Reviewer</option>
+                                </select>
+                            </label>
+                            <label>Max Adversarial Review Rounds (1–10)
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={parsedConfig.delivery?.maxReviewRounds ?? 3}
+                                    onChange={(e) => updateConfigObject((cfg) => {
+                                        cfg.delivery = {
+                                            mode: cfg.delivery?.mode || "local",
+                                            maxReviewRounds: Math.max(1, Math.min(10, Number(e.target.value) || 3)),
+                                        };
+                                    })}
+                                />
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        <label htmlFor="configuration-json">Repository and ADO settings</label><textarea id="configuration-json" rows={12} value={configuration} onChange={(event) => setConfiguration(event.target.value)} spellCheck={false} />
         <div className="factory-actions"><button className="primary" disabled={busy} onClick={() => {
             try { void run({ kind: "configure", configuration: JSON.parse(configuration) }); }
             catch { setError("Configuration must be valid JSON."); }

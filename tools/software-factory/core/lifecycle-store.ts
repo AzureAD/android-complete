@@ -9,7 +9,7 @@ import type { Registry } from "./registry.ts";
 import { currentChatProgress, featureActivity } from "./progress.ts";
 import {
     analysisConfiguration, jsonValue, parseConfiguration, sharedConfiguration, type Artifact, type Configuration, type ConfigRevision,
-    type Execution, type FactoryFeature, type FactoryState, type Json,
+    type Execution, type ExecutionTraceEntry, type FactoryFeature, type FactoryState, type Json,
 } from "./lifecycle-contracts.ts";
 
 export const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -228,6 +228,24 @@ export class LifecycleStore {
             });
             return execution;
         });
+    }
+
+    recordTrace(featureId: string, executionId: string, entry: ExecutionTraceEntry): void {
+        try {
+            this.change(featureId, (state) => {
+                const execution = state.executions.find((item) => item.id === executionId);
+                if (!execution || ["cancelled", "superseded", "completed"].includes(execution.status)) return;
+                execution.trace ??= [];
+                const idx = execution.trace.findIndex((item) => item.id === entry.id);
+                if (idx >= 0) execution.trace[idx] = entry;
+                else {
+                    execution.trace.push(entry);
+                    if (execution.trace.length > 200) execution.trace.splice(0, execution.trace.length - 200);
+                }
+            });
+        } catch {
+            // Best-effort diagnostic trace recording; never block or fail the workflow.
+        }
     }
 
     view(featureId: string): FactoryFeature {

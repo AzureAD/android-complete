@@ -174,7 +174,21 @@ export function createReaderTools(application: () => Application, host: () => Re
                     output += `\n\n[Linked worktree sub-repositories available via relative paths from ${mainRoot}: ${subrepos.join(", ")}]`;
                 }
             }
-            return output.length <= 30_000 ? output : `${output.slice(0, 30_000)}\n[Output truncated; narrow the search or read a smaller range.]`;
+            const bounded = output.length <= 30_000 ? output : `${output.slice(0, 30_000)}\n[Output truncated; narrow the search or read a smaller range.]`;
+            const rangeSuffix = Array.isArray(args.view_range) ? `:${args.view_range[0]}-${args.view_range[1]}` : "";
+            const patternSuffix = typeof args.pattern === "string" ? ` — pattern "${args.pattern}"${typeof args.glob === "string" ? ` (${args.glob})` : ""}` : "";
+            const lineCount = bounded.split(/\r?\n/).length;
+            app.lifecycle.store.recordTrace(text(args.featureId, "Feature ID"), text(args.executionId, "Execution ID"), {
+                id: `${execution.id}:tool:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+                kind: "tool_call",
+                timestamp: new Date().toISOString(),
+                tool: definition.name,
+                target: `${rawPath}${rangeSuffix}${patternSuffix}`,
+                detail: `${definition.native.toUpperCase()} (${lineCount} lines, ${bounded.length.toLocaleString()} chars)`,
+                status: "completed",
+                outputPreview: bounded.slice(0, 600),
+            });
+            return bounded;
         },
     }));
 }
