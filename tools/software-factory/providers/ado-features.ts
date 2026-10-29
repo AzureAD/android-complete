@@ -8,6 +8,7 @@ const encode = encodeURIComponent;
 const prefix = "software-factory-state-v1-";
 const maximumBytes = 16 * 1024 * 1024;
 const quote = (value: string) => value.replaceAll("'", "''");
+const escapeHtml = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
 export class AdoFeatureProvider implements SharedProvider {
     private readonly runner: CommandRunner;
@@ -174,5 +175,18 @@ export class AdoFeatureProvider implements SharedProvider {
         }), "Shared feature query");
         if (!Array.isArray(result.workItems)) throw new FactoryError("shared_unavailable", "ADO omitted shared feature query results.", 502);
         return result.workItems.map((item) => sharedTarget({ organization, project, workItemId: object(item, "ADO feature").id }));
+    }
+
+    async createFeature(target: { organization: string; project: string; areaPath?: string; iterationPath?: string }, title: string, description?: string): Promise<SharedTarget> {
+        const probe = sharedTarget({ organization: target.organization, project: target.project, workItemId: 1 });
+        const operations: { op: "add"; path: string; value: string }[] = [
+            { op: "add", path: "/fields/System.Title", value: text(title, "Feature title") },
+            { op: "add", path: "/fields/System.Tags", value: "software-factory" },
+        ];
+        if (description?.trim()) operations.push({ op: "add", path: "/fields/System.Description", value: `<p>${escapeHtml(description.trim())}</p>` });
+        if (target.areaPath?.trim()) operations.push({ op: "add", path: "/fields/System.AreaPath", value: target.areaPath.trim() });
+        if (target.iterationPath?.trim()) operations.push({ op: "add", path: "/fields/System.IterationPath", value: target.iterationPath.trim() });
+        const created = object(await this.json(probe, "wit/workitems/$Feature", "POST", operations, true), "Created ADO Feature");
+        return sharedTarget({ organization: target.organization, project: target.project, workItemId: created.id });
     }
 }

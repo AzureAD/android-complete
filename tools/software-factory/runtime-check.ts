@@ -83,6 +83,10 @@ try {
         }
         const context = observed.launchContext;
         const actualRegistration = observed.registration;
+        const binding = app.lifecycle.store.state(feature.id).sessionBinding;
+        if (!binding?.established || !binding.publishedSessionUri) {
+            throw new Error("Native controller did not publish the owned session through its loopback AHP host.");
+        }
         if (!context || !actualRegistration?.nodeExecutable || context.hostExecutable !== process.execPath ||
             realpathSync(actualRegistration.nodeExecutable) !== context.extensionNode ||
             actualRegistration.nodeVersion !== context.nodeVersion || Number(context.nodeVersion.split(".")[0]) < 24 ||

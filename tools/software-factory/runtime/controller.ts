@@ -13,7 +13,7 @@ import { hash } from "../core/lifecycle-store.ts";
 import { fileEvidence, loadedWorkflowFingerprint, runtimeFingerprint } from "../core/evidence.ts";
 import { systemRunner } from "../providers/cli.ts";
 import { createClient, ownedRuntimeEnvironment, sessionConfiguration } from "./host.ts";
-import { requireRuntime } from "../core/runtime-health.ts";
+import { requireRuntime, resolveRepositoryRoot } from "../core/runtime-health.ts";
 import { awaitWorkflowRegistration } from "./registration.ts";
 import { resolveExtensionInterpreter } from "./interpreter.ts";
 import { FACTORY_READER, initializeReaderPipeline } from "./reader.ts";
@@ -30,11 +30,16 @@ export interface NativeSession {
 
 export async function sourcePins(factory: Lifecycle): Promise<Record<string, string>> {
     const workspace = factory.store.registry.project.workspace;
+    const mainRoot = resolveRepositoryRoot(workspace);
     const roots = new Set([workspace]);
     const config = factory.store.configuration();
     for (const repo of Object.values(config?.value.repositories || {})) {
         const location = path.resolve(workspace, repo.localPath);
-        if (existsSync(location)) roots.add(realpathSync(location));
+        const fallback = path.resolve(mainRoot, repo.localPath);
+        const target = existsSync(path.join(location, ".git")) ? location
+            : existsSync(path.join(fallback, ".git")) ? fallback
+            : existsSync(location) ? location : fallback;
+        if (existsSync(target)) roots.add(realpathSync(target));
     }
     const pins: Record<string, string> = {};
     for (const root of roots) {
@@ -50,6 +55,7 @@ export async function sourcePins(factory: Lifecycle): Promise<Record<string, str
 export class NativeRuntime {
     private readonly factory: Lifecycle;
     private client?: ReturnType<typeof createClient>;
+    private ahpHost?: Awaited<ReturnType<ReturnType<typeof createClient>["startAhpHost"]>>;
     private readonly sessions = new Map<string, NativeSession>();
     private readonly launching = new Set<string>();
     private readonly ownerToken = randomUUID();
@@ -187,10 +193,26 @@ export class NativeRuntime {
         const session = execution.runtimeId || execution.reuseSession
             ? await this.client!.resumeSession(execution.sessionId, config)
             : await this.client!.createSession({ ...config, sessionId: execution.sessionId });
+        let publishedSessionUri: string | null = null;
+        try {
+            this.ahpHost ??= await this.client!.startAhpHost({
+                authentication: { mode: "github" }, computeId: this.ownerToken,
+                localServer: { hostname: "127.0.0.1", requireConnectionToken: true },
+                allowCreatingNewSessions: false,
+            });
+            publishedSessionUri = (await this.ahpHost.publishSession(session.sessionId)).sessionUri;
+        } catch {
+            publishedSessionUri = null;
+        }
         this.sessions.set(execution.id, session);
         for (const feature of this.factory.store.registry.list()) {
             if (this.factory.store.state(feature.id).sessionBinding?.sessionId === execution.sessionId) {
-                this.factory.store.change(feature.id, (state) => { if (state.sessionBinding) state.sessionBinding.established = true; });
+                this.factory.store.change(feature.id, (state) => {
+                    if (state.sessionBinding) {
+                        state.sessionBinding.established = true;
+                        if (publishedSessionUri) state.sessionBinding.publishedSessionUri = publishedSessionUri;
+                    }
+                });
             }
         }
         return session;
@@ -458,6 +480,10 @@ export class NativeRuntime {
                     catch (error) { this.fail(feature.id, execution.id, error); }
                 }
             }
+        }
+        if (this.ahpHost) {
+            try { await this.ahpHost.dispose(); } catch { /* Best-effort AHP host teardown before stopping client */ }
+            this.ahpHost = undefined;
         }
         const errors = await this.client?.stop() || [];
         await Promise.allSettled([...this.pending]);

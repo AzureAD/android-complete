@@ -184,11 +184,13 @@ export function App() {
         return result;
     }
 
-    async function teamAction(kind: "publish_feature" | "open_shared_feature", workItemId = Number(adoFeatureId)) {
+    async function teamAction(kind: "publish_feature" | "open_shared_feature", workItemId = Number(adoFeatureId), createNew = false) {
         const { configuration } = await request<{ configuration: ConfigRevision | null }>("/api/configuration");
         if (!configuration) throw new Error("Configure repository mappings and the ADO organization/project under Connections first.");
         await execute({ kind, ...(kind === "publish_feature" ? { featureId: selected?.id } : {}),
-            target: { organization: configuration.value.boards.organization, project: configuration.value.boards.project, workItemId } });
+            target: createNew
+                ? { organization: configuration.value.boards.organization, project: configuration.value.boards.project, create: true }
+                : { organization: configuration.value.boards.organization, project: configuration.value.boards.project, workItemId } });
     }
 
     async function send(command: Command) {
@@ -299,6 +301,8 @@ export function App() {
                         <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>Open team feature</button>
                         <button className="secondary" disabled={busy || !selected || !!selected.shared || !adoFeatureId}
                             onClick={() => void act(() => teamAction("publish_feature"))}>Publish draft to ADO</button>
+                        <button className="secondary" disabled={busy || !selected || !!selected.shared}
+                            onClick={() => void act(() => teamAction("publish_feature", 0, true))}>Create &amp; publish ADO Feature</button>
                         <button className="secondary" disabled={busy} onClick={() => void act(async () => {
                             const result = await execute({ kind: "list_shared_features" });
                             if (!Array.isArray(result.features)) throw new Error("ADO returned no team feature list.");

@@ -9,7 +9,7 @@ import { dispatch, prepare } from "./commands.ts";
 import { hash, now } from "./lifecycle-store.ts";
 import { jsonValue, parseConfiguration, sharedConfiguration, type Execution, type Json } from "./lifecycle-contracts.ts";
 import { AdoFeatureProvider } from "../providers/ado-features.ts";
-import { digest, parseSnapshot, sharedTarget, type SharedProvider, type SharedRecord, type SharedSnapshot, type SharedTarget } from "./shared-contracts.ts";
+import { digest, parseSnapshot, publishTarget, sharedTarget, type PublishTarget, type SharedProvider, type SharedRecord, type SharedSnapshot, type SharedTarget } from "./shared-contracts.ts";
 
 const localCommands = new Set(["report_progress", "control_run", "set_schedule", "supersede_execution", "export_feature", "review_pr"]);
 
@@ -108,20 +108,39 @@ export class SharedAuthority {
         return this.app.lifecycle.store.view(record.snapshot.feature.id);
     }
 
-    async publish(featureId: string, target: SharedTarget, actor: Actor) {
+    async publish(featureId: string, requestedTarget: PublishTarget, actor: Actor, options: { approve?: boolean } = {}) {
         const source = this.app.registry.get(featureId);
+        if (options.approve) {
+            if (!source.current.requirements.length) throw new FactoryError("success_criteria_required", "Add and review at least one success criterion before approving this feature for design.", 409);
+            if (source.current.blockingUnknowns.length) throw new FactoryError("blocking_unknowns", "Resolve the scope decisions before approving for design.", 409);
+        }
+        const boards = this.app.lifecycle.store.configuration()?.value.boards;
+        const parsedTarget = publishTarget(requestedTarget, boards);
+        const target = "create" in parsedTarget
+            ? await (() => {
+                if (!this.provider.createFeature) throw new FactoryError("feature_creation_unsupported", "This shared provider does not support creating ADO Features.", 501);
+                return this.provider.createFeature(parsedTarget, source.current.title, source.current.description);
+            })()
+            : parsedTarget;
         const identity = await this.provider.identity(target);
+        const trustedActor = { ...actor, ado: identity };
         // A successor preserves local historical approvals without importing them as team consent.
         const successor = this.app.registry.create(`publish:${featureId}:${digest(target)}:${source.current.id}`, {
             title: source.current.title, ...(source.current.description ? { description: source.current.description } : {}),
             ...(source.current.designTasks?.length ? { designTasks: source.current.designTasks } : {}),
             requirements: source.current.requirements, blockingUnknowns: source.current.blockingUnknowns,
-        }, { ...actor, ado: identity });
+        }, trustedActor);
         const existing = await this.provider.read(target);
         if (existing && existing.snapshot.feature.id !== successor.id) throw new FactoryError("shared_target_in_use", "That ADO Feature already belongs to another shared record.", 409);
-        const record = existing || await this.provider.write(target, null, this.snapshot(this.app, successor.id), identity);
+        let record = existing || await this.provider.write(target, null, this.snapshot(this.app, successor.id), identity);
         this.hydrate(this.app, record);
         this.save(record);
+        if (options.approve && this.app.registry.get(successor.id).status !== "ready_for_design") {
+            this.app.registry.approve(successor.id, successor.current.id, trustedActor);
+            record = await this.provider.write(target, record, this.snapshot(this.app, successor.id), identity);
+            this.hydrate(this.app, record);
+            this.save(record);
+        }
         return this.app.lifecycle.store.view(successor.id);
     }
 

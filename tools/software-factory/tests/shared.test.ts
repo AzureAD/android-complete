@@ -383,3 +383,83 @@ test("pre-admission startup failure automatically releases its unstarted ADO sha
         f.cleanup();
     }
 });
+
+test("combined publish_feature can create an ADO Feature, record authenticated scope approval, and start design in one confirmed action", async () => {
+    const f = teamFixture();
+    let appRef: Application | undefined;
+    try {
+        const app = f.create("combined-publish");
+        const ws = app.registry.project.workspace;
+        app.lifecycle.configure(teamConfig(".", "combined-publish"), actor);
+        execFileSync("git", ["init", "--quiet", ws]);
+        execFileSync("git", ["-C", ws, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", ws, "config", "user.name", "Test"]);
+        writeFileSync(path.join(ws, "README.md"), "fixture\n");
+        execFileSync("git", ["-C", ws, "add", "README.md"]);
+        execFileSync("git", ["-C", ws, "commit", "--quiet", "-m", "init"]);
+        appRef = app;
+        const draft = app.execute({ kind: "create_feature", requestId: "combined-draft", input: requirements() }, actor);
+        const sessionHash = createHash("sha256").update(actor.sessionId!).digest("hex");
+        let nativeRuns = 0;
+        const session = {
+            sessionId: actor.sessionId!,
+            rpc: {
+                extensions: { list: async () => ({ extensions: [{ id: "project:SoftwareFactory", name: "SoftwareFactory", source: "project" as const, status: "running" as const }] }), reload: async () => {} },
+                tools: {
+                    initializeAndValidate: async () => ({ toolNames: [] }),
+                    getCurrentMetadata: async () => ({ tools: [{ name: "view", description: "v" }, { name: "glob", description: "g" }, { name: "grep", description: "s" }] }),
+                    execute: async () => ({
+                        resultType: "success" as const,
+                        textResultForLlm: JSON.stringify({
+                            ready: true, sessionId: "******", sessionIdHash: sessionHash,
+                            workflowNames: ["software-factory-design"], runtimeFingerprint: runtimeFingerprint(), readerAgent: FACTORY_READER,
+                        }),
+                    }),
+                },
+            },
+            workflow: {
+                run: async () => { nativeRuns++; return { runId: "combined-run-1", status: "completed" as const, result: { ok: true } }; },
+                resume: async () => { throw new Error("unexpected"); },
+                pause: async () => { throw new Error("unexpected"); },
+                cancel: async () => { throw new Error("unexpected"); },
+                getRun: async () => { throw new Error("unexpected"); },
+                getRunDetail: async () => ({
+                    runId: "combined-run-1", workflowName: "software-factory-design", description: "Design", status: "completed" as const,
+                    revision: 1, createdAt: Date.now(), startedAt: Date.now(), updatedAt: Date.now(), completedAt: Date.now(),
+                    currentPhase: null, declaredPhaseCount: 1, liveAgentCount: 0, totalSpawnedAgentCount: 0,
+                    consumed: { subagents: 0, activeMs: 1, nanoAiu: 0 },
+                    declaredLimits: {}, approved: null, observedAt: Date.now(), activeSegmentStartedAt: null,
+                    terminal: null, canResume: false, phases: [], agents: [],
+                    progress: { records: [], oldestSeq: null, newestSeq: null, hasMoreOlder: false, hasMoreNewer: false, revision: 1 },
+                }),
+            },
+        };
+        await app.bindChatSession(session);
+        const result = await submit(app, {
+            kind: "publish_feature",
+            featureId: draft.id,
+            target: { create: true },
+            approve: true,
+            startDesign: true,
+        });
+        assert.equal(result.outcome, "workflow_requested");
+        const published = result.feature as { id: string; status: string; shared: { target: { organization: string; project: string; workItemId: number }; revision: number } };
+        assert.equal(published.status, "ready_for_design");
+        assert.ok(published.shared.target.workItemId >= 1001);
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+            const current = app.lifecycle.store.state(published.id).executions.at(-1)!;
+            if (current.status === "completed" || current.status === "error") break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const finalExecution = app.lifecycle.store.state(published.id).executions.at(-1)!;
+        assert.equal(finalExecution.status, "completed", finalExecution.error || finalExecution.status);
+        assert.equal(nativeRuns, 1);
+        const adoRecord = await f.provider.read(published.shared.target);
+        assert.equal(adoRecord?.snapshot.feature.approvals.length, 1);
+        assert.equal(adoRecord?.snapshot.feature.approvals[0]?.actor.ado?.id, "alice");
+    } finally {
+        await appRef?.shutdown();
+        f.cleanup();
+    }
+});

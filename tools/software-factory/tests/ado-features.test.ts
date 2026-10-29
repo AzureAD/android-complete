@@ -27,6 +27,11 @@ function transport() {
         assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer fixture-token");
         if (url.pathname.endsWith("/connectionData")) return Response.json({ authenticatedUser: identity });
         if (url.pathname.endsWith("/wiql")) return Response.json({ workItems: [{ id: 123 }] });
+        if (url.pathname.endsWith("/wit/workitems/$Feature") && init?.method === "POST") {
+            if (deny) return new Response("", { status: 403 });
+            assert.equal(new Headers(init.headers).get("Content-Type"), "application/json-patch+json");
+            return Response.json({ id: 123, rev: 1, fields: { "System.WorkItemType": "Feature", "System.ChangedBy": identity }, relations: [] });
+        }
         if (url.pathname.includes("/attachments")) {
             if (init?.method === "POST") {
                 if (deny) return new Response("", { status: 403 });
@@ -88,6 +93,8 @@ test("ADO attachment transport verifies historical writers, CAS, restart and ord
         await assert.rejects(() => provider.write(target, approved, approved.snapshot, identity), /Another user changed/);
         assert.equal(server.uploads(), uploads, "stale CAS must fail before uploading");
         assert.deepEqual(await provider.list("example", "Engineering"), [target]);
+        const createdTarget = await provider.createFeature({ organization: "example", project: "Engineering", areaPath: "Engineering" }, "Auto-created Feature", "Description");
+        assert.deepEqual(createdTarget, target);
         server.manualEdit((item) => { item.relations = structuredClone(server.revisions.get(first.revision)!.relations); });
         await assert.rejects(() => server.provider().read(target), /historical attachment/);
     } finally { f.cleanup(); }

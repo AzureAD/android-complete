@@ -101,10 +101,14 @@ export function createChatTools(application: () => Application, host: () => Chat
         app.lifecycle.reportProgress(feature.id, feature.current.id, `${provenance.reference}:${suffix}`, progress, provenance);
     }
 
-    function followingDecision(app: Application, prepared: PreparedCommand) {
-        if (!["approve_requirements", "approve_stage"].includes(String(prepared.command.kind)) ||
-            prepared.command.approved === false || typeof prepared.command.featureId !== "string") return null;
-        const id = prepared.command.featureId;
+    function followingDecision(app: Application, prepared: PreparedCommand, result?: Record<string, Json>) {
+        const publishedId = prepared.command.kind === "publish_feature" && prepared.command.approve === true &&
+            prepared.command.startDesign !== true && result?.feature && typeof result.feature === "object" &&
+            !Array.isArray(result.feature) && typeof result.feature.id === "string"
+            ? result.feature.id : null;
+        if (!publishedId && (!["approve_requirements", "approve_stage"].includes(String(prepared.command.kind)) ||
+            prepared.command.approved === false || typeof prepared.command.featureId !== "string")) return null;
+        const id = publishedId || String(prepared.command.featureId);
         const gates: AvailableGate[] = (["design", "plan", "backlog", "dispatch", "complete"] as const).map((stage) => {
             try { return { available: true, ...app.lifecycle.gate(id, stage) }; }
             catch (error) {
@@ -187,7 +191,7 @@ export function createChatTools(application: () => Application, host: () => Chat
             throw error;
         }
         if (preview.decision) note("idle", "The decision was handled. Native execution and recorded results remain authoritative; no hidden input request is pending.", "decision-handled");
-        const nextAction = followingDecision(app, preview);
+        const nextAction = followingDecision(app, preview, result);
         return { ...result,
             ...(preview.command.kind === "approve_requirements" && !result.outcome ? { outcome: "approved" } : {}),
             ...(nextAction ? { nextAction } : {}) };

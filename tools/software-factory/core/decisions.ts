@@ -81,11 +81,26 @@ export function describeDecision(app: Application, command: Record<string, unkno
     if (command.kind === "publish_feature") {
         const target = record(value.target);
         const itemId = target.workItemId;
+        const createNew = target.create === true;
         const organization = typeof target.organization === "string" ? target.organization : "";
         const project = typeof target.project === "string" ? target.project : "";
         const location = [organization, project].filter(Boolean).join("/");
-        const destination = typeof itemId === "number" ? `ADO Feature ${itemId}` : "the selected ADO Feature";
-        effect = `Save this draft to ${destination}${location ? ` (${location})` : ""} so your team can access it.`;
+        const destination = createNew
+            ? `a new ADO Feature${location ? ` in ${location}` : ""}`
+            : typeof itemId === "number" ? `ADO Feature ${itemId}${location ? ` (${location})` : ""}` : `the selected ADO Feature${location ? ` (${location})` : ""}`;
+        if (command.startDesign === true) {
+            title = "Publish, approve scope, and start design?";
+            approveLabel = "Publish, approve & start design";
+            effect = `Save this draft to ${destination}, approve its scope, and start the metered native design workflow.`;
+            boundaries = "Your local draft stays intact. Uses your Copilot allowance and may consume AI credits. Does not change code, create PBIs, or dispatch coding tasks.";
+        } else if (command.approve === true) {
+            title = "Publish and approve feature scope?";
+            approveLabel = "Publish & approve scope";
+            effect = `Save this draft to ${destination} and approve its success criteria for design.`;
+            boundaries = "Your local draft stays intact. Does not start AI work, change code, create PBIs, or dispatch coding tasks.";
+        } else {
+            effect = `Save this draft to ${destination} so your team can access it.`;
+        }
     }
     if (command.kind === "configure") {
         const repositories = record(value.repositories);

@@ -11,7 +11,7 @@ import { createBackup, inspectBackup, restoreClone } from "./backups.ts";
 import { runtimeFingerprint } from "./evidence.ts";
 import { parseProgress } from "./progress.ts";
 import { decisionMessage, describeDecision, type DecisionPresentation } from "./decisions.ts";
-import { sharedTarget } from "./shared-contracts.ts";
+import { publishTarget, sharedTarget } from "./shared-contracts.ts";
 
 export interface PreparedCommand {
     command: Record<string, unknown>; scope: Json; consentKey: string | null; confirmation: string | null; decision: DecisionPresentation | null;
@@ -59,13 +59,39 @@ export function prepare(app: Application, input: unknown): PreparedCommand {
     let scope: Json = jsonValue(command);
     let confirm = false;
     switch (command.kind) {
-        case "publish_feature":
-            exactKeys(command, ["kind", "featureId", "target"], "Command");
-            scope = { feature: jsonValue(app.registry.get(text(command.featureId, "Feature ID")).current), target: jsonValue(sharedTarget(command.target)),
-                effect: "Publish a new shared successor on this ADO Feature. Upload the current requirements as an attachment. Existing local history is preserved; no previous approvals or artifacts become team approvals." };
-            app.lifecycle.configuration();
+        case "publish_feature": {
+            exactKeys(command, ["kind", "featureId", "target", "approve", "startDesign", "limits"], "Command");
+            const feature = app.registry.get(text(command.featureId, "Feature ID"));
+            const config = app.lifecycle.configuration();
+            const target = publishTarget(command.target, config.boards);
+            if (command.approve !== undefined && typeof command.approve !== "boolean") throw new FactoryError("invalid_input", "approve must be a boolean.");
+            if (command.startDesign !== undefined && typeof command.startDesign !== "boolean") throw new FactoryError("invalid_input", "startDesign must be a boolean.");
+            if (command.startDesign === true && command.approve !== true) {
+                throw new FactoryError("approval_required", "Combined design startup requires approve: true on publish_feature.", 409);
+            }
+            if (command.approve === true) {
+                if (!feature.current.requirements.length) throw new FactoryError("success_criteria_required", "Add and review at least one success criterion before approving this feature for design.", 409);
+                if (feature.current.blockingUnknowns.length) throw new FactoryError("blocking_unknowns", "Resolve the scope decisions before approving for design.", 409);
+            }
+            const requestedLimits = limits(command.limits);
+            const combined = command.approve === true || command.startDesign === true || command.limits !== undefined || "create" in target;
+            scope = combined ? {
+                feature: jsonValue(feature.current), target: jsonValue(target),
+                approve: command.approve === true, startDesign: command.startDesign === true,
+                ...(command.startDesign === true ? {
+                    configurationId: app.lifecycle.store.configuration()?.id || null,
+                    userRequestedLimits: jsonValue(requestedLimits),
+                    effectiveAiCreditLimit: requestedLimits.maxAiCredits ?? null,
+                    executionOwner: app.executionOwner(feature.id),
+                } : {}),
+                effect: `${"create" in target ? "Create a new ADO Feature and publish" : "Publish"} a shared successor on ADO.${command.approve === true ? " Approve this exact scope for design." : ""}${command.startDesign === true ? " Start the metered native design workflow." : ""}`,
+            } : {
+                feature: jsonValue(feature.current), target: jsonValue(target),
+                effect: "Publish a new shared successor on this ADO Feature. Upload the current requirements as an attachment. Existing local history is preserved; no previous approvals or artifacts become team approvals.",
+            };
             confirm = true;
             break;
+        }
         case "open_shared_feature":
             exactKeys(command, ["kind", "target"], "Command");
             sharedTarget(command.target);
@@ -302,8 +328,30 @@ export async function dispatch(app: Application, input: unknown, actor: Actor, c
     }
     const id = () => text(command.featureId, "Feature ID");
     switch (command.kind) {
-        case "publish_feature":
-            return { feature: jsonValue(await app.shared.publish(id(), sharedTarget(command.target), actor)) };
+        case "publish_feature": {
+            const config = app.lifecycle.configuration();
+            const target = publishTarget(command.target, config.boards);
+            const published = await app.shared.publish(id(), target, actor, { approve: command.approve === true });
+            if (command.startDesign === true) {
+                const scopeValue = object(prepared.scope, "Execution scope");
+                const owner = object(scopeValue.executionOwner, "Execution owner");
+                const admission = {
+                    requirementsRevision: published.current.id,
+                    configurationId: scopeValue.configurationId === null ? null : text(scopeValue.configurationId, "Approved execution configuration"),
+                    sessionOwner: {
+                        sessionId: owner.sessionId === null ? null : text(owner.sessionId, "Owning session"),
+                        kind: owner.kind === "chat" ? "chat" as const : "owned" as const,
+                    },
+                };
+                const execution = await app.startWorkflow(published.id, "design", actor, limits(command.limits), admission);
+                return {
+                    feature: jsonValue(app.lifecycle.store.view(published.id)),
+                    execution: jsonValue(execution),
+                    outcome: execution.status === "error" ? "workflow_failed" : "workflow_requested",
+                };
+            }
+            return { feature: jsonValue(published), ...(command.approve === true ? { outcome: "approved" } : {}) };
+        }
         case "open_shared_feature":
             return { feature: jsonValue(await app.shared.open(sharedTarget(command.target))) };
         case "list_shared_features": {

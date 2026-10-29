@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { Application } from "../core/application.ts";
 import { FactoryError, MAX_COMMAND_BYTES } from "../core/contracts.ts";
+import { projectSdkRoot, resolveRepositoryRoot } from "../core/runtime-health.ts";
 import { actor, fixture, requirements } from "./helpers.ts";
 
 function create(app: Application, requestId = "request-1", input = requirements()) {
@@ -44,6 +45,36 @@ test("project boundaries isolate features even when sharing the registry", () =>
         assert.equal(other.registry.list().length, 0);
         assert.notEqual(create(other).projectId, feature.projectId);
     } finally { other.close(); f.cleanup(); }
+});
+
+test("linked git worktrees share the parent repository project identity and SDK fallback", () => {
+    const f = fixture();
+    const mainRepo = path.join(f.directory, "main-repo");
+    const mainGit = path.join(mainRepo, ".git");
+    const worktreeGit = path.join(mainGit, "worktrees", "feature-wt");
+    const worktree = path.join(f.directory, "worktrees", "feature-wt");
+    const mainSdk = path.join(mainRepo, "tools", "software-factory", "node_modules", "@github", "copilot-sdk");
+    mkdirSync(worktreeGit, { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+    mkdirSync(mainSdk, { recursive: true });
+    writeFileSync(path.join(worktreeGit, "commondir"), "../..\n");
+    writeFileSync(path.join(worktree, ".git"), `gitdir: ${worktreeGit}\n`);
+    writeFileSync(path.join(mainSdk, "package.json"), JSON.stringify({ name: "@github/copilot-sdk", version: "1.0.26" }));
+    const mainApp = new Application({ database: f.options.database, workspace: mainRepo });
+    const wtApp = new Application({ database: f.options.database, workspace: worktree });
+    try {
+        assert.equal(resolveRepositoryRoot(worktree), resolveRepositoryRoot(mainRepo));
+        assert.equal(wtApp.registry.project.id, mainApp.registry.project.id);
+        assert.equal(wtApp.registry.project.workspace, resolveRepositoryRoot(worktree) === worktree ? worktree : wtApp.registry.project.workspace);
+        const created = create(mainApp, "shared-across-worktrees");
+        assert.equal(wtApp.registry.list().length, 1);
+        assert.equal(wtApp.registry.get(created.id).id, created.id);
+        assert.equal(projectSdkRoot(worktree), mainSdk + path.sep);
+    } finally {
+        wtApp.close();
+        mainApp.close();
+        f.cleanup();
+    }
 });
 
 test("approval requires trusted consent and binds to the exact current revision", () => {

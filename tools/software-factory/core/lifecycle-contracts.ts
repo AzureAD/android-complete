@@ -61,7 +61,12 @@ export interface Operation {
     approvalId: string; receipt: Json | null; error: string | null; updatedAt: string;
 }
 export type ExecutionLimits = Record<string, number | null>;
-export interface SessionBinding { sessionId: string; kind: "chat" | "owned"; established: boolean }
+export interface SessionBinding {
+    sessionId: string;
+    kind: "chat" | "owned";
+    established: boolean;
+    publishedSessionUri?: string | null;
+}
 export interface WorkflowAdmission {
     requirementsRevision: string; configurationId: string | null;
     sessionOwner?: { sessionId: string | null; kind: "chat" | "owned" };
