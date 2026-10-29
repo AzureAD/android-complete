@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { FactoryError, object, text } from "../core/contracts.ts";
 import { jsonValue, type Configuration, type Json, type PlannedItem, type PullRequest, type RepositoryTarget, type WorkItem } from "../core/lifecycle-contracts.ts";
 import type { LocalImplementationInput, Provider } from "./provider.ts";
+import { ensureSubrepoWorktree } from "../core/runtime-health.ts";
 import { systemRunner, type CommandRunner } from "./cli.ts";
 
 const defaultWorkspaceRoot = () => fileURLToPath(new URL("../../../", import.meta.url));
@@ -177,7 +178,7 @@ export class ExternalProvider implements Provider {
         const repo = config.repositories[item.repository];
         if (!repo) throw new FactoryError("invalid_configuration", "Dispatch repository is missing.");
         const workspace = process.env.SOFTWARE_FACTORY_WORKSPACE || defaultWorkspaceRoot();
-        const repoRoot = path.resolve(workspace, repo.localPath);
+        const repoRoot = await ensureSubrepoWorktree(workspace, repo.localPath, repo.baseBranch, this.runner);
         if (!existsSync(repoRoot)) throw new FactoryError("local_repository_missing", `Configured localPath for ${item.repository} does not exist: ${repoRoot}.`, 409);
         const canonicalRoot = realpathSync(repoRoot);
         const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;

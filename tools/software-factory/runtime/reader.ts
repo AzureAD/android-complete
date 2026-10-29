@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import type { CopilotSession, CustomAgentConfig, WorkflowAgentOptions, WorkflowContext } from "@github/copilot-sdk";
 import type { Application } from "../core/application.ts";
@@ -117,12 +117,19 @@ export function createReaderTools(application: () => Application, host: () => Re
             const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
             const workspace = app.registry.project.workspace;
             const mainRoot = resolveRepositoryRoot(workspace);
-            const roots = [workspace, ...Object.keys(execution.sourcePins), path.join(path.dirname(app.registry.databasePath), "approval-evidence")]
+            const roots = [workspace, mainRoot, ...Object.keys(execution.sourcePins), path.join(path.dirname(app.registry.databasePath), "approval-evidence")]
                 .map((root) => normalize(path.resolve(root)));
             const withinRoots = (value: string) => roots.some((root) => normalize(value) === root || normalize(value).startsWith(root + path.sep));
             const rawPath = text(args.path, "Read path");
             const candidate = path.resolve(workspace, rawPath);
-            const requested = existsSync(candidate) || mainRoot === workspace ? candidate : path.resolve(mainRoot, rawPath);
+            const relToWorkspace = path.relative(workspace, candidate);
+            const insideWorkspace = relToWorkspace === "" || (!relToWorkspace.startsWith("..") && !path.isAbsolute(relToWorkspace));
+            const fallback = insideWorkspace && mainRoot !== workspace ? path.resolve(mainRoot, relToWorkspace) : candidate;
+            const useFallback = insideWorkspace && mainRoot !== workspace && existsSync(fallback) && (
+                !existsSync(candidate) ||
+                (statSync(candidate).isDirectory() && !existsSync(path.join(candidate, ".git")) && readdirSync(candidate).length === 0)
+            );
+            const requested = useFallback ? fallback : candidate;
             if (!withinRoots(requested)) {
                 throw new FactoryError("worker_read_outside_scope", "Workers can read only this execution's approved source and approval evidence.", 403);
             }
@@ -155,7 +162,18 @@ export function createReaderTools(application: () => Application, host: () => Re
             const name = definition.native === "grep" ? pipeline.grep : definition.native;
             const result = await session.rpc.tools.execute({ name, arguments: jsonValue(nativeArgs) });
             if (typeof result !== "string" && result.resultType !== "success") throw new FactoryError("worker_read_failed", result.textResultForLlm, 403);
-            const output = typeof result === "string" ? result : result.textResultForLlm;
+            let output = typeof result === "string" ? result : result.textResultForLlm;
+            if (definition.native === "view" && mainRoot !== workspace && normalize(target) === normalize(realpathSync(workspace))) {
+                const subrepos = readdirSync(mainRoot, { withFileTypes: true })
+                    .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") &&
+                        existsSync(path.join(mainRoot, entry.name, ".git")) &&
+                        !existsSync(path.join(workspace, entry.name, ".git")))
+                    .map((entry) => entry.name)
+                    .sort();
+                if (subrepos.length) {
+                    output += `\n\n[Linked worktree sub-repositories available via relative paths from ${mainRoot}: ${subrepos.join(", ")}]`;
+                }
+            }
             return output.length <= 30_000 ? output : `${output.slice(0, 30_000)}\n[Output truncated; narrow the search or read a smaller range.]`;
         },
     }));

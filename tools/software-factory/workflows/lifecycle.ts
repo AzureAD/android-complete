@@ -13,6 +13,8 @@ import {
 import { runDesignFeature, workflowDefinition as guardedDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
 import type { Provider } from "../providers/provider.ts";
 import { loadedWorkflowFingerprint, runtimeFingerprint } from "../core/evidence.ts";
+import { ensureSubrepoWorktree } from "../core/runtime-health.ts";
+import { systemRunner } from "../providers/cli.ts";
 import { sourcePins } from "../runtime/controller.ts";
 import { FACTORY_CODER, FACTORY_CODE_REVIEWER, runReader } from "../runtime/reader.ts";
 
@@ -373,7 +375,12 @@ export async function implementRun(ctx: Context, dependencies?: { provider: Prov
                     results.push(jsonValue(priorSaved));
                     continue;
                 }
-                const repoRoot = path.resolve(factory.store.registry.project.workspace, repo.localPath);
+                const repoRoot = await ensureSubrepoWorktree(
+                    factory.store.registry.project.workspace,
+                    repo.localPath,
+                    repo.baseBranch,
+                    systemRunner,
+                );
                 const backups = new Map<string, { exists: boolean; content: Buffer | null }>();
                 const reviewHistory: Json[] = [];
                 let findings: CodeReviewFinding[] = [];

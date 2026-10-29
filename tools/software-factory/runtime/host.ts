@@ -5,7 +5,7 @@ import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultWorkspace } from "../core/application.ts";
-import { projectSdkModule, requireRuntime } from "../core/runtime-health.ts";
+import { projectSdkModule, requireRuntime, resolveRepositoryRoot } from "../core/runtime-health.ts";
 import { resolveExtensionInterpreter, type ExtensionInterpreter } from "./interpreter.ts";
 import { readerToolNames } from "./reader.ts";
 
@@ -52,7 +52,11 @@ export function createClient(workspace = defaultWorkspace(), dataHome = process.
 
 export function sessionConfiguration(workspace: string, name: string, extraRoots: string[] = []): SessionConfig {
     const normalize = (root: string) => process.platform === "win32" ? root.toLowerCase() : root;
-    const roots = [workspace, ...extraRoots].map((root) => normalize(realpathSync(root)));
+    const mainRoot = resolveRepositoryRoot(workspace);
+    const allExtraRoots = mainRoot !== realpathSync(workspace) && !extraRoots.includes(mainRoot)
+        ? [...extraRoots, mainRoot]
+        : extraRoots;
+    const roots = [workspace, ...allExtraRoots].map((root) => normalize(realpathSync(root)));
     return {
         name, workingDirectory: workspace, trustWorkingDirectory: "session",
         enableExperimentalMode: true, enableConfigDiscovery: true, requestExtensions: true,
@@ -60,7 +64,7 @@ export function sessionConfiguration(workspace: string, name: string, extraRoots
         enableFileHooks: false,
         availableTools: ["builtin:view", "builtin:read", "builtin:glob", "builtin:grep", "builtin:rg", "builtin:skill", "custom:software_factory_get_feature", "custom:software_factory_workflow_registration", ...readerToolNames.map((name) => `custom:${name}`)],
         excludedTools: ["mcp:*", "builtin:shell", "builtin:powershell", "builtin:write", "builtin:edit", "builtin:apply_patch"],
-        additionalDirectories: extraRoots,
+        additionalDirectories: allExtraRoots,
         onPermissionRequest: (request) => {
             if (request.kind === "read" && !request.managedApprovalRequired && !request.requestSandboxBypass) {
                 try {

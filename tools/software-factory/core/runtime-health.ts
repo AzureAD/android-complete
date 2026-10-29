@@ -1,10 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { createRequire } from "node:module";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FactoryError } from "./contracts.ts";
+import type { CommandRunner } from "../providers/cli.ts";
 
 export function resolveRepositoryRoot(workspace: string): string {
     const canonical = realpathSync(workspace);
@@ -25,6 +26,35 @@ export function resolveRepositoryRoot(workspace: string): string {
         // Fall back to the canonical workspace path when not a linked git worktree.
     }
     return canonical;
+}
+
+export async function ensureSubrepoWorktree(
+    workspace: string,
+    localPath: string,
+    baseBranch: string,
+    runner: CommandRunner,
+): Promise<string> {
+    const canonicalWorkspace = realpathSync(workspace);
+    const targetWorktree = path.resolve(canonicalWorkspace, localPath);
+    if (existsSync(path.join(targetWorktree, ".git"))) return targetWorktree;
+    const mainRoot = resolveRepositoryRoot(canonicalWorkspace);
+    if (mainRoot === canonicalWorkspace) return targetWorktree;
+    const sourceRepo = path.resolve(mainRoot, localPath);
+    if (!existsSync(path.join(sourceRepo, ".git"))) return targetWorktree;
+    const canonicalSource = realpathSync(sourceRepo);
+    mkdirSync(path.dirname(targetWorktree), { recursive: true });
+    let baseRef = "HEAD";
+    for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
+        try {
+            await runner.run("git", ["rev-parse", "--verify", candidate], { cwd: canonicalSource });
+            baseRef = candidate;
+            break;
+        } catch {
+            // Try the next candidate ref when the remote-tracking ref is absent.
+        }
+    }
+    await runner.run("git", ["worktree", "add", "--detach", targetWorktree, baseRef], { cwd: canonicalSource });
+    return targetWorktree;
 }
 
 export function projectSdkRoot(checkoutRoot?: string): string {

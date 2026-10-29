@@ -1,13 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { Application } from "../core/application.ts";
 import { FactoryError, MAX_COMMAND_BYTES } from "../core/contracts.ts";
-import { projectSdkRoot, resolveRepositoryRoot } from "../core/runtime-health.ts";
+import { ensureSubrepoWorktree, projectSdkRoot, resolveRepositoryRoot } from "../core/runtime-health.ts";
+import { systemRunner } from "../providers/cli.ts";
+import { createReaderTools } from "../runtime/reader.ts";
 import { actor, fixture, requirements } from "./helpers.ts";
 
 function create(app: Application, requestId = "request-1", input = requirements()) {
@@ -47,7 +50,7 @@ test("project boundaries isolate features even when sharing the registry", () =>
     } finally { other.close(); f.cleanup(); }
 });
 
-test("linked git worktrees share the parent repository project identity and SDK fallback", () => {
+test("linked git worktrees share the parent repository project identity and SDK fallback", async () => {
     const f = fixture();
     const mainRepo = path.join(f.directory, "main-repo");
     const mainGit = path.join(mainRepo, ".git");
@@ -70,7 +73,55 @@ test("linked git worktrees share the parent repository project identity and SDK 
         assert.equal(wtApp.registry.list().length, 1);
         assert.equal(wtApp.registry.get(created.id).id, created.id);
         assert.equal(projectSdkRoot(worktree), mainSdk + path.sep);
+
+        // Read-only fallback reads sibling sub-repos from mainRepo without creating worktrees for them.
+        const msalRepo = path.join(mainRepo, "msal");
+        const brokerRepo = path.join(mainRepo, "broker");
+        mkdirSync(path.join(msalRepo, ".git"), { recursive: true });
+        writeFileSync(path.join(msalRepo, "MsalClient.kt"), "class MsalClient\n");
+        execFileSync("git", ["init", "--quiet", "-b", "dev", brokerRepo]);
+        execFileSync("git", ["-C", brokerRepo, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", brokerRepo, "config", "user.name", "Test"]);
+        writeFileSync(path.join(brokerRepo, "Broker.kt"), "class Broker // dev baseline\n");
+        execFileSync("git", ["-C", brokerRepo, "add", "Broker.kt"]);
+        execFileSync("git", ["-C", brokerRepo, "commit", "--quiet", "-m", "dev baseline"]);
+        execFileSync("git", ["-C", brokerRepo, "checkout", "--quiet", "-b", "unrelated-user-branch"]);
+        writeFileSync(path.join(brokerRepo, "Broker.kt"), "class Broker // dirty user branch\n");
+        execFileSync("git", ["-C", brokerRepo, "commit", "--quiet", "-am", "user branch work"]);
+
+        wtApp.execute({ kind: "approve_requirements", featureId: created.id, expectedRevision: created.current.id },
+            actor, { granted: true, revisionId: created.current.id, actor });
+        const exec = wtApp.lifecycle.begin(created.id, "check", actor);
+        const readerSession = {
+            sessionId: exec.sessionId,
+            rpc: {
+                tools: {
+                    initializeAndValidate: async () => ({ toolNames: [] }),
+                    getCurrentMetadata: async () => ({ tools: [{ name: "view", description: "v" }, { name: "glob", description: "g" }, { name: "grep", description: "s" }] }),
+                    execute: async (req: { name: string; arguments?: unknown }) => {
+                        const p = String((req.arguments as { path?: string; paths?: string })?.path || (req.arguments as { paths?: string })?.paths);
+                        return existsSync(p) && p.endsWith(".kt") ? readFileSync(p, "utf8") : `Directory: ${p}`;
+                    },
+                },
+            },
+        };
+        const readers = createReaderTools(() => wtApp, () => readerSession);
+        const rootListing = String(await readers[0]!.handler({ featureId: created.id, executionId: exec.id, path: "." }));
+        assert.match(rootListing, /Linked worktree sub-repositories available via relative paths.*broker, msal/);
+        const msalContent = String(await readers[0]!.handler({ featureId: created.id, executionId: exec.id, path: "msal/MsalClient.kt" }));
+        assert.match(msalContent, /class MsalClient/);
+        assert.equal(existsSync(path.join(worktree, "msal")), false, "read-only fallback must not materialize a worktree for msal");
+
+        // Write-time on-demand worktree creation materializes <worktree>/broker from dev without touching mainRepo/broker's branch.
+        const materializedBroker = await ensureSubrepoWorktree(worktree, "broker", "dev", systemRunner);
+        assert.equal(materializedBroker, path.join(worktree, "broker"));
+        assert.equal(existsSync(path.join(worktree, "broker", ".git")), true);
+        assert.match(readFileSync(path.join(worktree, "broker", "Broker.kt"), "utf8"), /dev baseline/,
+            "worktree must start from the configured baseBranch, not the main checkout's unrelated branch");
+        const mainBranch = execFileSync("git", ["-C", brokerRepo, "branch", "--show-current"], { encoding: "utf8" }).trim();
+        assert.equal(mainBranch, "unrelated-user-branch", "main checkout branch of broker must remain untouched");
     } finally {
+        try { execFileSync("git", ["-C", path.join(mainRepo, "broker"), "worktree", "remove", "--force", path.join(worktree, "broker")]); } catch { /* ignore */ }
         wtApp.close();
         mainApp.close();
         f.cleanup();
