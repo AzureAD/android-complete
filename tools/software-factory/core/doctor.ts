@@ -14,7 +14,7 @@ export function runtimeReport(host?: { sessionId: string; elicitation: boolean }
             "backlog_reconciliation", "provider_dispatch", "monitoring", "native_run_controls", "legacy_import", "local_schedules"],
         workflowExecution: {
             status: "native_sdk",
-            sessionOwnership: host ? "joined_chat_for_unbound_features_existing_feature_owner_preserved" : "existing_feature_owner_or_application_owned_session",
+            sessionOwnership: host ? "current_joined_chat_adopted_for_new_stage_runs" : "existing_feature_owner_or_application_owned_session",
             parentChatVisibility: "Joined-chat runs use native phases and completion notifications. Legacy owned runs remain separate; app discovery of dashboard-owned sessions is not yet verified.",
             creditLimit: "No default AI-credit cap. Only an explicitly user-requested ceiling applies; usage is still metered.",
             readiness: "Verified in the actual owning session before start/resume. Installed binaries alone do not prove workflow registration.",

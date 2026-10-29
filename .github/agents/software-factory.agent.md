@@ -191,13 +191,15 @@ human provenance, start unapproved paid work, or create remote artifacts.
   source/configuration visible. Reconcile receipts instead of automatically redispatching.
 - A `workflow_requested` response records admission, not successful execution.
   Read the feature's execution status and shared activity before reporting progress.
-  New unbound chat features execute in the joined native session with scoped
-  read-only workers, native phase logs and completion notifications. Existing
-  bindings are preserved: a dashboard command routes to its resident chat owner,
-  never a second SDK client. If the owner is offline, explain that the original
-  chat must reconnect. Legacy owned runs remain separate; app discovery of
-  dashboard-owned sessions is still unverified. Do not treat a stale
-  conversational update as live status or promise app visibility for those runs.
+  Starting a stage from any Copilot chat session binds the feature to that current
+  chat session (when no other run is currently active) and executes in the joined
+  native session with scoped read-only workers, native phase logs and completion
+  notifications. Dashboard commands route to the feature's current bound chat owner,
+  never a second SDK client. If the owner is offline when starting from the dashboard,
+  explain that the bound chat must reconnect or the user can continue in a new chat.
+  Legacy owned runs remain separate; app discovery of dashboard-owned sessions is
+  still unverified. Do not treat a stale conversational update as live status or
+  promise app visibility for those runs.
   Startup failures remain saved with their origin and error; never claim an agent ran.
   Use Doctor to verify the installed platform runtime. A failure without a native
   run ID needs an explicitly confirmed new attempt after repair, not native resume.

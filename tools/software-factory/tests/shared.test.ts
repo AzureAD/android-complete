@@ -458,6 +458,54 @@ test("combined publish_feature can create an ADO Feature, record authenticated s
         const adoRecord = await f.provider.read(published.shared.target);
         assert.equal(adoRecord?.snapshot.feature.approvals.length, 1);
         assert.equal(adoRecord?.snapshot.feature.approvals[0]?.actor.ado?.id, "alice");
+
+        // Continuing the feature in a new chat session on the same registry rebinds ownership to the new chat instead of queuing to the old chat.
+        const secondApp = new Application({ database: app.registry.databasePath, workspace: ws, sharedProvider: f.provider });
+        let secondChatRuns = 0;
+        const secondSessionId = "second-chat-session";
+        const secondHash = createHash("sha256").update(secondSessionId).digest("hex");
+        const secondSession = {
+            ...session,
+            sessionId: secondSessionId,
+            rpc: {
+                ...session.rpc,
+                tools: {
+                    ...session.rpc.tools,
+                    execute: async () => ({
+                        resultType: "success" as const,
+                        textResultForLlm: JSON.stringify({
+                            ready: true, sessionId: "******", sessionIdHash: secondHash,
+                            workflowNames: ["software-factory-check"], runtimeFingerprint: runtimeFingerprint(), readerAgent: FACTORY_READER,
+                        }),
+                    }),
+                },
+            },
+            workflow: {
+                ...session.workflow,
+                run: async () => { secondChatRuns++; return { runId: "second-chat-run-1", status: "completed" as const, result: { ok: true } }; },
+            },
+        };
+        try {
+            assert.equal(secondApp.lifecycle.store.state(published.id).sessionBinding?.sessionId, actor.sessionId);
+            await secondApp.bindChatSession(secondSession);
+            assert.deepEqual(secondApp.executionOwner(published.id), { sessionId: secondSessionId, kind: "chat" });
+            const checkRun = await (await secondApp.runtime()).start(published.id, "check", {
+                channel: "chat", reference: "continue-in-new-chat", sessionId: secondSessionId,
+            });
+            assert.equal(checkRun.sessionId, secondSessionId);
+            const untilSecond = Date.now() + 10_000;
+            while (Date.now() < untilSecond) {
+                const current = secondApp.lifecycle.store.execution(published.id, checkRun.id);
+                if (current.status === "completed" || current.status === "error") break;
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            const completedSecond = secondApp.lifecycle.store.execution(published.id, checkRun.id);
+            assert.equal(completedSecond.status, "completed", completedSecond.error || completedSecond.status);
+            assert.equal(secondChatRuns, 1);
+            assert.equal(secondApp.lifecycle.store.state(published.id).sessionBinding?.sessionId, secondSessionId);
+        } finally {
+            await secondApp.shutdown();
+        }
     } finally {
         await appRef?.shutdown();
         f.cleanup();

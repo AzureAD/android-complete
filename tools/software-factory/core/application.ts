@@ -103,7 +103,12 @@ export class Application {
     }
 
     executionOwner(featureId: string): { sessionId: string | null; kind: "chat" | "owned" } {
-        const binding = this.lifecycle.store.state(featureId).sessionBinding;
+        const state = this.lifecycle.store.state(featureId);
+        const active = state.executions.find((item) => ["starting", "running", "paused"].includes(item.status));
+        if (this.joinedSession && (!active || active.sessionId === this.joinedSession.sessionId)) {
+            return { sessionId: this.joinedSession.sessionId, kind: "chat" };
+        }
+        const binding = state.sessionBinding;
         return binding ? { sessionId: binding.sessionId, kind: binding.kind }
             : this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat" } : { sessionId: null, kind: "owned" };
     }

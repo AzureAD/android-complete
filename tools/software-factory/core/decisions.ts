@@ -129,7 +129,7 @@ export function describeDecision(app: Application, command: Record<string, unkno
         if (limits.maxAiCredits === undefined || limits.maxAiCredits === null) facts.push("No AI-credit cap. Copilot usage is still metered.");
         if (Object.keys(limits).length) facts.push(`Requested limits: ${readable(limits).replaceAll("\n", "; ")}`);
         facts.push(record(scoped.executionOwner).kind === "chat"
-            ? "Execution stays in its bound Copilot chat; dashboard controls go to that same owner."
+            ? "Execution runs in the current Copilot chat; dashboard controls route to this chat."
             : "Execution uses a Factory-owned SDK session; app discovery/attachment is not yet verified.");
     }
     if (command.kind === "start_workflow" || command.kind === "dispatch_work" || (command.kind === "approve_stage" && command.stage === "dispatch")) {

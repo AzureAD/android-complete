@@ -123,7 +123,7 @@ export class NativeRuntime {
         if (this.launching.has(execution.id)) return;
         this.launching.add(execution.id);
         const pending = (async () => {
-            await this.shared?.assertRun(featureId, execution.id);
+            if (execution.kind !== "check") await this.shared?.assertRun(featureId, execution.id);
             const active = this.factory.store.execution(featureId, execution.id);
             if (active.status !== "starting" || active.runtimeId) return;
             if (active.sessionKind === "chat" && process.env.SESSION_ID === active.sessionId &&
@@ -298,7 +298,7 @@ export class NativeRuntime {
             monitor: "software-factory-monitor", check: "software-factory-check",
         };
         await this.registration(featureId, execution, session);
-        await this.shared?.assertRun(featureId, execution.id);
+        if (execution.kind !== "check") await this.shared?.assertRun(featureId, execution.id);
         this.factory.store.change(featureId, (state) => {
             const current = state.executions.find((item) => item.id === execution.id)!;
             if (current.admissionClaim || current.runtimeId) throw new FactoryError("native_admission_exists", "This execution was already submitted or its admission is uncertain. Inspect the owning run; do not submit it twice.", 409);
@@ -339,7 +339,7 @@ export class NativeRuntime {
             throw new FactoryError("run_not_running", "Only an active run can be paused.", 409);
         }
         if (action === "resume") {
-            await this.shared?.assertRun(featureId, executionId);
+            if (execution.kind !== "check") await this.shared?.assertRun(featureId, executionId);
             this.factory.assertFresh(featureId, executionId);
             if (!execution.runtimeId || !["paused", "error"].includes(execution.status)) throw new FactoryError("run_not_resumable", "Only a paused or limit/interruption-stopped native run can be resumed.", 409);
             if ((execution.kind === "intake" || execution.kind === "design" || !this.factory.store.latest(featureId, "plan")) &&
@@ -411,7 +411,7 @@ export class NativeRuntime {
                             if (control.action === "resume") {
                                 this.factory.assertFresh(feature.id, execution.id);
                                 await this.registration(feature.id, execution, session);
-                                await this.shared?.assertRun(feature.id, execution.id);
+                                if (execution.kind !== "check") await this.shared?.assertRun(feature.id, execution.id);
                                 this.factory.store.updateExecution(feature.id, execution.id, { status: "running" });
                                 this.markControl(feature.id, control.id);
                                 const result = await session.workflow.resume(execution.runtimeId, { limits: control.limits,

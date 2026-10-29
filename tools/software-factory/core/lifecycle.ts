@@ -426,12 +426,12 @@ export class Lifecycle {
                 throw new FactoryError("revision_request_required", "A current design already exists. Request a reviewed revision rather than silently replacing it.", 409);
             }
             const timestamp = now();
-            const existingOwner = state.sessionBinding || preferredSession;
-            if (admission?.sessionOwner && (admission.sessionOwner.sessionId !== (existingOwner?.sessionId || null) ||
-                admission.sessionOwner.kind !== (existingOwner?.kind || "owned"))) {
+            const targetOwner = (preferredSession?.kind === "chat" ? preferredSession : null) || state.sessionBinding || preferredSession;
+            if (admission?.sessionOwner && (admission.sessionOwner.sessionId !== (targetOwner?.sessionId || null) ||
+                admission.sessionOwner.kind !== (targetOwner?.kind || "owned"))) {
                 throw new FactoryError("session_owner_changed", "The feature's owning session changed while execution was being confirmed. Review its current owner.", 409);
             }
-            const binding = state.sessionBinding || preferredSession || { sessionId: randomUUID(), kind: "owned" as const, established: false };
+            const binding = targetOwner || { sessionId: randomUUID(), kind: "owned" as const, established: false };
             const execution: Execution = {
                 id: randomUUID(), kind, requirementsRevision: feature.current.id, configurationId: this.store.configuration()?.id || null,
                 sessionId: binding.sessionId, sessionKind: binding.kind, reuseSession: binding.established,
