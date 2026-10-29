@@ -34,8 +34,11 @@ export class SharedAuthority {
     }
 
     private save(record: SharedRecord): void {
+        const serialized = JSON.stringify(record);
+        const existing = this.app.registry.connection.prepare("SELECT record_json FROM shared_features WHERE feature_id=?").get(record.snapshot.feature.id);
+        if (existing && existing.record_json === serialized) return;
         this.app.registry.connection.prepare("INSERT INTO shared_features VALUES (?, ?, ?) ON CONFLICT(feature_id) DO UPDATE SET record_json=excluded.record_json")
-            .run(record.snapshot.feature.id, JSON.stringify(record.target), JSON.stringify(record));
+            .run(record.snapshot.feature.id, JSON.stringify(record.target), serialized);
     }
 
     private hydrate(app: Application, record: SharedRecord): void {
@@ -53,15 +56,23 @@ export class SharedAuthority {
         if (!prior) db.prepare("INSERT INTO factory_configuration VALUES (?, ?, ?, ?, ?, ?)")
             .run(config.id, app.registry.project.id, hash(localValue), JSON.stringify(localValue),
                 JSON.stringify({ channel: "web", reference: "shared-cache" }), config.createdAt);
-        db.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
-            .run(app.registry.project.id, config.id, JSON.stringify(localValue));
+        const serializedLocal = JSON.stringify(localValue);
+        const existingMapping = db.prepare("SELECT configuration_id, mappings_json FROM factory_local_configuration WHERE project_id=?").get(app.registry.project.id);
+        if (!existingMapping || existingMapping.configuration_id !== config.id || existingMapping.mappings_json !== serializedLocal) {
+            db.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
+                .run(app.registry.project.id, config.id, serializedLocal);
+        }
         app.registry.importShared(snapshot.feature);
         const local = app.lifecycle.store.state(snapshot.feature.id);
         const state = { ...snapshot.state, executions: local.executions, sessionBinding: local.sessionBinding || null,
             controls: local.controls, schedule: local.schedule, progress: local.progress,
             events: [...snapshot.state.events, ...local.events.filter((entry) => entry.kind.startsWith("workflow_"))] };
-        db.prepare("INSERT INTO factory_state VALUES (?, 1, ?) ON CONFLICT(feature_id) DO UPDATE SET content_json=excluded.content_json, version=version+1")
-            .run(snapshot.feature.id, JSON.stringify(state));
+        const serializedState = JSON.stringify(state);
+        const existingState = db.prepare("SELECT content_json FROM factory_state WHERE feature_id=?").get(snapshot.feature.id);
+        if (!existingState || existingState.content_json !== serializedState) {
+            db.prepare("INSERT INTO factory_state VALUES (?, 1, ?) ON CONFLICT(feature_id) DO UPDATE SET content_json=excluded.content_json, version=version+1")
+                .run(snapshot.feature.id, serializedState);
+        }
     }
 
     snapshot(app: Application, featureId: string, lock: SharedSnapshot["lock"] = null): SharedSnapshot {
@@ -145,6 +156,27 @@ export class SharedAuthority {
         this.save(saved);
     }
 
+    async releaseUnstartedRun(featureId: string, executionId: string): Promise<void> {
+        const cached = this.cached(featureId);
+        if (!cached || cached.snapshot.lock?.id !== executionId) return;
+        const execution = this.app.lifecycle.store.execution(featureId, executionId);
+        if (execution.runtimeId || execution.admissionClaim) return;
+        const current = await this.pull(featureId);
+        if (!current || current.snapshot.lock?.id !== executionId) return;
+        const identity = await this.provider.identity(current.target);
+        const snapshot = structuredClone(current.snapshot);
+        snapshot.lock = null;
+        const baseActor: Actor = execution.requestedBy || { channel: "web", reference: executionId };
+        snapshot.state.events.push({
+            id: randomUUID(), kind: "shared_claim_released_unstarted", reference: executionId,
+            createdAt: now(), message: "Automatically released shared claim after pre-admission startup failure; no workflow or agent was started.",
+            actor: { ...baseActor, ado: identity },
+        });
+        const saved = await this.provider.write(current.target, current, snapshot, identity);
+        this.hydrate(this.app, saved);
+        this.save(saved);
+    }
+
     async release(featureId: string, expectedClaimId: string, reason: string, actor: Actor): Promise<void> {
         const record = await this.pull(featureId);
         if (!record || record.snapshot.lock?.id !== expectedClaimId) throw new FactoryError("shared_claim_changed", "Review the current shared claim before releasing it.", 409);
@@ -184,13 +216,13 @@ export class SharedAuthority {
             staged.lifecycle.checkpoint = async () => {
                 current = await this.provider.write(record.target, current, this.snapshot(staged, id, lock), identity);
                 this.save(current);
-                completed = true;
             };
             const stagedConsent = preview.consentKey ? { granted: true as const, revisionId: preview.consentKey, actor: trustedActor } : undefined;
             const result = await dispatch(staged, input, trustedActor, stagedConsent);
             current = await this.provider.write(record.target, current, this.snapshot(staged, id), identity);
             this.hydrate(this.app, current);
             this.save(current);
+            completed = true;
             return { ...result, feature: jsonValue(this.app.lifecycle.store.view(id)) };
         } catch (error) {
             // A persisted claim is intentionally retained after failure, including uncertain writes.

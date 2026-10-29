@@ -55,11 +55,12 @@ function transport() {
         const historical = /\/revisions\/(\d+)$/.exec(url.pathname);
         return Response.json(historical ? revisions.get(Number(historical[1])) : latest());
     };
+    let tokenCalls = 0;
     const runner = { async run(command: string, args: string[]) {
-        assert.equal(command, "az"); assert.ok(args.includes("499b84ac-1321-427f-aa17-267ca6975798")); return "fixture-token";
+        assert.equal(command, "az"); assert.ok(args.includes("499b84ac-1321-427f-aa17-267ca6975798")); tokenCalls++; return "fixture-token";
     } };
     return { provider: () => new AdoFeatureProvider(runner, fetcher), latest, revisions, manualEdit,
-        deny: () => { deny = true; }, loseResponse: () => { loseResponse = true; }, uploads: () => uploads };
+        deny: () => { deny = true; }, loseResponse: () => { loseResponse = true; }, uploads: () => uploads, tokenCalls: () => tokenCalls };
 }
 
 const target = { organization: "example", project: "Engineering", workItemId: 123 };
@@ -78,6 +79,7 @@ test("ADO attachment transport verifies historical writers, CAS, restart and ord
         f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, author,
             { granted: true, revisionId: feature.current.id, actor: author });
         const approved = await provider.write(target, first, f.app.shared.snapshot(f.app, feature.id), identity);
+        assert.equal(server.tokenCalls(), 1, "ADO access token is reused across sequential REST requests");
         const restarted = server.provider();
         assert.deepEqual((await restarted.read(target))?.snapshot.feature.approvals, approved.snapshot.feature.approvals);
         server.manualEdit((item) => { object(item.fields, "fields")["System.Title"] = "Ordinary user edit"; });

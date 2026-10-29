@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -316,6 +316,68 @@ test("slow shared claim acquisition waits for ADO lock and accepts redacted sess
         const finalExecution = app.lifecycle.store.state(feature.id).executions.at(-1)!;
         assert.equal(finalExecution.status, "completed", finalExecution.error || finalExecution.status);
         assert.equal(nativeRuns, 1);
+        const attempts = readdirSync(path.dirname(app.registry.databasePath)).filter((name) => name.startsWith("shared-attempt-"));
+        assert.deepEqual(attempts, [], "successful shared commands must remove temporary attempt directories");
+        const versionBefore = Number(app.registry.connection.prepare("SELECT version FROM factory_state WHERE feature_id=?").get(feature.id)!.version);
+        await app.feature(feature.id);
+        const versionAfter = Number(app.registry.connection.prepare("SELECT version FROM factory_state WHERE feature_id=?").get(feature.id)!.version);
+        assert.equal(versionAfter, versionBefore, "unchanged shared pulls must not churn factory_state versions");
+    } finally {
+        await appRef?.shutdown();
+        f.cleanup();
+    }
+});
+
+test("pre-admission startup failure automatically releases its unstarted ADO shared claim", async () => {
+    const f = teamFixture();
+    let appRef: Application | undefined;
+    try {
+        const app = f.create("pre-admission-fail");
+        const ws = app.registry.project.workspace;
+        app.lifecycle.configure(teamConfig(".", "pre-admission-fail"), actor);
+        execFileSync("git", ["init", "--quiet", ws]);
+        execFileSync("git", ["-C", ws, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", ws, "config", "user.name", "Test"]);
+        writeFileSync(path.join(ws, "README.md"), "fixture\n");
+        execFileSync("git", ["-C", ws, "add", "README.md"]);
+        execFileSync("git", ["-C", ws, "commit", "--quiet", "-m", "init"]);
+        appRef = app;
+        const draft = app.execute({ kind: "create_feature", requestId: "pre-admission-fail", input: requirements() }, actor);
+        await submit(app, { kind: "publish_feature", featureId: draft.id, target });
+        const feature = (await f.provider.read(target))!.snapshot.feature;
+        await submit(app, { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id });
+        const session = {
+            sessionId: actor.sessionId!,
+            rpc: {
+                extensions: { list: async () => ({ extensions: [{ id: "project:SoftwareFactory", name: "SoftwareFactory", source: "project" as const, status: "disabled" as const }] }), reload: async () => {} },
+                tools: {
+                    initializeAndValidate: async () => ({ toolNames: [] }),
+                    getCurrentMetadata: async () => ({ tools: [] }),
+                    execute: async () => { throw new Error("unexpected"); },
+                },
+            },
+            workflow: {
+                run: async () => { throw new Error("unexpected"); },
+                resume: async () => { throw new Error("unexpected"); },
+                pause: async () => { throw new Error("unexpected"); },
+                cancel: async () => { throw new Error("unexpected"); },
+                getRun: async () => { throw new Error("unexpected"); },
+                getRunDetail: async () => { throw new Error("unexpected"); },
+            },
+        };
+        await app.bindChatSession(session);
+        await submit(app, { kind: "start_workflow", featureId: feature.id, workflow: "design" });
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+            const current = app.lifecycle.store.state(feature.id).executions.at(-1)!;
+            const shared = await f.provider.read(target);
+            if (current.status === "error" && shared?.snapshot.lock === null) break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const failed = app.lifecycle.store.state(feature.id).executions.at(-1)!;
+        assert.equal(failed.status, "error");
+        assert.equal(failed.runtimeId, null);
+        assert.equal((await f.provider.read(target))!.snapshot.lock, null, "unstarted failed execution must release its ADO lock");
     } finally {
         await appRef?.shutdown();
         f.cleanup();

@@ -149,6 +149,7 @@ export class Application {
                 errorCode: error instanceof FactoryError ? error.code : "runtime_initialization_failed",
                 error: error instanceof Error ? error.message : "Runtime initialization failed. Your saved feature is unchanged.",
             });
+            await this.shared.releaseUnstartedRun(featureId, execution.id).catch(() => {});
         }
         return this.lifecycle.store.execution(featureId, execution.id);
     }

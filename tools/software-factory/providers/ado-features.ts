@@ -13,17 +13,33 @@ export class AdoFeatureProvider implements SharedProvider {
     private readonly runner: CommandRunner;
     private readonly fetcher: typeof fetch;
     private readonly verified = new Map<string, SharedRecord>();
+    private tokenCache?: { value: string; expiresAt: number };
+    private tokenPending?: Promise<string>;
     constructor(runner = systemRunner, fetcher = fetch) { this.runner = runner; this.fetcher = fetcher; }
+
+    private async accessToken(): Promise<string> {
+        if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) return this.tokenCache.value;
+        this.tokenPending ??= this.runner.run("az", ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798", "--query", "accessToken", "-o", "tsv"])
+            .then((value) => {
+                this.tokenCache = { value, expiresAt: Date.now() + 4 * 60_000 };
+                return value;
+            })
+            .finally(() => { this.tokenPending = undefined; });
+        return this.tokenPending;
+    }
 
     private async request(target: SharedTarget, suffix: string, method = "GET", body?: string, contentType = "application/json"): Promise<Response> {
         sharedTarget(target);
-        const token = await this.runner.run("az", ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798", "--query", "accessToken", "-o", "tsv"]);
+        const token = await this.accessToken();
         const response = await this.fetcher(`https://dev.azure.com/${encode(target.organization)}/${encode(target.project)}/_apis/${suffix}${suffix.includes("?") ? "&" : "?"}api-version=7.1`, {
             method, body, redirect: "error", signal: AbortSignal.timeout(60_000),
             headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType },
         });
-        if (!response.ok) throw new FactoryError(response.status === 409 || response.status === 412 ? "shared_conflict" : "shared_unavailable",
-            `ADO returned HTTP ${response.status}. No local approval substitutes for the shared record. Refresh and reconcile before retrying.`, response.status === 403 ? 403 : 409);
+        if (!response.ok) {
+            this.tokenCache = undefined;
+            throw new FactoryError(response.status === 409 || response.status === 412 ? "shared_conflict" : "shared_unavailable",
+                `ADO returned HTTP ${response.status}. No local approval substitutes for the shared record. Refresh and reconcile before retrying.`, response.status === 403 ? 403 : 409);
+        }
         return response;
     }
 
@@ -33,11 +49,14 @@ export class AdoFeatureProvider implements SharedProvider {
     }
 
     async identity(target: SharedTarget): Promise<AdoIdentity> {
-        const token = await this.runner.run("az", ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798", "--query", "accessToken", "-o", "tsv"]);
+        const token = await this.accessToken();
         const response = await this.fetcher(`https://dev.azure.com/${encode(sharedTarget(target).organization)}/_apis/connectionData?api-version=7.1-preview.1`, {
             redirect: "error", signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${token}` },
         });
-        if (!response.ok) throw new FactoryError("ado_identity_unavailable", "Cannot verify the signed-in ADO identity. No shared approval was recorded.", 403);
+        if (!response.ok) {
+            this.tokenCache = undefined;
+            throw new FactoryError("ado_identity_unavailable", "Cannot verify the signed-in ADO identity. No shared approval was recorded.", 403);
+        }
         const identity = object(object(await response.json(), "ADO connection").authenticatedUser, "Authenticated ADO user");
         return { id: text(identity.id, "ADO identity ID"), displayName: text(identity.providerDisplayName || identity.customDisplayName, "ADO display name") };
     }

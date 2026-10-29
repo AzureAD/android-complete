@@ -56,6 +56,7 @@ export class NativeRuntime {
     private readonly joined?: NativeSession;
     private readonly shared?: SharedAuthority;
     private readonly leaseSessions = new Set<string>();
+    private readonly heartbeats = new Map<string, number>();
     private readonly activeControls = new Set<string>();
     private readonly timer: NodeJS.Timeout;
     private started = false;
@@ -70,6 +71,7 @@ export class NativeRuntime {
         if (joined) {
             factory.store.heartbeat(joined.sessionId, this.ownerToken);
             this.leaseSessions.add(joined.sessionId);
+            this.heartbeats.set(joined.sessionId, Date.now());
         }
         this.timer = setInterval(() => { void this.poll().catch((error: unknown) => console.error("[Software Factory] Runtime control failed:", error)); }, 1000);
         this.timer.unref();
@@ -143,7 +145,14 @@ export class NativeRuntime {
             this.factory.assertFresh(featureId, execution.id);
             this.factory.store.updateExecution(featureId, execution.id, { sourcePins: pins, phase: "Starting Copilot session" });
             await this.run(featureId, this.factory.store.execution(featureId, execution.id));
-        })().catch((error: unknown) => this.fail(featureId, execution.id, error));
+        })().catch(async (error: unknown) => {
+            this.fail(featureId, execution.id, error);
+            const failed = this.factory.store.execution(featureId, execution.id);
+            if (failed.status === "error" && !failed.runtimeId && !failed.admissionClaim &&
+                this.factory.store.ownsSession(failed.sessionId, this.ownerToken)) {
+                await this.shared?.releaseUnstartedRun(featureId, execution.id).catch(() => {});
+            }
+        });
         this.pending.add(pending);
         void pending.finally(() => { this.pending.delete(pending); this.launching.delete(execution.id); });
     }
@@ -163,6 +172,7 @@ export class NativeRuntime {
         if (resident) { this.sessions.set(execution.id, resident); return resident; }
         this.factory.store.heartbeat(execution.sessionId, this.ownerToken);
         this.leaseSessions.add(execution.sessionId);
+        this.heartbeats.set(execution.sessionId, Date.now());
         if (!this.started) {
             requireRuntime();
             this.client ??= createClient(this.factory.store.registry.project.workspace, path.dirname(this.factory.store.registry.databasePath));
@@ -330,7 +340,13 @@ export class NativeRuntime {
         if (this.polling || this.stopping) return;
         this.polling = true;
         try {
-            for (const id of this.leaseSessions) this.factory.store.heartbeat(id, this.ownerToken);
+            const nowMs = Date.now();
+            for (const id of this.leaseSessions) {
+                if (nowMs - (this.heartbeats.get(id) ?? 0) >= 5_000 || !this.factory.store.ownsSession(id, this.ownerToken)) {
+                    this.factory.store.heartbeat(id, this.ownerToken);
+                    this.heartbeats.set(id, nowMs);
+                }
+            }
             for (const feature of this.factory.store.registry.list()) {
                 const state = this.factory.store.state(feature.id);
                 for (const execution of state.executions) {
