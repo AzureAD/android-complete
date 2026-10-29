@@ -139,6 +139,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **pbi-creator** | `.github/skills/pbi-creator/SKILL.md` | "create the PBIs", "create work items", "push PBIs to ADO", approved plan → ADO work items |
 | **design-author** | `.github/skills/design-author/SKILL.md` | "design this feature", "create a design spec", "write a design doc", "create an implementation plan" |
 | **design-reviewer** | `.github/skills/design-reviewer/SKILL.md` | "address review comments", "handle my review", "review comments on" |
+| **code-author** | `.github/skills/code-author/SKILL.md` | "implement this feature", "write the code for", "implement PBI", "code and open PR", Android Auth implementation authoring |
 | **pbi-dispatcher** | `.github/skills/pbi-dispatcher/SKILL.md` | "dispatch PBIs to agent", "assign to Copilot", "send work items to coding agent" |
 | **test-planner** | `.github/skills/test-planner/SKILL.md` | "create test plan", "write test cases", "add tests to ADO", "export test plan", "E2E tests for" |
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |

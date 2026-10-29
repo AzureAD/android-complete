@@ -199,11 +199,13 @@ const readerBoundaries = `You are a read-only worker. Inspect repository sources
 Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy.
 ${commonBoundaries}`;
 
-const builderBoundaries = `You are the Android Auth implementation builder. Follow repository conventions strictly:
+const builderBoundaries = `You are the Android Auth implementation builder. Follow repository and code-author conventions strictly:
 - Write new files and new code in Kotlin; maintain Java style when editing existing Java files.
-- Include the Microsoft copyright header at the top of every new file.
+- Include the full repository license/copyright header at the top of every new file (full MIT header in common/common4j/msal/adal; Microsoft copyright header in broker).
+- Gate behavioral changes behind a default-off flight with ZERO off-path side effects (when the flight is false, leave legacy state, navigation, and logging untouched), and test both flight=true and flight=false.
+- Preserve Java/Kotlin binary and source ABI (@JvmOverloads / @JvmStatic) and normalize boundary string inputs (trim/isNotBlank) consistently.
+- Emit flight-gated regression telemetry and update OpenTelemetry sampler expectation tests whenever a new SpanName is added.
 - Use the custom Logger class; never use android.util.Log or log PII/tokens/secrets.
-- Add KDoc/JavaDoc comments for public classes and methods, and write comprehensive unit tests.
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
 
@@ -211,37 +213,51 @@ export const SKILL_GUIDES = Object.freeze({
     evidence: Object.freeze([
         ".github/skills/codebase-researcher/SKILL.md",
         ".github/skills/codebase-researcher/references/search-patterns.md",
+        ".github/skills/code-author/SKILL.md",
+        ".github/skills/code-author/references/implementation-standards.md",
         ".github/skills/feature-planner/SKILL.md",
         ".github/skills/feature-planner/references/pbi-template.md",
     ]),
     builder: Object.freeze({
         common: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             ".github/copilot-instructions.md",
             "common/.github/copilot-instructions.md",
             ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         broker: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             ".github/copilot-instructions.md",
             "broker/.github/copilot-instructions.md",
             ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         msal: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             ".github/copilot-instructions.md",
             "msal/.github/copilot-instructions.md",
             ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         adal: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             ".github/copilot-instructions.md",
             "adal/.github/copilot-instructions.md",
             ".github/skills/feature-planner/references/pbi-template.md",
         ]),
         default: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             ".github/copilot-instructions.md",
             ".github/skills/feature-planner/references/pbi-template.md",
         ]),
     }),
     reviewer: Object.freeze({
         common: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             "common/.github/skills/code-review/SKILL.md",
             "common/.github/skills/code-review/references/domain-context.md",
             "common/.github/skills/code-review/references/correctness-api-compatibility.md",
@@ -254,6 +270,8 @@ export const SKILL_GUIDES = Object.freeze({
             "common/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
         broker: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             "broker/.github/skills/code-review/SKILL.md",
             "broker/.github/skills/code-review/references/domain-context.md",
             "broker/.github/skills/code-review/references/correctness-api-ipc.md",
@@ -266,6 +284,8 @@ export const SKILL_GUIDES = Object.freeze({
             "broker/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
         default: Object.freeze([
+            ".github/skills/code-author/SKILL.md",
+            ".github/skills/code-author/references/implementation-standards.md",
             ".github/copilot-instructions.md",
             "common/.github/skills/code-review/SKILL.md",
             "common/.github/skills/code-review/references/correctness-api-compatibility.md",
@@ -1054,14 +1074,19 @@ export function resolveGitHubAccount(target, workspaceRoot, exec = defaultExec) 
     return "";
 }
 
-export function buildBranchName(target) {
+export function buildBranchName(target, branchPrefix = "") {
     const slug = `${target.id}-${target.title}`
         .toLowerCase()
         .replace(/[^a-z0-9-]+/g, "-")
         .replace(/-+/g, "-")
         .replace(/^-+|-+$/g, "")
         .slice(0, 48);
-    return `feat/ab-${target.workItemId}-${slug || "change"}`;
+    const prefix = nonempty(branchPrefix)
+        ? branchPrefix.trim().replace(/^\/+|\/+$/g, "")
+        : nonempty(target.account)
+            ? target.account.trim()
+            : "feat";
+    return `${prefix}/ab-${target.workItemId}-${slug || "change"}`;
 }
 
 export function publishTargetPullRequest({
@@ -1073,9 +1098,11 @@ export function publishTargetPullRequest({
     workspaceRoot,
     createPullRequests = false,
     draftPullRequest = false,
+    branchPrefix = "",
     exec = defaultExec,
 }) {
-    const branch = buildBranchName(target);
+    const account = createPullRequests ? resolveGitHubAccount(target, workspaceRoot, exec) : (target.account || "");
+    const branch = buildBranchName(target, branchPrefix || account);
     const title = formatPrTitle(targetImpl.pr.title || target.title, target.workItemId);
     const body = formatPrBody(target, targetImpl, traceability, reviewRoundCount, parentWorkItemId);
     const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
@@ -1097,7 +1124,6 @@ export function publishTargetPullRequest({
         };
     }
 
-    const account = resolveGitHubAccount(target, workspaceRoot, exec);
     let token = "";
     if (nonempty(account)) {
         try {

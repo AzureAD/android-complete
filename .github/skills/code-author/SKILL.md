@@ -1,0 +1,82 @@
+---
+name: code-author
+description: Author production-ready Android Auth implementations, regression telemetry, unit tests, and pull requests across Common, Broker, MSAL, ADAL, and Authenticator. Use this skill when implementing features, bug fixes, or PBIs—either directly in chat or inside the `code-feature` dynamic workflow. Enforces strict default-off flight isolation, OTel sampler synchronization, central cross-layer placement, Java/Kotlin ABI compatibility, and PR hygiene.
+---
+
+# Code Author
+
+Author production-ready code, tests, telemetry, and pull requests across the Android Auth
+repositories (`common`, `broker`, `msal`, `adal`, and `authenticator`) without avoidable
+review or CI round-trips.
+
+Read [implementation standards](references/implementation-standards.md) before writing or
+modifying production code.
+
+## Core Implementation Rules
+
+### 1. Strict Flight Isolation (Zero Off-Path Side Effects)
+- Gate every behavioral change behind a default-off flight (`CommonFlight`, `BrokerFlight`,
+  or `EcsFlight`).
+- **When the flight is `false`, the legacy path must execute with zero new side effects**:
+  - Do not initialize new ViewModels/coordinators, alter navigation graphs, write new
+    saved-state markers, or emit new diagnostic logs on the flight-off path.
+  - Keep only the minimal flight-read check needed to select between the legacy path and the
+    flighted path.
+- Write unit tests for **both** `flight = true` and `flight = false`.
+
+### 2. Regression-Attribution Telemetry & Sampler Synchronization
+- Emit flight-gated, privacy-safe telemetry (health spans or bounded `SystemMetadata` /
+  `AttributeName` keys) so new behavior, reuse/wait paths, and guard rejections can be
+  attributed in Kusto.
+- **Whenever you add or rename a `SpanName` or sampled operation in Broker or Common, update
+  the OpenTelemetry sampler configuration and sampler expectation unit tests in the same
+  commit** so CI never fails on sampler map mismatches.
+
+### 3. Central & Cross-Layer Placement (Common vs. Broker vs. Client App)
+- Trace all converging entry points before choosing where a fix or feature lives (e.g.,
+  pre-created join, manual admin SDM join, ordinary non-SDM WPJ, silent vs. interactive token
+  flows).
+- Centralize shared allowlists, policy metadata (such as `AppFamily`), and flight checks in
+  the shared layer (`Common` or the central `Broker` handler) instead of duplicating
+  validators per caller.
+- When a bug originates in a client/UI layer (such as Activity recreation in Authenticator)
+  but can corrupt state or trigger duplicate network/ADRS calls in `Broker`, enforce a
+  defensive guard in `Broker` as well—tied to the actual worker completion, not just caller
+  timeout.
+
+### 4. Java/Kotlin ABI, Input Normalization & License Headers
+- **Binary & source compatibility**:
+  - Preserve existing Java-callable constructors and method signatures. Use `@JvmOverloads`
+    and `@JvmStatic` when adding default parameters or companion helpers consumed from Java.
+  - Use `internal` or `@VisibleForTesting` for test-injection constructors rather than
+    replacing public/package-private constructors.
+- **Consistent input normalization**:
+  - Normalize string inputs (such as `tenantId`, `loginHint`, package names) consistently at
+    entry boundaries using trimmed/non-blank checks (`trim()`, `isNotBlank()`) so routing and
+    downstream handlers cannot disagree on whitespace-only values.
+- **License headers**:
+  - Add the full repository license header to every new file (full MIT header in `common`,
+    `common4j`, `msal`, `adal`; Microsoft copyright header in `broker`).
+- **Meaningful unit tests & diff coverage**:
+  - Test the real runtime boundary and state transitions (never tautological assertions on
+    pre-initialized constants). Ensure all new branches and overloads are covered so CI diff
+    coverage (>= 80%) passes on the first run.
+
+### 5. Pull Request & Branch Hygiene
+- **Branch naming**: Use `<alias>/<feature-or-fix-slug>` (e.g.,
+  `shjameel/island-browser-sso-identities`, or `users/<alias>/<slug>` in ADO repos)—never
+  leave random worktree-generated branch names on published PRs.
+- **Changelog & PR labels**:
+  - Update `CHANGELOG.md` under `vNext` (`MINOR` for additive internal/feature changes with
+    no breaking API impact, `PATCH` for bug fixes).
+  - Apply the matching `changelog:minor` or `changelog:patch` label on the PR so the
+    `Changelog Check` pipeline passes immediately.
+- **Submodule & base branch sync**:
+  - Merge/rebase against the latest `dev` branch before opening or updating PRs.
+  - When a feature spans `Common` and `Broker`, only point `Broker`'s `common` submodule to a
+    committed and pushed `Common` revision.
+- **PR creation via `gh` CLI**:
+  - For `AzureAD/*` repos on `github.com`, use `gh pr create` with the developer's public
+    GitHub account (from `.github/developer-local.json` or `gh auth status`) rather than
+    relying on EMU-bound app tokens that return `403 Forbidden`.
+  - Include `Fixes AB#<workItemId>` in both the PR title and body.
