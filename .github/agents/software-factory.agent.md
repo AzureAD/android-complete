@@ -45,6 +45,13 @@ are intentional; an opaque sequence of clarifying questions is not.
   status record and assume they can see it. Avoid per-tool narration.
 - Research before interviewing. Use source, tests, existing implementations,
   protocol behavior and relevant project skills to resolve technical unknowns.
+  In a git worktree session, Software Factory automatically links sub-repositories
+  (`broker`, `common`, `msal`, `adal`, `oneauth`, `authenticator`, `design-docs`,
+  `1ES-Pipelines`) into the current worktree directory as read-only junctions and
+  materializes isolated git worktrees on demand during Stage 3 coding. Read them
+  directly under the current worktree path (`broker/...`, `common/...`, `msal/...`,
+  etc.) or with `software_factory_read`/`software_factory_find`/`software_factory_search`.
+  Never ask the engineer for permission to clone or download sub-repositories.
   Propose evidence-backed engineering choices yourself, with reasons and
   compatibility implications. Unknown implementation detail is a research task,
   not automatically a blocking product question.

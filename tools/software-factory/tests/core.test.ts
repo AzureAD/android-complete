@@ -2,13 +2,13 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { Application } from "../core/application.ts";
 import { FactoryError, MAX_COMMAND_BYTES } from "../core/contracts.ts";
-import { ensureSubrepoWorktree, projectSdkRoot, resolveRepositoryRoot } from "../core/runtime-health.ts";
+import { ensureSubrepoWorktree, ensureWorktreeSubrepoLinks, projectSdkRoot, resolveRepositoryRoot } from "../core/runtime-health.ts";
 import { systemRunner } from "../providers/cli.ts";
 import { createReaderTools } from "../runtime/reader.ts";
 import { actor, fixture, requirements } from "./helpers.ts";
@@ -112,15 +112,24 @@ test("linked git worktrees share the parent repository project identity and SDK 
         assert.match(msalContent, /class MsalClient/);
         assert.equal(existsSync(path.join(worktree, "msal")), false, "read-only fallback must not materialize a worktree for msal");
 
-        // Write-time on-demand worktree creation materializes <worktree>/broker from dev without touching mainRepo/broker's branch.
+        // Automatic worktree sub-repo junctions make sub-repos visible under workspace_path for top-level chat tools.
+        const linked = ensureWorktreeSubrepoLinks(worktree);
+        assert.deepEqual(linked.sort(), ["broker", "msal"]);
+        assert.equal(lstatSync(path.join(worktree, "msal")).isSymbolicLink(), true);
+        assert.equal(lstatSync(path.join(worktree, "broker")).isSymbolicLink(), true);
+        assert.match(readFileSync(path.join(worktree, "msal", "MsalClient.kt"), "utf8"), /class MsalClient/);
+
+        // Write-time on-demand worktree creation replaces the read-only junction with an isolated git worktree from dev without touching mainRepo/broker's branch.
         const materializedBroker = await ensureSubrepoWorktree(worktree, "broker", "dev", systemRunner);
         assert.equal(materializedBroker, path.join(worktree, "broker"));
+        assert.equal(lstatSync(path.join(worktree, "broker")).isSymbolicLink(), false, "Stage 3 worktree must replace the junction with a real git worktree directory");
         assert.equal(existsSync(path.join(worktree, "broker", ".git")), true);
         assert.match(readFileSync(path.join(worktree, "broker", "Broker.kt"), "utf8"), /dev baseline/,
             "worktree must start from the configured baseBranch, not the main checkout's unrelated branch");
         const mainBranch = execFileSync("git", ["-C", brokerRepo, "branch", "--show-current"], { encoding: "utf8" }).trim();
         assert.equal(mainBranch, "unrelated-user-branch", "main checkout branch of broker must remain untouched");
     } finally {
+        try { unlinkSync(path.join(worktree, "msal")); } catch { /* ignore */ }
         try { execFileSync("git", ["-C", path.join(mainRepo, "broker"), "worktree", "remove", "--force", path.join(worktree, "broker")]); } catch { /* ignore */ }
         wtApp.close();
         mainApp.close();

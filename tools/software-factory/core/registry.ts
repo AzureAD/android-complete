@@ -10,7 +10,7 @@ import {
     type Actor, type Approval, type AuditEvent, type Feature, type Project, type Requirements, type Revision,
 } from "./contracts.ts";
 import { lifecycleSchema } from "./lifecycle-store.ts";
-import { resolveRepositoryRoot } from "./runtime-health.ts";
+import { ensureWorktreeSubrepoLinks, resolveRepositoryRoot } from "./runtime-health.ts";
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -44,6 +44,7 @@ export class Registry {
     constructor(databasePath: string, workspace: string) {
         const canonical = realpathSync(workspace);
         const repoRoot = resolveRepositoryRoot(canonical);
+        ensureWorktreeSubrepoLinks(canonical);
         const identity = process.platform === "win32" ? repoRoot.toLowerCase() : repoRoot;
         mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o700 });
         const directory = realpathSync(path.dirname(path.resolve(databasePath)));

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FactoryError } from "./contracts.ts";
@@ -28,6 +28,80 @@ export function resolveRepositoryRoot(workspace: string): string {
     return canonical;
 }
 
+function removeDirectoryJunction(linkPath: string): void {
+    try {
+        unlinkSync(linkPath);
+    } catch {
+        rmSync(linkPath, { recursive: false, force: true });
+    }
+}
+
+export function ensureWorktreeSubrepoLinks(workspace: string): string[] {
+    const canonicalWorkspace = realpathSync(workspace);
+    const mainRoot = resolveRepositoryRoot(canonicalWorkspace);
+    if (mainRoot === canonicalWorkspace) return [];
+    const gitignorePath = path.join(canonicalWorkspace, ".gitignore");
+    const ignoredNames = new Set<string>(
+        existsSync(gitignorePath)
+            ? readFileSync(gitignorePath, "utf8")
+                .split(/\r?\n/)
+                .map((line) => line.trim().replace(/\/+$/, ""))
+                .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"))
+            : [],
+    );
+    let excludeFile: string | null = null;
+    try {
+        const dotGit = path.join(canonicalWorkspace, ".git");
+        if (statSync(dotGit).isFile()) {
+            const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
+            if (match?.[1]) {
+                const gitDir = path.resolve(canonicalWorkspace, match[1].trim());
+                const commonFile = path.join(gitDir, "commondir");
+                const commonDir = existsSync(commonFile) && statSync(commonFile).isFile()
+                    ? path.resolve(gitDir, readFileSync(commonFile, "utf8").trim())
+                    : gitDir;
+                excludeFile = path.join(commonDir, "info", "exclude");
+            }
+        }
+    } catch {
+        excludeFile = null;
+    }
+    const linked: string[] = [];
+    for (const entry of readdirSync(mainRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+        const sourceRepo = path.join(mainRoot, entry.name);
+        if (!existsSync(path.join(sourceRepo, ".git"))) continue;
+        const targetLink = path.join(canonicalWorkspace, entry.name);
+        if (existsSync(targetLink)) {
+            try {
+                if (lstatSync(targetLink).isDirectory() && !lstatSync(targetLink).isSymbolicLink() &&
+                    !existsSync(path.join(targetLink, ".git")) && readdirSync(targetLink).length === 0) {
+                    rmSync(targetLink, { recursive: false, force: true });
+                } else {
+                    continue;
+                }
+            } catch {
+                continue;
+            }
+        }
+        try {
+            symlinkSync(sourceRepo, targetLink, process.platform === "win32" ? "junction" : "dir");
+            linked.push(entry.name);
+            if (!ignoredNames.has(entry.name) && excludeFile) {
+                mkdirSync(path.dirname(excludeFile), { recursive: true });
+                const currentExclude = existsSync(excludeFile) ? readFileSync(excludeFile, "utf8") : "";
+                const lines = new Set(currentExclude.split(/\r?\n/).map((line) => line.trim()));
+                if (!lines.has(entry.name) && !lines.has(`/${entry.name}`)) {
+                    writeFileSync(excludeFile, `${currentExclude.replace(/\s*$/, "")}\n/${entry.name}\n`, "utf8");
+                }
+            }
+        } catch {
+            // Best-effort link creation; reader fallback still resolves relative paths from mainRoot.
+        }
+    }
+    return linked;
+}
+
 export async function ensureSubrepoWorktree(
     workspace: string,
     localPath: string,
@@ -36,12 +110,20 @@ export async function ensureSubrepoWorktree(
 ): Promise<string> {
     const canonicalWorkspace = realpathSync(workspace);
     const targetWorktree = path.resolve(canonicalWorkspace, localPath);
-    if (existsSync(path.join(targetWorktree, ".git"))) return targetWorktree;
     const mainRoot = resolveRepositoryRoot(canonicalWorkspace);
     if (mainRoot === canonicalWorkspace) return targetWorktree;
     const sourceRepo = path.resolve(mainRoot, localPath);
     if (!existsSync(path.join(sourceRepo, ".git"))) return targetWorktree;
     const canonicalSource = realpathSync(sourceRepo);
+    const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+    if (existsSync(targetWorktree)) {
+        const stat = lstatSync(targetWorktree);
+        if (stat.isSymbolicLink() || normalize(realpathSync(targetWorktree)) === normalize(canonicalSource)) {
+            removeDirectoryJunction(targetWorktree);
+        } else if (existsSync(path.join(targetWorktree, ".git"))) {
+            return targetWorktree;
+        }
+    }
     mkdirSync(path.dirname(targetWorktree), { recursive: true });
     let baseRef = "HEAD";
     for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
