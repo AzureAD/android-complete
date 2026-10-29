@@ -385,7 +385,9 @@ def adoption_preview(orch, *, registry_entries=()):
             continue
         delivery.validate_record_state(orch.state, record)
         if record["status"] in ("claimed", "uncertain"):
-            blockers.append(f"notification_deliveries.{key}: {record['status']}")
+            from .notification_mismatch import validate_resolution
+            if not validate_resolution(orch.state, record):
+                blockers.append(f"notification_deliveries.{key}: {record['status']}")
         elif record["status"] == "sent" and (
                 not isinstance(record.get("completion"), dict)
                 or record["completion"].get("status") not in ("applied", "suppressed")):

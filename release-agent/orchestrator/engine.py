@@ -291,6 +291,14 @@ class Orchestrator(StatusViewMixin):
         from .approvals import execute
         return execute(self, phase_id, step_id, **authorization)
 
+    def preview_manual_gate_approval(self, phase_id, step_id, *, approval_id):
+        from .manual_approvals import preview
+        return preview(self, phase_id, step_id, approval_id=approval_id)
+
+    def record_manual_gate_approval(self, phase_id, step_id, **authorization):
+        from .manual_approvals import execute
+        return execute(self, phase_id, step_id, **authorization)
+
     def _projection(self) -> StateProjection:
         from .revision import mismatch_reason
         workflow = self._workflow_definition()

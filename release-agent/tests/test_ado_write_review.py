@@ -49,6 +49,13 @@ def memory(monkeypatch):
 
 
 @pytest.fixture
+def beta_clock(monkeypatch):
+    now = datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(signoff.schedule, "now_local", lambda tz=None: now)
+    return now
+
+
+@pytest.fixture
 def distribution_inputs(monkeypatch):
     inputs = {
         "roster": [{"name": "Alice", "upn": "alice@example.com"},
@@ -235,6 +242,123 @@ def test_wiki_unknown_existence_and_unconditional_update_reject(wiki_inputs, eta
         wiki.plan_payload_wiki(orch)
 
 
+@pytest.fixture
+def flight_section_inputs(wiki_inputs, monkeypatch, tmp_path):
+    wiki_inputs["content"] = (
+        "# App Version\nOwner build notes\n\n"
+        "Expected Feature flags rollouts\n-------------------------------\n\n"
+        "Owner's old flights\n\n"
+        "### Sign-offs\nOwner approvals must be preserved.\n")
+    monkeypatch.setattr(wiki, "_step_mocks", lambda orch: {})
+    monkeypatch.setattr(wiki.S, "_auth_build", lambda context: (
+        "6.0.0", "6.0.0", "https://example.test/build/1", ""))
+    monkeypatch.setattr(wiki.S, "compose_payload",
+                        lambda *a: pytest.fail("Section update must not regenerate the page"))
+    section = tmp_path / "flights.txt"
+    section.write_text("| Flight | Default |\n|---|---|\n| Example | OFF |", encoding="utf-8")
+    return wiki_inputs, section
+
+
+def test_wiki_flight_plan_preserves_other_sections(flight_section_inputs):
+    existing, section = flight_section_inputs
+    orch = make_orch("rollout_start", "wiki_payload")
+    before = deepcopy(asdict(orch.state))
+    plan = wiki.plan_payload_wiki(orch, flight_section_file=section)
+    operation = plan.operations[0]
+    assert operation.kind == "update_wiki_page"
+    assert operation.preconditions == {
+        "exists": True, "content": existing["content"], "etag": '"etag-7"'}
+    assert operation.content["content"].startswith("# App Version\nOwner build notes\n\n")
+    assert operation.content["content"].endswith("### Sign-offs\nOwner approvals must be preserved.\n")
+    assert "Owner's old flights" not in operation.content["content"]
+    assert section.read_text(encoding="utf-8") in operation.content["content"]
+    assert asdict(orch.state) == before
+
+
+@pytest.mark.parametrize("change", ["section", "etag", "other-content"])
+def test_wiki_flight_review_binds_file_and_live_page(flight_section_inputs, change):
+    existing, section = flight_section_inputs
+    orch = make_orch("rollout_start", "wiki_payload")
+    original = W.review_hash(
+        orch, "rollout_start", wiki.S.ID,
+        wiki.plan_payload_wiki(orch, flight_section_file=section))
+    if change == "section":
+        section.write_text("Changed rollout text", encoding="utf-8")
+    elif change == "etag":
+        existing["etag"] = '"etag-8"'
+    else:
+        existing["content"] = existing["content"].replace("Owner build notes", "Concurrent edit")
+    assert W.review_hash(
+        orch, "rollout_start", wiki.S.ID,
+        wiki.plan_payload_wiki(orch, flight_section_file=section)) != original
+
+
+@pytest.mark.parametrize("heading", [
+    "Expected Feature flags rollouts\n-------------------------------\n",
+    "## Expected Feature flags rollouts\n",
+])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_wiki_flight_replacement_preserves_boundaries_and_newlines(heading, newline):
+    before = ("Owner preface\n\n" + heading + "\nOld\n\n### Next section\nOwner suffix\n")
+    before = before.replace("\n", newline)
+    result = wiki.replace_flight_section(before, "New\nflights")
+    assert result.startswith(("Owner preface\n\n" + heading).replace("\n", newline))
+    assert result.endswith("### Next section\nOwner suffix\n".replace("\n", newline))
+    assert "New\nflights".replace("\n", newline) in result
+
+
+@pytest.mark.parametrize("body,section", [
+    ("No target heading", "New flights"),
+    ("## Expected Feature flags rollouts\nA\n## Expected Feature flags rollouts\nB", "New flights"),
+    ("## Expected Feature flags rollouts\nOld", " \n"),
+])
+def test_wiki_flight_replacement_rejects_ambiguous_or_empty_input(body, section):
+    with pytest.raises(ValueError):
+        wiki.replace_flight_section(body, section)
+
+
+def test_wiki_flight_update_requires_existing_page(flight_section_inputs):
+    existing, section = flight_section_inputs
+    existing["exists"] = False
+    with pytest.raises(ValueError, match="existing wiki page"):
+        wiki.plan_payload_wiki(make_orch("rollout_start", "wiki_payload"), flight_section_file=section)
+
+
+def test_wiki_flight_update_forbids_unattended_approval(flight_section_inputs, monkeypatch, capsys):
+    _, section = flight_section_inputs
+    orch = make_orch("rollout_start", "wiki_payload")
+    monkeypatch.setattr(C, "load_orch", lambda *_: (orch.state, orch))
+    args = arguments("create-payload-wiki", "--flight-section-file", str(section),
+                     "--execute", "--auto-approve")
+    assert wiki.cmd_create_payload_wiki(args) == 1
+    assert "explicit review" in json.loads(capsys.readouterr().out)["error"]
+    assert not orch.state.get_step("rollout_start", wiki.S.ID).execution
+
+
+def test_wiki_flight_file_drift_prevents_writes(flight_section_inputs, memory, monkeypatch):
+    _, section = flight_section_inputs
+    orch = make_orch("rollout_start", "wiki_payload")
+    memory[0](orch)
+    args = arguments("create-payload-wiki", "--flight-section-file", str(section),
+                     "--execute", "--approved-by", "owner@example.com")
+    args.review_hash = W.review_hash(
+        orch, "rollout_start", wiki.S.ID,
+        wiki.plan_payload_wiki(orch, flight_section_file=section))
+    section.write_text("Changed after owner review", encoding="utf-8")
+    monkeypatch.setattr(wiki.checks, "update_wiki_page",
+                        lambda **kw: pytest.fail("Unapproved section must not be written"))
+    assert wiki.cmd_create_payload_wiki(args) == 1
+    assert not orch.state.get_step("rollout_start", wiki.S.ID).execution
+
+
+def test_wiki_flight_update_rejects_mocked_page_inputs(flight_section_inputs, monkeypatch):
+    _, section = flight_section_inputs
+    orch = make_orch("rollout_start", "wiki_payload")
+    monkeypatch.setattr(wiki, "_step_mocks", lambda _orch: {"page_name": "Different page"})
+    with pytest.raises(ValueError, match="mocked"):
+        wiki.plan_payload_wiki(orch, flight_section_file=section)
+
+
 @pytest.mark.parametrize("exists", [True, False])
 def test_wiki_executor_never_rereads_etag_for_write(wiki_inputs, monkeypatch, exists):
     orch = make_orch("rollout_start", "wiki_payload")
@@ -374,7 +498,8 @@ def test_stage_start_commands_bind_their_stage(step, stage, command, approver, m
     assert args.review_hash == record.data["last_write_review"]["hash"]
 
 
-def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypatch, capsys):
+def test_beta_stage_start_requires_exact_release_owner_approval(
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -397,10 +522,6 @@ def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypa
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
-
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -452,7 +573,7 @@ def test_beta_stage_execution_rejects_simulated_clock(memory, monkeypatch, capsy
 
 
 def test_beta_stage_rechecks_trusted_date_immediately_before_write(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -469,7 +590,7 @@ def test_beta_stage_rechecks_trusted_date_immediately_before_write(
 
     monkeypatch.setattr(
         signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 22, 0, 1, tzinfo=timezone.utc))
+        lambda tz=None: beta_clock + timedelta(days=1))
     execute = arguments(
         "start-beta-play-store",
         "--execute",
@@ -482,7 +603,7 @@ def test_beta_stage_rechecks_trusted_date_immediately_before_write(
 
 
 def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -493,9 +614,6 @@ def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -517,7 +635,7 @@ def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
 
 
 def test_beta_stage_uncertain_failure_keeps_exact_run_link(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -528,9 +646,6 @@ def test_beta_stage_uncertain_failure_keeps_exact_run_link(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     preview_args = arguments("start-beta-play-store")
     assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
     preview = json.loads(capsys.readouterr().out)
@@ -554,7 +669,7 @@ def test_beta_stage_uncertain_failure_keeps_exact_run_link(
 
 
 def test_beta_stage_verified_failure_is_blocked_not_uncertain(
-        memory, monkeypatch, capsys):
+        beta_clock, memory, monkeypatch, capsys):
     orch = make_orch("rollout_start", beta_play_store.ID)
     memory[0](orch)
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -565,9 +680,6 @@ def test_beta_stage_verified_failure_is_blocked_not_uncertain(
         "",
     ))
     monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
-    monkeypatch.setattr(
-        signoff.schedule, "now_local",
-        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
     monkeypatch.setattr(
         signoff.P,
         "start_auth_signoff_stage",

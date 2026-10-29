@@ -11,7 +11,7 @@ from orchestrator.step_context import StepContext, thaw
 from orchestrator import delivery
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.bug_bash.send_invite import delivered_invite
-from tools.bugbash_meeting import meeting_chat_id
+from tools.bugbash_meeting import mcp_request, meeting_chat_id
 
 ID = "activate_chat"
 KIND = "scout"
@@ -59,8 +59,13 @@ def build(context: StepContext):
         return Blocked(f"activate_chat: {exc}")
     instructions = (
         f"Run `record-bugbash-chat --release {context.release.release_id}` as the invite organizer. "
-        f"It reads event {invite['event_id']} from the sent calendar receipt, resolves its "
-        "join URL to onlineMeeting.chatInfo.threadId, verifies the chat and stores the binding. "
+        f"It returns exact MCP reads for acknowledged event {invite['event_id']}. "
+        "Gather those fresh WorkIQ responses, including explicit cancellation evidence and "
+        "canonical online-meeting metadata; fetch the exact chat from that meeting's join URL. "
+        "Save the complete envelope outside release state, then repeat with "
+        "`--mcp-evidence-file <path>` to verify and store the binding. Missing transcripts "
+        "do not matter when canonical meeting metadata is returned; never read transcript content. "
+        "Azure CLI/Graph is an explicit --transport graph opt-in, not the default. "
         "Never search by topic or accept a pasted ID as proof. If Teams has not exposed the "
         "thread, use Playwright to open THAT exact event's Chat pane, or ask the owner via "
         "m_ask_user to do so, then retry. HTTP 403 is a permission problem, not an "
@@ -76,7 +81,8 @@ def build(context: StepContext):
         payload={"release": context.release.release_id,
                  "followup_command": f"record-bugbash-chat --release {context.release.release_id}",
                  "_gather": {"meeting_topic": invite["subject"], "event_id": invite["event_id"],
-                             "instructions": instructions}},
+                             "instructions": instructions,
+                             "mcp_request": mcp_request(invite)}},
         record_as=ID,
         summary=f"Verify the exact meeting chat for '{invite['subject']}'",
         note="awaiting event-bound chat verification",

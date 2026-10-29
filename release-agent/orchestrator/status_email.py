@@ -194,7 +194,9 @@ def milestones(state, phase_order, selection=None):
                  "status": _roll_up(state, [("build_verify", "mrwp_ecs"),
                                             ("build_verify", "mrwp_local"),
                                             ("build_verify", "auth_ecs"),
-                                            ("build_verify", "rc_report")],
+                                            ("build_verify", "rc_report_publish"),
+                                            ("build_verify", "rc_report_notify"),
+                                            ("build_verify", "rc_report_gate")],
                                      phase_order, selection),
                  "date": "", "details": rc_details})
 
@@ -210,12 +212,13 @@ def milestones(state, phase_order, selection=None):
                                      phase_order, selection),
                  "date": "", "details": auth_details})
 
-    # 5. Manual Test Pass Scheduled — the bug bash invite (shows as Scheduled, not Complete).
+    # 5. Keep the invitation scheduled only until the manual pass is complete.
     #    The date is RECOMPUTED deterministically from when send_invite ran (its persisted
     #    completed_at) via the same scheduling rule — no extra persisted field, no guess.
     invite_done = _is_done(state, "bug_bash", "send_invite", selection)
+    manual_done = _is_done(state, "bug_bash", "bugbash_complete", selection)
     rows.append({"label": "Manual Test Pass Scheduled",
-                 "status": "scheduled" if invite_done else _step_status(
+                 "status": "complete" if manual_done else "scheduled" if invite_done else _step_status(
                      state, "bug_bash", "send_invite", phase_order, selection),
                  "date": _bugbash_date(state), "details": []})
 
@@ -285,6 +288,11 @@ def _rc_build_links(state):
 
 def current_status_line(state, phase_order, ms):
     """A one-line human 'Current Status' summary, auto-generated from the milestone model."""
+    library = [m for m in ms if m["label"] not in (
+        "Authenticator app built & tagged", "Manual Test Pass Scheduled")]
+    if library and all(m["status"] == "complete" for m in library):
+        return ("Library release complete. "
+                "Authenticator app build/tagging and rollout are separate.")
     done = [m["label"] for m in ms if m["status"] == "complete"]
     in_prog = [m["label"] for m in ms if m["status"] == "in_progress"]
     blocked = [m["label"] for m in ms if m["status"] == "blocked"]
@@ -409,6 +417,8 @@ def render_html(model) -> str:
     month_year = model.get("month_year", "")
     status_line = model.get("status_line", "")
     owner = model.get("owner_name") or "the release team"
+    footer = model.get("footer") or (
+        "Automated daily release status (business days) from the Android release orchestrator.")
     return (
         "<div style=\"font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#101828;"
         "max-width:760px;margin:0 auto;font-size:14px;line-height:1.5;\">"
@@ -435,12 +445,12 @@ def render_html(model) -> str:
         f"{_changelist_html(model.get('changes'))}"
         # sign-off
         f"<p style=\"margin:26px 0 0;color:#344054;\">Thanks,<br>{T.esc(owner)}</p>"
-        "<p style=\"margin:16px 0 0;color:#98a2b3;font-size:11px;\">Automated daily release status "
-        "(business days) from the Android release orchestrator.</p>"
+        f"<p style=\"margin:16px 0 0;color:#98a2b3;font-size:11px;\">{T.esc(footer)}</p>"
         "</div></div>")
 
 
-def compose(state, phase_order, recipients, changes=None, selection=None):
+def compose(state, phase_order, recipients, changes=None, selection=None, *,
+            purpose="daily", completed_phase=None):
     """Build the send descriptor. Returns {to, subject, html, skip, reason, model}."""
     ok, reason = in_window(state, phase_order, selection)
     month_year = schedule.target_month_label(state) or str(getattr(state, "release_id", ""))
@@ -454,6 +464,39 @@ def compose(state, phase_order, recipients, changes=None, selection=None):
         "changes": changes or [],
         "owner_name": getattr(state, "owner_name", None) or getattr(state, "owner_email", None),
     }
+    if purpose not in ("daily", "phase", "ad_hoc"):
+        raise ValueError("Unknown status email purpose")
+    if purpose != "daily":
+        if selection is None:
+            raise ValueError("Engineer-reviewed status emails require live workflow evidence")
+        phases = [phase for phase in selection.phases if phase.included]
+        if purpose == "phase":
+            phase = next((p for p in phases if p.definition.id == completed_phase), None)
+            if not phase or not phase.complete:
+                raise ValueError("Phase-completion email requires a completed, included phase")
+            subject = f"Auth Client Android SDKs {month_year} Release — {phase.definition.name} Complete"
+            model["status_line"] = f"{phase.definition.name} workflow complete."
+        else:
+            subject = f"Auth Client Android SDKs {month_year} Release — Status Update"
+        progress = []
+        for phase in phases:
+            details = []
+            if any(step.implementation == "dummy" for step in phase.definition.steps):
+                details.append({"text": "DUMMY steps track workflow only, not real verification or publication."})
+            skipped = [step.name for step in phase.definition.steps
+                       if state.get_step(phase.definition.id, step.id).status == "skipped"]
+            if skipped:
+                details.append({"text": "Skipped: " + ", ".join(skipped)})
+            progress.append({
+                "label": phase.definition.name, "date": "", "details": details,
+                "status": ("complete" if phase.complete else "blocked"
+                           if any(state.get_step(phase.definition.id, step.id).status == "blocked"
+                                  for step in phase.definition.steps)
+                           else "in_progress" if selection.frontier == phase.definition else "not_started"),
+            })
+        model["milestones"] = progress + ms
+        model["footer"] = "Engineer-reviewed release status from the Android release orchestrator."
+        ok, reason = True, ""
     return {
         "to": list(recipients or []),
         "subject": subject,

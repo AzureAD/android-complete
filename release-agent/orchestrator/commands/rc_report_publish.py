@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -10,14 +9,15 @@ from urllib.request import Request, urlopen
 from orchestrator import cli_common as C, write_review as W
 from steps.build_verify import rc_report as R
 from steps.build_verify import rc_report_publish as S
+from tools.executables import find_azure_cli
 
 PHASE = "build_verify"
 
 
 def _graph_token():
-    az = shutil.which("az") or shutil.which("az.cmd")
+    az = find_azure_cli()
     if not az:
-        raise ValueError("Azure CLI was not found on PATH (expected az or az.cmd)")
+        raise ValueError("Azure CLI was not found on PATH or in standard Windows install locations")
     raw = subprocess.check_output([
         az, "account", "get-access-token",
         "--resource", "https://graph.microsoft.com",

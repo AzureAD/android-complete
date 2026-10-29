@@ -269,7 +269,9 @@ def _prompt_for(spec: dict, release: str) -> str:
         return (
             f"Release {release} — advance this pinned release autonomously.\n"
             f"1. Run `status --release {release} --json`. Missing, unsigned, halted, "
-            "blocked, cancelled or complete means skip new work, NOT cleanup.\n"
+            "blocked, cancelled or complete means skip new release work, NOT cleanup. "
+            "Still discover phase-completion drafts through the notification protocol; "
+            "a completed release can have an owner-reviewed closing draft.\n"
             f"2. Loop `next --release {release} --json`; resolve scout_pending via "
             f"`step-action --release {release} --phase <phase> --step <step>`. "
             "Non-notification gather/trigger actions retain domain follow-ups and "

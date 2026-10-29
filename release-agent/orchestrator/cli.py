@@ -61,7 +61,7 @@ def main(argv=None):
         diagnostics = {
             "status", "list", "workflow-adopt", "mock-spec",
             "step-info", "gate-info", "log", "journal", "paths", "preview-release",
-            "bugbash-progress",
+            "bugbash-progress", "migrate-integration-recovery-runtime",
         }
         pending_deliveries = (
             args.cmd == "notification" and args.operation == "prepare" and args.source == "pending")
@@ -69,14 +69,18 @@ def main(argv=None):
             args.cmd == "automation"
             and args.action in ("list", "plan", "sync", "obligations", "cleanup"))
         checklist_inspection = args.cmd == "checklist" and not getattr(args, "verify", False)
+        integration_recovery_preview = (
+            args.cmd == "recover-integration-prs" and not args.execute)
         if (release and (os.path.isfile(C.state_path(runs_root, release)) or args.cmd == "automation")
                 and args.cmd not in diagnostics
-                and not pending_deliveries and not automation_inspection and not checklist_inspection):
+                and not pending_deliveries and not automation_inspection and not checklist_inspection
+                and not integration_recovery_preview):
             from orchestrator.revision import assert_current, assert_automation_recovery_compatible
             try:
                 _, orch = C.load_orch(runs_root, release, args.config)
-                if args.cmd == "automation" and args.action in (
-                        "create-result", "delete-result", "confirm-absent"):
+                if (args.cmd == "automation" and args.action in (
+                        "create-result", "delete-result", "confirm-absent")
+                        or args.cmd == "notification" and args.operation == "resolve-mismatch"):
                     # Registry methods still enforce exact attempt/spec or explicit
                     # absence proof. No creation/deletion claim is permitted here.
                     assert_automation_recovery_compatible(orch)

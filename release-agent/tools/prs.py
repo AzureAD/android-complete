@@ -24,6 +24,7 @@ import subprocess
 import re
 from pathlib import Path
 from urllib.parse import quote
+from tools.executables import find_azure_cli
 
 # android-complete root = <root>/release-agent/tools/prs.py -> parents[2]
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +32,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _run(args, cwd=None, timeout=120):
     """Run a command; return (returncode, stdout, stderr). Never raises."""
+    if args and args[0] == "az":
+        executable = find_azure_cli()
+        if executable is None:
+            return 1, "", "az CLI not found"
+        args = [executable, *args[1:]]
     try:
         p = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
                            timeout=timeout, encoding="utf-8", errors="replace")

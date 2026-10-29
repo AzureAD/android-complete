@@ -80,6 +80,9 @@ class Permit:
     def validate(self):
         self.validations += 1
 
+    def checkpoint_operation(self, index, operation, status, evidence=None):
+        self.validate()
+
 
 @pytest.fixture
 def integration(request, tmp_path, monkeypatch):
@@ -310,6 +313,8 @@ def test_integration_plan_full_normalized_inputs_and_exact_payloads(integration)
     plan = P.integration_plan(s.context, s.args)
     value = plan.as_dict()
     assert value["parameters"]["repos"] == ["common"]
+    assert "checkout_root" not in value["parameters"]
+    assert value["preconditions"]["repos"][0]["target"]["root"] == str(s.checkout.root)
     assert value["parameters"]["pbi"]["title"] == "Android r release — integration PRs"
     assert [op.kind for op in plan.operations] == [
         "pbi.create", "integration.create", "integration.push", "integration.create"]
@@ -322,6 +327,101 @@ def test_integration_plan_full_normalized_inputs_and_exact_payloads(integration)
         plan.parameters["pbi"]["title"] = "mutated"
     s.args.repos = ["common", "common"]
     assert P.integration_plan(s.context, s.args) == plan
+
+
+@pytest.fixture
+def integration_checkout_root(integration, tmp_path):
+    root = tmp_path / "clean-checkouts"
+    root.mkdir()
+    git(tmp_path, "clone", "--quiet", "--no-hardlinks", str(integration.checkout.root),
+        str(root / "common"))
+    git(root / "common", "config", "core.autocrlf", "false")
+    integration.args.checkout_root = str(root)
+    return root
+
+
+@pytest.mark.git_integration
+@pytest.mark.parametrize("integration", ["git"], indirect=True)
+class TestIntegrationCheckoutRoot:
+    def test_selects_normalized_checkout_without_touching_original(
+            self, integration, integration_checkout_root):
+        s, root = integration, integration_checkout_root
+        (s.checkout.root / "source.txt").write_text("preserved original work\n", encoding="utf-8")
+        (root / "unused").mkdir()
+        s.args.checkout_root = str(root / "unused" / "..")
+        plan = P.integration_plan(s.context, s.args).as_dict()
+        assert plan["parameters"]["checkout_root"] == str(root.resolve())
+        assert plan["preconditions"]["repos"][0]["target"]["root"] == str(root / "common")
+        assert all(op["target"].get("root", str(root / "common")) == str(root / "common")
+                   for op in plan["operations"])
+        assert (s.checkout.root / "source.txt").read_text() == "preserved original work\n"
+        assert not git(root / "common", "status", "--porcelain")
+        assert s.calls == []
+
+    def test_changed_root_changes_review_plan(
+            self, integration, integration_checkout_root, tmp_path):
+        s = integration
+        first = P.integration_plan(s.context, s.args)
+        other = tmp_path / "another-clean-root"
+        other.mkdir()
+        git(tmp_path, "clone", "--quiet", "--no-hardlinks", str(s.checkout.root),
+            str(other / "common"))
+        git(other / "common", "config", "core.autocrlf", "false")
+        s.args.checkout_root = str(other)
+        second = P.integration_plan(s.context, s.args)
+        assert revision.digest(first.as_dict()) != revision.digest(second.as_dict())
+        assert s.calls == []
+
+    @pytest.mark.parametrize("problem", ["dirty", "wrong-remote", "missing", "nested"])
+    def test_override_does_not_bypass_checkout_or_identity_guards(
+            self, integration, integration_checkout_root, monkeypatch, problem):
+        s, root = integration, integration_checkout_root
+        if problem == "dirty":
+            (root / "common" / "source.txt").write_text("dirty\n", encoding="utf-8")
+        elif problem == "wrong-remote":
+            git(root / "common", "remote", "set-url", "origin", str(root))
+        elif problem == "missing":
+            s.args.checkout_root = str(root / "missing")
+        else:
+            (root / "common").rename(root / "elsewhere")
+            (root / "common").mkdir()
+        with pytest.raises(ValueError):
+            P.integration_plan(s.context, s.args)
+        assert s.calls == []
+
+    @pytest.mark.parametrize("problem", ["dirty", "wrong-remote", "resolved-path"])
+    def test_executor_rechecks_actual_reviewed_root_before_any_write(
+            self, integration, integration_checkout_root, monkeypatch, problem):
+        s, root = integration, integration_checkout_root
+        authorization = Permit(P.integration_plan(s.context, s.args))
+        if problem == "dirty":
+            (root / "common" / "source.txt").write_text("late dirty\n", encoding="utf-8")
+        elif problem == "wrong-remote":
+            git(root / "common", "remote", "set-url", "origin", str(root))
+        else:
+            monkeypatch.setattr(G, "clean_repository", lambda path: s.checkout.root)
+        with pytest.raises(ValueError):
+            P.execute_integration(authorization)
+        assert s.calls == []
+
+
+@pytest.mark.parametrize("value", ["", "relative-checkouts"])
+def test_integration_checkout_root_requires_absolute_directory(integration, value):
+    integration.args.checkout_root = value
+    with pytest.raises(ValueError, match="absolute directory"):
+        P.integration_plan(integration.context, integration.args)
+    assert integration.calls == []
+
+
+def test_integration_checkout_root_cli_argument():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    IC.register(parser.add_subparsers())
+    args = parser.parse_args(["create-integration-prs", "--release", "r",
+                              "--checkout-root", str(Path.cwd())])
+    assert args.checkout_root == str(Path.cwd())
+    assert not args.execute
 
 
 @pytest.mark.parametrize("change", ["pbi-mode", "pbi-id", "pbi-title", "org", "project",

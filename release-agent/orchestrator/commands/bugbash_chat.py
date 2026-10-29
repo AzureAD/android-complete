@@ -4,6 +4,7 @@ The optional --chat-id is an assertion, never a way to bypass event resolution.
 Already-completed bindings cannot be silently replaced; failures leave state unchanged.
 """
 from __future__ import annotations
+import json
 
 from orchestrator import cli_common as C, delivery
 from orchestrator.outcomes import Done
@@ -35,7 +36,20 @@ def cmd_record_bugbash_chat(args):
             raise ValueError("Invalid meeting chat ID")
         invite = send_invite.delivered_invite(orch.context(
             "bug_bash", "activate_chat", permit=permit))
-        meeting = bugbash_meeting.resolve(invite)
+        if args.transport == "graph":
+            if args.mcp_evidence_file:
+                raise ValueError("--mcp-evidence-file cannot be combined with --transport graph")
+            meeting = bugbash_meeting.resolve(invite)
+        else:
+            if not args.mcp_evidence_file:
+                print(json.dumps(bugbash_meeting.mcp_request(invite), indent=2))
+                return 0
+            try:
+                with open(args.mcp_evidence_file, encoding="utf-8-sig") as fh:
+                    observation = json.load(fh)
+            except (OSError, UnicodeError, ValueError) as exc:
+                raise ValueError(f"Cannot read meeting MCP evidence: {exc}") from exc
+            meeting = bugbash_meeting.resolve_mcp(invite, observation)
         if chat_id and chat_id != meeting["chat_id"]:
             raise ValueError("Supplied chat does not belong to the acknowledged invitation")
     except ValueError as exc:
@@ -74,6 +88,10 @@ def register(sub):
     p.add_argument("--release", required=True)
     p.add_argument("--chat-id", default=None, dest="chat_id",
                    help="Optional assertion; must equal the thread resolved from the sent invitation")
+    p.add_argument("--transport", choices=("mcp", "graph"), default="mcp",
+                   help="Use fresh WorkIQ MCP evidence (default), or explicitly opt into Azure CLI/Graph")
+    p.add_argument("--mcp-evidence-file",
+                   help="Fresh complete MCP observation JSON returned by the gathering request")
     p.set_defaults(func=cmd_record_bugbash_chat)
 
     n = sub.add_parser("record-nativeauth-notify",

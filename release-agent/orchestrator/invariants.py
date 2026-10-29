@@ -71,7 +71,7 @@ def validate_step(state: ReleaseState, workflow: WorkflowDefinition, key: str):
     if isinstance(raw.get("data"), dict) and "last_approval" in raw["data"]:
         from .approvals import validate_closed_approval
         try:
-            validate_closed_approval(raw["data"]["last_approval"])
+            validate_closed_approval(raw["data"]["last_approval"], state=state, key=key)
         except (ValueError, TypeError) as exc:
             add("invalid_closed_approval", f"has malformed closed approval evidence: {exc}")
     if not valid_links(raw.get("links", [])):
