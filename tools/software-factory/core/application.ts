@@ -132,11 +132,16 @@ export class Application {
 
     async startWorkflow(featureId: string, kind: WorkflowKind, actor: Actor, limits: ExecutionLimits,
         admission: WorkflowAdmission): Promise<Execution> {
+        const needsClaim = Boolean(kind !== "check" && (kind !== "intake" || this.shared.cached(featureId)));
         const execution = this.lifecycle.begin(featureId, kind, actor, {}, limits, admission,
-            this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat", established: true } : undefined);
+            this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat", established: true } : undefined,
+            needsClaim ? "Claiming shared execution" : "Starting native workflow");
         try {
-            if (kind !== "check" && (kind !== "intake" || this.shared.cached(featureId))) await this.shared.claimRun(featureId, execution);
-            (await this.runtime()).launch(featureId, execution);
+            if (needsClaim) {
+                await this.shared.claimRun(featureId, execution);
+                this.lifecycle.store.updateExecution(featureId, execution.id, { phase: "Starting native workflow" });
+            }
+            (await this.runtime()).launch(featureId, this.lifecycle.store.execution(featureId, execution.id));
         }
         catch (error) {
             this.lifecycle.store.updateExecution(featureId, execution.id, {

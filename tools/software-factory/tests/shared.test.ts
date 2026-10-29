@@ -1,14 +1,19 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { Application } from "../core/application.ts";
 import { type Actor } from "../core/contracts.ts";
+import { runtimeFingerprint } from "../core/evidence.ts";
 import { parseSnapshot, validateTransition } from "../core/shared-contracts.ts";
 import { createChatTools, type ChatHost } from "../chat/tools.ts";
+import { FACTORY_READER } from "../runtime/reader.ts";
+import { awaitWorkflowRegistration } from "../runtime/registration.ts";
 import { TeamProvider, teamConfig } from "./team-provider.ts";
 import type { Provider } from "../providers/provider.ts";
 import type { WorkItem } from "../core/lifecycle-contracts.ts";
@@ -216,4 +221,103 @@ test("shared backlog sends persist inflight authority and reconcile a lost recei
         assert.equal(completed.snapshot.lock, null);
         assert.ok(completed.snapshot.state.operations.every((operation) => operation.status === "completed"));
     } finally { f.cleanup(); }
+});
+
+test("slow shared claim acquisition waits for ADO lock and accepts redacted sessionId with matching hash", async () => {
+    const f = teamFixture();
+        let appRef: Application | undefined;
+    try {
+        const app = f.create("claim-race");
+        const ws = app.registry.project.workspace;
+        app.lifecycle.configure(teamConfig(".", "claim-race"), actor);
+        execFileSync("git", ["init", "--quiet", ws]);
+        execFileSync("git", ["-C", ws, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", ws, "config", "user.name", "Test"]);
+        writeFileSync(path.join(ws, "README.md"), "fixture\n");
+        execFileSync("git", ["-C", ws, "add", "README.md"]);
+        execFileSync("git", ["-C", ws, "commit", "--quiet", "-m", "init"]);
+        appRef = app;
+        const draft = app.execute({ kind: "create_feature", requestId: "claim-race", input: requirements() }, actor);
+        await submit(app, { kind: "publish_feature", featureId: draft.id, target });
+        const feature = (await f.provider.read(target))!.snapshot.feature;
+        await submit(app, { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id });
+        const sessionHash = createHash("sha256").update(actor.sessionId!).digest("hex");
+        await assert.rejects(
+            () => awaitWorkflowRegistration({
+                sessionId: actor.sessionId!,
+                rpc: {
+                    extensions: { list: async () => ({ extensions: [{ id: "project:SoftwareFactory", name: "SoftwareFactory", source: "project" as const, status: "running" as const }] }), reload: async () => {} },
+                    tools: {
+                        execute: async () => ({
+                            resultType: "success" as const,
+                            textResultForLlm: JSON.stringify({
+                                ready: true, sessionId: "******", sessionIdHash: "wrong-hash",
+                                workflowNames: ["software-factory-design"], runtimeFingerprint: runtimeFingerprint(), readerAgent: FACTORY_READER,
+                            }),
+                        }),
+                    },
+                },
+            }, "software-factory-design", runtimeFingerprint()),
+            /different session/,
+        );
+        let nativeRuns = 0;
+        const session = {
+            sessionId: actor.sessionId!,
+            rpc: {
+                extensions: { list: async () => ({ extensions: [{ id: "project:SoftwareFactory", name: "SoftwareFactory", source: "project" as const, status: "running" as const }] }), reload: async () => {} },
+                tools: {
+                    initializeAndValidate: async () => ({ toolNames: [] }),
+                    getCurrentMetadata: async () => ({ tools: [{ name: "view", description: "v" }, { name: "glob", description: "g" }, { name: "grep", description: "s" }] }),
+                    execute: async () => ({
+                        resultType: "success" as const,
+                        textResultForLlm: JSON.stringify({
+                            ready: true, sessionId: "******", sessionIdHash: sessionHash,
+                            workflowNames: ["software-factory-design"], runtimeFingerprint: runtimeFingerprint(), readerAgent: FACTORY_READER,
+                        }),
+                    }),
+                },
+            },
+            workflow: {
+                run: async () => { nativeRuns++; return { runId: "race-run-1", status: "completed" as const, result: { ok: true } }; },
+                resume: async () => { throw new Error("unexpected"); },
+                pause: async () => { throw new Error("unexpected"); },
+                cancel: async () => { throw new Error("unexpected"); },
+                getRun: async () => { throw new Error("unexpected"); },
+                getRunDetail: async () => ({
+                    runId: "race-run-1", workflowName: "software-factory-design", description: "Design", status: "completed" as const,
+                    revision: 1, createdAt: Date.now(), startedAt: Date.now(), updatedAt: Date.now(), completedAt: Date.now(),
+                    currentPhase: null, declaredPhaseCount: 1, liveAgentCount: 0, totalSpawnedAgentCount: 0,
+                    consumed: { subagents: 0, activeMs: 1, nanoAiu: 0 },
+                    declaredLimits: {}, approved: null, observedAt: Date.now(), activeSegmentStartedAt: null,
+                    terminal: null, canResume: false, phases: [], agents: [],
+                    progress: { records: [], oldestSeq: null, newestSeq: null, hasMoreOlder: false, hasMoreNewer: false, revision: 1 },
+                }),
+            },
+        };
+        const originalWrite = f.provider.write.bind(f.provider);
+        f.provider.write = async (writeTarget, expected, snapshot, identity) => {
+            if (snapshot.lock?.kind === "design") {
+                await new Promise((resolve) => setTimeout(resolve, 1400));
+                const pending = app!.lifecycle.store.state(feature.id).executions.at(-1)!;
+                assert.equal(pending.status, "starting");
+                assert.equal(pending.phase, "Claiming shared execution");
+            }
+            return originalWrite(writeTarget, expected, snapshot, identity);
+        };
+        await app.bindChatSession(session);
+        const started = await submit(app, { kind: "start_workflow", featureId: feature.id, workflow: "design" });
+        assert.equal(started.outcome, "workflow_requested");
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+            const current = app.lifecycle.store.state(feature.id).executions.at(-1)!;
+            if (current.status === "completed" || current.status === "error") break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const finalExecution = app.lifecycle.store.state(feature.id).executions.at(-1)!;
+        assert.equal(finalExecution.status, "completed", finalExecution.error || finalExecution.status);
+        assert.equal(nativeRuns, 1);
+    } finally {
+        await appRef?.shutdown();
+        f.cleanup();
+    }
 });

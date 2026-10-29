@@ -10,7 +10,7 @@ import { jsonValue, type Execution, type ExecutionLimits, type Json, type Workfl
 import type { Lifecycle } from "../core/lifecycle.ts";
 import { now } from "../core/lifecycle-store.ts";
 import { hash } from "../core/lifecycle-store.ts";
-import { fileEvidence, runtimeFingerprint } from "../core/evidence.ts";
+import { fileEvidence, loadedWorkflowFingerprint, runtimeFingerprint } from "../core/evidence.ts";
 import { systemRunner } from "../providers/cli.ts";
 import { createClient, ownedRuntimeEnvironment, sessionConfiguration } from "./host.ts";
 import { requireRuntime } from "../core/runtime-health.ts";
@@ -78,14 +78,26 @@ export class NativeRuntime {
     async start(featureId: string, kind: WorkflowKind, actor: Actor, limits: ExecutionLimits = {},
         admission?: WorkflowAdmission): Promise<Execution> {
         await this.shared?.pull(featureId);
+        const needsClaim = Boolean(this.shared && kind !== "check" && (kind !== "intake" || this.shared.cached(featureId)));
         const execution = this.factory.begin(featureId, kind, actor, {}, limits, admission,
-            this.joined ? { sessionId: this.joined.sessionId, kind: "chat", established: true } : undefined);
-        if (this.shared && kind !== "check" && (kind !== "intake" || this.shared.cached(featureId))) await this.shared.claimRun(featureId, execution);
-        this.launch(featureId, execution);
-        return execution;
+            this.joined ? { sessionId: this.joined.sessionId, kind: "chat", established: true } : undefined,
+            needsClaim ? "Claiming shared execution" : "Starting native workflow");
+        try {
+            if (needsClaim) {
+                await this.shared!.claimRun(featureId, execution);
+                this.factory.store.updateExecution(featureId, execution.id, { phase: "Starting native workflow" });
+            }
+            this.launch(featureId, this.factory.store.execution(featureId, execution.id));
+        } catch (error) {
+            this.fail(featureId, execution.id, error);
+            throw error;
+        }
+        return this.factory.store.execution(featureId, execution.id);
     }
 
     launch(featureId: string, execution: Execution): void {
+        const current = this.factory.store.execution(featureId, execution.id);
+        if (current.status !== "starting" || current.runtimeId) return;
         if (execution.sessionKind === "chat" && execution.sessionId !== this.joined?.sessionId) {
             this.factory.store.updateExecution(featureId, execution.id, { phase: this.factory.store.ownerOnline(execution.sessionId)
                 ? "Queued for the owning Copilot chat" : "Waiting for the owning Copilot chat to reconnect" });
@@ -96,7 +108,7 @@ export class NativeRuntime {
             this.factory.store.updateExecution(featureId, execution.id, { phase: "Queued for the owning Factory runtime" });
             return;
         }
-        if (execution.admissionClaim && !execution.runtimeId) {
+        if (current.admissionClaim && !current.runtimeId) {
             this.fail(featureId, execution.id, new FactoryError("native_admission_uncertain", "A prior controller claimed this admission without recording a native run ID. Inspect/reconcile it before authorizing a successor.", 409));
             return;
         }
@@ -104,6 +116,18 @@ export class NativeRuntime {
         this.launching.add(execution.id);
         const pending = (async () => {
             await this.shared?.assertRun(featureId, execution.id);
+            const active = this.factory.store.execution(featureId, execution.id);
+            if (active.status !== "starting" || active.runtimeId) return;
+            if (active.sessionKind === "chat" && process.env.SESSION_ID === active.sessionId &&
+                this.joined?.sessionId === active.sessionId && loadedWorkflowFingerprint !== active.runtimeFingerprint) {
+                this.factory.store.updateExecution(featureId, execution.id, { phase: "Reloading Software Factory integration" });
+                this.stopping = true;
+                clearInterval(this.timer);
+                for (const id of this.leaseSessions) this.factory.store.releaseOwner(id, this.ownerToken);
+                this.leaseSessions.clear();
+                await this.joined.rpc.extensions.reload();
+                return;
+            }
             this.factory.store.updateExecution(featureId, execution.id, { phase: this.joined ? "Using the current Copilot chat" : "Checking local Copilot runtime" });
             if (execution.sessionKind !== "chat") {
                 const runtime = requireRuntime();
@@ -195,7 +219,7 @@ export class NativeRuntime {
 
     private fail(featureId: string, executionId: string, error: unknown): void {
         const existing = this.factory.store.execution(featureId, executionId);
-        if (["superseded", "cancelled", "completed"].includes(existing.status)) return;
+        if (["superseded", "cancelled", "completed"].includes(existing.status) || (existing.status === "error" && !existing.runtimeId)) return;
         if ((existing.sessionKind === "chat" || this.factory.store.ownerOnline(existing.sessionId)) &&
             !this.factory.store.ownsSession(existing.sessionId, this.ownerToken)) {
             this.factory.store.change(featureId, (state) => this.factory.store.event(state, "stale_chat_controller_rejected", executionId));
@@ -311,7 +335,10 @@ export class NativeRuntime {
                 const state = this.factory.store.state(feature.id);
                 for (const execution of state.executions) {
                     const residentOwner = this.factory.store.ownsSession(execution.sessionId, this.ownerToken);
-                    if (residentOwner &&
+                    const claimingShared = execution.phase === "Claiming shared execution" ||
+                        Boolean(this.shared?.cached(feature.id) && execution.kind !== "check" &&
+                            this.shared.cached(feature.id)?.snapshot.lock?.id !== execution.id);
+                    if (residentOwner && !claimingShared &&
                         execution.status === "starting" && !execution.runtimeId && !this.launching.has(execution.id)) {
                         this.launch(feature.id, execution);
                     }

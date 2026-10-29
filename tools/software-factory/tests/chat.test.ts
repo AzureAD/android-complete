@@ -50,7 +50,7 @@ test("first-run chat reports missing configuration and a blocked preview without
             configured: false,
             configuration: null,
             message: "Software Factory has no repository or ADO board configuration in this local registry.",
-            nextStep: "Research the current repository and ask the engineer to confirm its repository alias, provider, host, slug, base branch, authenticated account, and local path, plus the ADO organization and project. Then preview and request genuine confirmation for a configure command. Do not infer missing account or branch values or publish before configuration succeeds.",
+            nextStep: "Research the current repository and ask only for missing or ambiguous repository, account, branch, or ADO values. Then preview and request genuine confirmation for a configure command without a separate preliminary yes/no prompt. Do not infer missing account or branch values or publish before configuration succeeds.",
         });
         const feature = f.app.execute({ kind: "create_feature", requestId: "first-run", input: requirements() }, actor);
         const preview = await call("software_factory_preview", { command: {

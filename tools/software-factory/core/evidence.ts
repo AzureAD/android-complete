@@ -28,6 +28,8 @@ export function runtimeFingerprint(): string {
     return digest.digest("hex");
 }
 
+export const loadedWorkflowFingerprint = runtimeFingerprint();
+
 export function fileEvidence(file: string): string | Buffer {
     return lstatSync(file).isSymbolicLink() ? readlinkSync(file) : readFileSync(file);
 }

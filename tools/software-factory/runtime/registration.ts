@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+import { createHash } from "node:crypto";
 import type { CopilotSession } from "@github/copilot-sdk";
 import { FactoryError, object, text } from "../core/contracts.ts";
 import type { WorkflowRegistration } from "../core/lifecycle-contracts.ts";
@@ -47,7 +48,13 @@ export async function awaitWorkflowRegistration(session: RegistrationSession, wo
                         const status = object(input, "Workflow registration");
                         if (typeof status.ready !== "boolean") throw new FactoryError("workflow_registration_invalid", "The registration handshake omitted its readiness state. No workflow was started.", 503);
                         if (status.ready === true) {
-                            if (status.sessionId !== session.sessionId) throw new FactoryError("workflow_registration_owner", "The workflows registered with a different session. No workflow was started.", 503);
+                            const expectedSessionHash = createHash("sha256").update(session.sessionId).digest("hex");
+                            const ownerMatches = status.sessionId === session.sessionId ||
+                                (status.sessionId === "******" && status.sessionIdHash === expectedSessionHash);
+                            if (!ownerMatches) {
+                                throw new FactoryError("workflow_registration_owner",
+                                    `The workflows registered with a different session (expected ${session.sessionId}, received ${typeof status.sessionId === "string" ? status.sessionId : "missing"}). No workflow was started.`, 503);
+                            }
                             if (!Array.isArray(status.workflowNames) || !status.workflowNames.every((name) => typeof name === "string") ||
                                 !status.workflowNames.includes(workflow)) {
                                 throw new FactoryError("workflow_registration_missing", `The owning extension did not register ${workflow}. No workflow was started.`, 503);

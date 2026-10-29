@@ -217,6 +217,9 @@ export class LifecycleStore {
             if (["superseded", "cancelled", "completed"].includes(execution.status) && update.status && update.status !== execution.status) {
                 throw new FactoryError("execution_authority_closed", "A terminal or revoked execution cannot be reactivated by a late callback.", 409);
             }
+            if (execution.status === "error" && !execution.runtimeId && (update.status || update.phase)) {
+                return execution;
+            }
             const changed = (update.status && update.status !== execution.status) || (update.phase && update.phase !== execution.phase);
             Object.assign(execution, update, { updatedAt: now() });
             if (changed) this.event(state, "workflow_progress", id, {

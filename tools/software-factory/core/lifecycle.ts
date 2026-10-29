@@ -389,7 +389,7 @@ export class Lifecycle {
     }
 
     begin(featureId: string, kind: WorkflowKind, actor: Actor, sourcePins: Record<string, string> = {}, limits: ExecutionLimits = {},
-        admission?: WorkflowAdmission, preferredSession?: SessionBinding): Execution {
+        admission?: WorkflowAdmission, preferredSession?: SessionBinding, initialPhase = "Starting native workflow"): Execution {
         const feature = this.store.registry.get(featureId);
         if (kind !== "intake" && feature.status !== "ready_for_design") throw new FactoryError("requirements_approval_required", "Review and approve the success criteria before starting design or delivery.", 409);
         if (kind === "lifecycle") throw new FactoryError("workflow_retired", "The multi-stage lifecycle workflow is retired. Start plan, then explicitly create the approved backlog and dispatch approved work.", 409);
@@ -424,7 +424,7 @@ export class Lifecycle {
                 id: randomUUID(), kind, requirementsRevision: feature.current.id, configurationId: this.store.configuration()?.id || null,
                 sessionId: binding.sessionId, sessionKind: binding.kind, reuseSession: binding.established,
                 runtimeId: null, parentSessionId: actor.sessionId || null,
-                status: "starting", phase: "Starting native workflow",
+                status: "starting", phase: initialPhase,
                 generation: { design: this.store.generation(state, "design", feature.current.id), plan: this.store.generation(state, "plan", feature.current.id) },
                 sourcePins, runtimeFingerprint: runtimeFingerprint(), requestedBy: validateActor(actor),
                 limits: { maxAiCredits: null, ...limits }, checkpoints: {}, outcome: null, error: null, createdAt: timestamp, updatedAt: timestamp,

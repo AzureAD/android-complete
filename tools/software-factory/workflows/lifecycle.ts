@@ -6,7 +6,7 @@ import { FactoryError, object, text } from "../core/contracts.ts";
 import { analysisConfiguration, jsonValue, parseIntakeProposal, parsePlan, strings, type Json, type WorkflowKind } from "../core/lifecycle-contracts.ts";
 import { runDesignFeature, workflowDefinition as guardedDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
 import type { Provider } from "../providers/provider.ts";
-import { runtimeFingerprint } from "../core/evidence.ts";
+import { loadedWorkflowFingerprint, runtimeFingerprint } from "../core/evidence.ts";
 import { sourcePins } from "../runtime/controller.ts";
 import { runReader } from "../runtime/reader.ts";
 
@@ -14,7 +14,7 @@ export type FactoryContext = Pick<WorkflowContext, "runId" | "args" | "agent" | 
     session: { sessionId: string };
 };
 type Context = FactoryContext;
-export const loadedWorkflowFingerprint = runtimeFingerprint();
+export { loadedWorkflowFingerprint };
 const schemaString = { type: "string" };
 const arrayOfStrings = { type: "array", items: schemaString };
 const itemSchema = {
