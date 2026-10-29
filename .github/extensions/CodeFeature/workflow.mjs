@@ -81,6 +81,17 @@ const referenceSchema = object({
     locator: text,
 });
 
+const extractedTargetSchema = object({
+    id: text,
+    repository: text,
+    baseBranch: text,
+    workItemId: { type: "integer" },
+    title: text,
+    description: text,
+    acceptanceCriteria: texts,
+    verificationCommands: texts,
+});
+
 const evidenceSchema = object({
     approvalVerification: object({
         verified: { type: "boolean" },
@@ -94,6 +105,28 @@ const evidenceSchema = object({
     assumptions: texts,
     unknowns: texts,
     blockingUnknowns: texts,
+});
+
+const extractionEvidenceSchema = object({
+    approvalVerification: object({
+        verified: { type: "boolean" },
+        revision: text,
+        reference: text,
+        rationale: text,
+    }),
+    extractedSpec: object({
+        title: text,
+        designSummary: text,
+        requirements: list(object({ id: text, text: text })),
+        targets: list(extractedTargetSchema),
+    }),
+    references: list(referenceSchema),
+    facts: list(object({ statement: text, referenceIds: texts })),
+    conflicts: texts,
+    assumptions: texts,
+    unknowns: texts,
+    blockingUnknowns: texts,
+    clarificationQuestions: texts,
 });
 
 const fileChangeSchema = object({
@@ -204,72 +237,377 @@ export const customAgents = Object.freeze([
 function normalizeRepositoryKey(name) {
     if (!nonempty(name)) return "";
     const trimmed = name.trim().toLowerCase();
-    if (trimmed === "common4j") return "common";
-    if (trimmed === "broker4j" || trimmed === "aadauthenticator") return "broker";
+    if (trimmed === "common4j" || trimmed.includes("microsoft-authentication-library-common-for-android")) return "common";
+    if (trimmed === "broker4j" || trimmed === "aadauthenticator" || trimmed.includes("ad-accounts-for-android")) return "broker";
+    if (trimmed.includes("microsoft-authentication-library-for-android")) return "msal";
+    if (trimmed.includes("azure-activedirectory-library-for-android")) return "adal";
+    if (trimmed.includes("android-complete")) return "android-complete";
     return trimmed;
 }
 
-export function normalizeTask(args) {
-    const raw = record(args?.task) ? args.task : record(args?.stage0) ? args.stage0 : null;
-    if (!raw) return null;
-    const rawTargets = Array.isArray(raw.targets) && raw.targets.length > 0
-        ? raw.targets
-        : nonempty(raw.repository)
-            ? [{
-                id: nonempty(raw.targetId) ? raw.targetId.trim() : "target-1",
-                repository: raw.repository,
-                baseBranch: raw.baseBranch,
-                workItemId: raw.workItemId,
-                title: raw.title,
-                description: raw.description || raw.designSummary || raw.title,
-                acceptanceCriteria: Array.isArray(raw.acceptanceCriteria)
-                    ? raw.acceptanceCriteria
-                    : Array.isArray(raw.requirements)
-                        ? raw.requirements.map((req) => req?.text).filter(nonempty)
-                        : [],
-                verificationCommands: Array.isArray(raw.verificationCommands) ? raw.verificationCommands : [],
-                localPath: raw.localPath,
-                hostname: raw.hostname,
-                slug: raw.slug,
-                account: raw.account,
-            }]
-            : [];
+function parseWorkItemNumber(value) {
+    if (positiveInt(Number(value))) return Number(value);
+    if (typeof value === "string") {
+        const match = value.match(/(?:AB#)?([1-9]\d*)/i);
+        if (match) return Number(match[1]);
+    }
+    return null;
+}
 
-    const targets = rawTargets.map((target) => {
-        if (!record(target)) return target;
-        const repoKey = normalizeRepositoryKey(target.repository);
-        const defaults = REPOSITORY_DEFAULTS[repoKey] || null;
-        return {
-            id: typeof target.id === "string" ? target.id.trim() : "",
-            repository: repoKey || (typeof target.repository === "string" ? target.repository.trim() : ""),
-            localPath: nonempty(target.localPath) ? target.localPath.trim() : (defaults?.localPath || ""),
-            hostname: nonempty(target.hostname) ? target.hostname.trim() : (defaults?.hostname || "github.com"),
-            slug: nonempty(target.slug) ? target.slug.trim() : (defaults?.slug || ""),
-            baseBranch: nonempty(target.baseBranch) ? target.baseBranch.trim() : (defaults?.baseBranch || "dev"),
-            account: nonempty(target.account) ? target.account.trim() : "",
-            workItemId: target.workItemId ?? raw.workItemId ?? null,
-            title: nonempty(target.title) ? target.title.trim() : (typeof raw.title === "string" ? raw.title.trim() : ""),
-            description: nonempty(target.description) ? target.description.trim() : (typeof raw.designSummary === "string" ? raw.designSummary.trim() : ""),
-            acceptanceCriteria: Array.isArray(target.acceptanceCriteria) ? target.acceptanceCriteria : [],
-            verificationCommands: Array.isArray(target.verificationCommands) ? target.verificationCommands : [],
-        };
-    });
+function stripHtml(textValue) {
+    if (!nonempty(textValue)) return "";
+    return String(textValue)
+        .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, "\n")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
+        .replace(/&quot;/gi, "\"")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n\s*\n+/g, "\n\n")
+        .trim();
+}
 
+function extractBulletsFromText(rawText) {
+    if (!nonempty(rawText)) return [];
+    const lines = stripHtml(rawText).split(/\r?\n/);
+    const items = [];
+    for (const line of lines) {
+        const match = line.trim().match(/^(?:[-*•]|\d+\.)\s+(?:\[[ xX]\]\s*)?(.+)$/);
+        if (match && nonempty(match[1])) {
+            items.push(match[1].trim());
+        }
+    }
+    return items;
+}
+
+function inferRepositoriesFromText(rawText) {
+    if (!nonempty(rawText)) return [];
+    const found = [];
+    const lower = rawText.toLowerCase();
+    for (const [key, token] of [
+        ["common", /\b(common4j|common|microsoft-authentication-library-common-for-android)\b/i],
+        ["broker", /\b(broker4j|broker|aadauthenticator|ad-accounts-for-android)\b/i],
+        ["msal", /\b(msal|microsoft-authentication-library-for-android)\b/i],
+        ["adal", /\b(adal|azure-activedirectory-library-for-android)\b/i],
+    ]) {
+        if (token.test(lower)) found.push(key);
+    }
+    return found;
+}
+
+function normalizeTargetObject(target, fallbackRaw = {}, index = 0) {
+    if (!record(target)) return target;
+    const repoKey = normalizeRepositoryKey(target.repository || fallbackRaw.repository);
+    const defaults = REPOSITORY_DEFAULTS[repoKey] || null;
+    const workItemId = parseWorkItemNumber(target.workItemId ?? target.pbiId ?? target.id ?? fallbackRaw.workItemId ?? fallbackRaw.pbiId);
     return {
-        title: typeof raw.title === "string" ? raw.title.trim() : "",
-        revision: typeof raw.revision === "string" ? raw.revision.trim() : "",
-        workItemId: raw.workItemId ?? null,
-        designSummary: nonempty(raw.designSummary) ? raw.designSummary.trim() : "",
-        approval: raw.approval,
-        requirements: raw.requirements,
-        targets,
-        blockingUnknowns: raw.blockingUnknowns,
+        id: nonempty(target.id) ? String(target.id).trim() : `target-${index + 1}`,
+        repository: repoKey || (typeof target.repository === "string" ? target.repository.trim() : ""),
+        localPath: nonempty(target.localPath) ? target.localPath.trim() : (defaults?.localPath || ""),
+        hostname: nonempty(target.hostname) ? target.hostname.trim() : (defaults?.hostname || "github.com"),
+        slug: nonempty(target.slug) ? target.slug.trim() : (defaults?.slug || ""),
+        baseBranch: nonempty(target.baseBranch) ? target.baseBranch.trim() : (defaults?.baseBranch || "dev"),
+        account: nonempty(target.account) ? target.account.trim() : "",
+        workItemId,
+        title: nonempty(target.title) ? target.title.trim() : (typeof fallbackRaw.title === "string" ? fallbackRaw.title.trim() : ""),
+        description: nonempty(target.description) ? target.description.trim() : (typeof fallbackRaw.designSummary === "string" ? fallbackRaw.designSummary.trim() : ""),
+        acceptanceCriteria: Array.isArray(target.acceptanceCriteria) ? target.acceptanceCriteria.filter(nonempty) : [],
+        verificationCommands: Array.isArray(target.verificationCommands) ? target.verificationCommands.filter(nonempty) : [],
     };
 }
 
-export function validateTask(args) {
-    const task = normalizeTask(args);
-    if (!record(task) || !nonempty(task.title) || !nonempty(task.revision)) {
+export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem } = {}) {
+    if (typeof args === "string") {
+        return { prompt: args };
+    }
+    if (!record(args)) return args;
+    const cloned = JSON.parse(JSON.stringify(args));
+    const container = record(cloned.task) ? cloned.task : cloned;
+
+    if (nonempty(container.designDocPath) && !nonempty(container.designDoc)) {
+        const candidatePath = path.resolve(workspaceRoot, container.designDocPath.trim());
+        if (!existsSync(candidatePath)) {
+            container.resolutionError = `Design doc file not found: ${container.designDocPath}`;
+        } else {
+            container.designDoc = readFileSync(candidatePath, "utf8");
+        }
+    }
+
+    const pbiIdList = [
+        ...(Array.isArray(container.pbiIds) ? container.pbiIds : []),
+        ...(container.pbiId !== undefined ? [container.pbiId] : []),
+    ]
+        .map(parseWorkItemNumber)
+        .filter((id) => positiveInt(id));
+
+    if (pbiIdList.length > 0 && !Array.isArray(container.pbis) && !record(container.pbi)) {
+        const resolvedPbis = [];
+        for (const id of unique(pbiIdList) ? pbiIdList : [...new Set(pbiIdList)]) {
+            try {
+                const wi = typeof fetchWorkItem === "function"
+                    ? fetchWorkItem(id)
+                    : JSON.parse(exec("az", [
+                        "boards", "work-item", "show",
+                        "--id", String(id),
+                        "--org", "https://identitydivision.visualstudio.com",
+                        "-o", "json",
+                    ], { cwd: workspaceRoot }));
+                if (record(wi)) {
+                    const fields = record(wi.fields) ? wi.fields : wi;
+                    resolvedPbis.push({
+                        id: Number(wi.id || id),
+                        workItemId: Number(wi.id || id),
+                        title: fields["System.Title"] || fields.title || `PBI ${id}`,
+                        description: stripHtml(fields["System.Description"] || fields.description || ""),
+                        acceptanceCriteria: Array.isArray(fields.acceptanceCriteria)
+                            ? fields.acceptanceCriteria
+                            : extractBulletsFromText(fields["Microsoft.VSTS.Common.AcceptanceCriteria"] || fields["System.Description"] || ""),
+                        repository: fields.repository || inferRepositoriesFromText(fields["System.Description"] || fields["System.Title"] || "")[0] || "",
+                        baseBranch: fields.baseBranch || "dev",
+                        parentWorkItemId: parseWorkItemNumber(fields["System.Parent"] ?? fields.parentWorkItemId),
+                    });
+                }
+            } catch (error) {
+                container.resolutionError = `Failed to load PBI AB#${id}: ${error instanceof Error ? error.message : String(error)}`;
+            }
+        }
+        if (resolvedPbis.length > 0) {
+            container.pbis = resolvedPbis;
+        }
+    }
+
+    return cloned;
+}
+
+export function normalizeTask(args) {
+    if (typeof args === "string" && nonempty(args)) {
+        args = { prompt: args };
+    }
+    if (!record(args)) return null;
+
+    const raw = record(args.task) ? args.task : record(args.stage0) ? args.stage0 : args;
+    const isExplicitStage0 = record(args.stage0) !== false && !nonempty(raw.designDoc) && !nonempty(raw.designDocPath) &&
+        !record(raw.designPacket) && !record(raw.pbi) && !Array.isArray(raw.pbis) && !nonempty(raw.prompt);
+
+    const designPacket = record(raw.designPacket) ? raw.designPacket : null;
+    const designDocText = typeof raw.designDoc === "string"
+        ? raw.designDoc.trim()
+        : record(raw.designDoc)
+            ? JSON.stringify(raw.designDoc)
+            : designPacket && record(designPacket.design?.sections)
+                ? Object.entries(designPacket.design.sections).map(([k, v]) => `## ${k}\n${v}`).join("\n\n")
+                : "";
+    const pbiList = Array.isArray(raw.pbis)
+        ? raw.pbis.filter(record)
+        : record(raw.pbi)
+            ? [raw.pbi]
+            : [];
+    const promptText = nonempty(raw.prompt) ? raw.prompt.trim() : "";
+
+    const inputMode = nonempty(designDocText) || nonempty(raw.designDocPath) || designPacket
+        ? "design_doc"
+        : pbiList.length > 0 || raw.pbiId !== undefined || Array.isArray(raw.pbiIds)
+            ? "pbi"
+            : nonempty(promptText)
+                ? "prompt"
+                : "structured";
+
+    if (inputMode === "structured" && !record(args.task) && !record(args.stage0)) {
+        return null;
+    }
+
+    const headingMatch = designDocText.match(/^#\s+(.+)$/m);
+    const derivedTitle = nonempty(raw.title)
+        ? raw.title.trim()
+        : nonempty(designPacket?.stage0?.title)
+            ? designPacket.stage0.title.trim()
+            : headingMatch && nonempty(headingMatch[1])
+                ? headingMatch[1].trim()
+                : nonempty(pbiList[0]?.title)
+                    ? String(pbiList[0].title).trim()
+                    : nonempty(promptText)
+                        ? promptText.split(/\r?\n/)[0].slice(0, 80).trim()
+                        : "";
+
+    const abFromText = parseWorkItemNumber(
+        raw.workItemId ?? raw.pbiId ?? pbiList[0]?.parentWorkItemId ?? pbiList[0]?.workItemId ?? pbiList[0]?.id ??
+        (designDocText.match(/AB#([1-9]\d*)/i)?.[1] || promptText.match(/AB#([1-9]\d*)/i)?.[1]),
+    );
+
+    const rawRequirements = Array.isArray(raw.requirements) && raw.requirements.length > 0
+        ? raw.requirements
+        : Array.isArray(designPacket?.stage0?.requirements) && designPacket.stage0.requirements.length > 0
+            ? designPacket.stage0.requirements
+            : [];
+
+    let synthesizedRequirements = rawRequirements;
+    if (synthesizedRequirements.length === 0 && inputMode !== "structured") {
+        const bullets = [
+            ...extractBulletsFromText(designDocText),
+            ...pbiList.flatMap((item) => Array.isArray(item.acceptanceCriteria) ? item.acceptanceCriteria : extractBulletsFromText(item.description || "")),
+        ].filter(nonempty);
+        if (bullets.length > 0) {
+            synthesizedRequirements = bullets.slice(0, 8).map((item, idx) => ({ id: `R${idx + 1}`, text: item }));
+        } else if (nonempty(derivedTitle) || nonempty(promptText)) {
+            synthesizedRequirements = [{ id: "R1", text: promptText || derivedTitle }];
+        }
+    }
+
+    let rawTargets = [];
+    if (Array.isArray(raw.targets) && raw.targets.length > 0) {
+        rawTargets = raw.targets;
+    } else if (pbiList.length > 0) {
+        rawTargets = pbiList.map((item, idx) => ({
+            id: nonempty(item.id) && !positiveInt(Number(item.id)) ? String(item.id) : `pbi-${item.workItemId || item.id || idx + 1}`,
+            repository: item.repository || raw.repository || inferRepositoriesFromText(`${item.title || ""} ${item.description || ""}`)[0] || "",
+            baseBranch: item.baseBranch || raw.baseBranch || "dev",
+            workItemId: parseWorkItemNumber(item.workItemId ?? item.id ?? abFromText),
+            title: item.title || derivedTitle,
+            description: stripHtml(item.description || ""),
+            acceptanceCriteria: Array.isArray(item.acceptanceCriteria) && item.acceptanceCriteria.length > 0
+                ? item.acceptanceCriteria
+                : extractBulletsFromText(item.description || "").length > 0
+                    ? extractBulletsFromText(item.description || "")
+                    : synthesizedRequirements.map((r) => r.text),
+            verificationCommands: Array.isArray(item.verificationCommands) ? item.verificationCommands : [],
+        }));
+    } else if (nonempty(raw.repository) || inputMode !== "structured") {
+        const inferredRepos = nonempty(raw.repository)
+            ? [raw.repository]
+            : inferRepositoriesFromText(`${designDocText}\n${promptText}`);
+        rawTargets = inferredRepos.map((repoName, idx) => ({
+            id: nonempty(raw.targetId) && idx === 0 ? raw.targetId.trim() : `target-${idx + 1}`,
+            repository: repoName,
+            baseBranch: raw.baseBranch,
+            workItemId: abFromText,
+            title: derivedTitle,
+            description: raw.description || raw.designSummary || designDocText || promptText || derivedTitle,
+            acceptanceCriteria: Array.isArray(raw.acceptanceCriteria) && raw.acceptanceCriteria.length > 0
+                ? raw.acceptanceCriteria
+                : synthesizedRequirements.map((req) => req?.text).filter(nonempty),
+            verificationCommands: Array.isArray(raw.verificationCommands) ? raw.verificationCommands : [],
+            localPath: raw.localPath,
+            hostname: raw.hostname,
+            slug: raw.slug,
+            account: raw.account,
+        }));
+    }
+
+    const targets = rawTargets.map((target, idx) => normalizeTargetObject(target, { ...raw, title: derivedTitle, workItemId: abFromText }, idx));
+
+    const autoRevisionHash = createHash("sha256")
+        .update(JSON.stringify({ derivedTitle, designDocText, pbiList, promptText, rawRequirements, targets }))
+        .digest("hex")
+        .slice(0, 12);
+    const revision = nonempty(raw.revision)
+        ? raw.revision.trim()
+        : nonempty(designPacket?.stage0?.revision)
+            ? designPacket.stage0.revision.trim()
+            : inputMode !== "structured"
+                ? `auto-${autoRevisionHash}`
+                : "";
+
+    const approval = record(raw.approval)
+        ? raw.approval
+        : record(designPacket?.stage0?.approval)
+            ? designPacket.stage0.approval
+            : inputMode !== "structured" && nonempty(revision)
+                ? {
+                    approvedRevision: revision,
+                    approvedBy: "workflow-caller",
+                    reference: nonempty(raw.designDocPath)
+                        ? `design-doc:${raw.designDocPath}`
+                        : abFromText
+                            ? `AB#${abFromText}`
+                            : `${inputMode}:${revision}`,
+                }
+                : raw.approval;
+
+    const blockingUnknowns = Array.isArray(raw.blockingUnknowns)
+        ? raw.blockingUnknowns
+        : Array.isArray(designPacket?.stage0?.blockingUnknowns)
+            ? designPacket.stage0.blockingUnknowns
+            : inputMode !== "structured"
+                ? []
+                : raw.blockingUnknowns;
+
+    const needsExtraction = inputMode !== "structured" && (
+        !Array.isArray(raw.requirements) ||
+        raw.requirements.length === 0 ||
+        !Array.isArray(raw.targets) ||
+        raw.targets.length === 0 ||
+        targets.some((t) => !nonempty(t.repository) || !positiveInt(Number(t.workItemId)))
+    );
+
+    return {
+        inputMode,
+        isExplicitStage0,
+        needsExtraction,
+        resolutionError: raw.resolutionError || null,
+        title: derivedTitle,
+        revision,
+        workItemId: abFromText,
+        designSummary: nonempty(raw.designSummary)
+            ? raw.designSummary.trim()
+            : nonempty(designDocText)
+                ? designDocText
+                : promptText,
+        sourceInputs: {
+            ...(nonempty(raw.designDocPath) ? { designDocPath: raw.designDocPath.trim() } : {}),
+            ...(nonempty(designDocText) ? { designDoc: designDocText } : {}),
+            ...(pbiList.length > 0 ? { pbis: pbiList } : {}),
+            ...(nonempty(promptText) ? { prompt: promptText } : {}),
+            ...(Array.isArray(raw.clarifications) ? { clarifications: raw.clarifications } : {}),
+        },
+        approval,
+        requirements: synthesizedRequirements,
+        targets,
+        blockingUnknowns,
+    };
+}
+
+export function mergeExtractedSpec(task, evidence) {
+    if (!record(task) || !record(evidence?.extractedSpec)) return task;
+    const spec = evidence.extractedSpec;
+    const merged = JSON.parse(JSON.stringify(task));
+    if (!nonempty(merged.title) && nonempty(spec.title)) {
+        merged.title = spec.title.trim();
+    }
+    if (!nonempty(merged.designSummary) && nonempty(spec.designSummary)) {
+        merged.designSummary = spec.designSummary.trim();
+    }
+    if (Array.isArray(spec.requirements) && spec.requirements.length > 0 &&
+        (merged.needsExtraction || !Array.isArray(merged.requirements) || merged.requirements.length === 0)) {
+        merged.requirements = spec.requirements.map((req, idx) => ({
+            id: nonempty(req?.id) ? req.id.trim() : `R${idx + 1}`,
+            text: typeof req?.text === "string" ? req.text.trim() : "",
+        }));
+    }
+    if (Array.isArray(spec.targets) && spec.targets.length > 0 &&
+        (merged.needsExtraction || !Array.isArray(merged.targets) || merged.targets.length === 0 ||
+            merged.targets.some((t) => !nonempty(t.repository) || !positiveInt(Number(t.workItemId))))) {
+        merged.targets = spec.targets.map((target, idx) => normalizeTargetObject(
+            target,
+            { title: merged.title, designSummary: merged.designSummary, workItemId: merged.workItemId },
+            idx,
+        ));
+    }
+    merged.needsExtraction = false;
+    return merged;
+}
+
+export function validateTask(args, { allowDeferredTargets = false } = {}) {
+    const task = record(args) && typeof args.inputMode === "string" ? args : normalizeTask(args);
+    if (!record(task)) {
+        return ["Provide a design doc (designDocPath/designDoc), PBI (pbiId/pbis), free-form prompt, or structured task."];
+    }
+    if (nonempty(task.resolutionError)) {
+        return [task.resolutionError];
+    }
+    if (!nonempty(task.title) || !nonempty(task.revision)) {
         return ["Task must include a title and immutable revision."];
     }
     const errors = [];
@@ -277,31 +615,33 @@ export function validateTask(args) {
         !nonempty(task.approval.approvedBy) || !nonempty(task.approval.reference)) {
         errors.push("An explicit human approval reference bound to this task revision is required.");
     }
-    if (!Array.isArray(task.requirements) || task.requirements.length === 0 ||
-        task.requirements.some((r) => !record(r) || !nonempty(r.id) || !nonempty(r.text)) ||
-        !unique(task.requirements.map((r) => r?.id))) {
-        errors.push("Requirements must have unique nonempty IDs and text.");
-    }
-    if (!Array.isArray(task.targets) || task.targets.length === 0) {
-        errors.push("At least one target repository task is required.");
-    } else {
-        if (!unique(task.targets.map((t) => t?.id))) {
-            errors.push("Target IDs must be unique.");
+    if (!allowDeferredTargets || !task.needsExtraction) {
+        if (!Array.isArray(task.requirements) || task.requirements.length === 0 ||
+            task.requirements.some((r) => !record(r) || !nonempty(r.id) || !nonempty(r.text)) ||
+            !unique(task.requirements.map((r) => r?.id))) {
+            errors.push("Requirements must have unique nonempty IDs and text.");
         }
-        for (const target of task.targets) {
-            if (!record(target) || !nonempty(target.id) || !nonempty(target.repository) ||
-                !nonempty(target.slug) || !nonempty(target.baseBranch) || !nonempty(target.title)) {
-                errors.push("Every target must specify id, repository, slug, baseBranch, and title.");
-                continue;
+        if (!Array.isArray(task.targets) || task.targets.length === 0) {
+            errors.push("At least one target repository task is required.");
+        } else {
+            if (!unique(task.targets.map((t) => t?.id))) {
+                errors.push("Target IDs must be unique.");
             }
-            if (!positiveInt(Number(target.workItemId))) {
-                errors.push(`Target ${target.id} must specify a positive numeric ADO workItemId (AB#ID) for PR linking.`);
-            }
-            if (!strings(target.acceptanceCriteria) || target.acceptanceCriteria.length === 0) {
-                errors.push(`Target ${target.id} must include at least one non-empty acceptance criterion.`);
-            }
-            if (!Array.isArray(target.verificationCommands) || !target.verificationCommands.every(nonempty)) {
-                errors.push(`Target ${target.id} verificationCommands must be an array of strings.`);
+            for (const target of task.targets) {
+                if (!record(target) || !nonempty(target.id) || !nonempty(target.repository) ||
+                    !nonempty(target.slug) || !nonempty(target.baseBranch) || !nonempty(target.title)) {
+                    errors.push("Every target must specify id, repository, slug, baseBranch, and title.");
+                    continue;
+                }
+                if (!positiveInt(Number(target.workItemId))) {
+                    errors.push(`Target ${target.id} must specify a positive numeric ADO workItemId (AB#ID) for PR linking.`);
+                }
+                if (!strings(target.acceptanceCriteria) || target.acceptanceCriteria.length === 0) {
+                    errors.push(`Target ${target.id} must include at least one non-empty acceptance criterion.`);
+                }
+                if (!Array.isArray(target.verificationCommands) || !target.verificationCommands.every(nonempty)) {
+                    errors.push(`Target ${target.id} verificationCommands must be an array of strings.`);
+                }
             }
         }
     }
@@ -318,9 +658,16 @@ export function validateEvidence(evidence, task) {
         !["conflicts", "assumptions", "unknowns", "blockingUnknowns"].every((key) => strings(evidence[key]))) {
         return ["Evidence worker returned no valid structured evidence."];
     }
+    if (evidence.clarificationQuestions !== undefined && !strings(evidence.clarificationQuestions)) {
+        return ["Evidence clarificationQuestions must be an array of strings when present."];
+    }
     const approval = evidence.approvalVerification;
+    const revisionMatches = approval?.revision === task.revision ||
+        (task.inputMode !== "structured" && nonempty(approval?.revision));
+    const referenceMatches = approval?.reference === task.approval.reference ||
+        (task.inputMode !== "structured" && nonempty(approval?.reference));
     if (!record(approval) || approval.verified !== true || !nonempty(approval.rationale) ||
-        approval.revision !== task.revision || approval.reference !== task.approval.reference) {
+        !revisionMatches || !referenceMatches) {
         return ["Evidence worker could not verify the approval record for the exact task revision."];
     }
     const refs = evidence.references;
@@ -334,7 +681,8 @@ export function validateEvidence(evidence, task) {
         !strings(f.referenceIds) || !f.referenceIds.length || f.referenceIds.some((id) => !ids.has(id)))) {
         return ["Every evidence fact must cite existing source references."];
     }
-    return [...evidence.conflicts, ...evidence.blockingUnknowns];
+    const questions = Array.isArray(evidence.clarificationQuestions) ? evidence.clarificationQuestions : [];
+    return [...evidence.conflicts, ...evidence.blockingUnknowns, ...questions];
 }
 
 export function isSafeRelativeFilePath(filePath) {
@@ -407,7 +755,9 @@ export function formatPrBody(target, targetImpl, traceabilityRows, reviewRoundCo
 export function validateImplementation(implementation, task) {
     if (!record(implementation)) return ["Builder returned no valid structured implementation."];
     const errors = [];
-    if (implementation.taskRevision !== task.revision) {
+    const revisionMatches = implementation.taskRevision === task.revision ||
+        (task.inputMode !== "structured" && nonempty(implementation.taskRevision));
+    if (!revisionMatches) {
         errors.push("Implementation changed the approved task revision.");
     }
     if (!Array.isArray(implementation.targets) || implementation.targets.length !== task.targets.length ||
@@ -734,13 +1084,42 @@ export function publishTargetPullRequest({
     };
 }
 
+async function askUserForClarifications(questions, ctx, askUser) {
+    if (!Array.isArray(questions) || questions.length === 0) return null;
+    if (typeof askUser === "function") {
+        const answers = [];
+        for (const question of questions) {
+            const response = await askUser(question);
+            if (!nonempty(response)) return null;
+            answers.push({ question, answer: response.trim() });
+        }
+        return answers;
+    }
+    if (typeof ctx?.session?.ui?.elicitation === "function") {
+        const properties = Object.fromEntries(
+            questions.map((question, idx) => [`q${idx + 1}`, { type: "string", title: question }]),
+        );
+        const response = await ctx.session.ui.elicitation({
+            message: "Clarification needed to complete the coding task:",
+            requestedSchema: {
+                type: "object",
+                properties,
+                required: Object.keys(properties),
+            },
+        });
+        if (!record(response) || response.action !== "accept" || !record(response.content)) {
+            return null;
+        }
+        const answers = questions.map((question, idx) => ({
+            question,
+            answer: typeof response.content[`q${idx + 1}`] === "string" ? response.content[`q${idx + 1}`].trim() : "",
+        }));
+        return answers.every((entry) => nonempty(entry.answer)) ? answers : null;
+    }
+    return null;
+}
+
 export async function runCodeFeature(ctx, dependencies = {}) {
-    const taskErrors = validateTask(ctx.args);
-    const history = [];
-    let evidence = null;
-    let implementation = null;
-    let pullRequests = [];
-    let fixes = 0;
     const rawOptions = record(ctx.args?.options) ? ctx.args.options : {};
     const maxFixes = positiveInt(rawOptions.maxFixIterations)
         ? Math.min(rawOptions.maxFixIterations, MAX_FIX_ITERATIONS)
@@ -751,11 +1130,24 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
 
-    let task = normalizeTask(ctx.args);
-    const packet = (recommendation, reasons) => ({
+    const resolvedArgs = resolveInputSources(ctx.args, {
+        workspaceRoot,
+        exec,
+        fetchWorkItem: dependencies.fetchWorkItem,
+    });
+    const initialErrors = validateTask(resolvedArgs, { allowDeferredTargets: true });
+    const history = [];
+    let evidence = null;
+    let implementation = null;
+    let pullRequests = [];
+    let fixes = 0;
+
+    let task = normalizeTask(resolvedArgs);
+    const packet = (recommendation, reasons, questions = []) => ({
         recommendation,
         humanApproval: "pending",
         reasons,
+        questions,
         fixIterations: fixes,
         maxFixIterations: maxFixes,
         task,
@@ -769,10 +1161,10 @@ export async function runCodeFeature(ctx, dependencies = {}) {
             : "Resolve the listed issues; obtain a new task approval if requirements or scope change.",
     });
 
-    if (taskErrors.length) return packet("needs clarification", taskErrors);
+    if (initialErrors.length) return packet("needs clarification", initialErrors, initialErrors);
 
-    // Snapshot the approval-bound input once; agents never supply or revise requirements.
-    const originalRaw = JSON.stringify(ctx.args?.task ?? ctx.args?.stage0);
+    // Snapshot the caller-supplied input once to detect external mid-run tampering.
+    const originalRaw = JSON.stringify(ctx.args);
     task = JSON.parse(JSON.stringify(task));
     const approvedSnapshot = JSON.stringify(task);
     const prefix = `code-feature-v1-${createHash("sha256").update(approvedSnapshot).digest("hex")}`;
@@ -790,19 +1182,52 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     );
 
     phase("Validate task and gather evidence");
+    const needsSpecExtraction = task.needsExtraction === true;
     evidence = await step("evidence", () => ask(
         "Repository evidence",
         EVIDENCE_AGENT,
-        `Inspect the target Android repositories (${task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")}) and any cross-repository callers.
+        `Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and the target Android repositories (${
+            task.targets.length > 0
+                ? task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")
+                : "common, broker, msal, adal"
+        }).
 Record exact checked-out commit revisions, file paths, and symbols/line ranges.
-Verify that the human approval record binds to the exact task revision (${task.revision}) and reference (${task.approval.reference}).
-Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns.`,
-        evidenceSchema,
+Verify that the approval/input record binds to revision (${task.revision}) and reference (${task.approval.reference}).
+${needsSpecExtraction
+            ? "Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, or prompt into extractedSpec."
+            : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
+Infer technical details from the design doc, PBI, and existing codebase conventions whenever possible. Populate clarificationQuestions / blockingUnknowns ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase.`,
+        needsSpecExtraction ? extractionEvidenceSchema : evidenceSchema,
         { task },
         rawOptions.evidenceModel,
     ));
+
+    if (record(evidence)) {
+        task = mergeExtractedSpec(task, evidence);
+        const pendingQuestions = [
+            ...(Array.isArray(evidence.clarificationQuestions) ? evidence.clarificationQuestions : []),
+            ...(Array.isArray(evidence.blockingUnknowns) ? evidence.blockingUnknowns : []),
+        ].filter(nonempty);
+        if (pendingQuestions.length > 0) {
+            const answers = await askUserForClarifications(pendingQuestions, ctx, dependencies.askUser);
+            if (answers) {
+                task.sourceInputs.clarifications = [
+                    ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
+                    ...answers,
+                ];
+                evidence.clarificationQuestions = [];
+                evidence.blockingUnknowns = [];
+            } else {
+                return packet("needs clarification", pendingQuestions, pendingQuestions);
+            }
+        }
+    }
+
     const evidenceErrors = validateEvidence(evidence, task);
-    if (evidenceErrors.length) return packet("needs clarification", evidenceErrors);
+    if (evidenceErrors.length) return packet("needs clarification", evidenceErrors, evidenceErrors);
+
+    const postExtractionErrors = validateTask(task, { allowDeferredTargets: false });
+    if (postExtractionErrors.length) return packet("needs clarification", postExtractionErrors, postExtractionErrors);
 
     const builderTask = `Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
 Preserve all approved requirements and acceptance criteria verbatim.
@@ -835,7 +1260,7 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
     phase("Independent code review and bounded fixes");
     try {
         for (let round = 0; round <= maxFixes; round++) {
-            if (JSON.stringify(ctx.args?.task ?? ctx.args?.stage0) !== originalRaw) {
+            if (JSON.stringify(ctx.args) !== originalRaw) {
                 restoreAll();
                 return packet("NO-GO", ["Approved input changed during the run; start a new run."]);
             }
@@ -845,8 +1270,17 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
 
             if (validationErrors.length === 0) {
                 if (implementation.blockingUnknowns.length) {
-                    restoreAll();
-                    return packet("needs clarification", implementation.blockingUnknowns);
+                    const answers = await askUserForClarifications(implementation.blockingUnknowns, ctx, dependencies.askUser);
+                    if (answers) {
+                        task.sourceInputs.clarifications = [
+                            ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
+                            ...answers,
+                        ];
+                        implementation.blockingUnknowns = [];
+                    } else {
+                        restoreAll();
+                        return packet("needs clarification", implementation.blockingUnknowns, implementation.blockingUnknowns);
+                    }
                 }
 
                 for (const target of task.targets) {
@@ -904,14 +1338,14 @@ Do not edit code or waive criteria. Return findings=[] and pass=true on all crit
 
                 history.push({ round: round + 1, review });
 
-                if (JSON.stringify(ctx.args?.task ?? ctx.args?.stage0) !== originalRaw) {
+                if (JSON.stringify(ctx.args) !== originalRaw) {
                     restoreAll();
                     return packet("NO-GO", ["Approved input changed during review; start a new run."]);
                 }
 
                 if (review.blockingUnknowns.length) {
                     restoreAll();
-                    return packet("needs clarification", review.blockingUnknowns);
+                    return packet("needs clarification", review.blockingUnknowns, review.blockingUnknowns);
                 }
 
                 const criteriaPassed = review.criteria.every((criterion) => criterion.pass === true);
@@ -995,6 +1429,16 @@ export const workflowDefinition = {
         argsSchema: {
             type: "object",
             properties: {
+                designDocPath: { type: "string" },
+                designDoc: { type: ["string", "object"] },
+                designPacket: { type: "object" },
+                pbiId: { type: ["integer", "string"] },
+                pbiIds: { type: "array", items: { type: ["integer", "string"] } },
+                pbi: { type: "object" },
+                pbis: { type: "array", items: { type: "object" } },
+                prompt: { type: "string" },
+                repository: { type: "string" },
+                workItemId: { type: ["integer", "string"] },
                 task: { type: "object" },
                 stage0: { type: "object" },
                 options: { type: "object" },

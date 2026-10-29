@@ -532,3 +532,119 @@ test("customAgents enforce read-only reviewer permissions and workflow metadata 
         /Independent AI code review passed in 1 round\(s\)/,
     );
 });
+
+test("supports designDocPath, PBI IDs, and free-form prompt inputs end-to-end", async () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-inputs-"));
+    try {
+        const docPath = path.join(tempRoot, "broker-throttling-design.md");
+        writeFileSync(
+            docPath,
+            [
+                "# Add server-directed Retry-After throttling",
+                "",
+                "Tracking: AB#3802484",
+                "Target repository: common",
+                "",
+                "## Requirements",
+                "- Honor valid Retry-After headers on 429/503 responses.",
+                "- Serve valid cached tokens during active backoff.",
+            ].join("\n"),
+            "utf8",
+        );
+
+        const extractedSpec = {
+            title: "Add server-directed Retry-After throttling",
+            designSummary: "Honor eSTS Retry-After headers in Common.",
+            requirements: task().requirements,
+            targets: task().targets,
+        };
+        const evidenceWithSpec = () => ({
+            ...evidence(),
+            extractedSpec,
+            clarificationQuestions: [],
+        });
+
+        // 1. Design doc path input
+        const designCtx = context([evidenceWithSpec(), implementation(), review()]);
+        designCtx.args = {
+            designDocPath: "broker-throttling-design.md",
+            options: { workspaceRoot: tempRoot },
+        };
+        const designPacketResult = await runCodeFeature(designCtx);
+        assert.equal(designPacketResult.recommendation, "GO to PR Review");
+        assert.equal(designPacketResult.task.inputMode, "design_doc");
+        assert.equal(designPacketResult.pullRequests.length, 1);
+
+        // 2. PBI ID input (fetched via fetchWorkItem)
+        const pbiCtx = context([evidenceWithSpec(), implementation(), review()]);
+        pbiCtx.args = { pbiId: 3802484 };
+        const pbiPacketResult = await runCodeFeature(pbiCtx, {
+            fetchWorkItem: (id) => ({
+                id,
+                fields: {
+                    "System.Title": "Add Retry-After throttle cache in Common",
+                    "System.Description": "<p>Target repo: common</p><ul><li>Honor valid Retry-After headers on 429/503 responses.</li><li>Serve valid cached tokens during active backoff.</li></ul>",
+                    "Microsoft.VSTS.Common.AcceptanceCriteria": "<ul><li>Suppresses matching requests until Retry-After expires</li><li>Unit tests verify expiry and cache hit behavior</li></ul>",
+                    "System.Parent": 3802483,
+                },
+            }),
+        });
+        assert.equal(pbiPacketResult.recommendation, "GO to PR Review");
+        assert.equal(pbiPacketResult.task.inputMode, "pbi");
+        assert.equal(pbiPacketResult.pullRequests[0].workItemId, 3802484);
+
+        // 3. Free-form prompt input
+        const promptCtx = context([evidenceWithSpec(), implementation(), review()]);
+        promptCtx.args = {
+            prompt: "Add server-directed Retry-After throttling to Common for AB#3802484",
+        };
+        const promptPacketResult = await runCodeFeature(promptCtx);
+        assert.equal(promptPacketResult.recommendation, "GO to PR Review");
+        assert.equal(promptPacketResult.task.inputMode, "prompt");
+        assert.equal(promptPacketResult.pullRequests.length, 1);
+    } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test("clarification questions are asked only when requirements are unclear and resume coding when answered", async () => {
+    const ambiguousEvidence = () => ({
+        ...evidence(),
+        extractedSpec: {
+            title: "Add throttling",
+            designSummary: "Add throttling.",
+            requirements: task().requirements,
+            targets: task().targets,
+        },
+        clarificationQuestions: ["Should throttling apply to interactive token requests or only silent requests?"],
+    });
+
+    // Without interactive askUser, returns needs clarification with the exact question
+    const nonInteractiveCtx = context([ambiguousEvidence()]);
+    nonInteractiveCtx.args = { prompt: "Add throttling to Common (AB#3802484)" };
+    const pausedPacket = await runCodeFeature(nonInteractiveCtx);
+    assert.equal(pausedPacket.recommendation, "needs clarification");
+    assert.deepEqual(pausedPacket.questions, [
+        "Should throttling apply to interactive token requests or only silent requests?",
+    ]);
+    assert.equal(nonInteractiveCtx.calls.length, 1);
+
+    // With interactive askUser, asks the question once, records the answer, and completes coding
+    const asked = [];
+    const interactiveCtx = context([ambiguousEvidence(), implementation(), review()]);
+    interactiveCtx.args = { prompt: "Add throttling to Common (AB#3802484)" };
+    const completedPacket = await runCodeFeature(interactiveCtx, {
+        askUser: async (question) => {
+            asked.push(question);
+            return "Only silent token requests.";
+        },
+    });
+    assert.equal(completedPacket.recommendation, "GO to PR Review");
+    assert.equal(asked.length, 1);
+    assert.deepEqual(completedPacket.task.sourceInputs.clarifications, [
+        {
+            question: "Should throttling apply to interactive token requests or only silent requests?",
+            answer: "Only silent token requests.",
+        },
+    ]);
+});

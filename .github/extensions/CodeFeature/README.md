@@ -36,49 +36,58 @@ Given an approved coding task or PBI specification:
 
 ## Input and use
 
-Start `code-feature` through the runtime's Dynamic Workflow tooling:
+`code-feature` supports **three everyday input modes** (plus pre-structured `task`/`stage0` objects):
+
+### 1. Design Doc (`designDocPath`, `designDoc`, or `designPacket`)
+Pass a path to a design doc (most common when a design already exists), raw markdown, or
+the output packet from `design-feature`:
 
 ```json
 {
-  "task": {
-    "title": "Add server-directed Retry-After throttling",
-    "revision": "plan-v1",
-    "workItemId": 3802483,
-    "designSummary": "Honor eSTS Retry-After headers for silent token requests while serving valid cache hits.",
-    "approval": {
-      "approvedRevision": "plan-v1",
-      "approvedBy": "human-owner",
-      "reference": "AB#3802483"
-    },
-    "requirements": [
-      { "id": "R1", "text": "Honor valid Retry-After headers on 429/503 responses." }
-    ],
-    "targets": [
-      {
-        "id": "common-throttle",
-        "repository": "common",
-        "baseBranch": "dev",
-        "workItemId": 3802484,
-        "title": "Add Retry-After throttle cache in Common",
-        "description": "Implement bounded Retry-After cache in common4j.",
-        "acceptanceCriteria": [
-          "Suppresses matching requests until Retry-After expires",
-          "Unit tests verify expiry and cache hit behavior"
-        ],
-        "verificationCommands": [
-          "./gradlew :common4j:test"
-        ]
-      }
-    ],
-    "blockingUnknowns": []
-  },
+  "designDocPath": "design-docs/[Android] Broker Throttling.md",
+  "workItemId": 3802484,
   "options": {
-    "maxFixIterations": 3,
-    "createPullRequests": true,
-    "draftPullRequest": false
+    "createPullRequests": true
   }
 }
 ```
+
+### 2. Azure DevOps PBI (`pbiId`, `pbiIds`, `pbi`, or `pbis`)
+Pass one or more PBI work-item IDs (fetched automatically via `az boards work-item show`)
+or inline PBI objects:
+
+```json
+{
+  "pbiIds": [3802484, 3802485],
+  "options": {
+    "createPullRequests": true
+  }
+}
+```
+
+### 3. Free-form Prompt (`prompt`)
+Pass a plain-language request (optionally with `repository` and `workItemId`):
+
+```json
+{
+  "prompt": "Add server-directed Retry-After throttling to Common for 429/503 responses (AB#3802484)",
+  "repository": "common",
+  "options": {
+    "createPullRequests": true
+  }
+}
+```
+
+### How details and clarifications are handled
+- For **Design Doc**, **PBI**, and **Free-form Prompt** inputs, the workflow automatically
+  reads the design doc / PBI details, inspects the target repositories, and extracts concrete
+  requirements (`R1`, `R2`, ...) and per-repository targets.
+- It infers technical details from the design doc, PBI description, and codebase conventions
+  without interrupting the engineer.
+- **Only when requirements are genuinely missing, contradictory, or ambiguous** (cannot be
+  determined from the design doc, PBI, or codebase), the workflow asks the user for
+  clarification via session elicitation (or returns `recommendation: "needs clarification"`
+  with `questions: [...]`).
 
 ### Options
 
