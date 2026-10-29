@@ -101,6 +101,22 @@ Pass a plain-language request (optionally with `repository` and `workItemId`):
 - `builderModel` / `reviewerModel` / `evidenceModel`: Optional model overrides so the
   independent reviewer can run on a distinct model from the builder.
 
+## Repository Skills Leveraged
+
+Each workflow agent loads the repository's existing skill and instruction files:
+
+- **`code-evidence` (Evidence & Spec Extraction)**:
+  - `.github/skills/codebase-researcher/SKILL.md` and `references/search-patterns.md`
+  - `.github/skills/feature-planner/SKILL.md` and `references/pbi-template.md`
+- **`code-builder` (Implementation & Unit Tests)**:
+  - `.github/copilot-instructions.md` and target repo `.github/copilot-instructions.md` (`common`, `broker`, `msal`, `adal`)
+  - `.github/skills/feature-planner/references/pbi-template.md`
+- **`code-reviewer` (Independent Code Review)**:
+  - `common/.github/skills/code-review/SKILL.md` + `references/` (`correctness-api-compatibility.md`, `concurrency-threading.md`, `security-privacy-crypto.md`, `performance-resources-dependencies.md`, `telemetry-observability.md`, `testing-documentation.md`, `comment-quality-severity.md`, `false-positive-suppression.md`)
+  - `broker/.github/skills/code-review/SKILL.md` + `references/` (`correctness-api-ipc.md`, `concurrency-threading.md`, `security-privacy-crypto.md`, `performance-resources-dependencies.md`, `telemetry-observability.md`, `testing-documentation.md`, `comment-quality-severity.md`, `false-positive-suppression.md`)
+- **PR Publishing**:
+  - `.github/skills/pbi-dispatcher/SKILL.md` (GitHub account discovery via `.github/developer-local.json` and `gh auth status`, repository routing, and `Fixes AB#<id>` linking)
+
 ## Fixed Code Review Rubric
 
 1. `approvedScopeAndRequirements`

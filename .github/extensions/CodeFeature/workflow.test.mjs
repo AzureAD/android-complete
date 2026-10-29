@@ -16,6 +16,7 @@ import {
     formatPrTitle,
     isSafeRelativeFilePath,
     normalizeTask,
+    resolveRoleSkillGuides,
     rubric,
     runCodeFeature,
     validateEvidence,
@@ -522,8 +523,14 @@ test("mutating input during review fails closed and journal replay avoids duplic
 test("customAgents enforce read-only reviewer permissions and workflow metadata has explicit bounds", () => {
     const reviewer = customAgents.find((a) => a.name === REVIEWER_AGENT);
     const builder = customAgents.find((a) => a.name === BUILDER_AGENT);
-    assert.deepEqual(reviewer.tools, ["view", "glob", "grep"]);
-    assert.ok(builder.tools.includes("edit"));
+    const evidenceWorker = customAgents.find((a) => a.name === EVIDENCE_AGENT);
+    assert.deepEqual(reviewer.tools, ["view", "glob", "grep", "skill"]);
+    assert.deepEqual(evidenceWorker.tools, ["view", "glob", "grep", "skill"]);
+    assert.ok(builder.tools.includes("edit") && builder.tools.includes("skill"));
+    assert.ok(resolveRoleSkillGuides("evidence").includes(".github/skills/codebase-researcher/SKILL.md"));
+    assert.ok(resolveRoleSkillGuides("builder", [{ repository: "common" }]).includes("common/.github/copilot-instructions.md"));
+    assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "common" }]).includes("common/.github/skills/code-review/SKILL.md"));
+    assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "broker" }]).includes("broker/.github/skills/code-review/SKILL.md"));
     assert.equal(workflowDefinition.meta.name, "code-feature");
     assert.equal(formatPrTitle("Add cache", 12345), "Add cache, Fixes AB#12345");
     assert.equal(formatPrTitle("Add cache, Fixes AB#12345", 12345), "Add cache, Fixes AB#12345");

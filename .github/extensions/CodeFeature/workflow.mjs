@@ -207,13 +207,106 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
 
+export const SKILL_GUIDES = Object.freeze({
+    evidence: Object.freeze([
+        ".github/skills/codebase-researcher/SKILL.md",
+        ".github/skills/codebase-researcher/references/search-patterns.md",
+        ".github/skills/feature-planner/SKILL.md",
+        ".github/skills/feature-planner/references/pbi-template.md",
+    ]),
+    builder: Object.freeze({
+        common: Object.freeze([
+            ".github/copilot-instructions.md",
+            "common/.github/copilot-instructions.md",
+            ".github/skills/feature-planner/references/pbi-template.md",
+        ]),
+        broker: Object.freeze([
+            ".github/copilot-instructions.md",
+            "broker/.github/copilot-instructions.md",
+            ".github/skills/feature-planner/references/pbi-template.md",
+        ]),
+        msal: Object.freeze([
+            ".github/copilot-instructions.md",
+            "msal/.github/copilot-instructions.md",
+            ".github/skills/feature-planner/references/pbi-template.md",
+        ]),
+        adal: Object.freeze([
+            ".github/copilot-instructions.md",
+            "adal/.github/copilot-instructions.md",
+            ".github/skills/feature-planner/references/pbi-template.md",
+        ]),
+        default: Object.freeze([
+            ".github/copilot-instructions.md",
+            ".github/skills/feature-planner/references/pbi-template.md",
+        ]),
+    }),
+    reviewer: Object.freeze({
+        common: Object.freeze([
+            "common/.github/skills/code-review/SKILL.md",
+            "common/.github/skills/code-review/references/domain-context.md",
+            "common/.github/skills/code-review/references/correctness-api-compatibility.md",
+            "common/.github/skills/code-review/references/concurrency-threading.md",
+            "common/.github/skills/code-review/references/security-privacy-crypto.md",
+            "common/.github/skills/code-review/references/performance-resources-dependencies.md",
+            "common/.github/skills/code-review/references/telemetry-observability.md",
+            "common/.github/skills/code-review/references/testing-documentation.md",
+            "common/.github/skills/code-review/references/comment-quality-severity.md",
+            "common/.github/skills/code-review/references/false-positive-suppression.md",
+        ]),
+        broker: Object.freeze([
+            "broker/.github/skills/code-review/SKILL.md",
+            "broker/.github/skills/code-review/references/domain-context.md",
+            "broker/.github/skills/code-review/references/correctness-api-ipc.md",
+            "broker/.github/skills/code-review/references/concurrency-threading.md",
+            "broker/.github/skills/code-review/references/security-privacy-crypto.md",
+            "broker/.github/skills/code-review/references/performance-resources-dependencies.md",
+            "broker/.github/skills/code-review/references/telemetry-observability.md",
+            "broker/.github/skills/code-review/references/testing-documentation.md",
+            "broker/.github/skills/code-review/references/comment-quality-severity.md",
+            "broker/.github/skills/code-review/references/false-positive-suppression.md",
+        ]),
+        default: Object.freeze([
+            ".github/copilot-instructions.md",
+            "common/.github/skills/code-review/SKILL.md",
+            "common/.github/skills/code-review/references/correctness-api-compatibility.md",
+            "common/.github/skills/code-review/references/concurrency-threading.md",
+            "common/.github/skills/code-review/references/security-privacy-crypto.md",
+            "common/.github/skills/code-review/references/performance-resources-dependencies.md",
+            "common/.github/skills/code-review/references/telemetry-observability.md",
+            "common/.github/skills/code-review/references/testing-documentation.md",
+            "common/.github/skills/code-review/references/comment-quality-severity.md",
+            "common/.github/skills/code-review/references/false-positive-suppression.md",
+        ]),
+    }),
+});
+
+export function resolveRoleSkillGuides(role, targets = []) {
+    if (role === "evidence") return [...SKILL_GUIDES.evidence];
+    const table = role === "builder" ? SKILL_GUIDES.builder : SKILL_GUIDES.reviewer;
+    const guides = new Set();
+    const repos = Array.isArray(targets) && targets.length > 0
+        ? targets.map((t) => normalizeRepositoryKey(t?.repository)).filter(nonempty)
+        : ["default"];
+    for (const repo of repos) {
+        const entries = table[repo] || table.default;
+        for (const entry of entries) guides.add(entry);
+        if (role === "reviewer" && (repo === "msal" || repo === "adal")) {
+            guides.add(`${repo}/.github/copilot-instructions.md`);
+        }
+    }
+    if (guides.size === 0) {
+        for (const entry of table.default) guides.add(entry);
+    }
+    return [...guides];
+}
+
 export const customAgents = Object.freeze([
     {
         name: EVIDENCE_AGENT,
         displayName: "Code Feature Evidence Worker",
         description: "Read-only repository evidence gatherer for the code-feature workflow.",
         infer: false,
-        tools: ["view", "glob", "grep"],
+        tools: ["view", "glob", "grep", "skill"],
         prompt: readerBoundaries,
     },
     {
@@ -221,7 +314,7 @@ export const customAgents = Object.freeze([
         displayName: "Code Feature Builder",
         description: "Implementation and test builder for the code-feature workflow.",
         infer: false,
-        tools: ["view", "glob", "grep", "edit", "create", "apply_patch", "powershell"],
+        tools: ["view", "glob", "grep", "skill", "edit", "create", "apply_patch", "powershell"],
         prompt: builderBoundaries,
     },
     {
@@ -229,7 +322,7 @@ export const customAgents = Object.freeze([
         displayName: "Independent Code Reviewer",
         description: "Read-only independent code reviewer for the code-feature workflow.",
         infer: false,
-        tools: ["view", "glob", "grep"],
+        tools: ["view", "glob", "grep", "skill"],
         prompt: readerBoundaries,
     },
 ]);
@@ -1183,10 +1276,12 @@ export async function runCodeFeature(ctx, dependencies = {}) {
 
     phase("Validate task and gather evidence");
     const needsSpecExtraction = task.needsExtraction === true;
+    const evidenceGuides = resolveRoleSkillGuides("evidence", task.targets);
     evidence = await step("evidence", () => ask(
         "Repository evidence",
         EVIDENCE_AGENT,
-        `Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and the target Android repositories (${
+        `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.
+Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and the target Android repositories (${
             task.targets.length > 0
                 ? task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")
                 : "common, broker, msal, adal"
@@ -1198,7 +1293,7 @@ ${needsSpecExtraction
             : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
 Infer technical details from the design doc, PBI, and existing codebase conventions whenever possible. Populate clarificationQuestions / blockingUnknowns ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase.`,
         needsSpecExtraction ? extractionEvidenceSchema : evidenceSchema,
-        { task },
+        { task, skillGuides: evidenceGuides },
         rawOptions.evidenceModel,
     ));
 
@@ -1229,7 +1324,10 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
     const postExtractionErrors = validateTask(task, { allowDeferredTargets: false });
     if (postExtractionErrors.length) return packet("needs clarification", postExtractionErrors, postExtractionErrors);
 
-    const builderTask = `Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
+    const builderGuides = resolveRoleSkillGuides("builder", task.targets);
+    const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
+    const builderTask = `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
+Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
 Preserve all approved requirements and acceptance criteria verbatim.
 Return the complete file content for every created or modified file in targets[].files, unit tests in testsAddedOrUpdated,
 requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
@@ -1241,7 +1339,7 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
         BUILDER_AGENT,
         builderTask,
         implementationSchema,
-        { round: 1, maxFixIterations: maxFixes, task, evidence },
+        { round: 1, maxFixIterations: maxFixes, task, evidence, skillGuides: builderGuides },
         rawOptions.builderModel,
     ));
 
@@ -1312,9 +1410,10 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
                 const review = await step(`independent-review-${round}`, () => ask(
                     `Independent code reviewer (round ${round + 1})`,
                     REVIEWER_AGENT,
-                    `Independently review the builder's code changes, unit tests, diffs, traceability, and PR metadata against the approved task and evidence.
+                    `Read and apply these repository code-review skills and reference guides: ${reviewerGuides.join(", ")}.
+Independently review the builder's code changes, unit tests, diffs, traceability, and PR metadata against the approved task and evidence.
 Apply the fixed rubric: ${rubric.join(", ")}.
-Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety, security/privacy/Logger rules, resource bounds, and unit test coverage.
+Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
 If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions.
 Do not edit code or waive criteria. Return findings=[] and pass=true on all criteria only when the code and PR packet are ready for human review.`,
                     reviewSchema,
@@ -1326,6 +1425,7 @@ Do not edit code or waive criteria. Return findings=[] and pass=true on all crit
                         implementation,
                         diffsByTarget,
                         rubric,
+                        skillGuides: reviewerGuides,
                         priorReviews: history,
                     },
                     rawOptions.reviewerModel,
@@ -1405,6 +1505,7 @@ Address every validation error, failed rubric criterion, failed acceptance crite
                     evidence,
                     previousImplementation: implementation,
                     rubric,
+                    skillGuides: builderGuides,
                     history,
                 },
                 rawOptions.builderModel,
