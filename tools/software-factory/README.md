@@ -342,6 +342,15 @@ legacy state writers or coordinate phase agents themselves.
 Use **Connections** in the web UI or the `configure` command in chat. Repository
 provider/hostname/account/branch are explicit. Board metadata may remain empty
 for repository-only analysis; backlog is blocked until required fields are known.
+An empty local registry is unconfigured: the chat configuration tool says so
+explicitly and provides the setup checklist. A plain-language feature brief may
+still be saved and researched as a private draft, but it cannot be published,
+approved, or advanced until mappings are configured. Confirm repository and ADO
+targets from repository evidence. Ask the engineer only for missing or ambiguous
+values; otherwise show the proposed mappings and use the single `configure`
+confirmation to save them. A blocked preview reports its Factory error code and
+message; resolve that cause rather than retrying or treating the preview as a
+successful command.
 For example, replace these placeholders with verified local mappings:
 
 ```json

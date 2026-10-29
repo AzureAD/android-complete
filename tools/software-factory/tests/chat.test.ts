@@ -34,6 +34,41 @@ test("chat uses the shared registry without a server or frontend", async () => {
     } finally { f.cleanup(); }
 });
 
+test("first-run chat reports missing configuration and a blocked preview without hiding the cause", async () => {
+    const f = fixture();
+    const host: ChatHost = {
+        sessionId: actor.sessionId!, capabilities: { ui: { elicitation: true } },
+        ui: { confirm: async () => true },
+    };
+    const tools = createChatTools(() => f.app, () => host);
+    const call = (name: string, args: unknown) => tools.find((item) => item.name === name)!.handler(args, {
+        sessionId: host.sessionId, toolCallId: "first-run",
+    });
+    try {
+        const status = await call("software_factory_configuration", {});
+        assert.deepEqual(status, {
+            configured: false,
+            configuration: null,
+            message: "Software Factory has no repository or ADO board configuration in this local registry.",
+            nextStep: "Research the current repository and ask only for missing or ambiguous repository, account, branch, or ADO values. Then preview and request genuine confirmation for a configure command without a separate preliminary yes/no prompt. Do not infer missing account or branch values or publish before configuration succeeds.",
+        });
+        const feature = f.app.execute({ kind: "create_feature", requestId: "first-run", input: requirements() }, actor);
+        const preview = await call("software_factory_preview", { command: {
+            kind: "publish_feature", featureId: feature.id,
+            target: { organization: "IdentityDivision", project: "Engineering", workItemId: 3802483 },
+        } });
+        assert.deepEqual(preview, {
+            outcome: "blocked",
+            executed: false,
+            error: { code: "configuration_required", message: "Configure repository/account mappings and ADO board settings first." },
+            nextStep: "Read software_factory_configuration, gather the missing repository and board mappings, and preview a configure command. Do not retry this preview until configuration is confirmed.",
+        });
+        assert.equal(f.app.lifecycle.store.configuration(), null);
+        assert.equal(f.app.registry.get(feature.id).approvals.length, 0);
+        assert.equal(f.app.shared.cached(feature.id), null);
+    } finally { f.cleanup(); }
+});
+
 test("unsupported hosts and declined confirmations cannot manufacture approval", async () => {
     const f = fixture();
     let confirmations = 0;

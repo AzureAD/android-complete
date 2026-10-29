@@ -5,6 +5,7 @@ import { FactoryError, object, parseRequirements, text, validateActor, type Feat
 import { jsonValue, parseConfiguration, sharedConfiguration, type ConfigRevision, type FactoryState } from "./lifecycle-contracts.ts";
 
 export interface SharedTarget { organization: string; project: string; workItemId: number }
+export type PublishTarget = SharedTarget | { organization: string; project: string; create: true; areaPath?: string; iterationPath?: string };
 export interface AdoIdentity { id: string; displayName: string }
 export interface SharedSnapshot {
     version: 1;
@@ -24,6 +25,7 @@ export interface SharedProvider {
     read(target: SharedTarget): Promise<SharedRecord | null>;
     write(target: SharedTarget, expected: SharedRecord | null, snapshot: SharedSnapshot, actor: AdoIdentity): Promise<SharedRecord>;
     list(organization: string, project: string): Promise<SharedTarget[]>;
+    createFeature?(target: { organization: string; project: string; areaPath?: string; iterationPath?: string }, title: string, description?: string): Promise<SharedTarget>;
 }
 
 export const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -34,6 +36,24 @@ export function sharedTarget(value: unknown): SharedTarget {
     if (!/^[a-zA-Z0-9_-]+$/.test(organization)) throw new FactoryError("invalid_shared_target", "Use an ADO organization name, not a URL.");
     if (!Number.isSafeInteger(raw.workItemId) || Number(raw.workItemId) < 1) throw new FactoryError("invalid_shared_target", "Choose an existing ADO Feature work item.");
     return { organization, project: text(raw.project, "ADO project"), workItemId: Number(raw.workItemId) };
+}
+
+export function publishTarget(value: unknown, boards?: { organization: string; project: string; areaPath?: string; iterationPath?: string }): PublishTarget {
+    const raw = object(value, "Shared ADO target");
+    if (raw.create === true) {
+        if (raw.workItemId !== undefined) throw new FactoryError("invalid_shared_target", "Do not specify both create: true and an existing workItemId.");
+        const organization = text(raw.organization ?? boards?.organization, "ADO organization");
+        if (!/^[a-zA-Z0-9_-]+$/.test(organization)) throw new FactoryError("invalid_shared_target", "Use an ADO organization name, not a URL.");
+        const project = text(raw.project ?? boards?.project, "ADO project");
+        const areaPath = typeof raw.areaPath === "string" && raw.areaPath.trim() ? raw.areaPath.trim() : boards?.areaPath || undefined;
+        const iterationPath = typeof raw.iterationPath === "string" && raw.iterationPath.trim() ? raw.iterationPath.trim() : boards?.iterationPath || undefined;
+        return { organization, project, create: true, ...(areaPath ? { areaPath } : {}), ...(iterationPath ? { iterationPath } : {}) };
+    }
+    return sharedTarget( {
+        organization: raw.organization ?? boards?.organization,
+        project: raw.project ?? boards?.project,
+        workItemId: raw.workItemId,
+    });
 }
 
 export function parseSnapshot(value: unknown): SharedSnapshot {

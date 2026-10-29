@@ -10,6 +10,7 @@ import {
     type Actor, type Approval, type AuditEvent, type Feature, type Project, type Requirements, type Revision,
 } from "./contracts.ts";
 import { lifecycleSchema } from "./lifecycle-store.ts";
+import { resolveRepositoryRoot } from "./runtime-health.ts";
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -42,7 +43,8 @@ export class Registry {
 
     constructor(databasePath: string, workspace: string) {
         const canonical = realpathSync(workspace);
-        const identity = process.platform === "win32" ? canonical.toLowerCase() : canonical;
+        const repoRoot = resolveRepositoryRoot(canonical);
+        const identity = process.platform === "win32" ? repoRoot.toLowerCase() : repoRoot;
         mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o700 });
         const directory = realpathSync(path.dirname(path.resolve(databasePath)));
         const relative = path.relative(canonical, directory);
@@ -95,10 +97,10 @@ export class Registry {
                 }
             });
             this.db.prepare("INSERT INTO projects (id, identity, workspace) VALUES (?, ?, ?) ON CONFLICT(identity) DO NOTHING")
-                .run(randomUUID(), identity, canonical);
+                .run(randomUUID(), identity, repoRoot);
             const row = this.db.prepare("SELECT id, workspace FROM projects WHERE identity = ?").get(identity);
             if (!row) throw new FactoryError("storage_corrupt", "Project registration failed.", 500);
-            this.project = { id: column(row, "id"), workspace: column(row, "workspace") };
+            this.project = { id: column(row, "id"), workspace: canonical };
         } catch (error) {
             this.db.close();
             throw error;

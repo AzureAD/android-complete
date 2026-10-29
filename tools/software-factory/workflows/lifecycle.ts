@@ -12,7 +12,7 @@ import {
 } from "../core/lifecycle-contracts.ts";
 import { runDesignFeature, workflowDefinition as guardedDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
 import type { Provider } from "../providers/provider.ts";
-import { runtimeFingerprint } from "../core/evidence.ts";
+import { loadedWorkflowFingerprint, runtimeFingerprint } from "../core/evidence.ts";
 import { sourcePins } from "../runtime/controller.ts";
 import { FACTORY_CODER, FACTORY_CODE_REVIEWER, runReader } from "../runtime/reader.ts";
 
@@ -20,7 +20,7 @@ export type FactoryContext = Pick<WorkflowContext, "runId" | "args" | "agent" | 
     session: { sessionId: string };
 };
 type Context = FactoryContext;
-export const loadedWorkflowFingerprint = runtimeFingerprint();
+export { loadedWorkflowFingerprint };
 const schemaString = { type: "string" };
 const arrayOfStrings = { type: "array", items: schemaString };
 const itemSchema = {

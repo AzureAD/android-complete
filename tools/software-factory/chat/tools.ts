@@ -101,10 +101,14 @@ export function createChatTools(application: () => Application, host: () => Chat
         app.lifecycle.reportProgress(feature.id, feature.current.id, `${provenance.reference}:${suffix}`, progress, provenance);
     }
 
-    function followingDecision(app: Application, prepared: PreparedCommand) {
-        if (!["approve_requirements", "approve_stage"].includes(String(prepared.command.kind)) ||
-            prepared.command.approved === false || typeof prepared.command.featureId !== "string") return null;
-        const id = prepared.command.featureId;
+    function followingDecision(app: Application, prepared: PreparedCommand, result?: Record<string, Json>) {
+        const publishedId = prepared.command.kind === "publish_feature" && prepared.command.approve === true &&
+            prepared.command.startDesign !== true && result?.feature && typeof result.feature === "object" &&
+            !Array.isArray(result.feature) && typeof result.feature.id === "string"
+            ? result.feature.id : null;
+        if (!publishedId && (!["approve_requirements", "approve_stage"].includes(String(prepared.command.kind)) ||
+            prepared.command.approved === false || typeof prepared.command.featureId !== "string")) return null;
+        const id = publishedId || String(prepared.command.featureId);
         const gates: AvailableGate[] = (["design", "plan", "backlog", "dispatch", "complete"] as const).map((stage) => {
             try { return { available: true, ...app.lifecycle.gate(id, stage) }; }
             catch (error) {
@@ -187,7 +191,7 @@ export function createChatTools(application: () => Application, host: () => Chat
             throw error;
         }
         if (preview.decision) note("idle", "The decision was handled. Native execution and recorded results remain authoritative; no hidden input request is pending.", "decision-handled");
-        const nextAction = followingDecision(app, preview);
+        const nextAction = followingDecision(app, preview, result);
         return { ...result,
             ...(preview.command.kind === "approve_requirements" && !result.outcome ? { outcome: "approved" } : {}),
             ...(nextAction ? { nextAction } : {}) };
@@ -255,7 +259,21 @@ export function createChatTools(application: () => Application, host: () => Chat
             name: "software_factory_preview",
             description: "Preview any Software Factory command and its exact approval scope without executing it. Commands: report_progress, configure, start_workflow, approve_stage, request_revision, control_run, reconcile_operation, set_schedule, preview_import, import_legacy, export_feature, preflight, cancel_feature, and the requirements commands. Use stable feature/execution IDs.",
             parameters: schema({ command: { type: "object" } }),
-            handler: (args) => application().preview(object(args, "Arguments").command),
+            handler: async (args) => {
+                try {
+                    return await application().preview(object(args, "Arguments").command);
+                } catch (error) {
+                    if (!(error instanceof FactoryError)) throw error;
+                    return {
+                        outcome: "blocked",
+                        executed: false,
+                        error: { code: error.code, message: error.message },
+                        nextStep: error.code === "configuration_required"
+                            ? "Read software_factory_configuration, gather the missing repository and board mappings, and preview a configure command. Do not retry this preview until configuration is confirmed."
+                            : "Resolve the reported blocker, then prepare a fresh preview. No action was executed.",
+                    };
+                }
+            },
         },
         {
             name: "software_factory_command",
@@ -281,9 +299,19 @@ export function createChatTools(application: () => Application, host: () => Chat
         },
         {
             name: "software_factory_configuration",
-            description: "Read this project's configured provider, hostname, repository, branch, account, and ADO board mappings. No credentials are returned.",
+            description: "Read this project's configuration status and configured provider, hostname, repository, branch, account, and ADO board mappings. If unconfigured, returns the missing setup steps. No credentials are returned.",
             parameters: schema({}),
-            handler: () => application().lifecycle.store.configuration(),
+            handler: () => {
+                const configuration = application().lifecycle.store.configuration();
+                return configuration
+                    ? { configured: true, configuration }
+                    : {
+                        configured: false,
+                        configuration: null,
+                        message: "Software Factory has no repository or ADO board configuration in this local registry.",
+                        nextStep: "Research the current repository and ask only for missing or ambiguous repository, account, branch, or ADO values. Then preview and request genuine confirmation for a configure command without a separate preliminary yes/no prompt. Do not infer missing account or branch values or publish before configuration succeeds.",
+                    };
+            },
         },
         {
             name: "software_factory_approve_requirements",

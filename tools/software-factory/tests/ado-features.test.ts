@@ -27,6 +27,11 @@ function transport() {
         assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer fixture-token");
         if (url.pathname.endsWith("/connectionData")) return Response.json({ authenticatedUser: identity });
         if (url.pathname.endsWith("/wiql")) return Response.json({ workItems: [{ id: 123 }] });
+        if (url.pathname.endsWith("/wit/workitems/$Feature") && init?.method === "POST") {
+            if (deny) return new Response("", { status: 403 });
+            assert.equal(new Headers(init.headers).get("Content-Type"), "application/json-patch+json");
+            return Response.json({ id: 123, rev: 1, fields: { "System.WorkItemType": "Feature", "System.ChangedBy": identity }, relations: [] });
+        }
         if (url.pathname.includes("/attachments")) {
             if (init?.method === "POST") {
                 if (deny) return new Response("", { status: 403 });
@@ -55,11 +60,12 @@ function transport() {
         const historical = /\/revisions\/(\d+)$/.exec(url.pathname);
         return Response.json(historical ? revisions.get(Number(historical[1])) : latest());
     };
+    let tokenCalls = 0;
     const runner = { async run(command: string, args: string[]) {
-        assert.equal(command, "az"); assert.ok(args.includes("499b84ac-1321-427f-aa17-267ca6975798")); return "fixture-token";
+        assert.equal(command, "az"); assert.ok(args.includes("499b84ac-1321-427f-aa17-267ca6975798")); tokenCalls++; return "fixture-token";
     } };
     return { provider: () => new AdoFeatureProvider(runner, fetcher), latest, revisions, manualEdit,
-        deny: () => { deny = true; }, loseResponse: () => { loseResponse = true; }, uploads: () => uploads };
+        deny: () => { deny = true; }, loseResponse: () => { loseResponse = true; }, uploads: () => uploads, tokenCalls: () => tokenCalls };
 }
 
 const target = { organization: "example", project: "Engineering", workItemId: 123 };
@@ -78,6 +84,7 @@ test("ADO attachment transport verifies historical writers, CAS, restart and ord
         f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, author,
             { granted: true, revisionId: feature.current.id, actor: author });
         const approved = await provider.write(target, first, f.app.shared.snapshot(f.app, feature.id), identity);
+        assert.equal(server.tokenCalls(), 1, "ADO access token is reused across sequential REST requests");
         const restarted = server.provider();
         assert.deepEqual((await restarted.read(target))?.snapshot.feature.approvals, approved.snapshot.feature.approvals);
         server.manualEdit((item) => { object(item.fields, "fields")["System.Title"] = "Ordinary user edit"; });
@@ -86,6 +93,8 @@ test("ADO attachment transport verifies historical writers, CAS, restart and ord
         await assert.rejects(() => provider.write(target, approved, approved.snapshot, identity), /Another user changed/);
         assert.equal(server.uploads(), uploads, "stale CAS must fail before uploading");
         assert.deepEqual(await provider.list("example", "Engineering"), [target]);
+        const createdTarget = await provider.createFeature({ organization: "example", project: "Engineering", areaPath: "Engineering" }, "Auto-created Feature", "Description");
+        assert.deepEqual(createdTarget, target);
         server.manualEdit((item) => { item.relations = structuredClone(server.revisions.get(first.revision)!.relations); });
         await assert.rejects(() => server.provider().read(target), /historical attachment/);
     } finally { f.cleanup(); }

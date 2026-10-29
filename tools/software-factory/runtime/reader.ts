@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { CopilotSession, CustomAgentConfig, WorkflowAgentOptions, WorkflowContext } from "@github/copilot-sdk";
 import type { Application } from "../core/application.ts";
 import { exactKeys, FactoryError, object, text } from "../core/contracts.ts";
 import { jsonValue } from "../core/lifecycle-contracts.ts";
+import { resolveRepositoryRoot } from "../core/runtime-health.ts";
 import { workerGuidance } from "./guidance.ts";
 
 export const FACTORY_READER = "software-factory-reader";
@@ -115,10 +116,13 @@ export function createReaderTools(application: () => Application, host: () => Re
             if (execution.sessionId !== session.sessionId) throw new FactoryError("wrong_worker_owner", "This read belongs to another execution session.", 403);
             const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
             const workspace = app.registry.project.workspace;
+            const mainRoot = resolveRepositoryRoot(workspace);
             const roots = [workspace, ...Object.keys(execution.sourcePins), path.join(path.dirname(app.registry.databasePath), "approval-evidence")]
                 .map((root) => normalize(path.resolve(root)));
             const withinRoots = (value: string) => roots.some((root) => normalize(value) === root || normalize(value).startsWith(root + path.sep));
-            const requested = path.resolve(workspace, text(args.path, "Read path"));
+            const rawPath = text(args.path, "Read path");
+            const candidate = path.resolve(workspace, rawPath);
+            const requested = existsSync(candidate) || mainRoot === workspace ? candidate : path.resolve(mainRoot, rawPath);
             if (!withinRoots(requested)) {
                 throw new FactoryError("worker_read_outside_scope", "Workers can read only this execution's approved source and approval evidence.", 403);
             }

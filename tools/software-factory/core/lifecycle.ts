@@ -393,7 +393,11 @@ export class Lifecycle {
     }
 
     begin(featureId: string, kind: WorkflowKind, actor: Actor, sourcePins: Record<string, string> = {}, limits: ExecutionLimits = {},
-        admission?: WorkflowAdmission, preferredSession?: SessionBinding, deliveryOverride?: Partial<DeliverySettings>): Execution {
+        admission?: WorkflowAdmission, preferredSession?: SessionBinding,
+        initialPhaseOrDelivery: string | Partial<DeliverySettings> = "Starting native workflow",
+        deliveryOverride?: Partial<DeliverySettings>): Execution {
+        const initialPhase = typeof initialPhaseOrDelivery === "string" ? initialPhaseOrDelivery : "Starting native workflow";
+        const effectiveDelivery = typeof initialPhaseOrDelivery === "string" ? deliveryOverride : initialPhaseOrDelivery;
         const feature = this.store.registry.get(featureId);
         if (kind !== "intake" && feature.status !== "ready_for_design") throw new FactoryError("requirements_approval_required", "Review and approve the success criteria before starting design or delivery.", 409);
         if (kind === "lifecycle") throw new FactoryError("workflow_retired", "The multi-stage lifecycle workflow is retired. Start plan, then explicitly create the approved backlog and dispatch approved work.", 409);
@@ -401,7 +405,7 @@ export class Lifecycle {
         if (kind === "implement") this.requireDispatchDecision(featureId);
         if (kind === "monitor") this.plan(featureId);
         const resolvedDelivery = kind === "implement" || kind === "monitor"
-            ? deliverySettings(this.store.configuration()?.value, deliveryOverride)
+            ? deliverySettings(this.store.configuration()?.value, effectiveDelivery)
             : undefined;
         return this.store.change(featureId, (state) => {
             if (this.store.registry.get(featureId).current.id !== feature.current.id ||
@@ -432,7 +436,7 @@ export class Lifecycle {
                 id: randomUUID(), kind, requirementsRevision: feature.current.id, configurationId: this.store.configuration()?.id || null,
                 sessionId: binding.sessionId, sessionKind: binding.kind, reuseSession: binding.established,
                 runtimeId: null, parentSessionId: actor.sessionId || null,
-                status: "starting", phase: "Starting native workflow",
+                status: "starting", phase: initialPhase,
                 generation: { design: this.store.generation(state, "design", feature.current.id), plan: this.store.generation(state, "plan", feature.current.id) },
                 sourcePins, runtimeFingerprint: runtimeFingerprint(), requestedBy: validateActor(actor),
                 ...(resolvedDelivery ? { delivery: resolvedDelivery } : {}),

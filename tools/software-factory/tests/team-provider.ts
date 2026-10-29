@@ -25,6 +25,12 @@ export class TeamProvider implements SharedProvider {
         return structuredClone(record);
     }
     async list() { return [...this.records.values()].map((record) => record.target); }
+    async createFeature(target: { organization: string; project: string }) {
+        this.available();
+        if (!this.canEdit) throw new FactoryError("forbidden", "ADO edit permission denied.", 403);
+        const workItemId = Math.max(1000, ...this.records.keys()) + 1;
+        return { organization: target.organization, project: target.project, workItemId };
+    }
 }
 
 export const teamConfig = (localPath = ".", account = "alice"): Configuration => ({

@@ -6,7 +6,46 @@ import type { ElicitationParams, ElicitationResult } from "@github/copilot-sdk";
 import { createChatTools, type ChatHost } from "../chat/tools.ts";
 import { requestDecision } from "../chat/confirmation.ts";
 import { object } from "../core/contracts.ts";
+import { decisionMessage, describeDecision } from "../core/decisions.ts";
 import { actor, transportFixture as fixture, requirements } from "./helpers.ts";
+
+test("publishing confirmation says plainly what will be shared and where", () => {
+    const f = fixture();
+    try {
+        const feature = f.app.execute({ kind: "create_feature", requestId: "publish-copy", input: requirements() }, actor);
+        const decision = describeDecision(f.app, { kind: "publish_feature", featureId: feature.id }, {
+            feature: { title: feature.current.title, number: feature.current.number },
+            target: { organization: "IdentityDivision", project: "Engineering", workItemId: 3802483 },
+            effect: "Internal scope metadata.",
+        });
+        const message = decisionMessage(decision);
+        assert.match(message, /^Publish this draft\?/);
+        assert.match(message, /Draft revision 1/);
+        assert.match(message, /Save this draft to ADO Feature 3802483 \(IdentityDivision\/Engineering\) so your team can access it\./);
+        assert.match(message, /does not approve the scope or start design/i);
+        assert.ok(!message.includes("successor"));
+        assert.ok(!message.includes("historical approval"));
+    } finally { f.cleanup(); }
+});
+
+test("connection confirmation shows repository and ADO targets in readable form", () => {
+    const f = fixture();
+    try {
+        const decision = describeDecision(f.app, { kind: "configure" }, {
+            repositories: {
+                broker: { hostname: "msft.ghe.com", slug: "security/ad-accounts-for-android", baseBranch: "dev", account: "shjameel", localPath: "broker" },
+                common: { hostname: "github.com", slug: "AzureAD/microsoft-authentication-library-common-for-android", baseBranch: "dev", account: "shahzaibj", localPath: "common" },
+            },
+            boards: { organization: "IdentityDivision", project: "Engineering", areaPath: "AndroidM" },
+        });
+        const message = decisionMessage(decision);
+        assert.match(message, /^Save these project connections\?/);
+        assert.match(message, /broker: msft\.ghe\.com\/security\/ad-accounts-for-android; branch dev; account shjameel; local folder broker/);
+        assert.match(message, /common: github\.com\/AzureAD\/microsoft-authentication-library-common-for-android; branch dev; account shahzaibj; local folder common/);
+        assert.match(message, /ADO backlog: IdentityDivision\/Engineering; area AndroidM/);
+        assert.match(message, /No credentials or ADO work items are changed/);
+    } finally { f.cleanup(); }
+});
 
 test("scope confirmation is short and labeled; full requirements stay available without approval", async () => {
     const f = fixture();

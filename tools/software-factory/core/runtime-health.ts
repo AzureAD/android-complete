@@ -1,14 +1,45 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { createRequire } from "node:module";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FactoryError } from "./contracts.ts";
 
-export function projectSdkRoot(): string {
+export function resolveRepositoryRoot(workspace: string): string {
+    const canonical = realpathSync(workspace);
+    try {
+        const dotGit = path.join(canonical, ".git");
+        if (!statSync(dotGit).isFile()) return canonical;
+        const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
+        if (!match?.[1]) return canonical;
+        const gitDir = path.resolve(canonical, match[1].trim());
+        const commonFile = path.join(gitDir, "commondir");
+        const commonDir = existsSync(commonFile) && statSync(commonFile).isFile()
+            ? path.resolve(gitDir, readFileSync(commonFile, "utf8").trim())
+            : gitDir;
+        if (path.basename(commonDir).toLowerCase() === ".git") {
+            return realpathSync(path.dirname(commonDir));
+        }
+    } catch {
+        // Fall back to the canonical workspace path when not a linked git worktree.
+    }
+    return canonical;
+}
+
+export function projectSdkRoot(checkoutRoot?: string): string {
     // Chat hosts may redirect bare SDK specifiers to their own bundled extension SDK.
-    return fileURLToPath(new URL("../node_modules/@github/copilot-sdk/", import.meta.url));
+    const localRoot = checkoutRoot
+        ? path.join(realpathSync(checkoutRoot), "tools", "software-factory", "node_modules", "@github", "copilot-sdk") + path.sep
+        : fileURLToPath(new URL("../node_modules/@github/copilot-sdk/", import.meta.url));
+    if (existsSync(path.join(localRoot, "package.json"))) return localRoot;
+    const workspace = checkoutRoot ? realpathSync(checkoutRoot) : fileURLToPath(new URL("../../../", import.meta.url));
+    const mainRoot = resolveRepositoryRoot(workspace);
+    if (mainRoot !== realpathSync(workspace)) {
+        const sharedSdk = path.join(mainRoot, "tools", "software-factory", "node_modules", "@github", "copilot-sdk") + path.sep;
+        if (existsSync(path.join(sharedSdk, "package.json"))) return sharedSdk;
+    }
+    return localRoot;
 }
 
 export function projectSdkModule(name: "." | "./extension", root = projectSdkRoot()): string {

@@ -1,9 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+import { readFileSync } from "node:fs";
 import { Application } from "./core/application.ts";
 import { FactoryError } from "./core/contracts.ts";
 import { runtimeReport } from "./core/doctor.ts";
 import { requireRuntime } from "./core/runtime-health.ts";
+import { cases, summarizeGrades } from "./evals/design.mjs";
 
 async function main(): Promise<void> {
     const [command, ...args] = process.argv.slice(2);
@@ -12,8 +14,21 @@ async function main(): Promise<void> {
         console.log(JSON.stringify(runtimeReport(), null, 2));
         return;
     }
+    if (command === "eval-list") {
+        console.log(JSON.stringify({ cases }, null, 2));
+        return;
+    }
+    if (command === "eval-summary") {
+        if (args.length !== 2 || !args[0] || !args[1]) {
+            throw new FactoryError("usage", "eval-summary requires <results.json> <grades.json>.");
+        }
+        const results: unknown = JSON.parse(readFileSync(args[0], "utf8"));
+        const grades: unknown = JSON.parse(readFileSync(args[1], "utf8"));
+        console.log(JSON.stringify(summarizeGrades(results, grades), null, 2));
+        return;
+    }
     if (!["list", "show", "team-list", "team-open", "serve"].includes(command || "")) {
-        throw new FactoryError("usage", "Usage: node cli.ts doctor | list | show <feature-id> | team-list | team-open <ADO-feature-id> | serve [--port <port>]");
+        throw new FactoryError("usage", "Usage: node cli.ts doctor | list | show <feature-id> | team-list | team-open <ADO-feature-id> | eval-list | eval-summary <results.json> <grades.json> | serve [--port <port>]");
     }
     const app = new Application();
     let serving = false;

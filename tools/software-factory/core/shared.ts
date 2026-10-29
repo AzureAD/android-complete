@@ -9,7 +9,7 @@ import { dispatch, prepare } from "./commands.ts";
 import { hash, now } from "./lifecycle-store.ts";
 import { deliverySettings, jsonValue, parseConfiguration, sharedConfiguration, type Execution, type Json } from "./lifecycle-contracts.ts";
 import { AdoFeatureProvider } from "../providers/ado-features.ts";
-import { digest, parseSnapshot, sharedTarget, type SharedProvider, type SharedRecord, type SharedSnapshot, type SharedTarget } from "./shared-contracts.ts";
+import { digest, parseSnapshot, publishTarget, sharedTarget, type PublishTarget, type SharedProvider, type SharedRecord, type SharedSnapshot, type SharedTarget } from "./shared-contracts.ts";
 
 const localCommands = new Set(["report_progress", "control_run", "set_schedule", "supersede_execution", "export_feature", "review_pr"]);
 
@@ -34,8 +34,11 @@ export class SharedAuthority {
     }
 
     private save(record: SharedRecord): void {
+        const serialized = JSON.stringify(record);
+        const existing = this.app.registry.connection.prepare("SELECT record_json FROM shared_features WHERE feature_id=?").get(record.snapshot.feature.id);
+        if (existing && existing.record_json === serialized) return;
         this.app.registry.connection.prepare("INSERT INTO shared_features VALUES (?, ?, ?) ON CONFLICT(feature_id) DO UPDATE SET record_json=excluded.record_json")
-            .run(record.snapshot.feature.id, JSON.stringify(record.target), JSON.stringify(record));
+            .run(record.snapshot.feature.id, JSON.stringify(record.target), serialized);
     }
 
     private hydrate(app: Application, record: SharedRecord): void {
@@ -53,15 +56,23 @@ export class SharedAuthority {
         if (!prior) db.prepare("INSERT INTO factory_configuration VALUES (?, ?, ?, ?, ?, ?)")
             .run(config.id, app.registry.project.id, hash(localValue), JSON.stringify(localValue),
                 JSON.stringify({ channel: "web", reference: "shared-cache" }), config.createdAt);
-        db.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
-            .run(app.registry.project.id, config.id, JSON.stringify(localValue));
+        const serializedLocal = JSON.stringify(localValue);
+        const existingMapping = db.prepare("SELECT configuration_id, mappings_json FROM factory_local_configuration WHERE project_id=?").get(app.registry.project.id);
+        if (!existingMapping || existingMapping.configuration_id !== config.id || existingMapping.mappings_json !== serializedLocal) {
+            db.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
+                .run(app.registry.project.id, config.id, serializedLocal);
+        }
         app.registry.importShared(snapshot.feature);
         const local = app.lifecycle.store.state(snapshot.feature.id);
         const state = { ...snapshot.state, executions: local.executions, sessionBinding: local.sessionBinding || null,
             controls: local.controls, schedule: local.schedule, progress: local.progress,
             events: [...snapshot.state.events, ...local.events.filter((entry) => entry.kind.startsWith("workflow_"))] };
-        db.prepare("INSERT INTO factory_state VALUES (?, 1, ?) ON CONFLICT(feature_id) DO UPDATE SET content_json=excluded.content_json, version=version+1")
-            .run(snapshot.feature.id, JSON.stringify(state));
+        const serializedState = JSON.stringify(state);
+        const existingState = db.prepare("SELECT content_json FROM factory_state WHERE feature_id=?").get(snapshot.feature.id);
+        if (!existingState || existingState.content_json !== serializedState) {
+            db.prepare("INSERT INTO factory_state VALUES (?, 1, ?) ON CONFLICT(feature_id) DO UPDATE SET content_json=excluded.content_json, version=version+1")
+                .run(snapshot.feature.id, serializedState);
+        }
     }
 
     snapshot(app: Application, featureId: string, lock: SharedSnapshot["lock"] = null): SharedSnapshot {
@@ -97,20 +108,39 @@ export class SharedAuthority {
         return this.app.lifecycle.store.view(record.snapshot.feature.id);
     }
 
-    async publish(featureId: string, target: SharedTarget, actor: Actor) {
+    async publish(featureId: string, requestedTarget: PublishTarget, actor: Actor, options: { approve?: boolean } = {}) {
         const source = this.app.registry.get(featureId);
+        if (options.approve) {
+            if (!source.current.requirements.length) throw new FactoryError("success_criteria_required", "Add and review at least one success criterion before approving this feature for design.", 409);
+            if (source.current.blockingUnknowns.length) throw new FactoryError("blocking_unknowns", "Resolve the scope decisions before approving for design.", 409);
+        }
+        const boards = this.app.lifecycle.store.configuration()?.value.boards;
+        const parsedTarget = publishTarget(requestedTarget, boards);
+        const target = "create" in parsedTarget
+            ? await (() => {
+                if (!this.provider.createFeature) throw new FactoryError("feature_creation_unsupported", "This shared provider does not support creating ADO Features.", 501);
+                return this.provider.createFeature(parsedTarget, source.current.title, source.current.description);
+            })()
+            : parsedTarget;
         const identity = await this.provider.identity(target);
+        const trustedActor = { ...actor, ado: identity };
         // A successor preserves local historical approvals without importing them as team consent.
         const successor = this.app.registry.create(`publish:${featureId}:${digest(target)}:${source.current.id}`, {
             title: source.current.title, ...(source.current.description ? { description: source.current.description } : {}),
             ...(source.current.designTasks?.length ? { designTasks: source.current.designTasks } : {}),
             requirements: source.current.requirements, blockingUnknowns: source.current.blockingUnknowns,
-        }, { ...actor, ado: identity });
+        }, trustedActor);
         const existing = await this.provider.read(target);
         if (existing && existing.snapshot.feature.id !== successor.id) throw new FactoryError("shared_target_in_use", "That ADO Feature already belongs to another shared record.", 409);
-        const record = existing || await this.provider.write(target, null, this.snapshot(this.app, successor.id), identity);
+        let record = existing || await this.provider.write(target, null, this.snapshot(this.app, successor.id), identity);
         this.hydrate(this.app, record);
         this.save(record);
+        if (options.approve && this.app.registry.get(successor.id).status !== "ready_for_design") {
+            this.app.registry.approve(successor.id, successor.current.id, trustedActor);
+            record = await this.provider.write(target, record, this.snapshot(this.app, successor.id), identity);
+            this.hydrate(this.app, record);
+            this.save(record);
+        }
         return this.app.lifecycle.store.view(successor.id);
     }
 
@@ -141,6 +171,27 @@ export class SharedAuthority {
         await this.assertRun(featureId, executionId);
         const actor = await this.provider.identity(cached.target);
         const saved = await this.provider.write(cached.target, this.cached(featureId)!, output, actor);
+        this.hydrate(this.app, saved);
+        this.save(saved);
+    }
+
+    async releaseUnstartedRun(featureId: string, executionId: string): Promise<void> {
+        const cached = this.cached(featureId);
+        if (!cached || cached.snapshot.lock?.id !== executionId) return;
+        const execution = this.app.lifecycle.store.execution(featureId, executionId);
+        if (execution.runtimeId || execution.admissionClaim) return;
+        const current = await this.pull(featureId);
+        if (!current || current.snapshot.lock?.id !== executionId) return;
+        const identity = await this.provider.identity(current.target);
+        const snapshot = structuredClone(current.snapshot);
+        snapshot.lock = null;
+        const baseActor: Actor = execution.requestedBy || { channel: "web", reference: executionId };
+        snapshot.state.events.push({
+            id: randomUUID(), kind: "shared_claim_released_unstarted", reference: executionId,
+            createdAt: now(), message: "Automatically released shared claim after pre-admission startup failure; no workflow or agent was started.",
+            actor: { ...baseActor, ado: identity },
+        });
+        const saved = await this.provider.write(current.target, current, snapshot, identity);
         this.hydrate(this.app, saved);
         this.save(saved);
     }
@@ -188,13 +239,13 @@ export class SharedAuthority {
             staged.lifecycle.checkpoint = async () => {
                 current = await this.provider.write(record.target, current, this.snapshot(staged, id, lock), identity);
                 this.save(current);
-                completed = true;
             };
             const stagedConsent = preview.consentKey ? { granted: true as const, revisionId: preview.consentKey, actor: trustedActor } : undefined;
             const result = await dispatch(staged, input, trustedActor, stagedConsent);
             current = await this.provider.write(record.target, current, this.snapshot(staged, id), identity);
             this.hydrate(this.app, current);
             this.save(current);
+            completed = true;
             return { ...result, feature: jsonValue(this.app.lifecycle.store.view(id)) };
         } catch (error) {
             // A persisted claim is intentionally retained after failure, including uncertain writes.

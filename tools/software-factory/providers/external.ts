@@ -17,24 +17,48 @@ const wiql = (value: string) => value.replaceAll("'", "''");
 export class ExternalProvider implements Provider {
     private readonly runner: CommandRunner;
     private readonly fetcher: typeof fetch;
+    private readonly githubTokens = new Map<string, { value: string; expiresAt: number }>();
+    private adoTokenCache?: { value: string; expiresAt: number };
     constructor(runner = systemRunner, fetcher = fetch) { this.runner = runner; this.fetcher = fetcher; }
 
+    private async githubToken(repo: RepositoryTarget): Promise<string> {
+        const key = `${repo.hostname}\0${repo.account}`;
+        const cached = this.githubTokens.get(key);
+        if (cached && Date.now() < cached.expiresAt) return cached.value;
+        const value = await this.runner.run("gh", ["auth", "token", "--hostname", repo.hostname, "--user", repo.account]);
+        this.githubTokens.set(key, { value, expiresAt: Date.now() + 4 * 60_000 });
+        return value;
+    }
+
+    private async adoToken(): Promise<string> {
+        if (this.adoTokenCache && Date.now() < this.adoTokenCache.expiresAt) return this.adoTokenCache.value;
+        const value = await this.runner.run("az", ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798", "--query", "accessToken", "-o", "tsv"]);
+        this.adoTokenCache = { value, expiresAt: Date.now() + 4 * 60_000 };
+        return value;
+    }
+
     private async github(repo: RepositoryTarget, endpoint: string, method = "GET", data?: unknown): Promise<unknown> {
-        const token = await this.runner.run("gh", ["auth", "token", "--hostname", repo.hostname, "--user", repo.account]);
-        const result = await this.runner.run("gh", [
-            "api", "--hostname", repo.hostname, "--method", method, endpoint,
-            ...(data === undefined ? [] : ["--input", "-"]),
-        ], {
-            env: { ...process.env, GH_HOST: repo.hostname, GH_TOKEN: token, GH_ENTERPRISE_TOKEN: token },
-            input: data === undefined ? undefined : JSON.stringify(data),
-        });
+        const token = await this.githubToken(repo);
+        let result: string;
+        try {
+            result = await this.runner.run("gh", [
+                "api", "--hostname", repo.hostname, "--method", method, endpoint,
+                ...(data === undefined ? [] : ["--input", "-"]),
+            ], {
+                env: { ...process.env, GH_HOST: repo.hostname, GH_TOKEN: token, GH_ENTERPRISE_TOKEN: token },
+                input: data === undefined ? undefined : JSON.stringify(data),
+            });
+        } catch (error) {
+            this.githubTokens.delete(`${repo.hostname}\0${repo.account}`);
+            throw error;
+        }
         if (!result) return null;
         try { return JSON.parse(result); }
         catch { throw new FactoryError("invalid_provider_response", "GitHub returned invalid JSON.", 502); }
     }
 
     private async ado(organization: string, project: string, suffix: string, method = "GET", body?: unknown, patch = false): Promise<unknown> {
-        const tokenText = await this.runner.run("az", ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798", "--query", "accessToken", "-o", "tsv"]);
+        const tokenText = await this.adoToken();
         const url = `https://dev.azure.com/${segment(organization)}/${segment(project)}/_apis/${suffix}${suffix.includes("?") ? "&" : "?"}api-version=7.1`;
         const response = await this.fetcher(url, {
             method, redirect: "error",
@@ -42,7 +66,10 @@ export class ExternalProvider implements Provider {
             headers: { Authorization: `Bearer ${tokenText}`, "Content-Type": patch ? "application/json-patch+json" : "application/json" },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
-        if (!response.ok) throw new FactoryError(response.status < 500 ? "provider_rejected" : "ado_request_failed", `ADO returned HTTP ${response.status}. Resolve authentication, permission, or concurrency failures before retrying.`, 502);
+        if (!response.ok) {
+            this.adoTokenCache = undefined;
+            throw new FactoryError(response.status < 500 ? "provider_rejected" : "ado_request_failed", `ADO returned HTTP ${response.status}. Resolve authentication, permission, or concurrency failures before retrying.`, 502);
+        }
         if (response.status === 204) return null;
         return response.json();
     }
@@ -115,7 +142,7 @@ export class ExternalProvider implements Provider {
         if (!repo) throw new FactoryError("invalid_configuration", "Dispatch repository is missing.");
         if (repo.provider === "github") {
             await this.github(repo, `repos/${repo.slug}/branches/${segment(repo.baseBranch)}`);
-            const token = await this.runner.run("gh", ["auth", "token", "--hostname", repo.hostname, "--user", repo.account]);
+            const token = await this.githubToken(repo);
             const output = await this.runner.run("gh", ["agent-task", "create", "-F", "-", "--repo", `${repo.hostname}/${repo.slug}`, "--base", repo.baseBranch], {
                 env: { ...process.env, GH_HOST: repo.hostname, GH_TOKEN: token, GH_ENTERPRISE_TOKEN: token },
                 input: `${item.description}\n\nAcceptance criteria:\n${item.acceptanceCriteria.map((value) => `- ${value}`).join("\n")}\n\nExpected tests:\n${item.tests.join("\n")}\n\nFixes AB#${workItem.adoId}\nSoftware Factory operation: ${marker}\nFollow .github/copilot-instructions.md strictly. Preserve the operation marker in the PR body. Do not merge the PR.`,
@@ -356,7 +383,7 @@ export class ExternalProvider implements Provider {
 
     async diff(repo: RepositoryTarget, number: number): Promise<string> {
         if (repo.provider === "github") {
-            const token = await this.runner.run("gh", ["auth", "token", "--hostname", repo.hostname, "--user", repo.account]);
+            const token = await this.githubToken(repo);
             return this.runner.run("gh", ["pr", "diff", String(number), "--repo", `${repo.hostname}/${repo.slug}`], {
                 env: { ...process.env, GH_HOST: repo.hostname, GH_TOKEN: token, GH_ENTERPRISE_TOKEN: token },
             });
@@ -394,7 +421,7 @@ export class ExternalProvider implements Provider {
     async findFeedback(repo: RepositoryTarget, number: number, marker: string): Promise<Json | null> {
         let comments: Record<string, unknown>[];
         if (repo.provider === "github") {
-            const token = await this.runner.run("gh", ["auth", "token", "--hostname", repo.hostname, "--user", repo.account]);
+            const token = await this.githubToken(repo);
             const pages: unknown = JSON.parse(await this.runner.run("gh", [
                 "api", "--hostname", repo.hostname, "--paginate", "--slurp", `repos/${repo.slug}/issues/${number}/comments?per_page=100`,
             ], { env: { ...process.env, GH_HOST: repo.hostname, GH_TOKEN: token, GH_ENTERPRISE_TOKEN: token } }));
@@ -430,7 +457,7 @@ export class ExternalProvider implements Provider {
 
     async review(repo: RepositoryTarget, number: number): Promise<Json> {
         if (repo.provider === "github") {
-            const token = await this.runner.run("gh", ["auth", "token", "--hostname", repo.hostname, "--user", repo.account]);
+            const token = await this.githubToken(repo);
             const result: Record<string, Json> = {};
             for (const [kind, endpoint] of Object.entries({
                 inlineComments: `repos/${repo.slug}/pulls/${number}/comments`,

@@ -132,11 +132,16 @@ export class Application {
 
     async startWorkflow(featureId: string, kind: WorkflowKind, actor: Actor, limits: ExecutionLimits,
         admission: WorkflowAdmission, delivery?: Partial<DeliverySettings>): Promise<Execution> {
+        const needsClaim = Boolean(kind !== "check" && (kind !== "intake" || this.shared.cached(featureId)));
         const execution = this.lifecycle.begin(featureId, kind, actor, {}, limits, admission,
-            this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat", established: true } : undefined, delivery);
+            this.joinedSession ? { sessionId: this.joinedSession.sessionId, kind: "chat", established: true } : undefined,
+            needsClaim ? "Claiming shared execution" : "Starting native workflow", delivery);
         try {
-            if (kind !== "check" && (kind !== "intake" || this.shared.cached(featureId))) await this.shared.claimRun(featureId, execution);
-            (await this.runtime()).launch(featureId, execution);
+            if (needsClaim) {
+                await this.shared.claimRun(featureId, execution);
+                this.lifecycle.store.updateExecution(featureId, execution.id, { phase: "Starting native workflow" });
+            }
+            (await this.runtime()).launch(featureId, this.lifecycle.store.execution(featureId, execution.id));
         }
         catch (error) {
             this.lifecycle.store.updateExecution(featureId, execution.id, {
@@ -144,6 +149,7 @@ export class Application {
                 errorCode: error instanceof FactoryError ? error.code : "runtime_initialization_failed",
                 error: error instanceof Error ? error.message : "Runtime initialization failed. Your saved feature is unchanged.",
             });
+            await this.shared.releaseUnstartedRun(featureId, execution.id).catch(() => {});
         }
         return this.lifecycle.store.execution(featureId, execution.id);
     }

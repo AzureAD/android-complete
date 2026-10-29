@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
@@ -49,6 +50,7 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
             parameters: { type: "object", properties: {}, additionalProperties: false }, skipPermission: true,
             handler: () => JSON.stringify(session && ready ? {
                 ready: true, sessionId: session.sessionId,
+                sessionIdHash: createHash("sha256").update(session.sessionId).digest("hex"),
                 workflowNames: definitions.map((definition) => definition.meta.name),
                 runtimeFingerprint: loadedWorkflowFingerprint,
                 nodeExecutable: process.execPath, nodeVersion: process.versions.node,
