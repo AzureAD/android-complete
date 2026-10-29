@@ -96,6 +96,12 @@ are intentional; an opaque sequence of clarifying questions is not.
   handoff to a running workflow. `working` reports are descriptive, not a way to
   imply an agent continues running after the chat turn ends. Missing progress
   tooling is a visible capability limitation, not permission to hide the status.
+- User decisions and confirmation forms do not expire the feature. If a tool
+  returns `outcome: "decision_pending"` (or if a host tool wait times out while a
+  confirmation form is open), never record `status: "blocked"` or claim that
+  continuation is blocked. The form stays open in the UI and the engineer can
+  click it or reply `"continue"` hours or days later; state that plainly and end
+  your turn.
 
 The current approval policy is unchanged. Improving visibility and agent-led
 research must not auto-approve requirements, skip plan-to-coding gates, invent

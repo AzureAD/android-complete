@@ -197,3 +197,55 @@ test("native full-review -> request-changes -> feedback handoff collects input w
         if (errors.length) throw new AggregateError(errors, "Review handoff transport cleanup failed.");
     }
 });
+
+test("long-open decision forms do not time out as blockers and can be confirmed when the developer returns later", async () => {
+    const f = fixture();
+    let resolveForm: ((value: ElicitationResult) => void) | undefined;
+    const sentPrompts: string[] = [];
+    const host: ChatHost = {
+        sessionId: actor.sessionId!,
+        capabilities: { ui: { elicitation: true } },
+        ui: {
+            confirm: async () => false,
+            elicitation: () => new Promise<ElicitationResult>((resolve) => { resolveForm = resolve; }),
+        },
+        send: async ({ prompt }) => { sentPrompts.push(prompt); },
+    };
+    try {
+        const feature = f.app.execute({ kind: "create_feature", requestId: "multi-day-resume", input: requirements() }, actor);
+        const tools = createChatTools(() => f.app, () => host, { decisionWaitMs: 30 });
+        const approve = tools.find((entry) => entry.name === "software_factory_approve_requirements")!;
+        const pending = object(await approve.handler(
+            { featureId: feature.id, expectedRevision: feature.current.id },
+            { sessionId: host.sessionId, toolCallId: "long-wait-approval" },
+        ), "Deferred decision result");
+        assert.equal(pending.outcome, "decision_pending");
+        assert.equal(pending.userInputRequired, true);
+        assert.equal(f.app.lifecycle.store.view(feature.id).currentProgress?.status, "waiting_for_user");
+        assert.equal(f.app.registry.get(feature.id).approvals.length, 0);
+
+        // Developer returns later and clicks Approve on the still-open form.
+        assert.ok(resolveForm);
+        resolveForm({ action: "accept", content: { decision: "approve" } });
+        const deadline = Date.now() + 2_000;
+        while (f.app.registry.get(feature.id).approvals.length === 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.equal(f.app.registry.get(feature.id).status, "ready_for_design");
+        assert.equal(f.app.registry.get(feature.id).approvals.length, 1);
+        assert.equal(sentPrompts.length, 1);
+
+        // An incomplete ("needs clarification") design artifact allows starting another design pass without a dummy revision request.
+        f.app.lifecycle.store.artifact(feature.id, "design", feature.current.id, { recommendation: "needs clarification" });
+        const rerunPreview = f.app.prepare({ kind: "start_workflow", featureId: feature.id, workflow: "design" });
+        assert.ok(rerunPreview.consentKey);
+        const rerunExec = f.app.lifecycle.begin(feature.id, "design", actor);
+        f.app.lifecycle.store.updateExecution(feature.id, rerunExec.id, { status: "completed" });
+
+        // Once a design reaches "GO to Planning", replacing it still requires an explicit revision request.
+        f.app.lifecycle.store.artifact(feature.id, "design", feature.current.id, { recommendation: "GO to Planning" });
+        assert.throws(() => f.app.prepare({ kind: "start_workflow", featureId: feature.id, workflow: "design" }), /Request a reviewed revision/);
+    } finally {
+        f.cleanup();
+    }
+});

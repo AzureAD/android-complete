@@ -210,6 +210,10 @@ export function prepare(app: Application, input: unknown): PreparedCommand {
             if (!["intake", "design", "plan", "implement", "monitor"].includes(String(command.workflow))) throw new FactoryError("invalid_workflow", "Choose intake, design, plan, implement, or monitor. Multi-stage lifecycle runs are retired.");
             const feature = app.registry.get(text(command.featureId, "Feature ID"));
             if (command.workflow !== "intake" && feature.status !== "ready_for_design") throw new FactoryError("approval_required", "Review and approve success criteria before starting design or delivery.", 409);
+            const existingDesign = command.workflow === "design" ? app.lifecycle.store.latest(feature.id, "design") : null;
+            if (existingDesign && object(existingDesign.content, "Design packet").recommendation === "GO to Planning") {
+                throw new FactoryError("revision_request_required", "A current design already exists. Request a reviewed revision rather than silently replacing it.", 409);
+            }
             if (command.workflow === "implement") app.lifecycle.requireDispatchDecision(feature.id);
             const hasDeliveryOptions = command.workflow === "implement" || command.mode !== undefined || command.maxReviewRounds !== undefined;
             if (hasDeliveryOptions && !["implement", "monitor"].includes(String(command.workflow))) {

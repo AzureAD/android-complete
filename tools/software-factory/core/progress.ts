@@ -146,7 +146,15 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
     }
     if (!feature.currentArtifacts.design) return { stage: 1, title: "Ready, not running.", description: "Your criteria are approved. Start design when you are ready; it uses Copilot usage.", action: start("design", "Run guarded design") };
     const design = gates.find((entry) => entry.stage === "design");
-    if (design?.available && !design.approved) return { stage: 1, title: "Review the design", description: "Read the design and independent findings before deciding.", gate: design };
+    if (design?.available && !design.approved) {
+        return {
+            stage: 1,
+            title: design.ready ? "Review the design" : "Design needs another pass",
+            description: design.ready ? "Read the design and independent findings before deciding." : (design.blockers?.join(" ") || "Resolve the reported design gaps and run guarded design again."),
+            gate: design,
+            ...(!design.ready ? { action: start("design", "Run guarded design") } : {}),
+        };
+    }
     if (!feature.currentArtifacts.plan) return { stage: 2, title: "Turn the design into a plan", description: "Factory will propose repository-specific work items and end for human review. No backlog is created.", action: start("plan", "Create implementation plan") };
     const backlog = gates.find((entry) => entry.stage === "backlog" && entry.approved && entry.ready);
     const plan = state.artifacts.find((entry) => entry.id === feature.currentArtifacts.plan);

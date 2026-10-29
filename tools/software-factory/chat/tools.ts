@@ -15,13 +15,17 @@ export interface ChatHost {
     sessionId: string;
     capabilities: { ui?: { elicitation?: boolean } };
     ui: { confirm: SessionUiApi["confirm"]; elicitation?: SessionUiApi["elicitation"] };
+    send?(options: { prompt: string }): Promise<unknown>;
 }
 
 export interface Invocation {
     sessionId: string;
     toolCallId: string;
     agentId?: string;
+    signal?: AbortSignal;
 }
+
+const DEFAULT_DECISION_WAIT_MS = 25 * 60_000;
 
 interface ChatTool {
     name: string;
@@ -63,8 +67,13 @@ function schema(properties: Record<string, unknown>) {
     return { type: "object", additionalProperties: false, required: Object.keys(properties), properties };
 }
 
-export function createChatTools(application: () => Application, host: () => ChatHost): ChatTool[] {
+export function createChatTools(
+    application: () => Application,
+    host: () => ChatHost,
+    options: { decisionWaitMs?: number } = {},
+): ChatTool[] {
     const reviews = new Map<string, { command: Record<string, unknown>; scopeHash: string; sessionId: string }>();
+    let activeDecisionSeq = 0;
     function actor(invocation: Invocation): Actor {
         if (host().sessionId !== invocation.sessionId) {
             throw new FactoryError("wrong_session", "The tool call does not belong to this owning session.", 403);
@@ -141,46 +150,118 @@ export function createChatTools(application: () => Application, host: () => Chat
             if (invocation.agentId) throw new FactoryError("worker_approval_forbidden", "Background workers cannot authorize Software Factory actions.", 403);
             if (!host().capabilities.ui?.elicitation) throw new FactoryError("confirmation_unavailable", "This host cannot capture supported consent. No browser redirect or automatic approval is used.", 409);
             note("waiting_for_user", `Waiting for your decision: ${preview.decision!.title}.`, "decision-pending");
-            let decision: Awaited<ReturnType<typeof requestDecision>>;
-            try { decision = await requestDecision(host().ui, preview.decision!, reviewedScope !== undefined); }
-            catch (error) {
-                note("blocked", `The decision form could not complete: ${error instanceof Error ? error.message : "The host input failed."} No approval was granted.`, "decision-error");
-                throw error;
-            }
-            if (decision === "not_now") {
-                note("idle", "You chose to pause this decision. Nothing new was approved or started.", "decision-paused");
-                return { outcome: "not_approved", message: "Paused on the user's choice. State plainly that nothing new was approved or started; do not reopen the form." };
-            }
-            if (decision === "review") {
-                const reviewId = randomUUID();
-                reviews.set(reviewId, { command: structuredClone(preview.command), scopeHash: preview.consentKey, sessionId: provenance.sessionId! });
-                note("waiting_for_user", "Full review requested. A decision form follows the review; no approval has been granted.", "review-requested");
-                return {
-                    outcome: "review_required", userInputRequired: true, title: preview.decision!.title, review: preview.decision!.review,
-                    nextAction: { tool: "software_factory_decide_after_review", arguments: { reviewId } },
-                    message: "Show the complete readable review in chat, state that you are waiting for the user's decision, then invoke nextAction in the same response to present the form. Do not end by asking the user to type an approval phrase. Viewing details grants no approval.",
-                };
-            }
-            if (decision === "revise") {
-                note("waiting_for_user", "You requested changes. Waiting for the feedback form, not approval.", "feedback-pending", {
-                    text: "What would you like changed?",
-                    whyNeeded: "Your requested changes are needed before preparing a new unapproved draft.",
-                    recommendation: "Describe the changes and any constraints to preserve. Nothing will be approved by submitting feedback.",
-                });
-                let feedback: string | null;
-                try { feedback = await requestChanges(host().ui, preview.decision!); }
-                catch (error) {
-                    note("blocked", `The revision-feedback form could not complete: ${error instanceof Error ? error.message : "The host input failed."} Nothing was approved.`, "feedback-error");
+            const decisionSeq = ++activeDecisionSeq;
+            const handleDecision = async (decision: Awaited<ReturnType<typeof requestDecision>>, background = false): Promise<Record<string, unknown>> => {
+                if (decision === "not_now") {
+                    note("idle", "You chose to pause this decision. Nothing new was approved or started.", "decision-paused");
+                    return { outcome: "not_approved", message: "Paused on the user's choice. State plainly that nothing new was approved or started; do not reopen the form." };
+                }
+                if (decision === "review") {
+                    const reviewId = randomUUID();
+                    reviews.set(reviewId, { command: structuredClone(preview.command), scopeHash: preview.consentKey!, sessionId: provenance.sessionId! });
+                    note("waiting_for_user", "Full review requested. A decision form follows the review; no approval has been granted.", "review-requested");
+                    const reviewOutcome = {
+                        outcome: "review_required", userInputRequired: true, title: preview.decision!.title, review: preview.decision!.review,
+                        nextAction: { tool: "software_factory_decide_after_review", arguments: { reviewId } },
+                        message: "Show the complete readable review in chat, state that you are waiting for the user's decision, then invoke nextAction in the same response to present the form. Do not end by asking the user to type an approval phrase. Viewing details grants no approval.",
+                    };
+                    if (background && host().send) {
+                        await host().send!({
+                            prompt: `The user selected "Review full details in chat" for "${preview.decision!.title}". Present this complete review in chat:\n\n${preview.decision!.review}\n\nThen immediately invoke software_factory_decide_after_review with reviewId "${reviewId}".`,
+                        }).catch(() => {});
+                    }
+                    return reviewOutcome;
+                }
+                if (decision === "revise") {
+                    note("waiting_for_user", "You requested changes. Waiting for the feedback form, not approval.", "feedback-pending", {
+                        text: "What would you like changed?",
+                        whyNeeded: "Your requested changes are needed before preparing a new unapproved draft.",
+                        recommendation: "Describe the changes and any constraints to preserve. Nothing will be approved by submitting feedback.",
+                    });
+                    let feedback: string | null;
+                    try { feedback = await requestChanges(host().ui, preview.decision!); }
+                    catch (error) {
+                        note("blocked", `The revision-feedback form could not complete: ${error instanceof Error ? error.message : "The host input failed."} Nothing was approved.`, "feedback-error");
+                        throw error;
+                    }
+                    note(feedback ? "working" : "idle", feedback
+                        ? "The user requested changes. Revise the draft before seeking approval again."
+                        : "Revision feedback was cancelled. No scope was changed or approved.", "changes-requested");
+                    if (feedback && background && host().send) {
+                        await host().send!({
+                            prompt: `The user requested changes on "${preview.decision!.title}":\n${feedback}\nApply this feedback to an unapproved draft, preserving constraints, then present the updated review/decision.`,
+                        }).catch(() => {});
+                    }
+                    return feedback ? {
+                        outcome: "changes_requested", feedback, reviewedCommand: preview.command,
+                        message: "Apply this feedback to an unapproved draft, preserving constraints, then present the next review/decision. No approval or execution was authorized. Any separately protected revision action still needs its own confirmation.",
+                    } : { outcome: "not_approved", message: "Feedback cancelled. State that the conversation is paused; nothing was changed or approved." };
+                }
+                let submitted: Record<string, Json>;
+                try {
+                    submitted = await app.submit(input, provenance, { granted: true, revisionId: preview.consentKey!, actor: provenance });
+                } catch (error) {
+                    if (preview.decision) note("blocked", `The action did not complete: ${error instanceof Error ? error.message : "Unknown action failure."} Inspect recorded outcomes before retrying.`, "action-error");
                     throw error;
                 }
-                note(feedback ? "working" : "idle", feedback
-                    ? "The user requested changes. Revise the draft before seeking approval again."
-                    : "Revision feedback was cancelled. No scope was changed or approved.", "changes-requested");
-                return feedback ? {
-                    outcome: "changes_requested", feedback, reviewedCommand: preview.command,
-                    message: "Apply this feedback to an unapproved draft, preserving constraints, then present the next review/decision. No approval or execution was authorized. Any separately protected revision action still needs its own confirmation.",
-                } : { outcome: "not_approved", message: "Feedback cancelled. State that the conversation is paused; nothing was changed or approved." };
+                if (preview.decision) note("idle", "The decision was handled. Native execution and recorded results remain authoritative; no hidden input request is pending.", "decision-handled");
+                const nextAction = followingDecision(app, preview, submitted);
+                if (background && host().send && preview.command.kind !== "start_workflow") {
+                    await host().send!({
+                        prompt: `The user confirmed "${preview.decision!.title}" in the decision form and the action completed (${String(submitted.outcome || preview.command.kind)}). Continue the Software Factory flow from the updated feature state.`,
+                    }).catch(() => {});
+                }
+                return { ...submitted,
+                    ...(preview.command.kind === "approve_requirements" && !submitted.outcome ? { outcome: "approved" } : {}),
+                    ...(nextAction ? { nextAction } : {}) };
+            };
+
+            const decisionPromise = requestDecision(host().ui, preview.decision!, reviewedScope !== undefined);
+            const waitMs = options.decisionWaitMs ?? DEFAULT_DECISION_WAIT_MS;
+            let timer: NodeJS.Timeout | undefined;
+            let onAbort: (() => void) | undefined;
+            const waitOutcome = await Promise.race([
+                decisionPromise.then((value) => ({ kind: "resolved" as const, value }))
+                    .catch((error: unknown) => ({ kind: "rejected" as const, error })),
+                new Promise<{ kind: "deferred" }>((resolve) => {
+                    timer = setTimeout(() => resolve({ kind: "deferred" }), waitMs);
+                    timer.unref?.();
+                    if (invocation.signal) {
+                        if (invocation.signal.aborted) {
+                            clearTimeout(timer);
+                            resolve({ kind: "deferred" });
+                            return;
+                        }
+                        onAbort = () => {
+                            clearTimeout(timer);
+                            resolve({ kind: "deferred" });
+                        };
+                        invocation.signal.addEventListener("abort", onAbort, { once: true });
+                    }
+                }),
+            ]).finally(() => {
+                if (timer) clearTimeout(timer);
+                if (onAbort && invocation.signal) invocation.signal.removeEventListener("abort", onAbort);
+            });
+
+            if (waitOutcome.kind === "deferred") {
+                void decisionPromise.then(async (lateDecision) => {
+                    if (decisionSeq !== activeDecisionSeq) return;
+                    await handleDecision(lateDecision, true);
+                }).catch(() => {});
+                return {
+                    outcome: "decision_pending",
+                    userInputRequired: true,
+                    title: preview.decision!.title,
+                    message: "The decision form remains open in the chat with no expiration. Do not report a timeout or blocker; tell the user they can respond in the form or reply in chat whenever they return (even hours or days later), and end your turn.",
+                };
             }
+            if (waitOutcome.kind === "rejected") {
+                const message = waitOutcome.error instanceof Error ? waitOutcome.error.message : "The host input failed.";
+                note("blocked", `The decision form could not complete: ${message} No approval was granted.`, "decision-error");
+                throw waitOutcome.error;
+            }
+            return handleDecision(waitOutcome.value, false);
         }
         let result: Record<string, Json>;
         try {

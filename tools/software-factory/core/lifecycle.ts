@@ -422,7 +422,8 @@ export class Lifecycle {
             if (state.executions.some((item) => item.kind === kind && item.status === "error" && item.admissionClaim && !item.runtimeId)) {
                 throw new FactoryError("native_admission_uncertain", "A previous submission has no confirmed native run ID. Inspect its owner and explicitly supersede/reconcile that admission before starting more paid work.", 409);
             }
-            if (kind === "design" && this.store.latest(featureId, "design")) {
+            const existingDesign = kind === "design" ? this.store.latest(featureId, "design") : null;
+            if (existingDesign && object(existingDesign.content, "Design packet").recommendation === "GO to Planning") {
                 throw new FactoryError("revision_request_required", "A current design already exists. Request a reviewed revision rather than silently replacing it.", 409);
             }
             const timestamp = now();
