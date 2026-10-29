@@ -87,8 +87,8 @@ def test_only_acknowledged_active_driver_satisfies_startup(tmp_path, capsys, sta
         assert [item["key"] for item in report["work_dispatch"]["pending_work"]] == ["automation:push-reminders"]
         assert not report["work_dispatch"]["may_return_to_user"]
     elif status != "active":
-        assert code == 0 and report["work_dispatch"]["next_action"] == "recover_startup_automation"
-        assert not report["work_dispatch"]["pending_work"]
+        assert code == 2 and report["work_dispatch"]["next_action"] == "provision_startup_automation"
+        assert [item["key"] for item in report["work_dispatch"]["pending_work"]] == ["automation:push-reminders"]
         assert startup["recoveries"] and not startup["active"]
     else:
         assert code == 2  # The driver is ready; phase work still must drain.
@@ -219,6 +219,18 @@ def test_actual_startup_input_hold_never_claims_driver_ready(tmp_path, capsys):
     assert not report["work_dispatch"]["permission_to_execute"]
     assert not report["work_dispatch"]["permission_to_send"]
     assert path.read_bytes() == before and not state.steps
+
+
+def test_status_text_avoids_confusing_duplicate_startup_recovery_message(tmp_path, capsys):
+    state = release(tmp_path)
+    driver(tmp_path, state, "blocked")
+    code, out = call(tmp_path, capsys, "status", "--no-pipeline-check")
+    assert code == 0
+    assert "Next actions before owner handoff:" in out
+    assert "queued below for startup recovery." in out
+    assert "run `automation plan --release" in out
+    assert "`automation:push-reminders`: queued for Scout execution" not in out
+    assert "owning automation recovery is required" not in out
 
 
 def test_foreign_release_driver_cannot_satisfy_local_startup(tmp_path, capsys):

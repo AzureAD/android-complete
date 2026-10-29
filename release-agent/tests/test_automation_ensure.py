@@ -198,7 +198,7 @@ def test_retired_provider_identity_reappearing_cannot_be_ignored(tmp_path):
     assert result["status"] == "blocked" and not result["permission_to_create"]
 
 
-def test_historical_receipt_requires_live_reconciliation_after_freshness_window(tmp_path, capsys):
+def test_historical_receipt_stays_startup_complete_without_forced_reconciliation(tmp_path, capsys):
     state = release(tmp_path)
     registry, worker, entry = driver(tmp_path, state, "active")
     path = tmp_path / RID / "_automations.json"
@@ -208,7 +208,7 @@ def test_historical_receipt_requires_live_reconciliation_after_freshness_window(
     path.write_text(json.dumps(document), encoding="utf-8")
     assert not provider_check_fresh(registry.get(key=entry["key"]))
     _, runtime = C.load_orch(str(tmp_path), RID, CONFIG)
-    assert runtime.status_report()["work_dispatch"]["pending_work"][0]["kind"] == "automation"
+    assert runtime.status_report()["startup_automation"]["complete"]
     code, result = ensure_cli(tmp_path, capsys, worker, observed(
         {"id": "driver-id", "spec": worker["provider_spec"]}))
     assert code == 0 and not result["permission_to_create"]

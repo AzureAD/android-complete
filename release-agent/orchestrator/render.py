@@ -158,11 +158,23 @@ def readiness_table(chk: dict, release_id: str) -> str:
         lines.extend(["", readiness_followup(chk, release_id)])
     startup = chk.get("startup_automation")
     if startup is not None and not startup["complete"]:
+        dispatch = chk.get("dispatch") or {}
+        queued_startup = {
+            item["key"].split(":", 1)[1]
+            for item in dispatch.get("pending_work", [])
+            if item.get("kind") == "automation" and isinstance(item.get("key"), str)
+            and item["key"].startswith("automation:")
+        }
         lines.extend(["", "**Startup incomplete — the release-wide automation is not active.**"])
-        lines.extend(f"- `{item['slug']}`: startup automation must be provisioned by the AI agent."
+        lines.extend(f"- **{_cell(item.get('name') or item['slug'])}**: startup automation must be provisioned by the AI agent."
                      for item in startup["required"])
-        lines.extend(f"- `{item['slug']}`: {item['status']}; preserve its existing ownership and reconcile."
-                     for item in startup["recoveries"])
+        lines.extend(
+            f"- **{_cell(item.get('name') or item['slug'])}**: queued below for startup recovery."
+            for item in startup["recoveries"] if item["slug"] in queued_startup)
+        lines.extend(
+            f"- **{_cell(item.get('name') or item['slug'])}**: {item['status']}; preserve its existing ownership and reconcile. "
+            f"Run `{item['command']}`."
+            for item in startup["recoveries"] if item["slug"] not in queued_startup)
         lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
     return "\n".join(lines)
 
@@ -352,17 +364,34 @@ def work_followup(plan: dict) -> str:
         return ""
     lines = [plan["instruction"]]
     if plan.get("pending_work"):
-        lines.append("**Scout queue — finish before owner handoff:**")
-        lines.extend(f"- `{item['key']}`: queued for Scout execution" for item in plan["pending_work"])
+        lines.append("**Next actions before owner handoff:**")
+        for item in plan["pending_work"]:
+            label = item.get("name") or item.get("key", "task")
+            command = item.get("command")
+            if command:
+                lines.append(f"- **{_cell(label)}** — run `{command}`.")
+            else:
+                lines.append(f"- **{_cell(label)}** — queued for Scout execution.")
     for item in plan.get("deferred_work", []):
         lines.append(f"- `{item['key']}` remains incomplete: {_cell(item['reason'])} (host-reported hold).")
     if plan.get("pending_work") or plan.get("deferred_work"):
-        lines.append("Scout may still need to finish executable queued work before control can return to you.")
+        lines.append("Scout must finish these actions before control can return to you.")
     startup = plan.get("startup_automation")
     if startup is not None and not startup["complete"]:
+        queued_startup = {
+            item["key"].split(":", 1)[1]
+            for item in plan.get("pending_work", [])
+            if item.get("kind") == "automation" and isinstance(item.get("key"), str)
+            and item["key"].startswith("automation:")
+        }
         lines.append("**Unattended startup is NOT complete.**")
-        lines.extend(f"- `{item['slug']}`: {item['status']}; owning automation recovery is required."
-                     for item in startup["recoveries"])
+        lines.extend(
+            f"- **{_cell(item.get('name') or item['slug'])}**: queued below for startup recovery."
+            for item in startup["recoveries"] if item["slug"] in queued_startup)
+        lines.extend(
+            f"- **{_cell(item.get('name') or item['slug'])}**: {item['status']}; owning automation recovery is required. "
+            f"Run `{item['command']}`."
+            for item in startup["recoveries"] if item["slug"] not in queued_startup)
         lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
     return "\n".join(lines)
 

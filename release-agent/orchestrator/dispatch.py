@@ -112,7 +112,7 @@ def startup_plan(orch, selection):
     if reader is None:
         return None
     from orchestrator.automations import load_defs, _provider_defaults
-    from orchestrator.registry import has_creation_receipt, provider_check_fresh
+    from orchestrator.registry import has_creation_receipt
     definitions = [item for item in load_defs(orch.config_path) if item.get("required_on_start")]
     entries = reader()
     required, recoveries, active, problems = [], [], [], []
@@ -133,13 +133,19 @@ def startup_plan(orch, selection):
             problems.append(f"{slug}: duplicate startup registry identities; reconcile before creating")
             continue
         existing = matches[0] if matches else None
-        if (existing is None or existing["status"] in ("prepared", "missing")
-                or has_creation_receipt(existing) and not provider_check_fresh(existing)):
+        if existing is None or existing["status"] in ("prepared", "missing"):
             required.append({"slug": slug, "name": existing["name"] if existing else slug})
         elif has_creation_receipt(existing):
             active.append(slug)
         else:
-            recoveries.append({key: existing.get(key) for key in ("slug", "key", "id", "status")})
+            recoveries.append({
+                "slug": slug,
+                "key": existing.get("key"),
+                "id": existing.get("id"),
+                "name": existing.get("name") or slug,
+                "status": existing.get("status"),
+                "command": f"automation plan --release {orch.state.release_id} --slug {slug} --json",
+            })
     return {
         "required": [{"slug": item["slug"], "name": item["name"],
                       "command": f"automation plan --release {orch.state.release_id} --slug {item['slug']} --json"}
@@ -169,6 +175,15 @@ def with_startup(plan, startup):
             "Acknowledge the owning create-result. Only permission_to_create:true permits creation; "
             "unknown operations are never repeated."),
     } for item in startup["required"]]
+    for item in startup["recoveries"]:
+        tasks.append({
+            "key": f"automation:{item['slug']}", "kind": "automation", "name": item["name"],
+            "command": item["command"],
+            "instruction": (
+                "Recover the existing startup driver without creating duplicates. Obtain its canonical plan and "
+                "fresh exhaustive Scout list/details, then reconcile-create --ensure --claim with the exact spec. "
+                "Preserve existing ownership for unknown create/delete outcomes and acknowledge only the owning result."),
+        })
     entry = plan["next_action"] == "readiness"
     queued = tasks
     entry_checks = entry and plan["continue_automatically"]

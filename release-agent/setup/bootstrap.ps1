@@ -178,6 +178,72 @@ function Restart-Scout {
   return $launched
 }
 
+function Test-ScoutSkillRegistration {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScoutSkillsDir,
+    [Parameter(Mandatory = $true)][string]$SkillName
+  )
+  $skillDir = Join-Path $ScoutSkillsDir $SkillName
+  $skillFile = Join-Path $skillDir 'SKILL.md'
+  if (-not (Test-Path -LiteralPath $skillFile -PathType Leaf)) {
+    return [PSCustomObject]@{ ok = $false; detail = "Installed skill file is missing: $skillFile" }
+  }
+
+  $metadataNote = $null
+  $metadataFile = Join-Path $ScoutSkillsDir 'skills-metadata.json'
+  if (Test-Path -LiteralPath $metadataFile -PathType Leaf) {
+    try {
+      $metadata = Get-Content -LiteralPath $metadataFile -Raw | ConvertFrom-Json
+      $entry = @($metadata | Where-Object { $_.name -eq $SkillName }) | Select-Object -First 1
+      if ($entry) {
+        $metadataNote = "metadata entry '$($entry.id)'"
+        if ($null -ne $entry.enabled -and -not [bool]$entry.enabled) {
+          return [PSCustomObject]@{ ok = $false; detail = "Scout metadata has '$SkillName' disabled." }
+        }
+      } else {
+        $metadataNote = "metadata has no '$SkillName' entry yet"
+      }
+    } catch {
+      $metadataNote = "metadata unreadable: $($_.Exception.Message)"
+    }
+  } else {
+    $metadataNote = "metadata file not present yet"
+  }
+
+  $disabledFile = Join-Path $ScoutSkillsDir 'disabled-skills.json'
+  if (Test-Path -LiteralPath $disabledFile -PathType Leaf) {
+    try {
+      $disabled = Get-Content -LiteralPath $disabledFile -Raw | ConvertFrom-Json
+      if ($disabled -contains $SkillName) {
+        return [PSCustomObject]@{ ok = $false; detail = "Scout disabled-skills list contains '$SkillName'." }
+      }
+    } catch {
+      return [PSCustomObject]@{ ok = $false; detail = "Scout disabled-skills list is unreadable: $($_.Exception.Message)" }
+    }
+  }
+
+  return [PSCustomObject]@{
+    ok = $true
+    detail = if ($metadataNote) { "skill files present and enabled ($metadataNote)." } else { "skill files present and enabled." }
+  }
+}
+
+function Wait-ScoutSkillRegistration {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScoutSkillsDir,
+    [Parameter(Mandatory = $true)][string]$SkillName,
+    [int]$TimeoutSeconds = 45,
+    [int]$PollMilliseconds = 1000
+  )
+  $deadline = (Get-Date).AddSeconds([Math]::Max(1, $TimeoutSeconds))
+  do {
+    $result = Test-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName $SkillName
+    if ($result.ok) { return $result }
+    Start-Sleep -Milliseconds ([Math]::Max(100, $PollMilliseconds))
+  } while ((Get-Date) -lt $deadline)
+  return $result
+}
+
 # ---- 1. Infrastructure preflight (CLIs + MCP servers), data-driven ----
 # Delegates to the engine (python -m orchestrator.cli infra), which reads
 # config/requirements.yaml, checks every CLI/host dependency, and REGISTERS any
@@ -267,6 +333,9 @@ $ok = $true
 $infraReport = $null
 $setupReady = $false
 $restartNeeded = $false
+$skillRegistrationChecked = $false
+$skillRegistrationPending = $false
+$skillRegistrationResult = $null
 if (-not $haveInfra) {
   if (-not $PyExe) {
     Write-Host "  [ ] Python 3.9+ ... still MISSING (needed to run the preflight)" -ForegroundColor Yellow
@@ -373,6 +442,15 @@ if ($SkipSkillInstall) {
                  Select-Object -ExpandProperty Name
     if ($installed) { Write-Host "  Skills currently installed in Scout: $($installed -join ', ')" -ForegroundColor DarkGray }
   }
+
+  # Verify Scout has actually registered the newly-installed skill before we claim success.
+  $skillRegistrationResult = Test-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName 'release-agent'
+  if ($skillRegistrationResult.ok) {
+    $skillRegistrationChecked = $true
+    Write-Host "  [OK] Scout registry contains release-agent ($($skillRegistrationResult.detail))" -ForegroundColor Green
+  } else {
+    Write-Host "  [ ] Scout registry has not registered release-agent yet: $($skillRegistrationResult.detail)" -ForegroundColor Yellow
+  }
 }
 
 $needsReload = ($restartNeeded -or $skillInstalled)
@@ -380,14 +458,37 @@ if ($needsReload) {
   Write-Host "`nScout must reload to pick up the newly-installed skill / MCP server(s)."
   if ($NoRestartScout) {
     Write-Host "  Auto-restart disabled (-NoRestartScout). Restart Scout yourself so the changes load." -ForegroundColor DarkYellow
+    if ($skillInstalled -and -not $skillRegistrationChecked) { $skillRegistrationPending = $true }
   } elseif ($InsideScout) {
     Write-Host "  Skipping auto-restart: this setup is running inside a Scout session," -ForegroundColor Yellow
     Write-Host "  so restarting would kill it. Close and reopen Scout manually." -ForegroundColor Yellow
+    if ($skillInstalled -and -not $skillRegistrationChecked) { $skillRegistrationPending = $true }
   } else {
     $done = Restart-Scout
-    if ($done) { Write-Host "  Scout restarted — the skill/MCP servers will load on launch." -ForegroundColor Green }
-    else { Write-Host "  Please restart Scout manually so the changes load." -ForegroundColor Yellow }
+    if ($done) {
+      Write-Host "  Scout restarted — the skill/MCP servers will load on launch." -ForegroundColor Green
+      if ($skillInstalled -and -not $skillRegistrationChecked) {
+        $skillRegistrationResult = Wait-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName 'release-agent'
+        if ($skillRegistrationResult.ok) {
+          $skillRegistrationChecked = $true
+          Write-Host "  [OK] Scout registry contains release-agent ($($skillRegistrationResult.detail))" -ForegroundColor Green
+        } else {
+          Write-Host "  [ ] Scout did not register release-agent after restart: $($skillRegistrationResult.detail)" -ForegroundColor Yellow
+          $ok = $false
+        }
+      }
+    }
+    else {
+      Write-Host "  Please restart Scout manually so the changes load." -ForegroundColor Yellow
+      if ($skillInstalled -and -not $skillRegistrationChecked) { $skillRegistrationPending = $true }
+    }
   }
+}
+
+if ($skillRegistrationPending) {
+  Write-Host "  [ACTION NEEDED] release-agent registration could not be verified in this run." -ForegroundColor Yellow
+  Write-Host "  Restart Scout, then rerun setup without -NoRestartScout so registration can be verified." -ForegroundColor DarkYellow
+  $ok = $false
 }
 
 Write-Host "`n3. Next steps" -ForegroundColor Cyan
