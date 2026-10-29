@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import http from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
@@ -43,8 +44,36 @@ function readBody(request: IncomingMessage): Promise<unknown> {
     });
 }
 
+function newestMtime(directory: string): number {
+    if (!existsSync(directory)) return 0;
+    let latest = 0;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const target = path.join(directory, entry.name);
+        latest = Math.max(latest, entry.isDirectory() ? newestMtime(target) : statSync(target).mtimeMs);
+    }
+    return latest;
+}
+
+function ensureStudioBuild(assetDirectory: string): void {
+    const webRoot = fileURLToPath(new URL("../web/", import.meta.url));
+    const viteCli = path.join(webRoot, "node_modules", "vite", "bin", "vite.js");
+    if (!existsSync(viteCli)) return;
+    const distIndex = path.join(assetDirectory, "index.html");
+    const distTime = existsSync(distIndex) ? statSync(distIndex).mtimeMs : 0;
+    const sourceTime = Math.max(
+        existsSync(path.join(webRoot, "index.html")) ? statSync(path.join(webRoot, "index.html")).mtimeMs : 0,
+        newestMtime(path.join(webRoot, "src")),
+        newestMtime(fileURLToPath(new URL("../core/", import.meta.url))),
+    );
+    if (distTime < sourceTime) {
+        console.log("[Software Factory] Rebuilding Feature Studio UI bundle...");
+        execFileSync(process.execPath, [viteCli, "build"], { cwd: webRoot, stdio: "inherit" });
+    }
+}
+
 export async function startServer(options: { application: Application; port?: number; assets?: string }) {
     const assetDirectory = options.assets || fileURLToPath(new URL("../web/dist/", import.meta.url));
+    if (!options.assets) ensureStudioBuild(assetDirectory);
     if (!existsSync(path.join(assetDirectory, "index.html"))) {
         throw new FactoryError("ui_not_built", "Build the optional web UI before starting its server: npm --prefix web run build.", 500);
     }

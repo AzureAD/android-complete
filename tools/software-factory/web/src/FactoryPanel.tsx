@@ -166,48 +166,35 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     const planArtifact = latest("plan") || [...feature.factory.artifacts].reverse().find((a) => a.kind === "planning_attempt" && a.requirementsRevision === feature.current.id);
     const codeArtifact = latestImpl();
     const monitorArtifact = latest("monitor");
-    const hasStudioArtifacts = Boolean(designArtifact || planArtifact || codeArtifact || monitorArtifact || feature.factory.executions.length > 0);
 
     return <section className="card factory-panel" aria-label="Workflow lifecycle">
         <div className="phase-track" aria-label="Feature progress">{stageLabels.map((label, index) => <div key={label} aria-current={index === progress.stage ? "step" : undefined}
             className={`phase ${index === progress.stage ? "current" : index < progress.stage ? "past" : ""}`}><span>{index + 1}</span><strong>{label}</strong>
-            <small>{index === progress.stage ? "CURRENT STEP" : index < progress.stage ? "EARLIER STEP" : "LATER"}</small></div>)}</div>
+            <small>{index === progress.stage ? "CURRENT STEP" : index < progress.stage ? "COMPLETED" : "UPCOMING"}</small></div>)}</div>
 
-        {hasStudioArtifacts && (
-            <div className="studio-lens-bar" role="navigation" aria-label="Feature studio workspaces">
-                <span className="eyebrow">STUDIO WORKSPACE</span>
-                <div className="studio-lens-buttons">
-                    <button type="button" className={studioLens === "gate" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("gate")}>
-                        Active Gate &amp; Next Step
-                    </button>
-                    {designArtifact && (
-                        <button type="button" className={studioLens === "design" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("design")}>
-                            Design Studio
-                        </button>
-                    )}
-                    {planArtifact && (
-                        <button type="button" className={studioLens === "plan" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("plan")}>
-                            Plan &amp; DAG Studio
-                        </button>
-                    )}
-                    {codeArtifact && (
-                        <button type="button" className={studioLens === "code" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("code")}>
-                            Code Builder vs. Reviewer
-                        </button>
-                    )}
-                    {monitorArtifact && (
-                        <button type="button" className={studioLens === "delivery" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("delivery")}>
-                            Delivery &amp; PR Center
-                        </button>
-                    )}
-                    {feature.factory.executions.length > 0 && (
-                        <button type="button" className={studioLens === "flight" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("flight")}>
-                            Subagent Flight Recorder ({feature.factory.executions.length})
-                        </button>
-                    )}
-                </div>
+        <div className="studio-lens-bar" role="navigation" aria-label="Feature studio workspaces">
+            <span className="eyebrow">STUDIO WORKSPACE</span>
+            <div className="studio-lens-buttons">
+                <button type="button" className={studioLens === "gate" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("gate")}>
+                    Active Gate &amp; Next Step
+                </button>
+                <button type="button" className={studioLens === "design" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("design")}>
+                    Design Studio {designArtifact ? "✓" : ""}
+                </button>
+                <button type="button" className={studioLens === "plan" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("plan")}>
+                    Plan &amp; DAG Studio {planArtifact ? "✓" : ""}
+                </button>
+                <button type="button" className={studioLens === "code" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("code")}>
+                    Code Builder vs. Reviewer {codeArtifact ? "✓" : ""}
+                </button>
+                <button type="button" className={studioLens === "delivery" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("delivery")}>
+                    Delivery &amp; PR Center {monitorArtifact ? "✓" : ""}
+                </button>
+                <button type="button" className={studioLens === "flight" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("flight")}>
+                    Subagent Flight Recorder ({feature.factory.executions.length})
+                </button>
             </div>
-        )}
+        </div>
 
         <div className={`next-action ${progress.failed ? "failed" : ""}`} aria-label="Next step">
             <span className="eyebrow">{progress.failed ? "NEEDS ATTENTION" : progress.report ? "CHAT PROGRESS" : progress.run?.status === "running" || progress.run?.status === "starting" ? "IN PROGRESS" : "NEXT STEP"}</span>
@@ -233,24 +220,64 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
         {error && <div role="alert" className="message error">{error}</div>}
         {result?.outcome === "not_approved" && <p className="message notice" role="status">Not started. You chose not to approve this action.</p>}
 
-        {studioLens === "design" && designArtifact && currentGate?.stage !== "design" && (
+        {studioLens === "design" && currentGate?.stage !== "design" && (
             <section className="studio-spotlight" aria-label="Design Studio">
-                <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} />
+                {designArtifact ? (
+                    <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} />
+                ) : (
+                    <div className="studio-empty-lens">
+                        <span className="studio-pill blue">STAGE 2 · GUARDED DESIGN STUDIO</span>
+                        <h3>Design Author vs. Independent Reviewer Arena</h3>
+                        <p className="muted">
+                            Once your feature brief and success criteria are approved, starting a Guarded Design run dispatches the <strong>Repository Researcher</strong>, <strong>Design Author</strong>, and <strong>Independent Design Reviewer</strong> across up to 3 adversarial rounds, producing a full 10-section specification, Requirement Traceability Matrix, and verified Source Evidence Ledger.
+                        </p>
+                    </div>
+                )}
             </section>
         )}
-        {studioLens === "plan" && planArtifact && currentGate?.stage !== "plan" && (
+        {studioLens === "plan" && currentGate?.stage !== "plan" && (
             <section className="studio-spotlight" aria-label="Plan Studio">
-                <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+                {planArtifact ? (
+                    <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+                ) : (
+                    <div className="studio-empty-lens">
+                        <span className="studio-pill purple">STAGE 3 · PLAN &amp; DAG STUDIO</span>
+                        <h3>Interactive Execution Wave DAG &amp; PBI Inspector</h3>
+                        <p className="muted">
+                            After design approval, the <strong>Feature Planner</strong> and <strong>Independent Plan Reviewer</strong> decompose the architecture into repository-targeted PBIs with a verified dependency DAG, target file list, and unit/instrumented test suite.
+                        </p>
+                    </div>
+                )}
             </section>
         )}
-        {studioLens === "code" && codeArtifact && (
+        {studioLens === "code" && (
             <section className="studio-spotlight" aria-label="Code Arena Studio">
-                <ArtifactDocument artifact={codeArtifact} feature={feature} />
+                {codeArtifact ? (
+                    <ArtifactDocument artifact={codeArtifact} feature={feature} />
+                ) : (
+                    <div className="studio-empty-lens">
+                        <span className="studio-pill emerald">STAGE 5 · CODE BUILDER VS. REVIEWER ARENA</span>
+                        <h3>Multi-Round Coding Builder vs. Independent Code Reviewer</h3>
+                        <p className="muted">
+                            During Stage 3 implementation, the <strong>Coding Builder</strong> and <strong>Independent Code Reviewer</strong> iterate across rounds until every acceptance criterion is verified and zero blocker/major/minor findings remain before opening a PR.
+                        </p>
+                    </div>
+                )}
             </section>
         )}
-        {studioLens === "delivery" && monitorArtifact && (
+        {studioLens === "delivery" && (
             <section className="studio-spotlight" aria-label="Delivery Studio">
-                <ArtifactDocument artifact={monitorArtifact} feature={feature} onPrefillWaiver={prefillWaiver} onPrefillPrFeedback={prefillPrFeedback} />
+                {monitorArtifact ? (
+                    <ArtifactDocument artifact={monitorArtifact} feature={feature} onPrefillWaiver={prefillWaiver} onPrefillPrFeedback={prefillPrFeedback} />
+                ) : (
+                    <div className="studio-empty-lens">
+                        <span className="studio-pill amber">STAGE 6 · DELIVERY &amp; PR COMMAND CENTER</span>
+                        <h3>Live ADO Work Item, PR Status &amp; Acceptance Criteria Verification</h3>
+                        <p className="muted">
+                            Tracks live Azure DevOps PBIs, GitHub/ADO Pull Requests, CI status checks, and AI review rounds with one-click PR feedback composition and reasoned human gap waivers.
+                        </p>
+                    </div>
+                )}
             </section>
         )}
         {studioLens === "flight" && (
@@ -285,7 +312,7 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                     kind: "approve_stage", featureId: feature.id, stage: currentGate.stage, expectedScopeHash: currentGate.scopeHash, approved: false,
                 })}>Reject this scope</button></div>
         </section>}
-        <details ref={advanced} className="advanced-controls"><summary>Artifacts, run controls and advanced recovery</summary>
+        <details ref={advanced} className="advanced-controls" open><summary>Artifacts, run controls and advanced recovery</summary>
         <p className="muted">Saved artifacts and technical controls. Use the guided next step above for ordinary progress.</p>
         <div className="factory-actions">
             <button className="secondary" disabled={busy || feature.status !== "ready_for_design"} onClick={() => void start("design")}>Start a design run</button>

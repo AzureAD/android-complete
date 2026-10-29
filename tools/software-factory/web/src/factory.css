@@ -221,16 +221,24 @@
 .repo-mapper-fields input, .repo-mapper-fields select { padding: 6px 8px; font-size: 11px; border: 1px solid #d5ddce; border-radius: 5px; background: #fcfdf9; color: #23342b; }
 .visual-config-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 
+.studio-empty-lens { padding: 20px; border-radius: 10px; border: 1px dashed #94a3b8; background: rgba(15, 23, 42, 0.03); }
+.studio-empty-lens h3 { margin: 10px 0 6px; font-size: 16px; }
+
 /* Dark Studio Theme */
-.app-shell[data-theme="dark"] { background: #0d1512; color: #e3ece6; }
-.app-shell[data-theme="dark"] .topbar { background: #111c17; border-bottom-color: #23362c; color: #9bb0a3; }
+.app-shell[data-theme="dark"] { background: #0b1120; color: #e2e8f0; }
+.app-shell[data-theme="dark"] .topbar { background: rgba(15, 23, 42, 0.88); border-bottom-color: #1e293b; color: #94a3b8; }
+.app-shell[data-theme="dark"] .phase-track { background: #0f172a; border-color: #1e293b; }
+.app-shell[data-theme="dark"] .phase { border-right-color: #1e293b; color: #94a3b8; }
+.app-shell[data-theme="dark"] .phase.current { background: rgba(16, 185, 129, 0.14); color: #34d399; box-shadow: inset 0 -3px #10b981; }
+.app-shell[data-theme="dark"] .phase.past { background: rgba(30, 41, 59, 0.6); color: #cbd5e1; }
 .app-shell[data-theme="dark"] .card,
 .app-shell[data-theme="dark"] .studio-doc-section,
 .app-shell[data-theme="dark"] .arena-pane,
 .app-shell[data-theme="dark"] .pbi-inspector-card,
 .app-shell[data-theme="dark"] .delivery-pbi-card,
 .app-shell[data-theme="dark"] .repo-mapper-card,
-.app-shell[data-theme="dark"] .dag-wave-column { background: #13201a; border-color: #263b30; color: #e3ece6; }
+.app-shell[data-theme="dark"] .dag-wave-column { background: #111827; border-color: #1e293b; color: #e2e8f0; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28); }
+.app-shell[data-theme="dark"] .requirement { background: #0f172a; border-color: #1e293b; }
 .app-shell[data-theme="dark"] .studio-banner,
 .app-shell[data-theme="dark"] .studio-lens-bar,
 .app-shell[data-theme="dark"] .round-scrubber,
@@ -239,26 +247,34 @@
 .app-shell[data-theme="dark"] .visual-config-studio,
 .app-shell[data-theme="dark"] .unknowns,
 .app-shell[data-theme="dark"] .gate-card,
-.app-shell[data-theme="dark"] .studio-toc { background: #172720; border-color: #2b4236; color: #d3e0d8; }
+.app-shell[data-theme="dark"] .studio-toc,
+.app-shell[data-theme="dark"] .studio-empty-lens { background: #0f172a; border-color: #1e293b; color: #cbd5e1; }
+.app-shell[data-theme="dark"] .telemetry-stat strong,
+.app-shell[data-theme="dark"] .dag-node-title,
+.app-shell[data-theme="dark"] .swimlane-card strong { color: #f8fafc; }
 .app-shell[data-theme="dark"] input,
 .app-shell[data-theme="dark"] textarea,
 .app-shell[data-theme="dark"] select,
-.app-shell[data-theme="dark"] .factory-panel pre { background: #0e1814; border-color: #2c4437; color: #e5efe9; }
+.app-shell[data-theme="dark"] .factory-panel pre { background: #090d16; border-color: #334155; color: #f1f5f9; }
 .app-shell[data-theme="dark"] .secondary,
 .app-shell[data-theme="dark"] .studio-tab,
 .app-shell[data-theme="dark"] .lens-btn,
-.app-shell[data-theme="dark"] .round-pill { background: #192b23; border-color: #314b3d; color: #d5e2da; }
+.app-shell[data-theme="dark"] .round-pill,
+.app-shell[data-theme="dark"] .ghost-chip-btn { background: #1e293b; border-color: #334155; color: #e2e8f0; }
 .app-shell[data-theme="dark"] .studio-tab.active,
-.app-shell[data-theme="dark"] .lens-btn.active { background: #3b7a54; color: #fff; border-color: #4c9468; }
+.app-shell[data-theme="dark"] .lens-btn.active { background: #059669; color: #fff; border-color: #10b981; }
 .app-shell[data-theme="dark"] .muted,
 .app-shell[data-theme="dark"] .field-help,
-.app-shell[data-theme="dark"] .text-button { color: #98ada0; }
+.app-shell[data-theme="dark"] .text-button,
+.app-shell[data-theme="dark"] .advanced-controls > summary { color: #94a3b8; }
 .app-shell[data-theme="dark"] .evidence-card,
 .app-shell[data-theme="dark"] .swimlane-card,
 .app-shell[data-theme="dark"] .trace-item,
 .app-shell[data-theme="dark"] .finding-card,
 .app-shell[data-theme="dark"] .criterion-check-row,
-.app-shell[data-theme="dark"] .dag-node-card { background: #182921; border-color: #2c4337; color: #dfeae3; }
+.app-shell[data-theme="dark"] .dag-node-card,
+.app-shell[data-theme="dark"] .run-card,
+.app-shell[data-theme="dark"] .factory-panel details { background: #0f172a; border-color: #1e293b; color: #e2e8f0; }
 
 @media (max-width: 960px) {
     .studio-sections-layout, .arena-split, .dag-studio-grid { grid-template-columns: minmax(0, 1fr); }

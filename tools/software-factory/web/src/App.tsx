@@ -81,7 +81,7 @@ export function App() {
     const [confirmation, setConfirmation] = useState<ConfirmationRequest>();
     const [syncedAt, setSyncedAt] = useState<number>();
     const [syncError, setSyncError] = useState("");
-    const [theme, setTheme] = useState<"light" | "dark">("light");
+    const [theme, setTheme] = useState<"light" | "dark">("dark");
     const [featureFilter, setFeatureFilter] = useState("");
     const refreshing = useRef(false);
     const refreshSequence = useRef(0);
@@ -302,7 +302,31 @@ export function App() {
                 <span className={`sync-badge ${syncError ? "offline" : ""}`} role="status">{syncError ? "Updates disconnected" : syncedAt ? `Synced ${new Date(syncedAt).toLocaleTimeString()}` : "Connecting..."}</span>
             </div></header>
             <div className="content">
-                <section className="workspace-title"><div><span className="eyebrow">SOFTWARE FACTORY</span><h1>Your feature workspace</h1><p>Pick a feature. Review what changed. Take the next step.</p></div><span>{features.length} {features.length === 1 ? "feature" : "features"}</span></section>
+                <section className="workspace-title">
+                    <div>
+                        <span className="eyebrow">SOFTWARE FACTORY · FEATURE STUDIO &amp; CONTROL PLANE</span>
+                        <h1>Your feature workspace</h1>
+                        <p>Pick a feature. Inspect Builder vs. Reviewer rounds, Plan DAGs, and live Subagent Transcripts.</p>
+                    </div>
+                    <div className="studio-kpi-ribbon" aria-label="Workspace telemetry">
+                        <div className="kpi-tile">
+                            <strong>{features.length}</strong>
+                            <span>{features.length === 1 ? "feature" : "features"}</span>
+                        </div>
+                        <div className="kpi-tile">
+                            <strong>{features.filter((f) => Boolean(f.shared)).length}</strong>
+                            <span>ADO synced</span>
+                        </div>
+                        <div className="kpi-tile">
+                            <strong>{features.reduce((sum, f) => sum + f.factory.artifacts.length, 0)}</strong>
+                            <span>artifacts</span>
+                        </div>
+                        <div className="kpi-tile">
+                            <strong>{features.reduce((sum, f) => sum + f.factory.executions.length, 0)}</strong>
+                            <span>agent runs</span>
+                        </div>
+                    </div>
+                </section>
                 {syncError && <div role="alert" className="message error">Live updates are disconnected: {syncError} Last saved content is shown; unsaved edits are preserved.</div>}
                 {settings && <FactorySettings execute={execute} />}
                 {error && <div role="alert" className="message error">{error}</div>}

@@ -569,7 +569,10 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await flightDock.getByText("common/src/BrokerController.kt:10-90").click();
     await expect(flightDock.getByText("class BrokerController { fun execute() {} }")).toBeVisible();
 
-    // 6. Verify Dark Studio theme toggle & Visual Connections Mapper
+    // 6. Verify Dark Studio default theme, Light Mode toggle & Visual Connections Mapper
+    await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "dark");
+    await page.getByRole("button", { name: "Light Mode", exact: true }).click();
+    await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "light");
     await page.getByRole("button", { name: "Dark Studio", exact: true }).click();
     await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "Connections", exact: true }).click();
