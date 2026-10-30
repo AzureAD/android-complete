@@ -1085,8 +1085,21 @@ export function restoreTargetFiles(repoRoot, backups) {
     }
 }
 
-export function renderUnifiedDiff(backups, files) {
+export function renderUnifiedDiff(backups, files, { repoRoot = "", exec = defaultExec } = {}) {
     return files.map((file) => {
+        if (nonempty(repoRoot) && existsSync(path.join(repoRoot, ".git"))) {
+            const fullPath = path.resolve(repoRoot, file.path);
+            if (!nonempty(file.content) && existsSync(fullPath)) {
+                try {
+                    const gitDiff = exec("git", ["--no-pager", "diff", "HEAD", "--", file.path], { cwd: repoRoot });
+                    if (nonempty(gitDiff)) return gitDiff;
+                } catch {
+                    // Fall back to reading file from disk.
+                }
+                const diskText = readFileSync(fullPath, "utf8");
+                return `--- /dev/null\n+++ b/${file.path}\n${diskText.split(/\r?\n/).map((line) => `+${line}`).join("\n")}`;
+            }
+        }
         const prior = backups.get(file.path);
         const beforeText = prior?.exists && prior.content ? prior.content.toString("utf8") : "";
         if (file.action === "delete") {
@@ -1094,7 +1107,7 @@ export function renderUnifiedDiff(backups, files) {
         }
         const header = prior?.exists ? `--- a/${file.path}\n+++ b/${file.path}` : `--- /dev/null\n+++ b/${file.path}`;
         const removed = prior?.exists ? `${beforeText.split(/\r?\n/).map((line) => `-${line}`).join("\n")}\n` : "";
-        const added = file.content.split(/\r?\n/).map((line) => `+${line}`).join("\n");
+        const added = (file.content || "").split(/\r?\n/).map((line) => `+${line}`).join("\n");
         return `${header}\n${removed}${added}`;
     }).join("\n\n");
 }
@@ -1479,8 +1492,12 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
 
             if (validationErrors.length === 0) {
                 if (implementation.blockingUnknowns.length) {
-                    const answers = await askUserForClarifications(implementation.blockingUnknowns, ctx, dependencies.askUser);
-                    if (answers) {
+                    const pendingBuilderQuestions = [...new Set(implementation.blockingUnknowns.filter(nonempty).map((q) => q.trim()))].slice(0, 3);
+                    const answers = await step(
+                        `builder-clarifications-${round}`,
+                        () => askUserForClarifications(pendingBuilderQuestions, ctx, dependencies.askUser),
+                    );
+                    if (Array.isArray(answers) && answers.length > 0) {
                         task.sourceInputs.clarifications = [
                             ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
                             ...answers,
@@ -1499,8 +1516,8 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
                         backups = new Map();
                         backupsByTarget.set(target.id, backups);
                     }
+                    const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
                     if (applyToWorkspace) {
-                        const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
                         try {
                             applyTargetFiles(repoRoot, targetImpl.files, backups);
                             for (const command of target.verificationCommands) {
@@ -1512,7 +1529,10 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
                             );
                         }
                     }
-                    diffsByTarget[target.id] = renderUnifiedDiff(backups, targetImpl.files);
+                    diffsByTarget[target.id] = renderUnifiedDiff(backups, targetImpl.files, {
+                        repoRoot: manageWorkspace ? repoRoot : "",
+                        exec,
+                    });
                 }
             }
 
