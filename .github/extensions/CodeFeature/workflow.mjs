@@ -601,6 +601,11 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
 
     mkdirSync(path.dirname(targetDir), { recursive: true });
     const baseBranch = nonempty(target?.baseBranch) ? target.baseBranch.trim() : "dev";
+    try {
+        exec("git", ["fetch", "origin", baseBranch, "--quiet"], { cwd: canonicalSource });
+    } catch {
+        // Best-effort remote branch refresh before worktree creation.
+    }
     let baseRef = "HEAD";
     for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
         try {
