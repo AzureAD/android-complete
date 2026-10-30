@@ -7,11 +7,19 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+    OBSERVER_AGENT,
+    observerCustomAgent,
+    observerWorkflowDefinition,
+    parsePullRequestUrl,
+    runPrObserver,
+} from "./observer.mjs";
+import {
     BUILDER_AGENT,
     EVIDENCE_AGENT,
     MAX_FIX_ITERATIONS,
     REVIEWER_AGENT,
     customAgents,
+    discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
     extractRunnableVerificationCommand,
     formatPrBody,
@@ -22,6 +30,9 @@ import {
     rubric,
     runCodeFeature,
     runLocalVerificationGate,
+    slimIntakeSchema,
+    slimResultSchema,
+    slimReviewSchema,
     snapshotWorktree,
     validateEvidence,
     validateImplementation,
@@ -903,5 +914,155 @@ test("pauseOnBlocker invokes ctx.pause on unresolved clarification blockers and 
         rmSync(tempRoot, { recursive: true, force: true });
     }
 });
+
+test("thin { verdict, summary, evidence } schemas and on-disk git file discovery work end-to-end", async () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-slim-"));
+    try {
+        const brokerDir = path.join(tempRoot, "broker");
+        const prodFile = path.join(brokerDir, "broker4j/src/main/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottle.kt");
+        const testFile = path.join(brokerDir, "broker4j/src/test/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottleTest.kt");
+        mkdirSync(path.join(brokerDir, ".git"), { recursive: true });
+        mkdirSync(path.dirname(prodFile), { recursive: true });
+        mkdirSync(path.dirname(testFile), { recursive: true });
+        writeFileSync(prodFile, "// Copyright (c) Microsoft Corporation.\nclass SilentRequestThrottle\n", "utf8");
+        writeFileSync(testFile, "// Copyright (c) Microsoft Corporation.\nclass SilentRequestThrottleTest\n", "utf8");
+
+        const slimIntake = {
+            verdict: "ready",
+            summary: "Add caller-bound silent request throttling in Broker.",
+            repository: "broker",
+            baseBranch: "dev",
+            workItemId: null,
+            requirements: [
+                "Throttle AcquireTokenSilent on HTTP 429/5xx/Retry-After.",
+                "Fail immediately with ServiceException preserving eSTS error.",
+            ],
+            verificationCommands: [],
+            questions: [],
+            evidence: ["broker4j/src/main/com/microsoft/identity/broker4j/broker/ipc/AuthSdkOperation.java:L346-L390"],
+        };
+        const slimBuild = {
+            verdict: "pass",
+            summary: "Implemented SilentRequestThrottle and unit tests in broker4j.",
+            evidence: [
+                "broker4j/src/main/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottle.kt",
+                "broker4j/src/test/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottleTest.kt",
+            ],
+            prTitle: "Add silent request server-directed throttling in Broker",
+            prSummary: "Adds caller-isolated Retry-After throttling for Broker AcquireTokenSilent.",
+            testPlan: ".\\gradlew.bat :broker4j:test",
+            rolloutAndFlag: "BrokerFlight.ENABLE_SILENT_REQUEST_THROTTLING (default false)",
+        };
+        const slimReviewRound1 = {
+            verdict: "repair",
+            summary: "Preserve UiRequiredException subtype during throttle replay.",
+            evidence: ["SilentRequestThrottle.kt:L42"],
+            findings: ["SilentRequestThrottle.kt: Preserve UiRequiredException and IntuneAppProtectionPolicyRequiredException subtypes."],
+        };
+        const slimReviewRound2 = {
+            verdict: "pass",
+            summary: "Subtype preservation and regression tests verified.",
+            evidence: ["SilentRequestThrottleTest.kt:L10-L85"],
+            findings: [],
+        };
+
+        const ctx = context([slimIntake, slimBuild, slimReviewRound1, slimBuild, slimReviewRound2]);
+        ctx.session = {};
+        ctx.args = {
+            prompt: "add throttling to broker",
+            options: {
+                workspaceRoot: tempRoot,
+                createPullRequests: false,
+                slimSchemas: true,
+            },
+        };
+        const fakeGitExec = (_cmd, args) => {
+            if (args.includes("status") && args.includes("--porcelain")) {
+                return [
+                    "?? broker4j/src/main/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottle.kt",
+                    "?? broker4j/src/test/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottleTest.kt",
+                ].join("\n");
+            }
+            if (args.includes("rev-parse")) return "e428039b7";
+            return "";
+        };
+        const discovered = discoverChangedFilesFromGit(brokerDir, fakeGitExec);
+        assert.equal(discovered.files.length, 2);
+        assert.equal(discovered.testsAddedOrUpdated.length, 1);
+
+        const packet = await runCodeFeature(ctx, { exec: fakeGitExec });
+        assert.equal(packet.recommendation, "GO to PR Review");
+        assert.equal(packet.fixIterations, 1);
+        assert.equal(ctx.calls[0].options.schema, slimIntakeSchema);
+        assert.equal(ctx.calls[1].options.schema, slimResultSchema);
+        assert.equal(ctx.calls[2].options.schema, slimReviewSchema);
+    } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test("pr-observer workflow inspects PR checks/threads, applies verified tactical repair, pushes, and reaches ready-for-human-merge", async () => {
+    assert.equal(observerWorkflowDefinition.meta.name, "pr-observer");
+    assert.equal(observerCustomAgent.name, OBSERVER_AGENT);
+    const parsedGhe = parsePullRequestUrl("https://msft.ghe.com/security/ad-accounts-for-android/pull/362");
+    assert.equal(parsedGhe.hostname, "msft.ghe.com");
+    assert.equal(parsedGhe.repository, "broker");
+    assert.equal(parsedGhe.prNumber, 362);
+
+    const observeRepair = {
+        verdict: "repair",
+        repairKind: "ci-failure",
+        summary: "CI :broker4j:compileKotlin failed on SilentRequestIdentity.kt:51.",
+        evidence: ["https://msft.ghe.com/security/ad-accounts-for-android/pull/362/checks"],
+        actionableFindings: ["Declare explicit isShouldResolveInterrupt() Java getter in BrokerSilentTokenCommandParametersForResourceAccount."],
+    };
+    const builderFix = {
+        verdict: "pass",
+        summary: "Declared explicit isShouldResolveInterrupt() getter and added unit test.",
+        evidence: ["SilentRequestIdentity.kt", "SilentRequestIdentityTest.kt"],
+        prTitle: "Fix same-module Kotlin/Lombok getter resolution",
+        prSummary: "Declares explicit getter for Kotlin compilation order.",
+        testPlan: ".\\gradlew.bat :broker4j:test",
+        rolloutAndFlag: "BrokerFlight.ENABLE_SILENT_REQUEST_THROTTLING",
+    };
+    const reviewerPass = {
+        verdict: "pass",
+        summary: "Verified explicit getter and regression test.",
+        evidence: ["SilentRequestIdentityTest.kt"],
+        findings: [],
+    };
+    const observeReady = {
+        verdict: "ready",
+        repairKind: "none",
+        summary: "All CI checks green and review threads resolved.",
+        evidence: ["CI checks passed", "0 unresolved threads"],
+        actionableFindings: [],
+    };
+
+    const gitCommands = [];
+    const ctx = context([observeRepair, builderFix, reviewerPass, observeReady]);
+    ctx.args = {
+        prUrl: "https://msft.ghe.com/security/ad-accounts-for-android/pull/362",
+    };
+    const result = await runPrObserver(ctx, {
+        fetchPrSnapshot: () => ({
+            number: 362,
+            state: "OPEN",
+            mergeStateStatus: "CLEAN",
+            headRefName: "shjameel/broker-silent-server-throttling",
+            baseRefName: "dev",
+        }),
+        exec: (cmd, args) => {
+            gitCommands.push({ cmd, args });
+            if (cmd === "gh" && args[0] === "auth" && args[1] === "token") return "ghe-token";
+            return "";
+        },
+    });
+    assert.equal(result.status, "ready-for-human-merge");
+    assert.equal(result.iterations, 2);
+    assert.equal(result.humanMergeOnly, true);
+    assert.ok(gitCommands.some((c) => c.cmd === "git" && c.args.includes("push")));
+});
+
 
 

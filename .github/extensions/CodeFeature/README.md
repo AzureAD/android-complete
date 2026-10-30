@@ -110,6 +110,26 @@ Pass a plain-language request (optionally with `repository` and `workItemId`):
   the run can be resumed in place by `runId`.
 - `builderModel` / `reviewerModel` / `evidenceModel`: Optional model overrides so the
   independent reviewer can run on a distinct model from the builder.
+- `slimSchemas` (default `true` in live sessions): Uses compact `{ verdict, summary, evidence }`
+  agent schemas and discovers changed files and tests directly from `git status --porcelain` in
+  the target worktree.
+
+## Companion workflow: `pr-observer`
+
+`.github/extensions/CodeFeature/extension.mjs` also registers **`pr-observer`**
+(`.github/extensions/CodeFeature/observer.mjs`) alongside `code-feature`:
+
+```json
+{
+  "prUrl": "https://msft.ghe.com/security/ad-accounts-for-android/pull/362"
+}
+```
+
+`pr-observer` inspects a published Android Auth PR's CI checks, merge state, and review threads
+(`Observe`), runs `code-builder` + `code-reviewer` to apply and verify tactical repairs (`Repair`
+$\rightarrow$ `Verify & Push`), pushes fixes to the PR head branch using the repository's GitHub
+account (`shahzaibj` or `shjameel`), and stops with `status: "ready-for-human-merge"` once all
+checks are green and review threads are resolved.
 
 ## Repository Skills Leveraged
 
