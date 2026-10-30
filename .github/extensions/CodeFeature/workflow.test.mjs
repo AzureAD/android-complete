@@ -690,3 +690,53 @@ test("ensureIsolatedTargetWorktree replaces a shared junction and validateImplem
         rmSync(tempRoot, { recursive: true, force: true });
     }
 });
+
+test("prompt mode with createPullRequests=false handles null workItemId, empty extractedSpec.targets, and read-only role pseudo-conflicts", async () => {
+    const promptEvidence = () => ({
+        ...evidence(),
+        extractedSpec: {
+            title: "Add silent request throttling to Broker",
+            designSummary: "Throttle silent requests on HTTP 429/5xx/Retry-After.",
+            requirements: task().requirements,
+            targets: [],
+        },
+        conflicts: [
+            "Prompt mentions running code-builder and code-reviewer which conflicts with read-only evidence role.",
+            "Missing integer workItemId for AB# linking.",
+        ],
+        clarificationQuestions: [
+            "What fallback duration and max duration should apply when Retry-After is absent?",
+            "What throttle key scope should be used?",
+        ],
+    });
+
+    const impl = implementation();
+    impl.targets[0].targetId = "target-1";
+    impl.traceability = impl.traceability.map((row) => ({ ...row, targetIds: ["target-1"] }));
+    const rev = review();
+    rev.acceptanceCriteria = task().requirements.map((req) => ({
+        targetId: "target-1",
+        criterion: req.text,
+        passed: true,
+        evidence: "RetryAfterThrottleCacheTest:L12-L40",
+    }));
+
+    const ctx = context([promptEvidence(), impl, rev]);
+    ctx.args = {
+        prompt: "add throttling to common",
+        options: { createPullRequests: false },
+    };
+    const answers = [
+        "30s default fallback, 3600s max Retry-After cap",
+        "calling package UID / sign hash",
+    ];
+    let idx = 0;
+    const result = await runCodeFeature(ctx, {
+        askUser: async () => answers[idx++],
+    });
+    assert.equal(result.recommendation, "GO to PR Review");
+    assert.equal(result.task.targets.length, 1);
+    assert.equal(result.task.targets[0].workItemId, null);
+    assert.equal(result.fixIterations, 0);
+});
+

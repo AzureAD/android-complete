@@ -85,7 +85,7 @@ const extractedTargetSchema = object({
     id: text,
     repository: text,
     baseBranch: text,
-    workItemId: { type: "integer" },
+    workItemId: { type: ["integer", "null"] },
     title: text,
     description: text,
     acceptanceCriteria: texts,
@@ -195,8 +195,9 @@ Do not expose credentials, tokens, customer identifiers, or private source to ex
 Do not guess missing approval, requirements, evidence, or blocking decisions.
 Report blocking uncertainty explicitly in blockingUnknowns.`;
 
-const readerBoundaries = `You are a read-only worker. Inspect repository sources and return structured JSON, not files.
-Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy.
+const readerBoundaries = `You are Stage 1 (read-only repository evidence and specification extraction) of a multi-stage coding workflow.
+Inspect repository sources and return structured JSON, not files. Later workflow stages (code-builder, code-reviewer, and PR publishing) will perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
+Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy during this stage.
 ${commonBoundaries}`;
 
 const builderBoundaries = `You are the Android Auth implementation builder. Follow repository and code-author conventions strictly:
@@ -746,14 +747,16 @@ export function mergeExtractedSpec(task, evidence) {
     if (!record(task) || !record(evidence?.extractedSpec)) return task;
     const spec = evidence.extractedSpec;
     const merged = JSON.parse(JSON.stringify(task));
-    if (!nonempty(merged.title) && nonempty(spec.title)) {
+    const hadPromptDerivedTitle = merged.inputMode === "prompt";
+    if ((!nonempty(merged.title) || hadPromptDerivedTitle) && nonempty(spec.title)) {
         merged.title = spec.title.trim();
     }
-    if (!nonempty(merged.designSummary) && nonempty(spec.designSummary)) {
+    if ((!nonempty(merged.designSummary) || hadPromptDerivedTitle) && nonempty(spec.designSummary)) {
         merged.designSummary = spec.designSummary.trim();
     }
-    if (Array.isArray(spec.requirements) && spec.requirements.length > 0 &&
-        (merged.needsExtraction || !Array.isArray(merged.requirements) || merged.requirements.length === 0)) {
+    const updatedRequirements = Array.isArray(spec.requirements) && spec.requirements.length > 0 &&
+        (merged.needsExtraction || !Array.isArray(merged.requirements) || merged.requirements.length === 0);
+    if (updatedRequirements) {
         merged.requirements = spec.requirements.map((req, idx) => ({
             id: nonempty(req?.id) ? req.id.trim() : `R${idx + 1}`,
             text: typeof req?.text === "string" ? req.text.trim() : "",
@@ -767,6 +770,40 @@ export function mergeExtractedSpec(task, evidence) {
             { title: merged.title, designSummary: merged.designSummary, workItemId: merged.workItemId },
             idx,
         ));
+    } else if (Array.isArray(merged.targets) && merged.targets.length > 0 && updatedRequirements) {
+        for (const target of merged.targets) {
+            if (hadPromptDerivedTitle && nonempty(merged.title)) {
+                target.title = merged.title;
+            }
+            if (hadPromptDerivedTitle && nonempty(merged.designSummary)) {
+                target.description = merged.designSummary;
+            }
+            target.acceptanceCriteria = merged.requirements.map((r) => r?.text).filter(nonempty);
+        }
+    }
+    if ((!Array.isArray(merged.targets) || merged.targets.length === 0) && Array.isArray(evidence.references) && evidence.references.length > 0) {
+        const refRepos = [...new Set(
+            evidence.references
+                .map((ref) => normalizeRepositoryKey(ref?.repository))
+                .filter((repoKey) => repoKey && repoKey !== "android-complete" && REPOSITORY_METADATA[repoKey]),
+        )];
+        const fallbackRepos = refRepos.length > 0 ? refRepos : ["broker"];
+        merged.targets = fallbackRepos.map((repoKey, idx) => normalizeTargetObject(
+            {
+                id: `target-${idx + 1}`,
+                repository: repoKey,
+                title: merged.title,
+                description: merged.designSummary || merged.title,
+                acceptanceCriteria: (merged.requirements || []).map((r) => r?.text).filter(nonempty),
+            },
+            { title: merged.title, designSummary: merged.designSummary, workItemId: merged.workItemId },
+            idx,
+        ));
+    }
+    for (const target of merged.targets || []) {
+        if (!Array.isArray(target.acceptanceCriteria) || target.acceptanceCriteria.length === 0) {
+            target.acceptanceCriteria = (merged.requirements || []).map((r) => r?.text).filter(nonempty);
+        }
     }
     merged.needsExtraction = false;
     return merged;
@@ -1408,13 +1445,20 @@ Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and t
 Record exact checked-out commit revisions, file paths, and symbols/line ranges.
 Verify that the approval/input record binds to revision (${task.revision}) and reference (${task.approval.reference}).
 ${needsSpecExtraction
-            ? "Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, or prompt into extractedSpec."
+            ? `Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, or prompt into extractedSpec. Always populate extractedSpec.targets with at least one target repository and non-empty acceptanceCriteria; set workItemId to null if no AB#<id> work item is provided.`
             : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
-Infer technical details from the design doc, PBI, and existing codebase conventions whenever possible. Populate clarificationQuestions / blockingUnknowns ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase.`,
+You are Stage 1 (read-only evidence and specification extraction) of a multi-stage workflow; later stages (code-builder, code-reviewer, and PR creation) execute worktree, implementation, review, and PR steps. Never report requests to implement code, manage worktrees, or run builder/reviewer stages as a conflict with your read-only role, and never report a missing workItemId as a conflict or blockingUnknown when createPullRequests is ${Boolean(createPullRequests)}.
+Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Populate clarificationQuestions / blockingUnknowns ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase.`,
         needsSpecExtraction ? extractionEvidenceSchema : evidenceSchema,
-        { task, skillGuides: evidenceGuides },
+        { task, createPullRequests, skillGuides: evidenceGuides },
         rawOptions.evidenceModel,
     ));
+
+    if (record(evidence) && task.inputMode !== "structured" && Array.isArray(evidence.conflicts)) {
+        evidence.conflicts = evidence.conflicts.filter(
+            (c) => !/baseBranch|checked-out commit|local .* checkout|read-only|workItemId|work\s*item|AB#|orchestrat|code-builder|code-reviewer/i.test(c),
+        );
+    }
 
     if (record(evidence)) {
         task = mergeExtractedSpec(task, evidence);
@@ -1469,9 +1513,7 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
                 }
                 evidence.clarificationQuestions = [];
                 evidence.blockingUnknowns = [];
-                if (Array.isArray(evidence.conflicts)) {
-                    evidence.conflicts = evidence.conflicts.filter((c) => !/baseBranch|checked-out commit|local .* checkout/i.test(c));
-                }
+                evidence.conflicts = [];
             } else {
                 return packet("needs clarification", pendingQuestions, pendingQuestions);
             }
