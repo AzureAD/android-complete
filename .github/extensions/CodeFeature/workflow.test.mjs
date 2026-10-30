@@ -33,6 +33,8 @@ import {
     formatPrTitle,
     isSafeRelativeFilePath,
     normalizeTask,
+    parseAdoDesignDocUrl,
+    resolveInputSources,
     resolveRoleSkillGuides,
     rubric,
     runCodeFeature,
@@ -1210,6 +1212,35 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.equal(obsLoopResult.status, currentStatuses.needsOwnerDecision);
     assert.equal(obsPauses.length, 1);
     assert.ok(computeRepairIdentity({ observation: repeatObs, snapshot: { headRefOid: "abc111" }, worktreeSnap: "" }));
+
+    // 4. ADO PR ?path= design doc URL parsing & authenticator target inference
+    const parsedAdo = parseAdoDesignDocUrl(
+        "https://dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview/pullrequest/28487?path=/%5BAndroid%5D%20Backup%20%26%20Restore%20(v2)/Expanded%20Entra%20Guided%20Restore/expanded-entra-guided-restore-design.v2.md",
+    );
+    assert.equal(parsedAdo?.org, "IdentityDivision");
+    assert.equal(parsedAdo?.project, "DevEx");
+    assert.equal(parsedAdo?.repo, "AuthLibrariesApiReview");
+    assert.equal(parsedAdo?.prId, 28487);
+    assert.equal(
+        parsedAdo?.itemPath,
+        "/[Android] Backup & Restore (v2)/Expanded Entra Guided Restore/expanded-entra-guided-restore-design.v2.md",
+    );
+    const resolvedFromUrl = resolveInputSources(
+        {
+            designDocPath:
+                "https://dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview/pullrequest/28487?path=/%5BAndroid%5D%20Backup%20%26%20Restore%20(v2)/Expanded%20Entra%20Guided%20Restore/expanded-entra-guided-restore-design.v2.md",
+        },
+        {
+            linkSubrepos: false,
+            fetchDesignDoc: () =>
+                "# [Android] Expanded Entra Guided Restore\n\n**Feature:** [3652306](https://identitydivision.visualstudio.com/Engineering/_workitems/edit/3652306)\n\n| Authenticator app | Entry routing |\nNo MSAL, Common, Broker, ADAL, OneAuth, or 1ES-Pipelines change is proposed.",
+        },
+    );
+    const normalizedAuthAppTask = normalizeTask(resolvedFromUrl);
+    assert.equal(normalizedAuthAppTask.inputMode, "design_doc");
+    assert.equal(normalizedAuthAppTask.workItemId, 3652306);
+    assert.equal(normalizedAuthAppTask.targets[0].repository, "authenticator");
+    assert.equal(normalizedAuthAppTask.targets[0].baseBranch, "working");
 });
 
 

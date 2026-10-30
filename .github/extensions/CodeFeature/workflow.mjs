@@ -63,6 +63,13 @@ export const REPOSITORY_DEFAULTS = Object.freeze({
         slug: "AzureAD/azure-activedirectory-library-for-android",
         baseBranch: "dev",
     }),
+    authenticator: Object.freeze({
+        alias: "authenticator",
+        localPath: "authenticator",
+        hostname: "msazure.visualstudio.com",
+        slug: "One/_git/AD-MFA-phonefactor-phoneApp-android",
+        baseBranch: "working",
+    }),
     "android-complete": Object.freeze({
         alias: "android-complete",
         localPath: ".",
@@ -294,6 +301,13 @@ export const SKILL_GUIDES = Object.freeze({
             ".github/skills/code-author/SKILL.md",
             "adal/.github/copilot-instructions.md",
         ]),
+        authenticator: Object.freeze([
+            ".github/copilot-instructions.md",
+            ".github/skills/code-author/SKILL.md",
+            "authenticator/.github/copilot-instructions.md",
+            "authenticator/.github/skills/android-feature-development/SKILL.md",
+            "authenticator/.github/skills/android-ui-development/SKILL.md",
+        ]),
         default: Object.freeze([
             ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
@@ -320,6 +334,12 @@ export const SKILL_GUIDES = Object.freeze({
             "broker/.github/skills/code-review/references/security-privacy-crypto.md",
             "broker/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
+        authenticator: Object.freeze([
+            ".github/copilot-instructions.md",
+            "authenticator/.github/copilot-instructions.md",
+            ".github/skills/code-author/SKILL.md",
+            "authenticator/.github/skills/pr-reviewer/SKILL.md",
+        ]),
         default: Object.freeze([
             ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
@@ -339,8 +359,11 @@ export function resolveRoleSkillGuides(role, targets = []) {
     if (role === "evidence") {
         const guides = new Set(SKILL_GUIDES.evidence);
         for (const repo of repos) {
-            if (["common", "broker", "msal", "adal"].includes(repo)) {
+            if (["common", "broker", "msal", "adal", "authenticator"].includes(repo)) {
                 guides.add(`${repo}/.github/copilot-instructions.md`);
+            }
+            if (repo === "authenticator") {
+                guides.add("authenticator/.github/skills/codebase-researcher/SKILL.md");
             }
         }
         return [...guides];
@@ -350,7 +373,7 @@ export function resolveRoleSkillGuides(role, targets = []) {
     for (const repo of repos) {
         const entries = table[repo] || table.default;
         for (const entry of entries) guides.add(entry);
-        if (["common", "broker", "msal", "adal"].includes(repo)) {
+        if (["common", "broker", "msal", "adal", "authenticator"].includes(repo)) {
             guides.add(`${repo}/.github/copilot-instructions.md`);
         }
     }
@@ -394,6 +417,7 @@ function normalizeRepositoryKey(name) {
     if (trimmed === "broker4j" || trimmed === "aadauthenticator" || trimmed.includes("ad-accounts-for-android")) return "broker";
     if (trimmed.includes("microsoft-authentication-library-for-android")) return "msal";
     if (trimmed.includes("azure-activedirectory-library-for-android")) return "adal";
+    if (trimmed === "authapp" || trimmed === "authenticator" || trimmed.includes("phonefactor-phoneapp-android")) return "authenticator";
     if (trimmed.includes("android-complete")) return "android-complete";
     return trimmed;
 }
@@ -442,9 +466,14 @@ function extractBulletsFromText(rawText) {
 
 function inferRepositoriesFromText(rawText) {
     if (!nonempty(rawText)) return [];
+    if (/No\s+MSAL,\s*Common,\s*Broker,\s*ADAL.*change\s+is\s+proposed/i.test(rawText) &&
+        /\bAuthenticator\s+app\b|\bAD-MFA-phonefactor-phoneApp-android\b/i.test(rawText)) {
+        return ["authenticator"];
+    }
     const found = [];
     const lower = rawText.toLowerCase();
     for (const [key, token] of [
+        ["authenticator", /\b(ad-mfa-phonefactor-phoneapp-android|authenticator\s+app|guidedrestoreactivity|entraguidedrestore)\b/i],
         ["common", /\b(common4j|common|microsoft-authentication-library-common-for-android)\b/i],
         ["broker", /\b(broker4j|broker|aadauthenticator|ad-accounts-for-android)\b/i],
         ["msal", /\b(msal|microsoft-authentication-library-for-android)\b/i],
@@ -507,7 +536,7 @@ export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = def
     const mainCheckout = resolveMainCheckoutRoot(workspaceRoot, exec);
     if (!mainCheckout) return [];
     const linked = [];
-    for (const subrepo of ["common", "broker", "msal", "adal", "design-docs", "1ES-Pipelines"]) {
+    for (const subrepo of ["common", "broker", "msal", "adal", "authenticator", "design-docs", "1ES-Pipelines"]) {
         const dest = path.join(workspaceRoot, subrepo);
         const src = path.join(mainCheckout, subrepo);
         if (!existsSync(dest) && existsSync(src)) {
@@ -721,14 +750,95 @@ export function runLocalVerificationGate({
     return { errors, ranCommands, deferredNotes };
 }
 
-export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem, linkSubrepos = true } = {}) {
+export function parseAdoDesignDocUrl(textValue) {
+    if (!nonempty(textValue)) return null;
+    const urlMatch = String(textValue).match(
+        /https:\/\/(?:dev\.azure\.com\/([^/\s]+)\/([^/\s]+)|([^.\s]+)\.visualstudio\.com\/(?:DefaultCollection\/)?([^/\s]+))\/_git\/([^/\s?]+)\/pullrequest\/([1-9]\d*)\?[^\s"']*?\bpath=([^&\s"']+)/i,
+    );
+    if (!urlMatch) return null;
+    const org = urlMatch[1] || urlMatch[3];
+    const project = decodeURIComponent(urlMatch[2] || urlMatch[4]);
+    const repo = decodeURIComponent(urlMatch[5]);
+    const prId = Number(urlMatch[6]);
+    const itemPath = decodeURIComponent(urlMatch[7]);
+    const orgUrl = urlMatch[1]
+        ? `https://dev.azure.com/${org}`
+        : `https://${org}.visualstudio.com`;
+    return {
+        fullUrl: urlMatch[0],
+        org,
+        orgUrl,
+        project,
+        repo,
+        prId,
+        itemPath,
+    };
+}
+
+export function fetchAdoDesignDocFromUrl(parsedUrl, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
+    if (!record(parsedUrl)) return null;
+    const localRelative = parsedUrl.itemPath.replace(/^\/+/, "");
+    const localDesignCandidate = path.resolve(workspaceRoot, "design-docs", localRelative);
+    if (existsSync(localDesignCandidate)) {
+        return readFileSync(localDesignCandidate, "utf8");
+    }
+    const prJsonRaw = exec(
+        "az",
+        [
+            "repos",
+            "pr",
+            "show",
+            "--id",
+            String(parsedUrl.prId),
+            "--org",
+            parsedUrl.orgUrl,
+            "--query",
+            "{repoId:repository.id, commitId:lastMergeSourceCommit.commitId, sourceRefName:sourceRefName}",
+            "-o",
+            "json",
+        ],
+        { cwd: workspaceRoot },
+    );
+    const prMeta = JSON.parse(prJsonRaw);
+    const repoId = prMeta?.repoId || parsedUrl.repo;
+    const version = prMeta?.commitId || String(prMeta?.sourceRefName || "").replace(/^refs\/heads\//, "");
+    const versionType = prMeta?.commitId ? "commit" : "branch";
+    const encodedPath = encodeURIComponent(parsedUrl.itemPath);
+    const itemUri = `https://dev.azure.com/${encodeURIComponent(parsedUrl.org)}/${encodeURIComponent(parsedUrl.project)}/_apis/git/repositories/${encodeURIComponent(repoId)}/items?path=${encodedPath}&versionDescriptor.version=${encodeURIComponent(version)}&versionDescriptor.versionType=${versionType}&api-version=7.0`;
+    const psScript = [
+        "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+        `$headers = @{ Authorization = "Bearer $token" }`,
+        `$raw = Invoke-RestMethod -Uri '${itemUri.replace(/'/g, "''")}' -Headers $headers -Method Get`,
+        "[Console]::Out.Write($raw)",
+    ].join("; ");
+    return exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
+}
+
+export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem, fetchDesignDoc, linkSubrepos = true } = {}) {
     if (linkSubrepos) ensureSubrepoCheckouts(workspaceRoot, exec);
     if (typeof args === "string") {
-        return { prompt: args };
+        args = { prompt: args };
     }
     if (!record(args)) return args;
     const cloned = JSON.parse(JSON.stringify(args));
     const container = record(cloned.task) ? cloned.task : cloned;
+
+    const adoUrlCandidate = parseAdoDesignDocUrl(container.designDocPath) || parseAdoDesignDocUrl(container.prompt);
+    if (adoUrlCandidate && !nonempty(container.designDoc)) {
+        try {
+            const fetched = typeof fetchDesignDoc === "function"
+                ? fetchDesignDoc(adoUrlCandidate)
+                : fetchAdoDesignDocFromUrl(adoUrlCandidate, { workspaceRoot, exec });
+            if (nonempty(fetched)) {
+                container.designDoc = fetched;
+                if (!nonempty(container.designDocPath)) {
+                    container.designDocPath = adoUrlCandidate.itemPath;
+                }
+            }
+        } catch (error) {
+            container.resolutionError = `Failed to load ADO design doc from PR #${adoUrlCandidate.prId} (${adoUrlCandidate.itemPath}): ${error instanceof Error ? error.message : String(error)}`;
+        }
+    }
 
     if (nonempty(container.designDocPath) && !nonempty(container.designDoc)) {
         const candidatePath = path.resolve(workspaceRoot, container.designDocPath.trim());
@@ -837,7 +947,9 @@ export function normalizeTask(args) {
 
     const abFromText = parseWorkItemNumber(
         raw.workItemId ?? raw.pbiId ?? pbiList[0]?.parentWorkItemId ?? pbiList[0]?.workItemId ?? pbiList[0]?.id ??
-        (designDocText.match(/AB#([1-9]\d*)/i)?.[1] || promptText.match(/AB#([1-9]\d*)/i)?.[1]),
+        (designDocText.match(/AB#([1-9]\d*)/i)?.[1] ||
+            designDocText.match(/_workitems\/edit\/([1-9]\d*)/i)?.[1] ||
+            promptText.match(/AB#([1-9]\d*)/i)?.[1]),
     );
 
     const rawRequirements = Array.isArray(raw.requirements) && raw.requirements.length > 0
@@ -2033,6 +2145,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         workspaceRoot,
         exec,
         fetchWorkItem: dependencies.fetchWorkItem,
+        fetchDesignDoc: dependencies.fetchDesignDoc,
         linkSubrepos: manageWorkspace,
     });
     const initialErrors = validateTask(resolvedArgs, { allowDeferredTargets: true });
@@ -2211,6 +2324,7 @@ ${needsSpecExtraction || intakeRound > 0
                 ? `Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, prompt, and recorded clarifications. Always include at least one target repository and non-empty acceptanceCriteria; set workItemId to null if no AB#<id> work item is provided.`
                 : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
 You are Stage 1 (read-only evidence and specification extraction) of a multi-stage workflow; later stages (code-builder, code-reviewer, and PR creation) execute worktree, implementation, review, and PR steps. Never report requests to implement code, manage worktrees, or run builder/reviewer stages as a conflict with your read-only role, and never report a missing workItemId as a conflict or blockingUnknown when createPullRequests is ${Boolean(createPullRequests)}.
+When the caller invokes code-feature with a design doc, PBI, or prompt, that invocation IS explicit caller authorization to implement the supplied design revision—never reject or block because a status banner inside the design doc markdown says "proposed for engineer approval" or "not yet approved or authorized for implementation".
 Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase.`,
             useSlimSchemas
                 ? slimIntakeSchema
