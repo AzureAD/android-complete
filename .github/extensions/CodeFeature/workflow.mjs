@@ -782,36 +782,31 @@ export function fetchAdoDesignDocFromUrl(parsedUrl, { workspaceRoot = process.cw
     if (existsSync(localDesignCandidate)) {
         return readFileSync(localDesignCandidate, "utf8");
     }
-    const prJsonRaw = exec(
-        "az",
-        [
-            "repos",
-            "pr",
-            "show",
-            "--id",
-            String(parsedUrl.prId),
-            "--org",
-            parsedUrl.orgUrl,
-            "--query",
-            "{repoId:repository.id, commitId:lastMergeSourceCommit.commitId, sourceRefName:sourceRefName}",
-            "-o",
-            "json",
-        ],
-        { cwd: workspaceRoot },
-    );
-    const prMeta = JSON.parse(prJsonRaw);
-    const repoId = prMeta?.repoId || parsedUrl.repo;
-    const version = prMeta?.commitId || String(prMeta?.sourceRefName || "").replace(/^refs\/heads\//, "");
-    const versionType = prMeta?.commitId ? "commit" : "branch";
     const encodedPath = encodeURIComponent(parsedUrl.itemPath);
-    const itemUri = `https://dev.azure.com/${encodeURIComponent(parsedUrl.org)}/${encodeURIComponent(parsedUrl.project)}/_apis/git/repositories/${encodeURIComponent(repoId)}/items?path=${encodedPath}&versionDescriptor.version=${encodeURIComponent(version)}&versionDescriptor.versionType=${versionType}&api-version=7.0`;
+    const prApiUri = `${parsedUrl.orgUrl.replace(/\/+$/, "")}/${encodeURIComponent(parsedUrl.project)}/_apis/git/repositories/${encodeURIComponent(parsedUrl.repo)}/pullRequests/${parsedUrl.prId}?api-version=7.0`;
     const psScript = [
+        "$ErrorActionPreference = 'Stop'",
         "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
-        `$headers = @{ Authorization = "Bearer $token" }`,
-        `$raw = Invoke-RestMethod -Uri '${itemUri.replace(/'/g, "''")}' -Headers $headers -Method Get`,
+        "$headers = @{ Authorization = \"Bearer $token\" }",
+        `$pr = Invoke-RestMethod -Uri '${prApiUri.replace(/'/g, "''")}' -Headers $headers -Method Get`,
+        "$repoId = $pr.repository.id",
+        "$commitId = $pr.lastMergeSourceCommit.commitId",
+        `$itemUri = '${parsedUrl.orgUrl.replace(/\/+$/, "").replace(/'/g, "''")}/${encodeURIComponent(parsedUrl.project)}/_apis/git/repositories/' + $repoId + '/items?path=${encodedPath.replace(/'/g, "''")}&versionDescriptor.version=' + $commitId + '&versionDescriptor.versionType=commit&api-version=7.0'`,
+        "$raw = Invoke-RestMethod -Uri $itemUri -Headers $headers -Method Get",
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
         "[Console]::Out.Write($raw)",
     ].join("; ");
-    return exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
+    const content = exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
+    if (nonempty(content) && existsSync(workspaceRoot)) {
+        try {
+            const cachePath = path.resolve(workspaceRoot, ".code-feature-cache", localRelative);
+            mkdirSync(path.dirname(cachePath), { recursive: true });
+            writeFileSync(cachePath, content, "utf8");
+        } catch {
+            // Optional local cache write inside worktree.
+        }
+    }
+    return content;
 }
 
 export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem, fetchDesignDoc, linkSubrepos = true } = {}) {
@@ -1823,6 +1818,15 @@ export function renderUnifiedDiff(backups, files, { repoRoot = "", exec = defaul
 }
 
 function defaultExec(command, args, options = {}) {
+    if (process.platform === "win32" && command === "az") {
+        const quoted = (args || []).map((a) => `'${String(a).replace(/'/g, "''")}'`).join(" ");
+        return execFileSync("powershell", ["-NoProfile", "-Command", `& az ${quoted}`], {
+            cwd: options.cwd,
+            env: options.env ? { ...process.env, ...options.env } : process.env,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+    }
     return execFileSync(command, args, {
         cwd: options.cwd,
         env: options.env ? { ...process.env, ...options.env } : process.env,
