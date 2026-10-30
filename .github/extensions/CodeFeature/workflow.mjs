@@ -321,11 +321,15 @@ function normalizeRepositoryKey(name) {
     return trimmed;
 }
 
-function parseWorkItemNumber(value) {
-    if (positiveInt(Number(value))) return Number(value);
+function parseWorkItemNumber(value, { requirePrefixInText = false } = {}) {
+    if (typeof value === "number" && positiveInt(value)) return value;
     if (typeof value === "string") {
-        const match = value.match(/(?:AB#)?([1-9]\d*)/i);
-        if (match) return Number(match[1]);
+        const trimmed = value.trim();
+        if (!requirePrefixInText && /^[1-9]\d*$/.test(trimmed)) {
+            return Number(trimmed);
+        }
+        const abMatch = trimmed.match(/\bAB#([1-9]\d*)\b/i);
+        if (abMatch) return Number(abMatch[1]);
     }
     return null;
 }
@@ -1424,13 +1428,38 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
                     ...answers,
                 ];
                 for (const entry of answers) {
-                    const parsedAb = parseWorkItemNumber(entry?.answer);
+                    const questionAskedForWorkItem = /\b(AB#|work\s*item|PBI)\b/i.test(String(entry?.question || ""));
+                    const parsedAb = parseWorkItemNumber(entry?.answer, {
+                        requirePrefixInText: !questionAskedForWorkItem,
+                    });
                     if (positiveInt(parsedAb) && (!positiveInt(Number(task.workItemId)) || Number(task.workItemId) === 1)) {
                         task.workItemId = parsedAb;
                         for (const target of task.targets) {
                             if (!positiveInt(Number(target.workItemId)) || Number(target.workItemId) === 1) {
                                 target.workItemId = parsedAb;
                             }
+                        }
+                    }
+                }
+                const clarifiedCriteria = answers
+                    .map((entry) => typeof entry?.answer === "string" ? entry.answer.trim() : "")
+                    .filter(nonempty);
+                if (clarifiedCriteria.length > 0) {
+                    const clarificationSummary = answers
+                        .map((entry) => `${entry.question} -> ${entry.answer}`)
+                        .join("\n");
+                    task.designSummary = nonempty(task.designSummary)
+                        ? `${task.designSummary}\n\nClarified scope:\n${clarificationSummary}`
+                        : `Clarified scope:\n${clarificationSummary}`;
+                    if (task.requirements.length === 1 && task.requirements[0].text.toLowerCase() === task.title.toLowerCase()) {
+                        task.requirements[0].text = `${task.requirements[0].text}: ${clarifiedCriteria.join("; ")}`;
+                    }
+                    for (const target of task.targets) {
+                        const hasBlockedPlaceholder = !Array.isArray(target.acceptanceCriteria) ||
+                            target.acceptanceCriteria.length === 0 ||
+                            target.acceptanceCriteria.some((c) => /remain blocked|unspecified|blocked on/i.test(c));
+                        if (hasBlockedPlaceholder) {
+                            target.acceptanceCriteria = [...clarifiedCriteria];
                         }
                     }
                 }

@@ -642,21 +642,24 @@ test("clarification questions are asked only when requirements are unclear and r
     assert.equal(nonInteractiveCtx.calls.length, 1);
 
     // With interactive askUser, asks the question once, records the answer, and completes coding
+    // Also verifies that numeric HTTP status codes like "429" in non-work-item answers do NOT overwrite workItemId.
     const asked = [];
     const interactiveCtx = context([ambiguousEvidence(), implementation(), review()]);
     interactiveCtx.args = { prompt: "Add throttling to Common (AB#3802484)" };
     const completedPacket = await runCodeFeature(interactiveCtx, {
         askUser: async (question) => {
             asked.push(question);
-            return "Only silent token requests.";
+            return "Only silent token requests on HTTP 429 / 5xx / Retry-After.";
         },
     });
     assert.equal(completedPacket.recommendation, "GO to PR Review");
     assert.equal(asked.length, 1);
+    assert.equal(completedPacket.task.workItemId, 3802484);
+    assert.equal(completedPacket.pullRequests[0].workItemId, 3802484);
     assert.deepEqual(completedPacket.task.sourceInputs.clarifications, [
         {
             question: "Should throttling apply to interactive token requests or only silent requests?",
-            answer: "Only silent token requests.",
+            answer: "Only silent token requests on HTTP 429 / 5xx / Retry-After.",
         },
     ]);
 });
