@@ -321,6 +321,9 @@ export async function runPrObserver(ctx, dependencies = {}) {
             `Read and follow these repository skill guides: ${builderGuides.join(", ")}.
 Apply a surgical tactical fix in ${target.repository} for the reported PR findings (${observation.repairKind}):
 ${(observation.actionableFindings || []).map((f) => `- ${f}`).join("\n")}
+Follow Android Auth PR maintenance rules:
+- Never amend or force-push; keep commits incremental/fast-forward.
+- When merging origin/${target.baseBranch}, if a release was cut on ${target.baseBranch}, ensure this PR's CHANGELOG.md / changes.txt entry remains under the active vNext section; if ${target.baseBranch} deleted an adjacent retired flight enum entry, keep the retired flight deleted.
 Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, snapshot })}`,
             {
                 label: `Tactical repair (round ${iteration + 1})`,

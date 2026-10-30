@@ -55,10 +55,18 @@ modifying production code.
     If new Kotlin code calls a Lombok-generated `@Getter` / `@Setter` / `@Builder` on a Java
     class in the *same* Gradle module, declare the Java accessor explicitly on that Java class
     so `compileKotlin` can resolve it.
-- **Consistent input normalization**:
+- **Consistent input normalization & URL/URI parsing**:
   - Normalize string inputs (such as `tenantId`, `loginHint`, package names) consistently at
     entry boundaries using trimmed/non-blank checks (`trim()`, `isNotBlank()`) so routing and
     downstream handlers cannot disagree on whitespace-only values.
+  - **JDK `URI` vs. `URL` host parsing**: `java.net.URI.getHost()` returns `null` when a
+    hostname contains an underscore (`_`, common in enterprise ADFS servers like
+    `adfs_server.contoso.com`), whereas `java.net.URL` parses it; conversely, reject raw
+    backslashes (`\`) in authority/path before host comparison to prevent parser-differential
+    bypasses between `URL` and WebView/RFC 3986.
+- **Static analysis (PMD & SpotBugs) hygiene**:
+  - Avoid PMD-flagged constructs (collapsible `if` statements, unused local variables/imports)
+    and annotate intentional broad catches with `@SuppressFBWarnings` + a clear `justification`.
 - **License headers**:
   - Add the full repository license header to every new file (full MIT header in `common`,
     `common4j`, `msal`, `adal`; Microsoft copyright header in `broker`).
@@ -76,14 +84,22 @@ modifying production code.
     no breaking API impact, `PATCH` for bug fixes).
   - Apply the matching `changelog:minor` or `changelog:patch` label on the PR so the
     `Changelog Check` pipeline passes immediately.
-- **Submodule & base branch sync**:
-  - Merge/rebase against the latest `dev` branch before opening or updating PRs.
+- **Submodule & base branch sync (fast-forward only, never force-push)**:
+  - Merge `origin/dev` via `git merge origin/dev` and push incremental commits fast-forward
+    (`git merge-base --is-ancestor <old> <new>`)—never `git commit --amend` or `git push --force`
+    on an open PR, which breaks reviewer diff history and GitHub's merge ref.
+  - **Release-cut `vNext` changelog trap**: After merging `origin/dev`, check `CHANGELOG.md` /
+    `changes.txt`—if `dev` cut a release while the PR was open, move your PR's changelog bullet
+    back under the new `vNext` heading so `Changelog Check` passes.
+  - **Delete/modify conflict on retired flights**: If `origin/dev` deleted an adjacent retired
+    flight enum entry, keep the retired flight deleted and retain only your new flight entry.
   - When a feature spans `Common` and `Broker`, only point `Broker`'s `common` submodule to a
     committed and pushed `Common` revision.
-- **PR creation via `gh` CLI**:
-  - For `AzureAD/*` repos on `github.com`, use `gh pr create` with the developer's public
-    GitHub account (from `.github/developer-local.json` or `gh auth status`) rather than
-    relying on EMU-bound app tokens that return `403 Forbidden`.
+- **PR creation & inline thread replies via `gh` CLI**:
+  - For `AzureAD/*` repos on `github.com`, use `gh pr create` and post inline review replies
+    (`/pulls/<id>/comments/<comment_id>/replies`) with the developer's public GitHub account
+    (`shahzaibj` from `.github/developer-local.json`) rather than relying on EMU-bound
+    `shjameel_microsoft` tokens that return `403 Forbidden`.
   - For `msft.ghe.com/security/ad-accounts-for-android` (`broker`), always use `gh pr create` /
     `gh pr edit` / `gh api --hostname msft.ghe.com` with the GHE account (`shjameel`)—never
     use the app's built-in `create_pull_request` / `update_pull_request` tools on GHE repos
