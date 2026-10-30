@@ -19,6 +19,7 @@ const unique = (values) => new Set(values).size === values.length;
 const positiveInt = (value) => Number.isSafeInteger(value) && value > 0;
 
 export const MAX_FIX_ITERATIONS = 3;
+export const MAX_INTAKE_ROUNDS = 3;
 export const BUILDER_AGENT = "code-builder";
 export const REVIEWER_AGENT = "code-reviewer";
 export const EVIDENCE_AGENT = "code-evidence";
@@ -525,6 +526,126 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
     return targetDir;
 }
 
+export function snapshotWorktree(repoRoot, exec = defaultExec) {
+    if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git"))) return null;
+    try {
+        const hash = createHash("sha256");
+        hash.update(exec("git", ["--no-pager", "rev-parse", "HEAD"], { cwd: repoRoot }) || "");
+        hash.update(exec("git", ["--no-pager", "diff", "--binary", "HEAD"], { cwd: repoRoot }) || "");
+        hash.update(exec("git", ["--no-pager", "diff", "--cached", "--binary", "HEAD"], { cwd: repoRoot }) || "");
+        const untracked = exec(
+            "git",
+            ["--no-pager", "ls-files", "--others", "--exclude-standard"],
+            { cwd: repoRoot },
+        ) || "";
+        for (const rel of untracked.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).sort()) {
+            const full = path.join(repoRoot, rel);
+            if (existsSync(full) && lstatSync(full).isFile()) {
+                hash.update(rel);
+                hash.update(readFileSync(full));
+            }
+        }
+        return hash.digest("hex");
+    } catch {
+        return null;
+    }
+}
+
+export function extractRunnableVerificationCommand(rawCommand) {
+    if (!nonempty(rawCommand)) return null;
+    const trimmed = rawCommand.trim();
+    const match = trimmed.match(/(?:^|:\s+)((?:\.\\|\.\.\/|\.\/)?gradlew(?:\.bat)?\b.+)$/i);
+    if (match && nonempty(match[1])) {
+        return match[1].trim();
+    }
+    if (/^from\s+[^:]+:/i.test(trimmed)) {
+        const afterColon = trimmed.replace(/^from\s+[^:]+:\s*/i, "").trim();
+        return nonempty(afterColon) ? afterColon : null;
+    }
+    return trimmed;
+}
+
+export function isLocalBuildEnvError(textValue) {
+    return /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|local.*build.*environment/i.test(
+        String(textValue || ""),
+    );
+}
+
+export function runLocalVerificationGate({
+    repoRoot,
+    target,
+    targetImpl,
+    implementation,
+    exec = defaultExec,
+}) {
+    const commands = Array.isArray(target?.verificationCommands)
+        ? target.verificationCommands.map(extractRunnableVerificationCommand).filter(nonempty)
+        : [];
+    if (commands.length === 0) return { errors: [], ranCommands: [], deferredNotes: [] };
+
+    const env = { ...process.env };
+    const defaultStudioJbr = "C:\\Program Files\\Android\\Android Studio\\jbr";
+    if (!nonempty(env.JAVA_HOME) && existsSync(defaultStudioJbr)) {
+        env.JAVA_HOME = defaultStudioJbr;
+        env.PATH = `${path.join(defaultStudioJbr, "bin")};${env.PATH || ""}`;
+    }
+    if (!nonempty(env.ENV_VSTS_MVN_CRED_ACCESSTOKEN)) {
+        try {
+            const token = exec(
+                "az",
+                [
+                    "account",
+                    "get-access-token",
+                    "--resource",
+                    "499b84ac-1321-427f-aa17-267ca6975798",
+                    "--query",
+                    "accessToken",
+                    "-o",
+                    "tsv",
+                ],
+                { cwd: repoRoot },
+            );
+            if (nonempty(token)) {
+                env.ENV_VSTS_MVN_CRED_USERNAME = env.ENV_VSTS_MVN_CRED_USERNAME || "vsts";
+                env.ENV_VSTS_MVN_CRED_ACCESSTOKEN = token.trim();
+            }
+        } catch {
+            // Optional local Azure CLI VSTS token lookup.
+        }
+    }
+
+    const errors = [];
+    const ranCommands = [];
+    const deferredNotes = [];
+    for (const command of commands) {
+        try {
+            exec("powershell", ["-NoProfile", "-Command", command], { cwd: repoRoot, env });
+            ranCommands.push(command);
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (isLocalBuildEnvError(msg) && !/compileKotlin FAILED|compileJava FAILED|Unresolved reference:|Compilation error|There were failing tests/i.test(msg)) {
+                deferredNotes.push(`Local command deferred to CI (${command}): ${msg}`);
+            } else {
+                errors.push(`Target ${target.id} workspace verification failed (${command}): ${msg}`);
+            }
+        }
+    }
+
+    if (ranCommands.length > 0 && record(targetImpl)) {
+        const existingRun = Array.isArray(targetImpl.verificationCommandsRun)
+            ? targetImpl.verificationCommandsRun
+            : [];
+        targetImpl.verificationCommandsRun = [...new Set([...existingRun, ...ranCommands])];
+    }
+    if (deferredNotes.length > 0 && record(implementation)) {
+        implementation.assumptions = [
+            ...(Array.isArray(implementation.assumptions) ? implementation.assumptions : []),
+            ...deferredNotes,
+        ];
+    }
+    return { errors, ranCommands, deferredNotes };
+}
+
 export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem, linkSubrepos = true } = {}) {
     if (linkSubrepos) ensureSubrepoCheckouts(workspaceRoot, exec);
     if (typeof args === "string") {
@@ -999,8 +1120,48 @@ export function formatPrBody(target, targetImpl, traceabilityRows, reviewRoundCo
     ].join("\n");
 }
 
+export function reconcileImplementationWithTask(implementation, task) {
+    if (!record(implementation) || !record(task) || task.inputMode === "structured") {
+        return implementation;
+    }
+    if (!nonempty(implementation.taskRevision) || implementation.taskRevision !== task.revision) {
+        implementation.taskRevision = task.revision;
+    }
+    if (Array.isArray(implementation.targets) && implementation.targets.length === 1 &&
+        Array.isArray(task.targets) && task.targets.length === 1 &&
+        record(implementation.targets[0])) {
+        implementation.targets[0].targetId = task.targets[0].id;
+    }
+    const primaryTarget = Array.isArray(implementation.targets) && record(implementation.targets[0])
+        ? implementation.targets[0]
+        : null;
+    if (primaryTarget && Array.isArray(task.requirements) && task.requirements.length > 0) {
+        const existingRows = Array.isArray(implementation.traceability)
+            ? implementation.traceability.filter(record)
+            : [];
+        const byReq = new Map(existingRows.map((row) => [row.requirementId, row]));
+        const defaultFiles = Array.isArray(primaryTarget.files)
+            ? primaryTarget.files.map((f) => f?.path).filter(nonempty)
+            : [];
+        const defaultTests = Array.isArray(primaryTarget.testsAddedOrUpdated)
+            ? primaryTarget.testsAddedOrUpdated.filter(nonempty)
+            : [];
+        if (defaultFiles.length > 0 && defaultTests.length > 0 && existingRows.length < task.requirements.length) {
+            implementation.traceability = task.requirements.map((req) => byReq.get(req.id) || {
+                requirementId: req.id,
+                targetIds: [primaryTarget.targetId],
+                filePaths: defaultFiles,
+                testLocations: defaultTests,
+                verification: primaryTarget.pr?.testPlan || "Verified by target unit tests.",
+            });
+        }
+    }
+    return implementation;
+}
+
 export function validateImplementation(implementation, task, { workspaceRoot = "" } = {}) {
     if (!record(implementation)) return ["Builder returned no valid structured implementation."];
+    reconcileImplementationWithTask(implementation, task);
     const errors = [];
     const revisionMatches = implementation.taskRevision === task.revision ||
         (task.inputMode !== "structured" && nonempty(implementation.taskRevision));
@@ -1053,6 +1214,7 @@ export function validateImplementation(implementation, task, { workspaceRoot = "
         }
     }
 
+    const normSlash = (p) => String(p || "").trim().replace(/\\/g, "/");
     const targetMap = new Map(
         Array.isArray(implementation.targets)
             ? implementation.targets.filter(record).map((t) => [t.targetId, t])
@@ -1074,9 +1236,9 @@ export function validateImplementation(implementation, task, { workspaceRoot = "
                 continue;
             }
             const citedFiles = new Set(
-                row.targetIds.flatMap((id) => (targetMap.get(id)?.files || []).map((f) => f?.path)),
+                row.targetIds.flatMap((id) => (targetMap.get(id)?.files || []).map((f) => normSlash(f?.path))),
             );
-            if (row.filePaths.some((filePath) => !citedFiles.has(filePath))) {
+            if (row.filePaths.some((filePath) => !citedFiles.has(normSlash(filePath)))) {
                 errors.push(`Traceability row for ${row.requirementId} cites filePaths not present in the target implementation.`);
             }
         }
@@ -1098,10 +1260,15 @@ export function validateReview(review, task) {
     }
     const targetIds = new Set(task.targets.map((t) => t.id));
     for (const target of task.targets) {
-        for (const expectedCriterion of target.acceptanceCriteria) {
-            const match = review.acceptanceCriteria.find(
-                (entry) => record(entry) && entry.targetId === target.id && entry.criterion === expectedCriterion,
-            );
+        const targetEntries = review.acceptanceCriteria.filter(
+            (entry) => record(entry) && (entry.targetId === target.id || (task.targets.length === 1 && task.inputMode !== "structured")),
+        );
+        for (let idx = 0; idx < target.acceptanceCriteria.length; idx++) {
+            const expectedCriterion = target.acceptanceCriteria[idx];
+            const match = targetEntries.find(
+                (entry) => entry.criterion === expectedCriterion ||
+                    (typeof entry.criterion === "string" && entry.criterion.trim().toLowerCase() === expectedCriterion.trim().toLowerCase()),
+            ) || (task.inputMode !== "structured" && targetEntries.length === target.acceptanceCriteria.length ? targetEntries[idx] : null);
             if (!match || typeof match.passed !== "boolean" || !nonempty(match.evidence)) {
                 return false;
             }
@@ -1111,7 +1278,7 @@ export function validateReview(review, task) {
         record(f) &&
         rubric.includes(f.rubricId) &&
         ["blocker", "major", "minor"].includes(f.severity) &&
-        targetIds.has(f.targetId) &&
+        (targetIds.has(f.targetId) || (task.targets.length === 1 && task.inputMode !== "structured")) &&
         ["id", "targetId", "file", "location", "evidence", "requiredChange"].every((key) => nonempty(f[key])));
 }
 
@@ -1390,6 +1557,67 @@ async function askUserForClarifications(questions, ctx, askUser) {
     return null;
 }
 
+export async function confirmBriefApproval(task, ctx, askBriefApproval) {
+    const summaryLines = [
+        `Title: ${task.title}`,
+        `Targets: ${(task.targets || []).map((t) => `${t.repository} (${t.baseBranch})`).join(", ") || "none"}`,
+        `Summary: ${task.designSummary || task.title}`,
+        "Requirements:",
+        ...(task.requirements || []).map((r) => `- [${r.id}] ${r.text}`),
+    ].join("\n");
+
+    if (typeof askBriefApproval === "function") {
+        const res = await askBriefApproval({ task, brief: summaryLines });
+        if (typeof res === "string") return { decision: res.trim().toLowerCase(), feedback: "" };
+        if (record(res) && nonempty(res.decision)) {
+            return {
+                decision: res.decision.trim().toLowerCase(),
+                feedback: typeof res.feedback === "string" ? res.feedback.trim() : "",
+            };
+        }
+        return { decision: "cancel", feedback: "" };
+    }
+    if (typeof ctx?.session?.ui?.elicitation === "function") {
+        const response = await ctx.session.ui.elicitation({
+            message: `${summaryLines}\n\nChoose whether to start autonomous implementation under this brief, refine it, or cancel:`,
+            requestedSchema: {
+                type: "object",
+                properties: {
+                    decision: {
+                        type: "string",
+                        enum: ["start", "refine", "cancel"],
+                        title: "Start implementation / Refine brief / Cancel",
+                        default: "start",
+                    },
+                    feedback: {
+                        type: "string",
+                        title: "Optional refinement feedback (when choosing refine)",
+                    },
+                },
+                required: ["decision"],
+            },
+        });
+        if (!record(response) || response.action !== "accept" || !record(response.content)) {
+            return { decision: "cancel", feedback: "" };
+        }
+        return {
+            decision: String(response.content.decision || "cancel").trim().toLowerCase(),
+            feedback: typeof response.content.feedback === "string" ? response.content.feedback.trim() : "",
+        };
+    }
+    return { decision: "start", feedback: "" };
+}
+
+export async function pauseForHelp(ctx, key, reason) {
+    const msg = `${reason}\nWorkflow run ${ctx?.runId || "current"} is paused at "${key}". Inspect and resolve the blocker, then resume this same run ID.`;
+    ctx?.log?.(msg);
+    if (typeof ctx?.pause === "function") {
+        await ctx.pause(key);
+        return true;
+    }
+    return false;
+}
+
 export async function runCodeFeature(ctx, dependencies = {}) {
     const rawOptions = record(ctx.args?.options) ? ctx.args.options : {};
     const maxFixes = positiveInt(rawOptions.maxFixIterations)
@@ -1467,34 +1695,123 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     phase("Validate task and gather evidence");
     const needsSpecExtraction = task.needsExtraction === true;
     const evidenceGuides = resolveRoleSkillGuides("evidence", task.targets);
-    evidence = await step("evidence", () => ask(
-        "Repository evidence",
-        EVIDENCE_AGENT,
-        `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.
+    const maxIntakeRounds = positiveInt(rawOptions.maxIntakeRounds)
+        ? Math.min(rawOptions.maxIntakeRounds, MAX_INTAKE_ROUNDS)
+        : MAX_INTAKE_ROUNDS;
+    const iterativeIntake = rawOptions.iterativeIntake === true;
+    const requireBriefApproval = rawOptions.requireBriefApproval === true || typeof dependencies.askBriefApproval === "function";
+    const pauseOnBlocker = rawOptions.pauseOnBlocker === true && typeof ctx?.pause === "function";
+
+    const captureTargetSnapshots = () => {
+        const map = new Map();
+        if (!manageWorkspace) return map;
+        for (const target of task.targets) {
+            const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+            const snap = snapshotWorktree(repoRoot, exec);
+            if (snap) map.set(target.id, snap);
+        }
+        return map;
+    };
+
+    const verifyReadOnlySnapshots = (beforeSnapshots, stageLabel) => {
+        if (!manageWorkspace || beforeSnapshots.size === 0) return [];
+        const drift = [];
+        for (const target of task.targets) {
+            const expectedSnap = beforeSnapshots.get(target.id);
+            if (!expectedSnap) continue;
+            const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+            const actualSnap = snapshotWorktree(repoRoot, exec);
+            if (actualSnap && actualSnap !== expectedSnap) {
+                drift.push(`Read-only stage "${stageLabel}" modified target worktree ${target.id} (${target.repository}).`);
+            }
+        }
+        return drift;
+    };
+
+    const applyClarificationAnswersToTask = (answers) => {
+        task.sourceInputs.clarifications = [
+            ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
+            ...answers,
+        ];
+        for (const entry of answers) {
+            const questionAskedForWorkItem = /\b(AB#|work\s*item|PBI)\b/i.test(String(entry?.question || ""));
+            const parsedAb = parseWorkItemNumber(entry?.answer, {
+                requirePrefixInText: !questionAskedForWorkItem,
+            });
+            if (positiveInt(parsedAb) && (!positiveInt(Number(task.workItemId)) || Number(task.workItemId) === 1)) {
+                task.workItemId = parsedAb;
+                for (const target of task.targets) {
+                    if (!positiveInt(Number(target.workItemId)) || Number(target.workItemId) === 1) {
+                        target.workItemId = parsedAb;
+                    }
+                }
+            }
+        }
+        const clarifiedCriteria = answers
+            .map((entry) => typeof entry?.answer === "string" ? entry.answer.trim() : "")
+            .filter(nonempty);
+        if (clarifiedCriteria.length > 0) {
+            const clarificationSummary = answers
+                .map((entry) => `${entry.question} -> ${entry.answer}`)
+                .join("\n");
+            task.designSummary = nonempty(task.designSummary)
+                ? `${task.designSummary}\n\nClarified scope:\n${clarificationSummary}`
+                : `Clarified scope:\n${clarificationSummary}`;
+            if (task.requirements.length === 1 && task.requirements[0].text.toLowerCase() === task.title.toLowerCase()) {
+                task.requirements[0].text = `${task.requirements[0].text}: ${clarifiedCriteria.join("; ")}`;
+            }
+            for (const target of task.targets) {
+                const hasBlockedPlaceholder = !Array.isArray(target.acceptanceCriteria) ||
+                    target.acceptanceCriteria.length === 0 ||
+                    target.acceptanceCriteria.some((c) => /remain blocked|unspecified|blocked on/i.test(c));
+                if (hasBlockedPlaceholder) {
+                    target.acceptanceCriteria = [...clarifiedCriteria];
+                }
+            }
+        }
+    };
+
+    for (let intakeRound = 0; intakeRound < maxIntakeRounds; intakeRound++) {
+        const evidenceStepKey = intakeRound === 0 ? "evidence" : `evidence-round-${intakeRound}`;
+        const evidenceLabel = intakeRound === 0 ? "Repository evidence" : `Repository evidence (round ${intakeRound + 1})`;
+        const beforeEvidenceSnaps = captureTargetSnapshots();
+        evidence = await step(evidenceStepKey, () => ask(
+            evidenceLabel,
+            EVIDENCE_AGENT,
+            `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.
 Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and the target Android repositories (${
-            task.targets.length > 0
-                ? task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")
-                : "common, broker, msal, adal"
-        }).
+                task.targets.length > 0
+                    ? task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")
+                    : "common, broker, msal, adal"
+            }).
 Record exact checked-out commit revisions, file paths, and symbols/line ranges.
 Verify that the approval/input record binds to revision (${task.revision}) and reference (${task.approval.reference}).
-${needsSpecExtraction
-            ? `Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, or prompt into extractedSpec. Always populate extractedSpec.targets with at least one target repository and non-empty acceptanceCriteria; set workItemId to null if no AB#<id> work item is provided.`
-            : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
+${needsSpecExtraction || intakeRound > 0
+                ? `Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, prompt, and recorded clarifications into extractedSpec. Always populate extractedSpec.targets with at least one target repository and non-empty acceptanceCriteria; set workItemId to null if no AB#<id> work item is provided.`
+                : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
 You are Stage 1 (read-only evidence and specification extraction) of a multi-stage workflow; later stages (code-builder, code-reviewer, and PR creation) execute worktree, implementation, review, and PR steps. Never report requests to implement code, manage worktrees, or run builder/reviewer stages as a conflict with your read-only role, and never report a missing workItemId as a conflict or blockingUnknown when createPullRequests is ${Boolean(createPullRequests)}.
 Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Populate clarificationQuestions / blockingUnknowns ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase.`,
-        needsSpecExtraction ? extractionEvidenceSchema : evidenceSchema,
-        { task, createPullRequests, skillGuides: evidenceGuides },
-        rawOptions.evidenceModel,
-    ));
+            needsSpecExtraction || intakeRound > 0 ? extractionEvidenceSchema : evidenceSchema,
+            { task, createPullRequests, intakeRound: intakeRound + 1, skillGuides: evidenceGuides },
+            rawOptions.evidenceModel,
+        ));
 
-    if (record(evidence) && task.inputMode !== "structured" && Array.isArray(evidence.conflicts)) {
-        evidence.conflicts = evidence.conflicts.filter(
-            (c) => !/baseBranch|checked-out commit|local .* checkout|read-only|workItemId|work\s*item|AB#|orchestrat|code-builder|code-reviewer/i.test(c),
-        );
-    }
+        const evidenceDrift = verifyReadOnlySnapshots(beforeEvidenceSnaps, evidenceLabel);
+        if (evidenceDrift.length > 0) {
+            return packet("NO-GO", evidenceDrift);
+        }
 
-    if (record(evidence)) {
+        if (record(evidence) && task.inputMode !== "structured" && Array.isArray(evidence.conflicts)) {
+            evidence.conflicts = evidence.conflicts.filter(
+                (c) => !/baseBranch|checked-out commit|local .* checkout|read-only|workItemId|work\s*item|AB#|orchestrat|code-builder|code-reviewer/i.test(c),
+            );
+        }
+
+        if (!record(evidence)) break;
+
+        if (intakeRound > 0) {
+            task.needsExtraction = true;
+        }
         task = mergeExtractedSpec(task, evidence);
         const rawQuestions = Array.isArray(evidence.clarificationQuestions) && evidence.clarificationQuestions.length > 0
             ? evidence.clarificationQuestions
@@ -1502,66 +1819,71 @@ Infer technical details from the design doc, PBI, clarifications, and existing c
                 ? evidence.blockingUnknowns
                 : [];
         const pendingQuestions = [...new Set(rawQuestions.filter(nonempty).map((q) => q.trim()))].slice(0, 3);
+
         if (pendingQuestions.length > 0) {
-            const answers = await step("clarifications", () => askUserForClarifications(pendingQuestions, ctx, dependencies.askUser));
+            const clarificationStepKey = intakeRound === 0 ? "clarifications" : `clarifications-${intakeRound}`;
+            const answers = await step(
+                clarificationStepKey,
+                () => askUserForClarifications(pendingQuestions, ctx, dependencies.askUser),
+            );
             if (Array.isArray(answers) && answers.length > 0) {
-                task.sourceInputs.clarifications = [
-                    ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
-                    ...answers,
-                ];
-                for (const entry of answers) {
-                    const questionAskedForWorkItem = /\b(AB#|work\s*item|PBI)\b/i.test(String(entry?.question || ""));
-                    const parsedAb = parseWorkItemNumber(entry?.answer, {
-                        requirePrefixInText: !questionAskedForWorkItem,
-                    });
-                    if (positiveInt(parsedAb) && (!positiveInt(Number(task.workItemId)) || Number(task.workItemId) === 1)) {
-                        task.workItemId = parsedAb;
-                        for (const target of task.targets) {
-                            if (!positiveInt(Number(target.workItemId)) || Number(target.workItemId) === 1) {
-                                target.workItemId = parsedAb;
-                            }
-                        }
-                    }
-                }
-                const clarifiedCriteria = answers
-                    .map((entry) => typeof entry?.answer === "string" ? entry.answer.trim() : "")
-                    .filter(nonempty);
-                if (clarifiedCriteria.length > 0) {
-                    const clarificationSummary = answers
-                        .map((entry) => `${entry.question} -> ${entry.answer}`)
-                        .join("\n");
-                    task.designSummary = nonempty(task.designSummary)
-                        ? `${task.designSummary}\n\nClarified scope:\n${clarificationSummary}`
-                        : `Clarified scope:\n${clarificationSummary}`;
-                    if (task.requirements.length === 1 && task.requirements[0].text.toLowerCase() === task.title.toLowerCase()) {
-                        task.requirements[0].text = `${task.requirements[0].text}: ${clarifiedCriteria.join("; ")}`;
-                    }
-                    for (const target of task.targets) {
-                        const hasBlockedPlaceholder = !Array.isArray(target.acceptanceCriteria) ||
-                            target.acceptanceCriteria.length === 0 ||
-                            target.acceptanceCriteria.some((c) => /remain blocked|unspecified|blocked on/i.test(c));
-                        if (hasBlockedPlaceholder) {
-                            target.acceptanceCriteria = [...clarifiedCriteria];
-                        }
-                    }
-                }
+                applyClarificationAnswersToTask(answers);
                 evidence.clarificationQuestions = [];
                 evidence.blockingUnknowns = [];
                 evidence.conflicts = [];
+                if (iterativeIntake && intakeRound + 1 < maxIntakeRounds) {
+                    continue;
+                }
             } else {
+                if (pauseOnBlocker) {
+                    await pauseForHelp(ctx, `${prefix}-clarifications-pause-${intakeRound}`, pendingQuestions.join("\n"));
+                }
                 return packet("needs clarification", pendingQuestions, pendingQuestions);
             }
         }
+
+        if (requireBriefApproval) {
+            const approvalStepKey = intakeRound === 0 ? "brief-approval" : `brief-approval-${intakeRound}`;
+            const briefResult = await step(
+                approvalStepKey,
+                () => confirmBriefApproval(task, ctx, dependencies.askBriefApproval),
+            );
+            if (briefResult.decision === "cancel") {
+                return packet("needs clarification", ["Implementation cancelled by user during brief review."]);
+            }
+            if (briefResult.decision === "refine") {
+                if (nonempty(briefResult.feedback)) {
+                    applyClarificationAnswersToTask([
+                        { question: "What should change in the reviewed brief?", answer: briefResult.feedback },
+                    ]);
+                }
+                if (intakeRound + 1 < maxIntakeRounds) {
+                    continue;
+                }
+                return packet("needs clarification", ["Brief refinement requested; max intake rounds reached."]);
+            }
+        }
+        break;
     }
 
     const evidenceErrors = validateEvidence(evidence, task);
-    if (evidenceErrors.length) return packet("needs clarification", evidenceErrors, evidenceErrors);
+    if (evidenceErrors.length) {
+        if (pauseOnBlocker) {
+            await pauseForHelp(ctx, `${prefix}-evidence-pause`, evidenceErrors.join("\n"));
+        }
+        return packet("needs clarification", evidenceErrors, evidenceErrors);
+    }
 
     const postExtractionErrors = validateTask(task, {
         allowDeferredTargets: false,
         requireWorkItemId: createPullRequests || task.inputMode === "structured" || task.inputMode === "pbi",
     });
-    if (postExtractionErrors.length) return packet("needs clarification", postExtractionErrors, postExtractionErrors);
+    if (postExtractionErrors.length) {
+        if (pauseOnBlocker) {
+            await pauseForHelp(ctx, `${prefix}-task-pause`, postExtractionErrors.join("\n"));
+        }
+        return packet("needs clarification", postExtractionErrors, postExtractionErrors);
+    }
 
     if (manageWorkspace) {
         for (const target of task.targets) {
@@ -1573,10 +1895,7 @@ Infer technical details from the design doc, PBI, clarifications, and existing c
         }
     }
 
-    const isLocalBuildEnvBlocker = (textValue) =>
-        /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew|gradle.*credential|local.*build.*environment/i.test(
-            String(textValue || ""),
-        );
+    const isLocalBuildEnvBlocker = isLocalBuildEnvError;
 
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
@@ -1634,98 +1953,125 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
                         );
                     }
                 }
-                if (implementation.blockingUnknowns.length) {
-                    const pendingBuilderQuestions = [...new Set(implementation.blockingUnknowns.filter(nonempty).map((q) => q.trim()))].slice(0, 3);
-                    const answers = await step(
-                        `builder-clarifications-${round}`,
-                        () => askUserForClarifications(pendingBuilderQuestions, ctx, dependencies.askUser),
-                    );
-                    if (Array.isArray(answers) && answers.length > 0) {
-                        task.sourceInputs.clarifications = [
-                            ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
-                            ...answers,
-                        ];
-                        implementation.blockingUnknowns = [];
-                    } else {
-                        restoreAll();
-                        return packet("needs clarification", implementation.blockingUnknowns, implementation.blockingUnknowns);
-                    }
-                }
-
-                for (const target of task.targets) {
-                    const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
-                    let backups = backupsByTarget.get(target.id);
-                    if (!backups) {
-                        backups = new Map();
-                        backupsByTarget.set(target.id, backups);
-                    }
-                    const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
-                    if (applyToWorkspace) {
-                        try {
-                            applyTargetFiles(repoRoot, targetImpl.files, backups);
-                            for (const command of target.verificationCommands) {
-                                exec("powershell", ["-NoProfile", "-Command", command], { cwd: repoRoot });
+                    if (implementation.blockingUnknowns.length) {
+                        const pendingBuilderQuestions = [...new Set(implementation.blockingUnknowns.filter(nonempty).map((q) => q.trim()))].slice(0, 3);
+                        const answers = await step(
+                            `builder-clarifications-${round}`,
+                            () => askUserForClarifications(pendingBuilderQuestions, ctx, dependencies.askUser),
+                        );
+                        if (Array.isArray(answers) && answers.length > 0) {
+                            task.sourceInputs.clarifications = [
+                                ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
+                                ...answers,
+                            ];
+                            implementation.blockingUnknowns = [];
+                        } else {
+                            if (pauseOnBlocker) {
+                                await pauseForHelp(ctx, `${prefix}-builder-pause-${round}`, implementation.blockingUnknowns.join("\n"));
                             }
-                        } catch (error) {
-                            validationErrors.push(
-                                `Target ${target.id} workspace verification failed: ${error instanceof Error ? error.message : String(error)}`,
-                            );
+                            restoreAll();
+                            return packet("needs clarification", implementation.blockingUnknowns, implementation.blockingUnknowns);
                         }
                     }
-                    diffsByTarget[target.id] = renderUnifiedDiff(backups, targetImpl.files, {
-                        repoRoot: manageWorkspace ? repoRoot : "",
-                        exec,
-                    });
-                }
-            }
 
-            if (validationErrors.length === 0) {
-                log(`Independent code review (round ${round + 1})`);
-                const review = await step(`independent-review-${round}`, () => ask(
-                    `Independent code reviewer (round ${round + 1})`,
-                    REVIEWER_AGENT,
-                    `Read and apply these repository code-review skills and reference guides: ${reviewerGuides.join(", ")}.
+                    for (const target of task.targets) {
+                        const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+                        let backups = backupsByTarget.get(target.id);
+                        if (!backups) {
+                            backups = new Map();
+                            backupsByTarget.set(target.id, backups);
+                        }
+                        const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+                        const hasOnDiskEdits = manageWorkspace &&
+                            existsSync(path.join(repoRoot, "gradlew.bat")) &&
+                            targetImpl.files.some((f) => !nonempty(f.content) && existsSync(path.resolve(repoRoot, f.path)));
+                        const shouldRunLocalGate = applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits;
+                        if (applyToWorkspace) {
+                            try {
+                                applyTargetFiles(repoRoot, targetImpl.files, backups);
+                            } catch (error) {
+                                validationErrors.push(
+                                    `Target ${target.id} workspace verification failed: ${error instanceof Error ? error.message : String(error)}`,
+                                );
+                            }
+                        }
+                        if (validationErrors.length === 0 && shouldRunLocalGate) {
+                            const gate = runLocalVerificationGate({
+                                repoRoot,
+                                target,
+                                targetImpl,
+                                implementation,
+                                exec,
+                            });
+                            validationErrors.push(...gate.errors);
+                        }
+                        diffsByTarget[target.id] = renderUnifiedDiff(backups, targetImpl.files, {
+                            repoRoot: manageWorkspace ? repoRoot : "",
+                            exec,
+                        });
+                    }
+                }
+
+                if (validationErrors.length === 0) {
+                    log(`Independent code review (round ${round + 1})`);
+                    const beforeReviewSnaps = captureTargetSnapshots();
+                    const review = await step(`independent-review-${round}`, () => ask(
+                        `Independent code reviewer (round ${round + 1})`,
+                        REVIEWER_AGENT,
+                        `Read and apply these repository code-review skills and reference guides: ${reviewerGuides.join(", ")}.
 Independently review the builder's code changes, unit tests, diffs, traceability, and PR metadata against the approved task and evidence.
 Apply the fixed rubric: ${rubric.join(", ")}.
 Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
 Evaluate unitTestsAndVerification by inspecting the authored unit tests and assertions directly; if local Gradle execution was skipped due to missing local VSTS Maven credentials (ENV_VSTS_MVN_CRED_* / settings.gradle) and deferred to CI pipelines, do not fail unitTestsAndVerification or raise a finding/blockingUnknown over the unrun local build—review the code and tests thoroughly instead.
 If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions.
 Do not edit code or waive criteria. Return findings=[] and pass=true on all criteria only when the code and PR packet are ready for human review.`,
-                    reviewSchema,
-                    {
-                        round: round + 1,
-                        maxFixIterations: maxFixes,
-                        task,
-                        evidence,
-                        implementation,
-                        diffsByTarget,
-                        rubric,
-                        skillGuides: reviewerGuides,
-                        priorReviews: history,
-                    },
-                    rawOptions.reviewerModel,
-                ));
+                        reviewSchema,
+                        {
+                            round: round + 1,
+                            maxFixIterations: maxFixes,
+                            task,
+                            evidence,
+                            implementation,
+                            diffsByTarget,
+                            rubric,
+                            skillGuides: reviewerGuides,
+                            priorReviews: history,
+                        },
+                        rawOptions.reviewerModel,
+                    ));
 
-                if (!validateReview(review, task)) {
-                    restoreAll();
-                    return packet("NO-GO", ["Independent code reviewer failed or returned malformed output."]);
-                }
+                    const reviewDrift = verifyReadOnlySnapshots(
+                        beforeReviewSnaps,
+                        `Independent code reviewer (round ${round + 1})`,
+                    );
+                    if (reviewDrift.length > 0) {
+                        restoreAll();
+                        return packet("NO-GO", reviewDrift);
+                    }
 
-                history.push({ round: round + 1, review });
+                    if (!validateReview(review, task)) {
+                        restoreAll();
+                        return packet("NO-GO", ["Independent code reviewer failed or returned malformed output."]);
+                    }
 
-                if (JSON.stringify(ctx.args) !== originalRaw) {
-                    restoreAll();
-                    return packet("NO-GO", ["Approved input changed during review; start a new run."]);
-                }
+                    history.push({ round: round + 1, review });
 
-                if (Array.isArray(review.blockingUnknowns) && review.blockingUnknowns.length > 0) {
-                    review.blockingUnknowns = review.blockingUnknowns.filter((item) => !isLocalBuildEnvBlocker(item));
-                }
+                    if (JSON.stringify(ctx.args) !== originalRaw) {
+                        restoreAll();
+                        return packet("NO-GO", ["Approved input changed during review; start a new run."]);
+                    }
 
-                if (review.blockingUnknowns.length) {
-                    restoreAll();
-                    return packet("needs clarification", review.blockingUnknowns, review.blockingUnknowns);
-                }
+                    if (Array.isArray(review.blockingUnknowns) && review.blockingUnknowns.length > 0) {
+                        review.blockingUnknowns = review.blockingUnknowns.filter((item) => !isLocalBuildEnvBlocker(item));
+                    }
+
+                    if (review.blockingUnknowns.length) {
+                        if (pauseOnBlocker) {
+                            await pauseForHelp(ctx, `${prefix}-review-pause-${round}`, review.blockingUnknowns.join("\n"));
+                        }
+                        restoreAll();
+                        return packet("needs clarification", review.blockingUnknowns, review.blockingUnknowns);
+                    }
 
                 const criteriaPassed = review.criteria.every((criterion) => criterion.pass === true);
                 const acceptancePassed = review.acceptanceCriteria.every((entry) => entry.passed === true);

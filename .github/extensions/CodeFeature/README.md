@@ -98,6 +98,16 @@ Pass a plain-language request (optionally with `repository` and `workItemId`):
   When `false`, returns the complete verified PR title, body, branch, and file changes in the
   packet without mutating git remotes.
 - `draftPullRequest` (default `false`): Passes `--draft` to `gh pr create` when creating PRs.
+- `iterativeIntake` (default `false`): Re-invokes `code-evidence` with recorded user answers
+  for up to 3 intake rounds so the extracted specification incorporates clarifications cleanly.
+- `requireBriefApproval` (default `false`): Presents the extracted brief for explicit
+  `start` / `refine` / `cancel` confirmation before running `code-builder`.
+- `runLocalVerification` (default `true` when `applyToWorkspace` or on-disk target edits exist):
+  Runs target `verificationCommands` with automatic `local.properties` (`sdk.dir`), `JAVA_HOME`,
+  and Azure CLI VSTS token provisioning before `code-reviewer`; compiler/test failures feed
+  directly into `code-builder` (`fix-1..3`), while missing local credentials defer cleanly to CI.
+- `pauseOnBlocker` (default `false`): Invokes `await ctx.pause(key)` on unresolved blockers so
+  the run can be resumed in place by `runId`.
 - `builderModel` / `reviewerModel` / `evidenceModel`: Optional model overrides so the
   independent reviewer can run on a distinct model from the builder.
 

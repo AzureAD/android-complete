@@ -13,6 +13,7 @@ import {
     REVIEWER_AGENT,
     customAgents,
     ensureIsolatedTargetWorktree,
+    extractRunnableVerificationCommand,
     formatPrBody,
     formatPrTitle,
     isSafeRelativeFilePath,
@@ -20,6 +21,8 @@ import {
     resolveRoleSkillGuides,
     rubric,
     runCodeFeature,
+    runLocalVerificationGate,
+    snapshotWorktree,
     validateEvidence,
     validateImplementation,
     validateReview,
@@ -739,4 +742,166 @@ test("prompt mode with createPullRequests=false handles null workItemId, empty e
     assert.equal(result.task.targets[0].workItemId, null);
     assert.equal(result.fixIterations, 0);
 });
+
+test("iterative intake loop re-invokes evidence after clarifications and supports brief refine->start approval", async () => {
+    const round1Evidence = () => ({
+        ...evidence(),
+        extractedSpec: {
+            title: "Add throttling",
+            designSummary: "Initial draft.",
+            requirements: [{ id: "R1", text: "Throttle silent requests." }],
+            targets: [],
+        },
+        clarificationQuestions: ["What fallback duration should apply when Retry-After is absent?"],
+    });
+    const round2Evidence = () => ({
+        ...evidence(),
+        extractedSpec: {
+            title: "Add 30s fallback throttling",
+            designSummary: "Refined with 30s fallback.",
+            requirements: task().requirements,
+            targets: task().targets,
+        },
+        clarificationQuestions: [],
+    });
+    const round3Evidence = () => ({
+        ...evidence(),
+        extractedSpec: {
+            title: "Add 30s fallback + UID-scoped throttling",
+            designSummary: "Refined with UID scope.",
+            requirements: task().requirements,
+            targets: task().targets,
+        },
+        clarificationQuestions: [],
+    });
+
+    const ctx = context([round1Evidence(), round2Evidence(), round3Evidence(), implementation(), review()]);
+    ctx.args = {
+        prompt: "add throttling to common",
+        options: {
+            createPullRequests: false,
+            iterativeIntake: true,
+            requireBriefApproval: true,
+        },
+    };
+    let briefCalls = 0;
+    const result = await runCodeFeature(ctx, {
+        askUser: async () => "Use 30s fallback and 3600s max cap.",
+        askBriefApproval: async () => {
+            briefCalls++;
+            return briefCalls === 1
+                ? { decision: "refine", feedback: "Also key by calling package UID." }
+                : { decision: "start" };
+        },
+    });
+    assert.equal(result.recommendation, "GO to PR Review");
+    assert.equal(briefCalls, 2);
+    assert.equal(result.task.title, "Add 30s fallback + UID-scoped throttling");
+});
+
+test("pre-review local verification gate catches Kotlin/Lombok compile errors before reviewer and defers missing local VSTS credentials", async () => {
+    assert.equal(
+        extractRunnableVerificationCommand("From broker, if the policy is placed in broker4j: .\\gradlew.bat :broker4j:test"),
+        ".\\gradlew.bat :broker4j:test",
+    );
+
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-gate-"));
+    try {
+        const commonDir = path.join(tempRoot, "common");
+        mkdirSync(commonDir, { recursive: true });
+        writeFileSync(path.join(commonDir, "gradlew.bat"), "@echo off\n", "utf8");
+
+        // 1. Missing local VSTS credentials in settings.gradle -> deferred to CI, not a failure
+        const envImpl = implementation();
+        const envGate = runLocalVerificationGate({
+            repoRoot: commonDir,
+            target: {
+                id: "common-throttling",
+                verificationCommands: ["From common: .\\gradlew.bat :common4j:test"],
+            },
+            targetImpl: envImpl.targets[0],
+            implementation: envImpl,
+            exec: (cmd) => {
+                if (cmd === "az") return "";
+                throw new Error("Could not get unknown property 'project' for Credentials in settings.gradle:13");
+            },
+        });
+        assert.deepEqual(envGate.errors, []);
+        assert.equal(envGate.deferredNotes.length, 1);
+
+        // 2. Real Kotlin/Lombok compile failure -> triggers builder fix-1 before independent reviewer runs
+        let gradleAttempt = 0;
+        const brokenImpl = implementation();
+        const fixedImpl = implementation();
+        const gateTask = task();
+        gateTask.targets[0].verificationCommands = ["From common: .\\gradlew.bat :common4j:test"];
+        const ctx = context([evidence(), brokenImpl, fixedImpl, review()]);
+        ctx.args = {
+            task: gateTask,
+            options: {
+                workspaceRoot: tempRoot,
+                runLocalVerification: true,
+                createPullRequests: false,
+            },
+        };
+        const result = await runCodeFeature(ctx, {
+            exec: (cmd) => {
+                if (cmd === "az") return "fake-vsts-token";
+                if (cmd === "powershell") {
+                    gradleAttempt++;
+                    if (gradleAttempt === 1) {
+                        throw new Error("> Task :broker4j:compileKotlin FAILED\nUnresolved reference: isShouldResolveInterrupt");
+                    }
+                    return "BUILD SUCCESSFUL";
+                }
+                return "";
+            },
+        });
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.equal(result.fixIterations, 1);
+        assert.equal(gradleAttempt, 2);
+    } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test("pauseOnBlocker invokes ctx.pause on unresolved clarification blockers and snapshotWorktree detects read-only worktree drift", async () => {
+    const pausedKeys = [];
+    const ctx = context([
+        {
+            ...evidence(),
+            blockingUnknowns: ["Need production tenant allowlist policy."],
+        },
+    ]);
+    ctx.pause = async (key) => {
+        pausedKeys.push(key);
+    };
+    ctx.args = {
+        task: task(),
+        options: { pauseOnBlocker: true },
+    };
+    const pausedResult = await runCodeFeature(ctx);
+    assert.equal(pausedResult.recommendation, "needs clarification");
+    assert.equal(pausedKeys.length, 1);
+
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-snap-"));
+    try {
+        const repoDir = path.join(tempRoot, "common");
+        mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+        let head = "abc1234";
+        const fakeGitExec = (_cmd, args) => {
+            if (args.includes("rev-parse")) return head;
+            return "";
+        };
+        const snap1 = snapshotWorktree(repoDir, fakeGitExec);
+        head = "def5678";
+        const snap2 = snapshotWorktree(repoDir, fakeGitExec);
+        assert.ok(snap1);
+        assert.ok(snap2);
+        assert.notEqual(snap1, snap2);
+    } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 
