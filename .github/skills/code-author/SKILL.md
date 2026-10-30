@@ -15,8 +15,14 @@ modifying production code.
 ## Core Implementation Rules
 
 ### 1. Strict Flight Isolation (Zero Off-Path Side Effects)
-- Gate every behavioral change behind a default-off flight (`CommonFlight`, `BrokerFlight`,
-  or `EcsFlight`).
+- Gate every behavioral change behind a flight (`CommonFlight`, `BrokerFlight`, or `EcsFlight`):
+  - **Standard features & behavioral changes**: Default to `false` (`default = false`).
+  - **Low-risk security fixes**: May ship enabled by default (`default = true`) as an ECS
+    **kill-switch flight** so production is protected immediately while retaining an emergency
+    kill switch.
+  - **Compat-sensitive security/validation changes** (such as URL/origin validation touching
+    ADFS/federated redirects): Split **shadow/telemetry mode** (emitting telemetry on mismatch
+    without blocking) from **enforcement mode** (`Enforce*` flight, `default = false`).
 - **When the flight is `false`, the legacy path must execute with zero new side effects**:
   - Do not initialize new ViewModels/coordinators, alter navigation graphs, write new
     saved-state markers, or emit new diagnostic logs on the flight-off path.
@@ -31,6 +37,10 @@ modifying production code.
 - **Whenever you add or rename a `SpanName` or sampled operation in Broker or Common, update
   the OpenTelemetry sampler configuration and sampler expectation unit tests in the same
   commit** so CI never fails on sampler map mismatches.
+- **Cross-repo `AttributeName` sync (`Common` <-> `Broker`)**: `AttributeName` is defined in
+  both `common4j` and `broker4j`; when adding OTel attributes in `Common` that are read or
+  forwarded in `Broker` (or vice versa), check whether a matching `AttributeName` entry is
+  needed in the companion repo.
 
 ### 3. Central & Cross-Layer Placement (Common vs. Broker vs. Client App)
 - Trace all converging entry points before choosing where a fix or feature lives (e.g.,
