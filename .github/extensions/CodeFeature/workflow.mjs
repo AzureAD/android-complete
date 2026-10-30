@@ -474,6 +474,16 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
         }
     }
     exec("git", ["worktree", "add", "--detach", targetDir, baseRef], { cwd: canonicalSource });
+    const sourceCommon = path.join(canonicalSource, "common");
+    const targetCommon = path.join(targetDir, "common");
+    if (existsSync(path.join(sourceCommon, ".git")) && !existsSync(path.join(targetCommon, ".git"))) {
+        try {
+            if (existsSync(targetCommon)) rmSync(targetCommon, { recursive: true, force: true });
+            exec("git", ["worktree", "add", "--detach", targetCommon, "HEAD"], { cwd: sourceCommon });
+        } catch {
+            // Best-effort nested common submodule worktree initialization.
+        }
+    }
     return targetDir;
 }
 
