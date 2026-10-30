@@ -823,8 +823,13 @@ export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec 
     const cloned = JSON.parse(JSON.stringify(args));
     const container = record(cloned.task) ? cloned.task : cloned;
 
-    const adoUrlCandidate = parseAdoDesignDocUrl(container.designDocPath) || parseAdoDesignDocUrl(container.prompt);
-    if (adoUrlCandidate && !nonempty(container.designDoc)) {
+    const adoUrlCandidate =
+        parseAdoDesignDocUrl(container.designDocPath) ||
+        parseAdoDesignDocUrl(typeof container.designDoc === "string" ? container.designDoc : "") ||
+        parseAdoDesignDocUrl(container.prompt);
+    const isDesignDocUrlOnly =
+        typeof container.designDoc === "string" && Boolean(parseAdoDesignDocUrl(container.designDoc));
+    if (adoUrlCandidate && (!nonempty(container.designDoc) || isDesignDocUrlOnly)) {
         try {
             const fetched = typeof fetchDesignDoc === "function"
                 ? fetchDesignDoc(adoUrlCandidate)
@@ -990,9 +995,12 @@ export function normalizeTask(args) {
             verificationCommands: Array.isArray(item.verificationCommands) ? item.verificationCommands : [],
         }));
     } else if (nonempty(raw.repository) || inputMode !== "structured") {
+        const inferredFromDoc = nonempty(designDocText) ? inferRepositoriesFromText(designDocText) : [];
         const inferredRepos = nonempty(raw.repository)
             ? [raw.repository]
-            : inferRepositoriesFromText(`${designDocText}\n${promptText}`);
+            : inferredFromDoc.length > 0
+                ? inferredFromDoc
+                : inferRepositoriesFromText(`${designDocText}\n${promptText}`);
         rawTargets = inferredRepos.map((repoName, idx) => ({
             id: nonempty(raw.targetId) && idx === 0 ? raw.targetId.trim() : `target-${idx + 1}`,
             repository: repoName,
