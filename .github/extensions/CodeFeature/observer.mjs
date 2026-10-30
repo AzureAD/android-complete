@@ -2,8 +2,15 @@
 // Licensed under the MIT License.
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
+import {
+    currentStatusOwners,
+    currentStatuses,
+    renderCurrentStatusBlock,
+    statusMarkers,
+    upsertMarkerBlock,
+} from "./status.mjs";
 import {
     BUILDER_AGENT,
     REVIEWER_AGENT,
@@ -136,6 +143,22 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
     return JSON.parse(rawJson);
 }
 
+export function computeRepairIdentity({ observation, snapshot, worktreeSnap }) {
+    const findings = Array.isArray(observation?.actionableFindings)
+        ? [...observation.actionableFindings].map((s) => String(s || "").trim()).filter(Boolean).sort()
+        : [];
+    const headOid = snapshot?.headRefOid || snapshot?.headRefName || "HEAD";
+    const baseRef = snapshot?.baseRefName || "dev";
+    const payload = JSON.stringify([
+        observation?.repairKind || "repair",
+        headOid,
+        baseRef,
+        findings,
+        worktreeSnap || "",
+    ]);
+    return createHash("sha256").update(payload).digest("hex").slice(0, 16);
+}
+
 export async function runPrObserver(ctx, dependencies = {}) {
     const args = record(ctx?.args) ? ctx.args : {};
     const rawOptions = record(args.options) ? args.options : {};
@@ -162,7 +185,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
         : typeof ctx?.pause === "function";
 
     const prefix = `pr-observer-v1-${createHash("sha256").update(parsedPr.prUrl).digest("hex").slice(0, 16)}`;
-    const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
+    const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
 
@@ -179,12 +202,13 @@ export async function runPrObserver(ctx, dependencies = {}) {
     const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
     const builderGuides = resolveRoleSkillGuides("builder", [target]);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", [target]);
+    const attemptedRepairIdentities = new Set();
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
         phase("Observe");
         log(`Observing ${parsedPr.prUrl} (iteration ${iteration + 1}/${maxIterations})`);
 
-        const snapshot = await step(`snapshot-${iteration}`, async () => fetchSnapshot(parsedPr));
+        const snapshot = await step(`snapshot-${iteration}`, async () => fetchSnapshot(parsedPr), { volatile: true });
         if (record(snapshot) && nonempty(snapshot.baseRefName)) {
             target.baseBranch = snapshot.baseRefName;
         }
@@ -193,14 +217,18 @@ export async function runPrObserver(ctx, dependencies = {}) {
             : `pr-${parsedPr.prNumber}`;
 
         const beforeObserveSnap = snapshotWorktree(repoRoot, exec);
-        const observation = await step(`observe-${iteration}`, () => ctx.agent(
-            `Inspect the pull request snapshot and classify whether it is ready for human merge, needs a tactical repair (CI failure, review comment, or merge conflict), is waiting for CI, or needs an owner decision.\nDATA:\n${JSON.stringify({ pr: parsedPr, snapshot, iteration: iteration + 1 })}`,
-            {
-                label: `Observe PR #${parsedPr.prNumber} (round ${iteration + 1})`,
-                agent: OBSERVER_AGENT,
-                schema: observationSchema,
-            },
-        ));
+        const observation = await step(
+            `observe-${iteration}`,
+            () => ctx.agent(
+                `Inspect the pull request snapshot and classify whether it is ready for human merge, needs a tactical repair (CI failure, review comment, or merge conflict), is waiting for CI, or needs an owner decision.\nFresh observation request: ${randomUUID()}\nDATA:\n${JSON.stringify({ pr: parsedPr, snapshot, iteration: iteration + 1 })}`,
+                {
+                    label: `Observe PR #${parsedPr.prNumber} (round ${iteration + 1})`,
+                    agent: OBSERVER_AGENT,
+                    schema: observationSchema,
+                },
+            ),
+            { volatile: true },
+        );
         const afterObserveSnap = snapshotWorktree(repoRoot, exec);
         if (beforeObserveSnap && afterObserveSnap && beforeObserveSnap !== afterObserveSnap) {
             return {
@@ -223,14 +251,24 @@ export async function runPrObserver(ctx, dependencies = {}) {
         }
 
         if (observation.verdict === "ready") {
+            const readyStatusBlock = renderCurrentStatusBlock({
+                status: currentStatuses.readyForHumanMerge,
+                owner: currentStatusOwners.human,
+                runId: ctx?.runId || "local",
+                repository: parsedPr.repository,
+                prUrl: parsedPr.prUrl,
+                summary: observation.summary,
+                nextAction: "Human review and merge in GitHub/GHE.",
+            });
             return {
-                status: "ready-for-human-merge",
+                status: currentStatuses.readyForHumanMerge,
                 prUrl: parsedPr.prUrl,
                 repairKind: "none",
                 summary: observation.summary,
                 evidence: observation.evidence || [],
                 iterations: iteration + 1,
                 humanMergeOnly: true,
+                statusBlock: readyStatusBlock,
             };
         }
 
@@ -248,6 +286,28 @@ export async function runPrObserver(ctx, dependencies = {}) {
                 iterations: iteration + 1,
             };
         }
+
+        const repairId = computeRepairIdentity({
+            observation,
+            snapshot,
+            worktreeSnap: afterObserveSnap,
+        });
+        if (attemptedRepairIdentities.has(repairId)) {
+            const repeatMsg = `Repeated identical tactical repair assignment (${repairId}) on ${parsedPr.prUrl}; pausing for human inspection instead of looping.`;
+            if (pauseOnBlocker) {
+                await pauseForHelp(ctx, `${prefix}-repeat-repair-${iteration}`, repeatMsg);
+            }
+            return {
+                status: currentStatuses.needsOwnerDecision,
+                prUrl: parsedPr.prUrl,
+                repairKind: observation.repairKind,
+                summary: repeatMsg,
+                evidence: observation.evidence || [],
+                actionableFindings: observation.actionableFindings || [],
+                iterations: iteration + 1,
+            };
+        }
+        attemptedRepairIdentities.add(repairId);
 
         // verdict === "repair"
         phase("Repair");

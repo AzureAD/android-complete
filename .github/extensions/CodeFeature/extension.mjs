@@ -14,24 +14,37 @@ const { defineWorkflow, joinSession } = await import(sdkModule);
 const workflowUrl = new URL("./workflow.mjs", import.meta.url);
 const observerUrl = new URL("./observer.mjs", import.meta.url);
 
+let activeWorkflow = null;
+async function runExclusively(name, fn) {
+    if (activeWorkflow) {
+        throw new Error(`Workflow "${activeWorkflow}" is already running in this session; use a separate session for concurrent jobs.`);
+    }
+    activeWorkflow = name;
+    try {
+        return await fn();
+    } finally {
+        activeWorkflow = null;
+    }
+}
+
 await joinSession({
     customAgents: [...customAgents, observerCustomAgent],
     workflows: [
         defineWorkflow({
             ...workflowDefinition,
-            run: async (ctx) => {
+            run: async (ctx) => runExclusively("code-feature", async () => {
                 const { mtimeMs } = statSync(workflowUrl);
                 const latest = await import(`${workflowUrl.href}?v=${mtimeMs}`);
                 return latest.runCodeFeature(ctx);
-            },
+            }),
         }),
         defineWorkflow({
             ...observerWorkflowDefinition,
-            run: async (ctx) => {
+            run: async (ctx) => runExclusively("pr-observer", async () => {
                 const { mtimeMs } = statSync(observerUrl);
                 const latest = await import(`${observerUrl.href}?v=${mtimeMs}`);
                 return latest.runPrObserver(ctx);
-            },
+            }),
         }),
     ],
 });

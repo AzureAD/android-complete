@@ -8,11 +8,18 @@ import path from "node:path";
 import test from "node:test";
 import {
     OBSERVER_AGENT,
+    computeRepairIdentity,
     observerCustomAgent,
     observerWorkflowDefinition,
     parsePullRequestUrl,
     runPrObserver,
 } from "./observer.mjs";
+import {
+    currentStatuses,
+    deliveryDecisionMarkers,
+    parseMarkerBlock,
+    statusMarkers,
+} from "./status.mjs";
 import {
     BUILDER_AGENT,
     EVIDENCE_AGENT,
@@ -1063,6 +1070,148 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
     assert.equal(result.humanMergeOnly, true);
     assert.ok(gitCommands.some((c) => c.cmd === "git" && c.args.includes("push")));
 });
+
+test("question deduplication, pre-coding spec challenge, resume worktree inspection, PR status blocks, and observer anti-loop", async () => {
+    // 1. Question deduplication + pre-coding spec challenge + PR status/delivery-decision blocks
+    const round1Ev = {
+        ...evidence(),
+        extractedSpec: {
+            title: "Add Broker throttling",
+            designSummary: "Initial draft.",
+            requirements: task().requirements,
+            targets: task().targets,
+        },
+        clarificationQuestions: ["What fallback duration should apply when Retry-After is absent?"],
+    };
+    const round2Ev = {
+        ...evidence(),
+        extractedSpec: {
+            title: "Add Broker throttling",
+            designSummary: "Updated draft.",
+            requirements: task().requirements,
+            targets: task().targets,
+        },
+        // Repeats the exact same question on round 2 — should be deduplicated automatically without prompting again!
+        clarificationQuestions: ["What fallback duration should apply when Retry-After is absent?"],
+    };
+    const challengePass = {
+        verdict: "pass",
+        summary: "Scope is sound; preserve UiRequiredException subtypes during replay.",
+        evidence: ["ExceptionAdapter.java:L270"],
+        findings: ["Preserve UiRequiredException and IntuneAppProtectionPolicyRequiredException subtypes during cached error replay."],
+        questions: [],
+    };
+
+    const askedQuestions = [];
+    const challengeCtx = context([round1Ev, round2Ev, challengePass, implementation(), review()]);
+    challengeCtx.args = {
+        prompt: "add throttling to common (AB#3802484)",
+        options: {
+            createPullRequests: false,
+            iterativeIntake: true,
+            challengeBrief: true,
+        },
+    };
+    const challengePacket = await runCodeFeature(challengeCtx, {
+        askUser: async (q) => {
+            askedQuestions.push(q);
+            return "30s fallback, 3600s max cap.";
+        },
+    });
+    assert.equal(challengePacket.recommendation, "GO to PR Review");
+    assert.equal(askedQuestions.length, 1);
+    assert.ok(challengePacket.task.designSummary.includes("Preserve UiRequiredException"));
+    const prBody = challengePacket.pullRequests[0].body;
+    const parsedDelivery = parseMarkerBlock(prBody, deliveryDecisionMarkers);
+    const parsedStatus = parseMarkerBlock(prBody, statusMarkers);
+    assert.equal(parsedDelivery?.rollout?.tag, "feature-flag");
+    assert.equal(parsedStatus?.status, currentStatuses.publishedForObservation);
+
+    // 2. Resume worktree inspection (recoverWorktree) after builder blocker
+    const blockedBuilder = {
+        ...implementation(),
+        blockingUnknowns: ["Manual setup required in worktree."],
+    };
+    const inspectPass = {
+        verdict: "pass",
+        summary: "Manual repair in worktree verified and in scope.",
+        evidence: [
+            "common4j/src/main/kotlin/com/microsoft/identity/common/java/throttling/RetryAfterThrottleCache.kt:L1-L40",
+            "common4j/src/test/kotlin/com/microsoft/identity/common/java/throttling/RetryAfterThrottleCacheTest.kt:L1-L35",
+        ],
+        prTitle: "Add Retry-After throttle cache in Common",
+        prSummary: "Implements Retry-After cache.",
+        testPlan: ".\\gradlew.bat :common4j:test",
+        rolloutAndFlag: "CommonFlight.ENABLE_RETRY_AFTER_THROTTLE",
+    };
+    const recoverPaused = [];
+    const recoverCtx = context([evidence(), blockedBuilder, inspectPass, review()]);
+    recoverCtx.pause = async (key) => {
+        recoverPaused.push(key);
+    };
+    recoverCtx.args = {
+        task: task(),
+        options: {
+            createPullRequests: false,
+            pauseOnBlocker: true,
+            enableRecoveryInspection: true,
+        },
+    };
+    const recoveredPacket = await runCodeFeature(recoverCtx);
+    assert.equal(recoveredPacket.recommendation, "GO to PR Review");
+    assert.equal(recoverPaused.length, 1);
+
+    // 3. Observer anti-loop (computeRepairIdentity) stops repeated identical repair on same commit
+    const repeatObs = {
+        verdict: "repair",
+        repairKind: "ci-failure",
+        summary: "Same CI failure on commit abc111.",
+        evidence: ["check-run-1"],
+        actionableFindings: ["Fix compile error in SilentRequestIdentity.kt"],
+    };
+    const repeatReviewFail = {
+        verdict: "repair",
+        summary: "Still broken.",
+        evidence: ["SilentRequestIdentity.kt"],
+        findings: ["Still missing explicit getter."],
+    };
+    const obsPauses = [];
+    const obsCtx = context([
+        repeatObs,
+        {
+            verdict: "pass",
+            summary: "Attempted fix 1",
+            evidence: ["SilentRequestIdentity.kt"],
+            prTitle: "Fix 1",
+            prSummary: "Fix 1",
+            testPlan: "test",
+            rolloutAndFlag: "flight",
+        },
+        repeatReviewFail,
+        repeatObs,
+    ]);
+    obsCtx.pause = async (key) => {
+        obsPauses.push(key);
+    };
+    obsCtx.args = {
+        prUrl: "https://msft.ghe.com/security/ad-accounts-for-android/pull/362",
+    };
+    const obsLoopResult = await runPrObserver(obsCtx, {
+        fetchPrSnapshot: () => ({
+            number: 362,
+            state: "OPEN",
+            mergeStateStatus: "CLEAN",
+            headRefName: "shjameel/broker-silent-server-throttling",
+            headRefOid: "abc111",
+            baseRefName: "dev",
+        }),
+        exec: () => "",
+    });
+    assert.equal(obsLoopResult.status, currentStatuses.needsOwnerDecision);
+    assert.equal(obsPauses.length, 1);
+    assert.ok(computeRepairIdentity({ observation: repeatObs, snapshot: { headRefOid: "abc111" }, worktreeSnap: "" }));
+});
+
 
 
 
