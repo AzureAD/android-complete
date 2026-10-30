@@ -3,7 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const text = { type: "string" };
@@ -395,9 +395,8 @@ function normalizeTargetObject(target, fallbackRaw = {}, index = 0) {
     };
 }
 
-export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = defaultExec) {
-    if (!existsSync(workspaceRoot)) return [];
-    let mainCheckout = null;
+export function resolveMainCheckoutRoot(workspaceRoot = process.cwd(), exec = defaultExec) {
+    if (!existsSync(workspaceRoot)) return null;
     try {
         const commonGitDir = exec("git", ["rev-parse", "--git-common-dir"], { cwd: workspaceRoot });
         if (nonempty(commonGitDir)) {
@@ -405,13 +404,26 @@ export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = def
             if (path.basename(resolvedGitDir).toLowerCase() === ".git") {
                 const candidateMain = path.dirname(resolvedGitDir);
                 if (existsSync(candidateMain) && path.resolve(candidateMain) !== path.resolve(workspaceRoot)) {
-                    mainCheckout = candidateMain;
+                    return candidateMain;
                 }
             }
         }
     } catch {
-        // Not a git worktree or git unavailable; skip junction linking.
+        // Not a git worktree or git unavailable.
     }
+    return null;
+}
+
+function removeDirectoryJunction(linkPath) {
+    try {
+        unlinkSync(linkPath);
+    } catch {
+        rmSync(linkPath, { recursive: false, force: true });
+    }
+}
+
+export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = defaultExec) {
+    const mainCheckout = resolveMainCheckoutRoot(workspaceRoot, exec);
     if (!mainCheckout) return [];
     const linked = [];
     for (const subrepo of ["common", "broker", "msal", "adal", "design-docs", "1ES-Pipelines"]) {
@@ -427,6 +439,42 @@ export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = def
         }
     }
     return linked;
+}
+
+export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defaultExec) {
+    const localPath = nonempty(target?.localPath) ? target.localPath.trim() : ".";
+    const targetDir = path.resolve(workspaceRoot, localPath);
+    if (localPath === "." || localPath === "") return targetDir;
+    const mainCheckout = resolveMainCheckoutRoot(workspaceRoot, exec);
+    if (!mainCheckout) return targetDir;
+    const sourceRepo = path.resolve(mainCheckout, localPath);
+    if (!existsSync(path.join(sourceRepo, ".git"))) return targetDir;
+    const canonicalSource = realpathSync(sourceRepo);
+    const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
+
+    if (existsSync(targetDir)) {
+        const stat = lstatSync(targetDir);
+        if (stat.isSymbolicLink() || normalize(realpathSync(targetDir)) === normalize(canonicalSource)) {
+            removeDirectoryJunction(targetDir);
+        } else if (existsSync(path.join(targetDir, ".git"))) {
+            return targetDir;
+        }
+    }
+
+    mkdirSync(path.dirname(targetDir), { recursive: true });
+    const baseBranch = nonempty(target?.baseBranch) ? target.baseBranch.trim() : "dev";
+    let baseRef = "HEAD";
+    for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
+        try {
+            exec("git", ["rev-parse", "--verify", candidate], { cwd: canonicalSource });
+            baseRef = candidate;
+            break;
+        } catch {
+            // Try next ref if remote-tracking ref is absent.
+        }
+    }
+    exec("git", ["worktree", "add", "--detach", targetDir, baseRef], { cwd: canonicalSource });
+    return targetDir;
 }
 
 export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem } = {}) {
@@ -863,7 +911,7 @@ export function formatPrBody(target, targetImpl, traceabilityRows, reviewRoundCo
     ].join("\n");
 }
 
-export function validateImplementation(implementation, task) {
+export function validateImplementation(implementation, task, { workspaceRoot = "" } = {}) {
     if (!record(implementation)) return ["Builder returned no valid structured implementation."];
     const errors = [];
     const revisionMatches = implementation.taskRevision === task.revision ||
@@ -887,6 +935,7 @@ export function validateImplementation(implementation, task) {
             if (!nonempty(actual.summary)) {
                 errors.push(`Target ${expectedTarget.id} is missing an implementation summary.`);
             }
+            const repoRoot = nonempty(workspaceRoot) ? path.resolve(workspaceRoot, expectedTarget.localPath || ".") : "";
             if (!Array.isArray(actual.files) || actual.files.length === 0 ||
                 !unique(actual.files.map((f) => f?.path))) {
                 errors.push(`Target ${expectedTarget.id} must list unique non-empty changed files.`);
@@ -897,8 +946,9 @@ export function validateImplementation(implementation, task) {
                         errors.push(`Target ${expectedTarget.id} has an invalid file entry (${file?.path || "unknown"}).`);
                         continue;
                     }
-                    if (file.action !== "delete" && !nonempty(file.content)) {
-                        errors.push(`Target ${expectedTarget.id} file ${file.path} must include non-empty content.`);
+                    const existsOnDisk = nonempty(repoRoot) && existsSync(path.resolve(repoRoot, file.path));
+                    if (file.action !== "delete" && !nonempty(file.content) && !existsOnDisk) {
+                        errors.push(`Target ${expectedTarget.id} file ${file.path} must include non-empty content or exist on disk.`);
                     }
                 }
             }
@@ -998,13 +1048,15 @@ export function applyTargetFiles(repoRoot, files, backups) {
         }
         if (file.action === "delete") {
             if (existsSync(destination)) rmSync(destination, { force: true });
-        } else {
+        } else if (nonempty(file.content)) {
             mkdirSync(path.dirname(destination), { recursive: true });
             const resolvedParent = normalize(realpathSync(path.dirname(destination)));
             if (resolvedParent !== normalizedRoot && !resolvedParent.startsWith(normalizedRoot + path.sep)) {
                 throw new Error(`Symlink parent escapes repository root: ${file.path}`);
             }
             writeFileSync(destination, file.content, "utf8");
+        } else if (existsSync(destination)) {
+            file.content = readFileSync(destination, "utf8");
         }
     }
 }
@@ -1323,17 +1375,30 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
 
     if (record(evidence)) {
         task = mergeExtractedSpec(task, evidence);
-        const pendingQuestions = [
-            ...(Array.isArray(evidence.clarificationQuestions) ? evidence.clarificationQuestions : []),
-            ...(Array.isArray(evidence.blockingUnknowns) ? evidence.blockingUnknowns : []),
-        ].filter(nonempty);
+        const rawQuestions = Array.isArray(evidence.clarificationQuestions) && evidence.clarificationQuestions.length > 0
+            ? evidence.clarificationQuestions
+            : Array.isArray(evidence.blockingUnknowns)
+                ? evidence.blockingUnknowns
+                : [];
+        const pendingQuestions = [...new Set(rawQuestions.filter(nonempty).map((q) => q.trim()))].slice(0, 3);
         if (pendingQuestions.length > 0) {
-            const answers = await askUserForClarifications(pendingQuestions, ctx, dependencies.askUser);
-            if (answers) {
+            const answers = await step("clarifications", () => askUserForClarifications(pendingQuestions, ctx, dependencies.askUser));
+            if (Array.isArray(answers) && answers.length > 0) {
                 task.sourceInputs.clarifications = [
                     ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
                     ...answers,
                 ];
+                for (const entry of answers) {
+                    const parsedAb = parseWorkItemNumber(entry?.answer);
+                    if (positiveInt(parsedAb) && (!positiveInt(Number(task.workItemId)) || Number(task.workItemId) === 1)) {
+                        task.workItemId = parsedAb;
+                        for (const target of task.targets) {
+                            if (!positiveInt(Number(target.workItemId)) || Number(target.workItemId) === 1) {
+                                target.workItemId = parsedAb;
+                            }
+                        }
+                    }
+                }
                 evidence.clarificationQuestions = [];
                 evidence.blockingUnknowns = [];
             } else {
@@ -1348,13 +1413,21 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
     const postExtractionErrors = validateTask(task, { allowDeferredTargets: false });
     if (postExtractionErrors.length) return packet("needs clarification", postExtractionErrors, postExtractionErrors);
 
+    for (const target of task.targets) {
+        try {
+            ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
+        } catch {
+            // Best-effort isolated worktree materialization in test/mock environments.
+        }
+    }
+
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
     const builderTask = `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
 Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
 Preserve all approved requirements and acceptance criteria verbatim.
-Return the complete file content for every created or modified file in targets[].files, unit tests in testsAddedOrUpdated,
-requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
+If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
+Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
 Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`;
 
     phase("Build initial implementation");
@@ -1387,7 +1460,7 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
                 return packet("NO-GO", ["Approved input changed during the run; start a new run."]);
             }
 
-            const validationErrors = validateImplementation(implementation, task);
+            const validationErrors = validateImplementation(implementation, task, { workspaceRoot });
             const diffsByTarget = {};
 
             if (validationErrors.length === 0) {
@@ -1572,7 +1645,6 @@ export const workflowDefinition = {
         limits: {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 9,
-            timeoutSeconds: 3600,
         },
     },
     run: runCodeFeature,

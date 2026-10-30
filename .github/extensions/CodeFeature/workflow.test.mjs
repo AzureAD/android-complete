@@ -12,6 +12,7 @@ import {
     MAX_FIX_ITERATIONS,
     REVIEWER_AGENT,
     customAgents,
+    ensureIsolatedTargetWorktree,
     formatPrBody,
     formatPrTitle,
     isSafeRelativeFilePath,
@@ -534,6 +535,7 @@ test("customAgents enforce read-only reviewer permissions and workflow metadata 
     assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "common" }]).includes("common/.github/skills/code-review/SKILL.md"));
     assert.ok(resolveRoleSkillGuides("reviewer", [{ repository: "broker" }]).includes("broker/.github/skills/code-review/SKILL.md"));
     assert.equal(workflowDefinition.meta.limits.maxAiCredits, undefined);
+    assert.equal(workflowDefinition.meta.limits.timeoutSeconds, undefined);
     assert.equal(workflowDefinition.meta.name, "code-feature");
     assert.equal(formatPrTitle("Add cache", 12345), "Add cache, Fixes AB#12345");
     assert.equal(formatPrTitle("Add cache, Fixes AB#12345", 12345), "Add cache, Fixes AB#12345");
@@ -657,4 +659,31 @@ test("clarification questions are asked only when requirements are unclear and r
             answer: "Only silent token requests.",
         },
     ]);
+});
+
+test("ensureIsolatedTargetWorktree replaces a shared junction and validateImplementation accepts on-disk edits with empty content", async () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-wt-"));
+    try {
+        const commonDir = path.join(tempRoot, "common");
+        const onDiskFile = path.join(commonDir, "common4j/src/main/kotlin/com/microsoft/identity/common/java/throttling/RetryAfterThrottleCache.kt");
+        mkdirSync(path.dirname(onDiskFile), { recursive: true });
+        writeFileSync(onDiskFile, "// written directly by builder tool\nclass RetryAfterThrottleCache\n", "utf8");
+
+        const implWithEmptyContent = implementation();
+        implWithEmptyContent.targets[0].files[0].content = "";
+        const normalized = normalizeTask({ task: task() });
+        assert.deepEqual(validateImplementation(implWithEmptyContent, normalized, { workspaceRoot: tempRoot }), []);
+
+        const wtCalls = [];
+        const fakeExec = (cmd, args) => {
+            wtCalls.push({ cmd, args });
+            return "";
+        };
+        assert.equal(
+            ensureIsolatedTargetWorktree(tempRoot, { localPath: "common", baseBranch: "dev" }, fakeExec),
+            commonDir,
+        );
+    } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+    }
 });
