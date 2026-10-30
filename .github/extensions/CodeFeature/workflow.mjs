@@ -772,11 +772,12 @@ export function mergeExtractedSpec(task, evidence) {
     return merged;
 }
 
-export function validateTask(args, { allowDeferredTargets = false } = {}) {
+export function validateTask(args, { allowDeferredTargets = false, requireWorkItemId } = {}) {
     const task = record(args) && typeof args.inputMode === "string" ? args : normalizeTask(args);
     if (!record(task)) {
         return ["Provide a design doc (designDocPath/designDoc), PBI (pbiId/pbis), free-form prompt, or structured task."];
     }
+    const mustHaveWorkItem = requireWorkItemId ?? (task.inputMode === "structured" || task.inputMode === "pbi");
     if (nonempty(task.resolutionError)) {
         return [task.resolutionError];
     }
@@ -806,7 +807,7 @@ export function validateTask(args, { allowDeferredTargets = false } = {}) {
                     errors.push("Every target must specify id, repository, slug, baseBranch, and title.");
                     continue;
                 }
-                if (!positiveInt(Number(target.workItemId))) {
+                if (mustHaveWorkItem && !positiveInt(Number(target.workItemId))) {
                     errors.push(`Target ${target.id} must specify a positive numeric ADO workItemId (AB#ID) for PR linking.`);
                 }
                 if (!strings(target.acceptanceCriteria) || target.acceptanceCriteria.length === 0) {
@@ -872,11 +873,14 @@ export function isSafeRelativeFilePath(filePath) {
 export function formatPrTitle(title, workItemId) {
     const base = String(title || "").trim().replace(/,\s*Fixes\s+AB#\d+\s*$/i, "").trim();
     if (/\bfix(es|ed)?\b.*AB#\d+/i.test(base)) return base;
+    if (!positiveInt(Number(workItemId))) return base;
     return `${base}, Fixes AB#${workItemId}`;
 }
 
 export function formatPrBody(target, targetImpl, traceabilityRows, reviewRoundCount, parentWorkItemId = null) {
-    const abLinks = [`Fixes AB#${target.workItemId}`];
+    const abLinks = positiveInt(Number(target.workItemId))
+        ? [`Fixes AB#${target.workItemId}`]
+        : ["Fixes AB#<pending>"];
     if (positiveInt(Number(parentWorkItemId)) && Number(parentWorkItemId) !== Number(target.workItemId)) {
         abLinks.push(`Related to AB#${parentWorkItemId}`);
     }
@@ -1477,7 +1481,10 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
     const evidenceErrors = validateEvidence(evidence, task);
     if (evidenceErrors.length) return packet("needs clarification", evidenceErrors, evidenceErrors);
 
-    const postExtractionErrors = validateTask(task, { allowDeferredTargets: false });
+    const postExtractionErrors = validateTask(task, {
+        allowDeferredTargets: false,
+        requireWorkItemId: createPullRequests || task.inputMode === "structured" || task.inputMode === "pbi",
+    });
     if (postExtractionErrors.length) return packet("needs clarification", postExtractionErrors, postExtractionErrors);
 
     if (manageWorkspace) {
