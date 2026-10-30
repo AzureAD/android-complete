@@ -477,8 +477,8 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
     return targetDir;
 }
 
-export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem } = {}) {
-    ensureSubrepoCheckouts(workspaceRoot, exec);
+export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec = defaultExec, fetchWorkItem, linkSubrepos = true } = {}) {
+    if (linkSubrepos) ensureSubrepoCheckouts(workspaceRoot, exec);
     if (typeof args === "string") {
         return { prompt: args };
     }
@@ -1299,10 +1299,12 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
 
+    const manageWorkspace = applyToWorkspace || Boolean(ctx?.session) || nonempty(rawOptions.workspaceRoot);
     const resolvedArgs = resolveInputSources(ctx.args, {
         workspaceRoot,
         exec,
         fetchWorkItem: dependencies.fetchWorkItem,
+        linkSubrepos: manageWorkspace,
     });
     const initialErrors = validateTask(resolvedArgs, { allowDeferredTargets: true });
     const history = [];
@@ -1413,11 +1415,13 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
     const postExtractionErrors = validateTask(task, { allowDeferredTargets: false });
     if (postExtractionErrors.length) return packet("needs clarification", postExtractionErrors, postExtractionErrors);
 
-    for (const target of task.targets) {
-        try {
-            ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
-        } catch {
-            // Best-effort isolated worktree materialization in test/mock environments.
+    if (manageWorkspace) {
+        for (const target of task.targets) {
+            try {
+                ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
+            } catch {
+                // Best-effort isolated worktree materialization in test/mock environments.
+            }
         }
     }
 
