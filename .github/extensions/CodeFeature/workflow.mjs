@@ -1539,6 +1539,11 @@ Infer technical details from the design doc, PBI, clarifications, and existing c
         }
     }
 
+    const isLocalBuildEnvBlocker = (textValue) =>
+        /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew|gradle.*credential|local.*build.*environment/i.test(
+            String(textValue || ""),
+        );
+
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
     const builderTask = `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
@@ -1546,7 +1551,8 @@ Implement the approved Android Auth changes and comprehensive unit tests for eve
 Preserve all approved requirements and acceptance criteria verbatim.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
-Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`;
+If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or local SDKs are unavailable on this machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
+Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
 
     phase("Build initial implementation");
     implementation = await step("build-0", () => ask(
@@ -1582,6 +1588,18 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
             const diffsByTarget = {};
 
             if (validationErrors.length === 0) {
+                if (Array.isArray(implementation.blockingUnknowns) && implementation.blockingUnknowns.length > 0) {
+                    const envNotes = implementation.blockingUnknowns.filter(isLocalBuildEnvBlocker);
+                    if (envNotes.length > 0) {
+                        implementation.assumptions = [
+                            ...(Array.isArray(implementation.assumptions) ? implementation.assumptions : []),
+                            ...envNotes,
+                        ];
+                        implementation.blockingUnknowns = implementation.blockingUnknowns.filter(
+                            (item) => !isLocalBuildEnvBlocker(item),
+                        );
+                    }
+                }
                 if (implementation.blockingUnknowns.length) {
                     const pendingBuilderQuestions = [...new Set(implementation.blockingUnknowns.filter(nonempty).map((q) => q.trim()))].slice(0, 3);
                     const answers = await step(
@@ -1636,6 +1654,7 @@ Report any genuine blocking ambiguity in blockingUnknowns rather than guessing.`
 Independently review the builder's code changes, unit tests, diffs, traceability, and PR metadata against the approved task and evidence.
 Apply the fixed rubric: ${rubric.join(", ")}.
 Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
+Evaluate unitTestsAndVerification by inspecting the authored unit tests and assertions directly; if local Gradle execution was skipped due to missing local VSTS Maven credentials (ENV_VSTS_MVN_CRED_* / settings.gradle) and deferred to CI pipelines, do not fail unitTestsAndVerification or raise a finding/blockingUnknown over the unrun local build—review the code and tests thoroughly instead.
 If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions.
 Do not edit code or waive criteria. Return findings=[] and pass=true on all criteria only when the code and PR packet are ready for human review.`,
                     reviewSchema,
@@ -1663,6 +1682,10 @@ Do not edit code or waive criteria. Return findings=[] and pass=true on all crit
                 if (JSON.stringify(ctx.args) !== originalRaw) {
                     restoreAll();
                     return packet("NO-GO", ["Approved input changed during review; start a new run."]);
+                }
+
+                if (Array.isArray(review.blockingUnknowns) && review.blockingUnknowns.length > 0) {
+                    review.blockingUnknowns = review.blockingUnknowns.filter((item) => !isLocalBuildEnvBlocker(item));
                 }
 
                 if (review.blockingUnknowns.length) {

@@ -80,3 +80,9 @@ modifying production code.
     GitHub account (from `.github/developer-local.json` or `gh auth status`) rather than
     relying on EMU-bound app tokens that return `403 Forbidden`.
   - Include `Fixes AB#<workItemId>` in both the PR title and body.
+- **Local Gradle vs. CI pipeline verification**:
+  - When running Gradle locally in `common`, `broker`, `msal`, or `adal`, `settings.gradle`
+    reads `ENV_VSTS_MVN_CRED_USERNAME` and `ENV_VSTS_MVN_CRED_ACCESSTOKEN`. If a local VSTS
+    token is not configured on the machine, do not block implementation or code review—record
+    the targeted Gradle test commands in the PR test plan so CI pipelines (and any PR observer)
+    execute them, and proceed with thorough code and unit-test review.
