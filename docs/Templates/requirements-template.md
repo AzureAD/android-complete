@@ -1,13 +1,17 @@
 <!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 # Requirements: [Feature name]
 
-Template version: 1
+Template version: 2
 Owner: [Person/team]
 Feature/work-item link: [Link]
 Status: Draft
 Target milestone: [Date/release, or Unknown]
 
 ## How to use this template
+
+Use this shared template for every feature's requirements, including UI and
+non-UI features. Mark non-applicable sections N/A with a reason rather than
+omitting them.
 
 Describe what must happen, what must not change, and known constraints.
 The design process should propose how to implement the feature, including
@@ -16,6 +20,10 @@ architecture, API options, tradeoffs, and a detailed test plan.
 Start with sections 1-4 and any non-negotiable constraints. Write **Unknown**
 rather than guessing, and mark genuinely irrelevant sections **N/A**.
 Keep confirmed requirements separate from assumptions and proposed solutions.
+For features with user interaction, complete the journey and UX evidence in
+section 3 before handing requirements to the design author. A happy-path summary
+or a Figma link alone is not a complete flow. For non-UI features, mark the visual
+subsections N/A with a reason and describe the caller journey instead.
 
 ## 1. Problem and desired outcome
 
@@ -46,21 +54,91 @@ Include known targets; leave unconfirmed numbers as Unknown.]
 
 - [Existing flows, clients, platforms, or contracts to preserve.]
 
-## 3. User and caller scenarios
+## 3. User and caller scenarios and complete flow
 
-| ID | Starting condition / action | Required observable result |
-|---|---|---|
-| S1 | [Primary successful scenario] | [Expected outcome] |
-| S2 | [User cancels or declines] | [Expected outcome] |
-| S3 | [Required component/service is unavailable] | [Error or fallback behavior] |
-| S4 | [Existing user upgrades or migrates] | [What is preserved or changed] |
+### 3.1 Scenarios
+
+| ID | Starting condition / action | Required observable result | Flow / evidence IDs |
+|---|---|---|---|
+| S1 | [Primary successful scenario] | [Expected outcome] | [FLOW-1, UX-1] |
+| S2 | [User cancels or declines] | [Expected outcome] | [Flow/source IDs] |
+| S3 | [Required component/service is unavailable] | [Error or fallback behavior] | [Flow/source IDs] |
+| S4 | [Existing user upgrades or migrates] | [What is preserved or changed] | [Flow/source IDs] |
 
 [Add other relevant scenarios. Do not invent behavior that needs a decision.]
+
+### 3.2 UX sources and inspection status
+
+Provide the full relevant flow, not only an entry screen or selected happy-path
+screens. Use an accessible Figma link with page/frame or prototype node IDs, or
+a reviewable export/attachment. Keep private assets in their authorized location;
+do not copy them into a public repository to make the template self-contained.
+
+| Source ID | Link or attachment location | Version / snapshot identity | Relevant pages / frames | Inspected content and limits |
+|---|---|---|---|---|
+| UX-1 | [Figma node/prototype URL, or exported file location] | [Version ID; for an export, timestamp and hash if available] | [Stable IDs, not names alone] | [What was actually inspected; inaccessible content or ambiguous connections] |
+
+A linked source is not proof that its contents were inspected. If access or
+rendering is unavailable, obtain a reviewable export or owner-confirmed textual
+flow before claiming coverage. Record source gaps as open questions. An export
+node ID is not a published URL. Illustrative accounts, challenge values, and
+sample text must not become production requirements.
+
+### 3.3 Screen and state inventory
+
+Include app screens, relevant system/service handoffs, and result states. Identify
+reused versus new screens without prescribing implementation classes.
+
+| Screen / state ID | Name and user-visible purpose | Owner and new / existing | Visible actions | Source frame / evidence | Scenario / requirement IDs |
+|---|---|---|---|---|---|
+| SCREEN-1 | [Entry screen or state] | [App/System/Service; New/Existing/Unknown] | [Exact button/link labels; Back, Close, dismiss where applicable] | [UX-1 and frame/node ID, or confirmed product decision] | [S1; REQ-1] |
+
+### 3.4 End-to-end transitions and outcomes
+
+Describe the journey from each supported entry point through intermediate screens
+and external handoffs to the final observable outcome. Include explicit button
+presses, conditions, and branches; a generic "user continues" is insufficient.
+
+| Flow ID | Scenario IDs | From screen / state | Trigger / button press | Condition | Destination and observable state / result | Ownership and evidence |
+|---|---|---|---|---|---|---|
+| FLOW-1 | S1 | SCREEN-1 | [Exact action label, or automatic event] | [Eligibility, flag, account/device state] | [Next screen/state; selected item/data changes; terminal outcome if complete] | [App contract or illustrative external step; UX/source/connector ID or confirmed decision] |
+
+Cover applicable success, failure, cancellation, Back/Close/dismiss, alternate
+methods, retry/re-entry, and disabled/ineligible branches. Specify what remains
+unchanged or partial after exit and when the journey is actually complete.
+An intermediate success or an external sheet closing is not automatically success
+for the overall journey.
+
+Include a flow diagram when it clarifies branching, using these same IDs and
+action labels. Keep the table, diagram, scenarios, and acceptance criteria
+consistent. Identify observed connectors separately from spatially inferred
+destinations or proposed transitions; seek confirmation for ambiguous routing.
+Do not silently fill missing arrows. For externally owned screens, distinguish
+illustrative examples from guaranteed app handoff/return behavior; do not mandate
+an exact challenge order or available method list without an agreed contract.
+
+### 3.5 Flow completeness and reconciliation
+
+- [ ] Every in-scope scenario maps to a flow and an observable outcome.
+- [ ] Relevant screens, explicit actions, conditions, and exit/retry branches are
+  covered, or individually recorded as Unknown/N/A with a reason.
+- [ ] UX sources were inspected; missing access, ambiguous connectors, and conflicts
+  between text and visuals have an owner and a recorded resolution or open question.
+- [ ] App-owned requirements are distinguished from illustrative external behavior.
+- [ ] The authoritative UX revision and any superseded material are identified.
+
+[Record who confirmed the reconciled product flow and the confirmation reference,
+or Unknown. A supplied Figma file is input, not evidence of requirements or final
+design approval. Missing behavior that changes the design is a blocking question;
+do not treat this checklist as approval or defer it silently to implementation.]
 
 ## 4. Requirements and acceptance criteria
 
 Use **MUST** for release-blocking requirements and **SHOULD** for desired behavior.
 Give each requirement a stable ID so the design and tests can reference it.
+For user-visible behavior, reference the scenario/flow IDs and relevant UX source
+frames or an explicit owner decision. Include intermediate routing and terminal
+state expectations, not only the final happy-path screen.
 
 | ID | Priority | Requirement | Acceptance criterion | Source |
 |---|---|---|---|---|
@@ -118,6 +196,8 @@ Complete only the applicable rows.
 ### Supporting material
 
 - Authoritative requirements: [Links]
+- Authoritative UX flow: [Section 3 source IDs and exact revision/export]
+- Superseded UX/mockups: [Links and what supersedes them, or N/A]
 - Confirmed cross-team agreements: [Links]
 - Existing behavior/contracts: [Links]
 - Historical designs for context only: [Links]
