@@ -1204,7 +1204,8 @@ export function buildBranchName(target, branchPrefix = "") {
         : nonempty(target.account)
             ? target.account.trim()
             : "feat";
-    return `${prefix}/ab-${target.workItemId}-${slug || "change"}`;
+    const abSegment = positiveInt(Number(target.workItemId)) ? `ab-${Number(target.workItemId)}-` : "";
+    return `${prefix}/${abSegment}${slug || "change"}`;
 }
 
 export function publishTargetPullRequest({
@@ -1715,8 +1716,13 @@ Do not edit code or waive criteria. Return findings=[] and pass=true on all crit
                         }
                         return created;
                     });
+                    const deferredLocalBuild = implementation.targets.some(
+                        (item) => !Array.isArray(item.verificationCommandsRun) || item.verificationCommandsRun.length === 0,
+                    ) || (Array.isArray(implementation.assumptions) && implementation.assumptions.some(isLocalBuildEnvBlocker));
                     return packet("GO to PR Review", [
-                        `Implementation, unit tests, traceability, and independent code review passed in ${history.length} review round(s). Human PR review and merge approval are still required.`,
+                        deferredLocalBuild
+                            ? `Implementation, authored unit tests, traceability, and independent code review passed in ${history.length} review round(s) (local Gradle execution deferred to CI pipeline verification). Human PR review and merge approval are still required.`
+                            : `Implementation, unit tests, traceability, and independent code review passed in ${history.length} review round(s). Human PR review and merge approval are still required.`,
                     ]);
                 }
             } else {
