@@ -84,9 +84,11 @@ modifying production code.
   - Always try to run targeted Gradle tests locally first. In `common`, `broker`, `msal`, and
     `adal`, `settings.gradle` reads `ENV_VSTS_MVN_CRED_USERNAME` and
     `ENV_VSTS_MVN_CRED_ACCESSTOKEN`; if they are not already set in the environment, try
-    populating `$env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"` and
+    setting `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"` (when present),
+    `$env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"`, and
     `$env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv)`
-    before invoking `.\gradlew.bat`.
+    before invoking `.\gradlew.bat`. Also ensure `local.properties` (`sdk.dir`) is present in
+    any isolated sub-repo worktree (copied from the main checkout or `%LOCALAPPDATA%\Android\Sdk`).
   - Only if a local VSTS token or Android SDK is still unavailable on the machine, do not block
     implementation or code review—record the targeted Gradle test commands in the PR test plan
     so CI pipelines (and any PR observer) execute them, and proceed with thorough code and

@@ -446,6 +446,29 @@ export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = def
     return linked;
 }
 
+export function ensureAndroidLocalProperties(sourceRepo, targetDir) {
+    const targetLocalProps = path.join(targetDir, "local.properties");
+    if (existsSync(targetLocalProps)) return targetLocalProps;
+    const sourceLocalProps = path.join(sourceRepo, "local.properties");
+    if (existsSync(sourceLocalProps)) {
+        writeFileSync(targetLocalProps, readFileSync(sourceLocalProps));
+        return targetLocalProps;
+    }
+    const candidates = [
+        process.env.ANDROID_HOME,
+        process.env.ANDROID_SDK_ROOT,
+        process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Android", "Sdk") : "",
+    ].filter(nonempty);
+    for (const sdkPath of candidates) {
+        if (existsSync(sdkPath)) {
+            const escaped = sdkPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:");
+            writeFileSync(targetLocalProps, `sdk.dir=${escaped}\n`, "utf8");
+            return targetLocalProps;
+        }
+    }
+    return null;
+}
+
 export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defaultExec) {
     const localPath = nonempty(target?.localPath) ? target.localPath.trim() : ".";
     const targetDir = path.resolve(workspaceRoot, localPath);
@@ -462,6 +485,11 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
         if (stat.isSymbolicLink() || normalize(realpathSync(targetDir)) === normalize(canonicalSource)) {
             removeDirectoryJunction(targetDir);
         } else if (existsSync(path.join(targetDir, ".git"))) {
+            try {
+                ensureAndroidLocalProperties(canonicalSource, targetDir);
+            } catch {
+                // Best-effort local.properties propagation.
+            }
             return targetDir;
         }
     }
@@ -488,6 +516,11 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
         } catch {
             // Best-effort nested common submodule worktree initialization.
         }
+    }
+    try {
+        ensureAndroidLocalProperties(canonicalSource, targetDir);
+    } catch {
+        // Best-effort local.properties propagation.
     }
     return targetDir;
 }
@@ -1552,7 +1585,7 @@ Implement the approved Android Auth changes and comprehensive unit tests for eve
 Preserve all approved requirements and acceptance criteria verbatim.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
-If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) are unset, first try setting $env:ENV_VSTS_MVN_CRED_USERNAME="vsts" and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
+If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
 Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
 
     phase("Build initial implementation");
