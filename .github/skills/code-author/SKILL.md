@@ -81,8 +81,13 @@ modifying production code.
     relying on EMU-bound app tokens that return `403 Forbidden`.
   - Include `Fixes AB#<workItemId>` in both the PR title and body.
 - **Local Gradle vs. CI pipeline verification**:
-  - When running Gradle locally in `common`, `broker`, `msal`, or `adal`, `settings.gradle`
-    reads `ENV_VSTS_MVN_CRED_USERNAME` and `ENV_VSTS_MVN_CRED_ACCESSTOKEN`. If a local VSTS
-    token is not configured on the machine, do not block implementation or code review—record
-    the targeted Gradle test commands in the PR test plan so CI pipelines (and any PR observer)
-    execute them, and proceed with thorough code and unit-test review.
+  - Always try to run targeted Gradle tests locally first. In `common`, `broker`, `msal`, and
+    `adal`, `settings.gradle` reads `ENV_VSTS_MVN_CRED_USERNAME` and
+    `ENV_VSTS_MVN_CRED_ACCESSTOKEN`; if they are not already set in the environment, try
+    populating `$env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"` and
+    `$env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv)`
+    before invoking `.\gradlew.bat`.
+  - Only if a local VSTS token or Android SDK is still unavailable on the machine, do not block
+    implementation or code review—record the targeted Gradle test commands in the PR test plan
+    so CI pipelines (and any PR observer) execute them, and proceed with thorough code and
+    unit-test review.
