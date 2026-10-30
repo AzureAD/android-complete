@@ -78,7 +78,7 @@ const findingSchema = object({
     location: text, evidence: text, requiredChange: text,
 });
 const reviewSchema = object({
-    designDigest: text,
+    designDigest: text, evidenceDigest: text, references: list(referenceSchema),
     criteria: list(object({ id: { type: "string", enum: rubric }, pass: { type: "boolean" } })),
     changeChecks: list(object({
         changeId: text, baselineVerified: { type: "boolean" },
@@ -230,13 +230,20 @@ export function validateDesign(design, stage0, evidence) {
     return errors;
 }
 
-export function validateReview(review, design, evidence) {
+export function validateReview(review, design, evidence, sourceManifest = evidence.sourceVerification) {
     if (!record(review) || !Array.isArray(review.criteria) || review.criteria.length !== rubric.length ||
         !unique(review.criteria.map((c) => c?.id)) ||
         rubric.some((id) => !review.criteria.some((c) => c?.id === id && typeof c.pass === "boolean")) ||
         !Array.isArray(review.findings) || !strings(review.blockingUnknowns)) return false;
     const ids = new Set(evidence.references.map((r) => r.id));
-    if (review.designDigest !== digest(design) || !Array.isArray(review.changeChecks) ||
+    const sources = new Set(sourceManifest.map(sourceKey));
+    if (!Array.isArray(review.references) || !unique(review.references.map((r) => r?.id)) ||
+        review.references.some((r) => !record(r) ||
+            !["id", "repository", "revision", "path", "locator"].every((key) => nonempty(r[key])) ||
+            ids.has(r.id) || !sources.has(sourceKey(r)))) return false;
+    for (const reference of review.references) ids.add(reference.id);
+    if (review.designDigest !== digest(design) || review.evidenceDigest !== digest(evidence) ||
+        !Array.isArray(review.changeChecks) ||
         review.changeChecks.length !== design.changes.length ||
         !unique(review.changeChecks.map((c) => c?.changeId)) ||
         design.changes.some((change) => !review.changeChecks.some((c) => c?.changeId === change.id)) ||
@@ -251,14 +258,21 @@ export function validateReview(review, design, evidence) {
 export async function runDesignFeature(ctx) {
     const stage0Errors = validateStage0(ctx.args);
     const history = [];
+    const referenceDiscoveries = [];
     let evidence = null;
+    const availableEvidence = () => referenceDiscoveries.length ? {
+        ...evidence,
+        references: [...evidence.references, ...referenceDiscoveries.flatMap((entry) => entry.references)],
+        referenceDiscoveries: [...referenceDiscoveries],
+    } : evidence;
     let design = null;
     let fixes = 0;
     let stage0 = ctx.args?.stage0 ?? null;
     let sourceManifest = ctx.args?.sourceManifest ?? null;
     const packet = (recommendation, reasons) => ({
         recommendation, humanApproval: "pending", reasons, fixIterations: fixes,
-        stage0, sourceManifest, evidence, design, reviews: history,
+        stage0, sourceManifest, evidence, availableEvidence: availableEvidence(),
+        referenceDiscoveries, design, reviews: history,
         reviewReady: recommendation === "GO to Planning",
         rubric: [...rubric],
         nextAction: recommendation === "GO to Planning"
@@ -271,7 +285,7 @@ export async function runDesignFeature(ctx) {
     sourceManifest = JSON.parse(JSON.stringify(ctx.args.sourceManifest));
     const input = JSON.parse(JSON.stringify(ctx.args));
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v4-${digest(input)}`;
+    const prefix = `design-feature-v5-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },
@@ -321,7 +335,10 @@ security/privacy/performance, measurable telemetry/success, unit/instrumented/E2
 cross-repo dependencies/ownership and open decisions. Give every requirement a traceability row,
 existing evidence references, and a measurable verification. Mark unsupported claims as assumptions;
 report unresolved blocking decisions in blockingUnknowns. Do not invent numeric targets.
-Bind evidenceDigest to the supplied digest. Include a changes record for EVERY proposed change
+Bind evidenceDigest to the supplied digest, including all validated reviewer discoveries.
+The original evidence remains provenance, not a guarantee that its claims survived review.
+Use new reference IDs from reviewer discoveries in repaired traceability and counterevidence.
+Include a changes record for EVERY proposed change
 in the narrative, including incidental fixes, and every requirement. Link baseline scenario traces,
 source evidence, baselineBehavior, requestedDelta, necessity, and measurable verification.
 Classify new-feature or verified-defect only with a confirmed-gap counterevidence search.
@@ -332,18 +349,18 @@ implementation mandate. Optional improvements are deferred, not required scope. 
 necessity is unresolved, not an assumption that can justify mandatory work; it blocks readiness.
 Render these records visibly in the design. Keep UX-first explanation and prior review feedback;
 do not replace comprehensive implementation contracts with a short summary.`;
-    const evidenceDigest = digest(evidence);
-    const designStep = (key, producer) => step(`${evidenceDigest}-${key}`, producer);
+    const designStep = (key, producer) => step(`${digest(availableEvidence())}-${key}`, producer);
     design = await designStep("design", () => ask("Design author", authorTask, designSchema,
-        { stage0, sourceManifest, evidence, evidenceDigest, context: input.context }));
+        { stage0, sourceManifest, evidence, evidenceDigest: digest(evidence), context: input.context }));
     for (let round = 0; round <= 2; round++) {
         if (JSON.stringify(ctx.args) !== approved) {
             return packet("NO-GO", ["Approved input changed during the run; start a new run."]);
         }
-        const errors = validateDesign(design, stage0, evidence);
+        const currentEvidence = availableEvidence();
+        const errors = validateDesign(design, stage0, currentEvidence);
         if (errors.length === 0) {
             if (design.blockingUnknowns.length) return packet("needs clarification", design.blockingUnknowns);
-            const review = await designStep(`independent-review-${round}-${digest(design)}`, () => ask("Independent design reviewer",
+            const review = await designStep(`independent-review-${round}-${digest(design)}-${digest(history)}`, () => ask("Independent design reviewer",
                 `Independently inspect the repository evidence and design, not just the author's claims.
 Apply the fixed rubric: ${rubric.join(", ")}. Check every criterion and every approved requirement,
 source currency/conflicts, alternatives, open decisions, measurable targets, Android IPC/security
@@ -353,20 +370,27 @@ that a callback/error/terminal outcome is missing. Follow the complete trigger-t
 including indirect observers and result/completion handling. Actively seek counterevidence outside
 the author's cited snippet; do not inherit the author's premise or equate citations with proof.
 Return a changeChecks row for every change, citing inspected references and explaining the result.
+Return references for NEW discoveries only, each with a fresh ID, repository, exact pinned revision,
+path and source locator. Existing IDs must not be redefined, even with identical metadata.
+New references may be cited immediately in changeChecks and findings; use only sourceManifest pins.
+Return an empty references array when no new sources are discovered.
 Check the entire narrative for implementation mandates omitted from changes, all relevant scenario
 branches, and preservation of existing attribution/ordering. Missing evidence is a finding, not a pass.
-Use the supplied designDigest. A false change check prohibits GO even if all rubric criteria pass.
+Use the supplied designDigest and evidenceDigest for the exact input context.
+A false change check prohibits GO even if all rubric criteria pass.
 For each issue return a unique ID, rubric ID, severity, exact location, evidence, required change.
 Do not waive criteria or silently downgrade findings. Unresolved blocking unknowns prohibit GO.`,
-                reviewSchema, { stage0, sourceManifest, evidence, design, designDigest: digest(design),
+                reviewSchema, { stage0, sourceManifest, evidence: currentEvidence, design,
+                    evidenceDigest: digest(currentEvidence), designDigest: digest(design),
                     rubric, priorReviews: history, context: input.context }));
-            if (!validateReview(review, design, evidence)) return packet("NO-GO", ["Independent reviewer failed or returned malformed output."]);
+            if (!validateReview(review, design, currentEvidence, sourceManifest)) return packet("NO-GO", ["Independent reviewer failed or returned malformed output."]);
             history.push({ round, review });
+            if (review.references.length) referenceDiscoveries.push({ round, references: review.references });
             if (JSON.stringify(ctx.args) !== approved) {
                 return packet("NO-GO", ["Approved input changed during review; start a new run."]);
             }
             if (review.blockingUnknowns.length) return packet("needs clarification", review.blockingUnknowns);
-            if (review.criteria.every((c) => c.pass) && review.findings.length === 0 &&
+            if (!review.references.length && review.criteria.every((c) => c.pass) && review.findings.length === 0 &&
                 review.changeChecks.every((c) => c.baselineVerified && c.necessityConfirmed && c.counterevidenceVerified)) {
                 return packet("GO to Planning", ["Structural trace/necessity gates and independent source review passed. Human approval is still required."]);
             }
@@ -376,10 +400,11 @@ Do not waive criteria or silently downgrade findings. Unresolved blocking unknow
         }
         if (round === 2) return packet("NO-GO", ["Unresolved validation or review findings after two fix iterations."]);
         fixes++;
-        design = await designStep(`fix-${fixes}`, () => ask("Design revision",
+        design = await designStep(`fix-${fixes}-${digest(history)}`, () => ask("Design revision",
             `${authorTask}\nFix all validation and review findings without changing Stage 0 or the rubric.
 Do not claim an issue is resolved by deleting requirements, evidence, or review criteria.`,
-            designSchema, { stage0, sourceManifest, evidence, evidenceDigest, design, rubric, history, context: input.context }));
+            designSchema, { stage0, sourceManifest, evidence: availableEvidence(),
+                evidenceDigest: digest(availableEvidence()), design, rubric, history, context: input.context }));
     }
 }
 

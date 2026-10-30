@@ -50,7 +50,7 @@ const design = () => ({
     assumptions: [], openDecisions: [], blockingUnknowns: [],
 });
 const review = (d = design()) => ({
-    designDigest: digest(d),
+    designDigest: digest(d), evidenceDigest: d.evidenceDigest, references: [],
     changeChecks: d.changes.map((c) => ({
         changeId: c.id, baselineVerified: true, necessityConfirmed: true, counterevidenceVerified: true,
         referenceIds: ["E1"], rationale: "Independently inspected the existing terminal path.",
@@ -362,6 +362,7 @@ test("necessity records reject omitted, unlinked, stale, unresolved and inconsis
 test("review checks must cover each change and bind the exact design and inspected sources", () => {
     for (const mutate of [
         (r) => { r.designDigest = "old"; },
+        (r) => { r.evidenceDigest = "old"; },
         (r) => { r.changeChecks = []; },
         (r) => { r.changeChecks.push(r.changeChecks[0]); },
         (r) => { r.changeChecks[0].changeId = "unknown"; },
@@ -372,6 +373,171 @@ test("review checks must cover each change and bind the exact design and inspect
         mutate(r);
         assert.equal(validateReview(r, design(), evidence()), false);
     }
+});
+
+const discoveredReference = () => ({
+    id: "E2", ...sourceManifest()[0], path: "CompletionObserver.kt", locator: "onCompletion",
+});
+function discoveryRepairFixture() {
+    const original = evidence();
+    const incorrect = design();
+    Object.assign(incorrect.changes[0], {
+        classification: "verified-defect", implementation: "required",
+        counterevidence: { ...incorrect.changes[0].counterevidence, result: "confirmed-gap" },
+    });
+    const disputed = review(incorrect);
+    disputed.references = [discoveredReference()];
+    disputed.changeChecks[0].referenceIds = ["E2"];
+    disputed.changeChecks[0].necessityConfirmed = false;
+    disputed.findings.push({
+        id: "F1", rubricId: "changeNecessityAndCounterevidence", severity: "major",
+        location: "changes.C1", evidence: "E2: CompletionObserver already handles the result.",
+        requiredChange: "Preserve existing behavior and cite E2 rather than adding a handler.",
+    });
+    const discoveries = [{ round: 0, references: disputed.references }];
+    const expanded = {
+        ...original, references: [...original.references, ...disputed.references],
+        referenceDiscoveries: discoveries,
+    };
+    const corrected = design();
+    corrected.evidenceDigest = digest(expanded);
+    corrected.traceability[0].evidenceIds = ["E1", "E2"];
+    corrected.changes[0].evidenceIds = ["E2"];
+    corrected.changes[0].counterevidence.referenceIds = ["E2"];
+    const finalReview = review(corrected);
+    finalReview.changeChecks[0].referenceIds = ["E2"];
+    return { original, incorrect, disputed, expanded, corrected, finalReview };
+}
+
+test("reviewer discoveries survive repair, independent re-review and checkpoint replay without overwriting evidence", async () => {
+    const f = discoveryRepairFixture();
+    const journal = new Map();
+    const step = async (key, producer) => {
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    const ctx = context([f.original, f.incorrect, f.disputed, f.corrected, f.finalReview]);
+    ctx.step = step;
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(ctx.calls.length, 5);
+    assert.deepEqual(packet.evidence, evidence());
+    assert.deepEqual(packet.availableEvidence, f.expanded);
+    assert.deepEqual(packet.referenceDiscoveries, f.expanded.referenceDiscoveries);
+    assert.deepEqual(packet.reviews[0].review.references, [discoveredReference()]);
+    for (const index of [3, 4]) {
+        const data = JSON.parse(ctx.calls[index].prompt.split("\nDATA:\n")[1]);
+        assert.deepEqual(data.evidence, f.expanded);
+        assert.equal(data.evidenceDigest, digest(f.expanded));
+    }
+    const keys = [...journal.keys()];
+    assert.ok(keys[2].includes(digest(f.original)));
+    assert.ok(keys[3].includes(digest(f.expanded)));
+    assert.ok(keys[4].includes(digest(f.expanded)));
+    assert.ok(keys[4].includes(digest(f.corrected)));
+    assert.ok(keys[3].includes(digest(packet.reviews.slice(0, 1))));
+    assert.ok(keys[4].includes(digest(packet.reviews.slice(0, 1))));
+    assert.ok(validateDesign(f.corrected, stage0(), f.original).length);
+    assert.equal(validateReview(f.disputed, f.corrected, f.expanded, sourceManifest()), false);
+    const resumed = context([]);
+    resumed.step = step;
+    assert.deepEqual(await runDesignFeature(resumed), packet);
+    assert.equal(resumed.calls.length, 0);
+    assert.equal(journal.size, 5);
+});
+
+test("malformed, duplicate, colliding and unpinned reviewer references fail closed without losing original evidence", async () => {
+    for (const references of [
+        undefined, null, [null], [{ ...discoveredReference(), locator: "" }],
+        [{ ...discoveredReference(), path: "" }], [{ ...discoveredReference(), id: "" }],
+        [{ ...discoveredReference(), revision: newerSourceRevision }],
+        [{ ...discoveredReference(), revision: "HEAD" }],
+        [{ ...discoveredReference(), repository: "Unpinned" }],
+        [discoveredReference(), discoveredReference()],
+        [{ ...discoveredReference(), id: "E1" }], [evidence().references[0]],
+    ]) {
+        const r = review();
+        r.references = references;
+        const ctx = context([evidence(), design(), r]);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.equal(ctx.calls.length, 3);
+        assert.deepEqual(packet.referenceDiscoveries, []);
+        assert.deepEqual(packet.evidence, evidence());
+        assert.deepEqual(packet.reviews, []);
+    }
+});
+
+test("new references require a rebound design and fresh review even when the discovering reviewer passes", async () => {
+    const f = discoveryRepairFixture();
+    const passing = review();
+    passing.references = [discoveredReference()];
+    const ctx = context([evidence(), design(), passing, f.corrected, f.finalReview]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(ctx.calls.length, 5);
+    const stale = context([evidence(), design(), passing, design(), design()]);
+    const failed = await runDesignFeature(stale);
+    assert.equal(failed.recommendation, "NO-GO");
+    assert.equal(failed.fixIterations, 2);
+    assert.ok(failed.reviews[1].validationErrors.some((error) => /evidence digest/.test(error)));
+});
+
+test("later reviews cannot redefine discoveries or reuse a stale evidence digest", async () => {
+    for (const mutate of [
+        (r) => { r.references = [discoveredReference()]; },
+        (r) => { r.references = [{ ...discoveredReference(), path: "Replacement.kt" }]; },
+        (r) => { r.evidenceDigest = digest(evidence()); },
+    ]) {
+        const f = discoveryRepairFixture();
+        mutate(f.finalReview);
+        const packet = await runDesignFeature(context([
+            f.original, f.incorrect, f.disputed, f.corrected, f.finalReview,
+        ]));
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.deepEqual(packet.availableEvidence, f.expanded);
+        assert.equal(packet.reviews.length, 1);
+    }
+});
+
+test("successive review rounds accumulate discoveries within the unchanged seven-agent bound", async () => {
+    const f = discoveryRepairFixture();
+    const second = review(f.corrected);
+    second.references = [{ ...discoveredReference(), id: "E3", path: "CompletionObserverTest.kt", locator: "handlesFailure" }];
+    second.changeChecks[0].referenceIds = ["E2", "E3"];
+    const expanded = {
+        ...f.expanded, references: [...f.expanded.references, ...second.references],
+        referenceDiscoveries: [...f.expanded.referenceDiscoveries, { round: 1, references: second.references }],
+    };
+    const finalDesign = structuredClone(f.corrected);
+    finalDesign.evidenceDigest = digest(expanded);
+    finalDesign.changes[0].counterevidence.referenceIds = ["E2", "E3"];
+    const finalReview = review(finalDesign);
+    finalReview.changeChecks[0].referenceIds = ["E2", "E3"];
+    const journal = new Map();
+    const step = async (key, producer) => {
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    const ctx = context([f.original, f.incorrect, f.disputed, f.corrected, second, finalDesign, finalReview]);
+    ctx.step = step;
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 2);
+    assert.equal(ctx.calls.length, 7);
+    assert.deepEqual(packet.availableEvidence, expanded);
+    assert.deepEqual(packet.evidence, evidence());
+    const keys = [...journal.keys()];
+    assert.ok(keys[5].includes(digest(expanded)));
+    assert.ok(keys[6].includes(digest(expanded)));
+    assert.ok(keys[6].includes(digest(finalDesign)));
+    const resumed = context([]);
+    resumed.step = step;
+    assert.deepEqual(await runDesignFeature(resumed), packet);
+    assert.equal(resumed.calls.length, 0);
+    assert.equal(journal.size, 7);
 });
 
 test("a failed necessity check cannot be hidden behind a passing rubric", async () => {
@@ -489,7 +655,7 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v4-/);
+    assert.match(initial.keys[0], /^design-feature-v5-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
     changed.args.sourceManifest[0].revision = newerSourceRevision;

@@ -89,6 +89,10 @@ session storage. A request to draft is not automatically requirements approval.
    The reviewer reads pinned sources, seeks disconfirming paths for every proposed
    change, and checks for mandates missing from the register. Per-change checks and
    the review bind to the exact design digest; every check must pass.
+   Reviewers return `references` (empty if none) for discoveries outside the initial
+   reference list, with fresh IDs and full repository/revision/path/locator metadata.
+   Discoveries must match exact `sourceManifest` pairs; malformed, duplicate,
+   reused or conflicting IDs and unpinned sources fail closed.
 6. Fix and re-review at most twice; never change requirements or waive criteria.
 7. Return the full JSON human gate packet, including the approved input, evidence,
    design artifact, validation/review history, fix count, rubric, reasons, and next action.
@@ -105,6 +109,16 @@ planning. `NO-GO` means validation/review failed or two fixes were exhausted.
 No ADO items, code changes, merges, deployments, or human approvals are created.
 `ctx.pause()` is not used.
 
+The packet preserves the original `evidence` unchanged. Validated reviewer sources
+remain in review history and `referenceDiscoveries` with their discovery round.
+`availableEvidence` combines the original references with those discoveries and
+their provenance; revision authors, design validators and later reviewers use this
+expanded context. Reviewers bind both `designDigest` and the input `evidenceDigest`.
+Every new discovery changes the evidence digest and requires a rebound design and
+fresh independent review, even if the discovering review otherwise passes.
+Repaired traceability and change/counterevidence records may cite discovered IDs.
+Original claims are retained for provenance, not silently endorsed over findings.
+
 ## Bounds, safety, and resume
 
 The workflow uses journaled `ctx.step` calls and sequential `ctx.agent` calls:
@@ -119,9 +133,12 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v4` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v5` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
-bind the validated evidence digest; review keys include the design digest.
+bind the current expanded evidence digest (including discovery provenance); review
+keys include the design digest; review and fix keys also bind the review/validation history.
+Journal replay rebuilds discoveries from validated review outputs without mutating
+the original evidence or reusing reviews against stale reference context.
 Resume only against unchanged pinned source revisions and input. Journal replay does
 not recheck a mutable branch or re-read edited local snapshots; do not alter snapshots
 in place. Start a fresh run with new pins if the source/evidence changes; change the key version when workflow semantics,
@@ -143,6 +160,8 @@ agents. They cover approval gates, rejection of mutable/abbreviated source revis
 before checkpoint creation, full SHA-1/SHA-256 pins, source/trace validation, ordinary/hard failures,
 fixed rubric/per-change coverage, bounded fixes, recommendation semantics, and
 source/evidence-bound checkpoint identity. Synthetic executable completion fixtures
+also cover new pinned reviewer references, repair/re-review, invalid discoveries,
+stale digest rejection and journal replay with preserved provenance. Completion fixtures
 cover indirect handling (reuse/regression-only) and a genuinely missing handler
 (verified defect), plus a disputed false gap that must be fixed and re-reviewed.
 These are deterministic gate tests with mocked agent judgments, **not semantic
