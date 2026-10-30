@@ -1375,6 +1375,16 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         },
     );
 
+    if (manageWorkspace) {
+        for (const target of task.targets) {
+            try {
+                ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
+            } catch {
+                // Best-effort isolated worktree materialization before evidence inspection.
+            }
+        }
+    }
+
     phase("Validate task and gather evidence");
     const needsSpecExtraction = task.needsExtraction === true;
     const evidenceGuides = resolveRoleSkillGuides("evidence", task.targets);
@@ -1426,6 +1436,9 @@ Infer technical details from the design doc, PBI, and existing codebase conventi
                 }
                 evidence.clarificationQuestions = [];
                 evidence.blockingUnknowns = [];
+                if (Array.isArray(evidence.conflicts)) {
+                    evidence.conflicts = evidence.conflicts.filter((c) => !/baseBranch|checked-out commit|local .* checkout/i.test(c));
+                }
             } else {
                 return packet("needs clarification", pendingQuestions, pendingQuestions);
             }
