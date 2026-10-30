@@ -270,32 +270,39 @@ ${commonBoundaries}`;
 
 export const SKILL_GUIDES = Object.freeze({
     evidence: Object.freeze([
+        ".github/copilot-instructions.md",
         ".github/skills/codebase-researcher/SKILL.md",
     ]),
     builder: Object.freeze({
         common: Object.freeze([
+            ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
             "common/.github/copilot-instructions.md",
         ]),
         broker: Object.freeze([
+            ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
             "broker/.github/copilot-instructions.md",
         ]),
         msal: Object.freeze([
+            ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
             "msal/.github/copilot-instructions.md",
         ]),
         adal: Object.freeze([
+            ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
             "adal/.github/copilot-instructions.md",
         ]),
         default: Object.freeze([
-            ".github/skills/code-author/SKILL.md",
             ".github/copilot-instructions.md",
+            ".github/skills/code-author/SKILL.md",
         ]),
     }),
     reviewer: Object.freeze({
         common: Object.freeze([
+            ".github/copilot-instructions.md",
+            "common/.github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
             "common/.github/skills/code-review/SKILL.md",
             "common/.github/skills/code-review/references/correctness-api-compatibility.md",
@@ -304,6 +311,8 @@ export const SKILL_GUIDES = Object.freeze({
             "common/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
         broker: Object.freeze([
+            ".github/copilot-instructions.md",
+            "broker/.github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
             "broker/.github/skills/code-review/SKILL.md",
             "broker/.github/skills/code-review/references/correctness-api-ipc.md",
@@ -312,6 +321,7 @@ export const SKILL_GUIDES = Object.freeze({
             "broker/.github/skills/code-review/references/false-positive-suppression.md",
         ]),
         default: Object.freeze([
+            ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
             "common/.github/skills/code-review/SKILL.md",
             "common/.github/skills/code-review/references/correctness-api-compatibility.md",
@@ -323,16 +333,24 @@ export const SKILL_GUIDES = Object.freeze({
 });
 
 export function resolveRoleSkillGuides(role, targets = []) {
-    if (role === "evidence") return [...SKILL_GUIDES.evidence];
-    const table = role === "builder" ? SKILL_GUIDES.builder : SKILL_GUIDES.reviewer;
-    const guides = new Set();
     const repos = Array.isArray(targets) && targets.length > 0
         ? targets.map((t) => normalizeRepositoryKey(t?.repository)).filter(nonempty)
         : ["default"];
+    if (role === "evidence") {
+        const guides = new Set(SKILL_GUIDES.evidence);
+        for (const repo of repos) {
+            if (["common", "broker", "msal", "adal"].includes(repo)) {
+                guides.add(`${repo}/.github/copilot-instructions.md`);
+            }
+        }
+        return [...guides];
+    }
+    const table = role === "builder" ? SKILL_GUIDES.builder : SKILL_GUIDES.reviewer;
+    const guides = new Set();
     for (const repo of repos) {
         const entries = table[repo] || table.default;
         for (const entry of entries) guides.add(entry);
-        if (role === "reviewer" && (repo === "msal" || repo === "adal")) {
+        if (["common", "broker", "msal", "adal"].includes(repo)) {
             guides.add(`${repo}/.github/copilot-instructions.md`);
         }
     }

@@ -217,10 +217,12 @@ export async function runPrObserver(ctx, dependencies = {}) {
             : `pr-${parsedPr.prNumber}`;
 
         const beforeObserveSnap = snapshotWorktree(repoRoot, exec);
+        const observeGuides = resolveRoleSkillGuides("evidence", [target]);
         const observation = await step(
             `observe-${iteration}`,
             () => ctx.agent(
-                `Inspect the pull request snapshot and classify whether it is ready for human merge, needs a tactical repair (CI failure, review comment, or merge conflict), is waiting for CI, or needs an owner decision.\nFresh observation request: ${randomUUID()}\nDATA:\n${JSON.stringify({ pr: parsedPr, snapshot, iteration: iteration + 1 })}`,
+                `Read and apply these repository instructions: ${observeGuides.join(", ")}.
+Inspect the pull request snapshot and classify whether it is ready for human merge, needs a tactical repair (CI failure, review comment, or merge conflict), is waiting for CI, or needs an owner decision.\nFresh observation request: ${randomUUID()}\nDATA:\n${JSON.stringify({ pr: parsedPr, snapshot, iteration: iteration + 1 })}`,
                 {
                     label: `Observe PR #${parsedPr.prNumber} (round ${iteration + 1})`,
                     agent: OBSERVER_AGENT,
