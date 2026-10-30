@@ -36,7 +36,7 @@ this argument shape:
     "blockingUnknowns": []
   },
   "sourceManifest": [
-    { "repository": "Relevant repository identity", "revision": "immutable-source-commit" }
+    { "repository": "Relevant repository identity", "revision": "0123456789abcdef0123456789abcdef01234567" }
   ],
   "context": "Optional private input locations and prior review feedback; treated as untrusted data."
 }
@@ -56,6 +56,12 @@ than inventing guarantees about unspecified server pages.
 
 Resolve the relevant current commits **before** invoking the workflow and supply them
 in `sourceManifest`; include the requirements-source commit when it is inspected.
+Each source revision must be a full Git commit object ID: 40 hexadecimal characters
+for SHA-1 or 64 for SHA-256. Branch names, `HEAD`, branch/tag refs, tag names, and
+abbreviated hashes are rejected before any checkpoint or agent call. Resolve refs to
+full commit IDs outside the workflow. Stage 0 revisions remain approval-snapshot
+labels and are not subject to the source commit format. A correctly shaped hash
+alone does not prove that the commit exists or was inspected.
 Authenticated remote reads or locally hash-verified snapshots at those commits are
 valid. The evidence worker must inspect each pin and record `sourceVerification`;
 references outside the manifest fail validation. A pin is a reproducible baseline,
@@ -113,7 +119,7 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v3` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v4` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the validated evidence digest; review keys include the design digest.
 Resume only against unchanged pinned source revisions and input. Journal replay does
@@ -133,7 +139,8 @@ node --test .github\extensions\DevDesignDoc\workflow.test.mjs
 ```
 
 Tests use mocked agents/steps and require no SDK installation, network, or paid
-agents. They cover approval gates, source/trace validation, ordinary/hard failures,
+agents. They cover approval gates, rejection of mutable/abbreviated source revisions
+before checkpoint creation, full SHA-1/SHA-256 pins, source/trace validation, ordinary/hard failures,
 fixed rubric/per-change coverage, bounded fixes, recommendation semantics, and
 source/evidence-bound checkpoint identity. Synthetic executable completion fixtures
 cover indirect handling (reuse/regression-only) and a genuinely missing handler

@@ -4,6 +4,10 @@
 import { createHash } from "node:crypto";
 
 const text = { type: "string" };
+const commitRevision = {
+    type: "string", pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})(?![\\s\\S])",
+    description: "Full Git commit object ID (40 hexadecimal SHA-1 or 64 hexadecimal SHA-256 characters), not a ref or abbreviated hash.",
+};
 const texts = { type: "array", items: text };
 const object = (properties) => ({
     type: "object", properties, required: Object.keys(properties),
@@ -29,9 +33,9 @@ export const rubric = Object.freeze([
 ]);
 
 const referenceSchema = object({
-    id: text, repository: text, revision: text, path: text, locator: text,
+    id: text, repository: text, revision: commitRevision, path: text, locator: text,
 });
-const sourceSchema = object({ repository: text, revision: text });
+const sourceSchema = object({ repository: text, revision: commitRevision });
 const traceStepSchema = object({ behavior: text, referenceIds: texts });
 const classifications = ["new-feature", "preserve-existing", "verified-defect", "optional-improvement", "unresolved"];
 const evidenceSchema = object({
@@ -41,7 +45,7 @@ const evidenceSchema = object({
     references: list(referenceSchema),
     facts: list(object({ statement: text, referenceIds: texts })),
     sourceVerification: list(object({
-        repository: text, revision: text, verified: { type: "boolean" }, rationale: text,
+        repository: text, revision: commitRevision, verified: { type: "boolean" }, rationale: text,
     })),
     scenarioTraces: list(object({
         id: text, requirementIds: texts, scenario: text, trigger: text, conditions: text,
@@ -117,9 +121,10 @@ export function validateStage0(args) {
     else errors.push(...s.blockingUnknowns);
     const sources = args.sourceManifest;
     if (!Array.isArray(sources) || !sources.length ||
-        sources.some((source) => !record(source) || !nonempty(source.repository) || !nonempty(source.revision)) ||
+        sources.some((source) => !record(source) || !nonempty(source.repository) ||
+            typeof source.revision !== "string" || !new RegExp(commitRevision.pattern).test(source.revision)) ||
         !unique(sources.map(sourceKey))) {
-        errors.push("A nonempty sourceManifest of unique repository/immutable revision pairs is required.");
+        errors.push("A nonempty sourceManifest of unique repository/full Git commit object ID pairs is required (40 hexadecimal SHA-1 or 64 hexadecimal SHA-256 characters; refs and abbreviated hashes are not accepted).");
     }
     if (args.context !== undefined && !nonempty(args.context)) errors.push("Optional context must be nonempty text.");
     return errors;
@@ -266,7 +271,7 @@ export async function runDesignFeature(ctx) {
     sourceManifest = JSON.parse(JSON.stringify(ctx.args.sourceManifest));
     const input = JSON.parse(JSON.stringify(ctx.args));
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v3-${digest(input)}`;
+    const prefix = `design-feature-v4-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },

@@ -13,13 +13,15 @@ const stage0 = () => ({
     approval: { approvedRevision: "requirements-v3", approvedBy: "human-owner", reference: "review/123" },
     requirements: [{ id: "R1", text: "Preserve compatibility." }], blockingUnknowns: [],
 });
-const sourceManifest = () => [{ repository: "Common", revision: "commit-abc" }];
+const sourceRevision = "0123456789abcdef0123456789abcdef01234567";
+const newerSourceRevision = "89abcdef0123456789abcdef0123456789abcdef";
+const sourceManifest = () => [{ repository: "Common", revision: sourceRevision }];
 const evidence = () => ({
     approvalVerification: {
         verified: true, revision: "requirements-v3", reference: "review/123",
         rationale: "The test approval record explicitly approves requirements-v3.",
     },
-    references: [{ id: "E1", repository: "Common", revision: "commit-abc", path: "Example.kt", locator: "Example" }],
+    references: [{ id: "E1", repository: "Common", revision: sourceRevision, path: "Example.kt", locator: "Example" }],
     facts: [{ statement: "Example has an existing contract.", referenceIds: ["E1"] }],
     sourceVerification: [{ ...sourceManifest()[0], verified: true, rationale: "Inspected pinned test fixture." }],
     scenarioTraces: [{
@@ -256,6 +258,46 @@ test("missing or malformed source pins stop before spawning", async () => {
         ctx.args.sourceManifest = sources;
         assert.equal((await runDesignFeature(ctx)).recommendation, "needs clarification");
         assert.equal(ctx.calls.length, 0);
+        assert.equal(ctx.keys.length, 0);
+    }
+});
+
+test("mutable refs and abbreviated or malformed source hashes stop before agents and checkpoints", async () => {
+    const schema = workflowDefinition.meta.argsSchema.properties.sourceManifest.items.properties.revision;
+    for (const revision of [
+        "main", "HEAD", "refs/heads/dev", "refs/tags/v1.0", "v1.0",
+        "0123456", sourceRevision.slice(0, -1), `${sourceRevision}0`,
+        "a".repeat(63), "a".repeat(65), "g".repeat(40),
+        ` ${sourceRevision}`, `${sourceRevision}\n`, "", null, 123,
+    ]) {
+        const ctx = context([]);
+        ctx.args.sourceManifest[0].revision = revision;
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "needs clarification", String(revision));
+        assert.equal(packet.reviewReady, false);
+        assert.match(packet.reasons.join(" "), /full Git commit object ID/);
+        assert.equal(ctx.calls.length, 0);
+        assert.equal(ctx.keys.length, 0);
+        if (typeof revision === "string") assert.equal(new RegExp(schema.pattern).test(revision), false);
+    }
+});
+
+test("full SHA-1 and SHA-256 source hashes allow checkpoints and GO without restricting Stage 0 labels", async () => {
+    const schema = workflowDefinition.meta.argsSchema.properties.sourceManifest.items.properties.revision;
+    for (const revision of [sourceRevision, "0123456789abcdef".repeat(4), sourceRevision.toUpperCase()]) {
+        const e = evidence();
+        e.references[0].revision = e.sourceVerification[0].revision = revision;
+        const d = design();
+        d.evidenceDigest = digest(e);
+        const ctx = context([e, d, review(d)]);
+        ctx.args.sourceManifest[0].revision = revision;
+        assert.deepEqual(validateStage0(ctx.args), []);
+        assert.equal(new RegExp(schema.pattern).test(revision), true);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "GO to Planning");
+        assert.equal(packet.stage0.revision, "requirements-v3");
+        assert.equal(ctx.calls.length, 3);
+        assert.equal(ctx.keys.length, 3);
     }
 });
 
@@ -284,10 +326,10 @@ test("source verification and complete scenario traces are mandatory before auth
 });
 
 test("a trace cannot splice different revisions into a fictional execution path", () => {
-    const sources = [...sourceManifest(), { repository: "Common", revision: "commit-new" }];
+    const sources = [...sourceManifest(), { repository: "Common", revision: newerSourceRevision }];
     const e = evidence();
     e.sourceVerification.push({ ...sources[1], verified: true, rationale: "Inspected newer test fixture." });
-    e.references.push({ ...e.references[0], id: "E2", revision: "commit-new" });
+    e.references.push({ ...e.references[0], id: "E2", revision: newerSourceRevision });
     e.scenarioTraces[0].terminalOutcome.referenceIds = ["E2"];
     assert.match(validateEvidence(e, stage0(), sources).join(" "), /cannot mix revisions/);
 });
@@ -447,11 +489,12 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v3-/);
+    assert.match(initial.keys[0], /^design-feature-v4-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
-    changed.args.sourceManifest[0].revision = "new-pin";
+    changed.args.sourceManifest[0].revision = newerSourceRevision;
     await runDesignFeature(changed);
+    assert.equal(changed.keys.length, 1);
     assert.notEqual(initial.keys[0], changed.keys[0]);
     const feedback = context([null]);
     feedback.args.context = "Additional review feedback";
@@ -463,7 +506,7 @@ test("mutation of source pins during evidence gathering stops before authoring",
     const ctx = context([evidence()]);
     const agent = ctx.agent;
     ctx.agent = async (...args) => {
-        ctx.args.sourceManifest[0].revision = "changed";
+        ctx.args.sourceManifest[0].revision = newerSourceRevision;
         return agent(...args);
     };
     const packet = await runDesignFeature(ctx);
