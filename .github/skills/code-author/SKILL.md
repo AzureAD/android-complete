@@ -50,6 +50,11 @@ modifying production code.
     and `@JvmStatic` when adding default parameters or companion helpers consumed from Java.
   - Use `internal` or `@VisibleForTesting` for test-injection constructors rather than
     replacing public/package-private constructors.
+  - **Same-module Kotlin + Lombok**: In mixed Java/Kotlin Gradle modules (`broker4j`,
+    `common4j`), `compileKotlin` runs *before* `compileJava` / Lombok annotation processing.
+    If new Kotlin code calls a Lombok-generated `@Getter` / `@Setter` / `@Builder` on a Java
+    class in the *same* Gradle module, declare the Java accessor explicitly on that Java class
+    so `compileKotlin` can resolve it.
 - **Consistent input normalization**:
   - Normalize string inputs (such as `tenantId`, `loginHint`, package names) consistently at
     entry boundaries using trimmed/non-blank checks (`trim()`, `isNotBlank()`) so routing and

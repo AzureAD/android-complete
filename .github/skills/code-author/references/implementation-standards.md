@@ -58,10 +58,14 @@ Detailed engineering standards for authoring code and pull requests across `comm
 
 ## 4. Java / Kotlin Interop, Input Normalization & Code Hygiene
 
-1. **Java compatibility**:
+1. **Java compatibility & same-module Lombok**:
    - Adding a parameter with a default value in Kotlin or replacing a constructor in Java/Kotlin
      breaks binary/source compatibility unless `@JvmOverloads` is present or the original
      constructor signature is preserved.
+   - In mixed Java/Kotlin modules (`broker4j`, `common4j`), `compileKotlin` executes before
+     Java annotation processing (Lombok). Never rely on Lombok-generated `@Getter`/`@Setter`
+     methods from Kotlin code in the *same* Gradle module without an explicit Java method
+     declaration on that Java class.
 2. **Boundary normalization**:
    - Strings crossing Activity/Bundle/IPC boundaries (such as `tenantId`) must be checked
      with `.trim()` / `isNotBlank()` consistently in both the router and the downstream
