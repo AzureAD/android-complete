@@ -84,9 +84,16 @@ modifying production code.
   - For `AzureAD/*` repos on `github.com`, use `gh pr create` with the developer's public
     GitHub account (from `.github/developer-local.json` or `gh auth status`) rather than
     relying on EMU-bound app tokens that return `403 Forbidden`.
-  - Include `Fixes AB#<workItemId>` in both the PR title and body.
+  - For `msft.ghe.com/security/ad-accounts-for-android` (`broker`), always use `gh pr create` /
+    `gh pr edit` / `gh api --hostname msft.ghe.com` with the GHE account (`shjameel`)—never
+    use the app's built-in `create_pull_request` / `update_pull_request` tools on GHE repos
+    (they target `github.com` and return `404 Not Found`).
+  - Normalize new `.kt` / `.java` files to LF (`\n`) line endings so `git diff --check` and
+    rebases onto `origin/dev` pass without CRLF whitespace warnings.
+  - Include `Fixes AB#<workItemId>` in both the PR title and body when a work item exists.
 - **Local Gradle vs. CI pipeline verification**:
-  - Always try to run targeted Gradle tests locally first. In `common`, `broker`, `msal`, and
+  - Always try to run targeted Gradle tests locally first (scoped with `--tests "<Pattern>"`;
+    never run unfiltered `:AADAuthenticator:testLocalDebugUnitTest`). In `common`, `broker`, `msal`, and
     `adal`, `settings.gradle` reads `ENV_VSTS_MVN_CRED_USERNAME` and
     `ENV_VSTS_MVN_CRED_ACCESSTOKEN`; if they are not already set in the environment, try
     setting `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"` (when present),

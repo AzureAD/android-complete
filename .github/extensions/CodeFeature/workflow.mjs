@@ -246,15 +246,25 @@ Report blocking uncertainty explicitly in blockingUnknowns.`;
 const readerBoundaries = `You are Stage 1 (read-only repository evidence and specification extraction) of a multi-stage coding workflow.
 Inspect repository sources and return structured JSON, not files. Later workflow stages (code-builder, code-reviewer, and PR publishing) will perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
 Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy during this stage.
+Android Auth source layout reference (avoid guessing nonexistent paths):
+- broker: broker/broker4j/src/{main,test}/com/microsoft/identity/broker4j/..., broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
+- nested common inside broker: broker/common/common4j/src/{main,test}/com/microsoft/identity/common/java/..., broker/common/common/src/{main,test}/java/com/microsoft/identity/common/...
+- standalone common: common/common4j/src/{main,test}/..., common/common/src/{main,test}/java/...
 ${commonBoundaries}`;
 
 const builderBoundaries = `You are the Android Auth implementation builder. Follow repository and code-author conventions strictly:
-- Write new files and new code in Kotlin; maintain Java style when editing existing Java files.
+- Write new files and new code in Kotlin; maintain Java style when editing existing Java files. Use LF (\\n) line endings on new files so git diff --check stays clean.
 - Include the full repository license/copyright header at the top of every new file (full MIT header in common/common4j/msal/adal; Microsoft copyright header in broker).
 - Gate behavioral changes behind a default-off flight with ZERO off-path side effects (when the flight is false, leave legacy state, navigation, and logging untouched), and test both flight=true and flight=false.
-- Preserve Java/Kotlin binary and source ABI (@JvmOverloads / @JvmStatic) and normalize boundary string inputs (trim/isNotBlank) consistently.
+- Preserve Java/Kotlin binary and source ABI (@JvmOverloads / @JvmStatic) and normalize boundary string inputs (trim/isNotBlank) consistently. In mixed Java/Kotlin modules (broker4j, common4j), compileKotlin runs before Lombok—declare explicit Java getters/setters when calling Lombok-annotated Java classes from Kotlin in the same module.
 - Emit flight-gated regression telemetry and update OpenTelemetry sampler expectation tests whenever a new SpanName is added.
 - Use the custom Logger class; never use android.util.Log or log PII/tokens/secrets.
+- Android Auth source layout (do not guess paths):
+  * broker4j: broker/broker4j/src/{main,test}/com/microsoft/identity/broker4j/...
+  * AADAuthenticator: broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
+  * nested common in broker: broker/common/common4j/src/main/com/... and broker/common/common/src/main/java/...
+- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
+  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --no-daemon
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
 
@@ -1618,9 +1628,17 @@ export function applyTargetFiles(repoRoot, files, backups) {
             if (resolvedParent !== normalizedRoot && !resolvedParent.startsWith(normalizedRoot + path.sep)) {
                 throw new Error(`Symlink parent escapes repository root: ${file.path}`);
             }
-            writeFileSync(destination, file.content, "utf8");
+            const normalizedContent = file.content.replace(/\r\n/g, "\n");
+            writeFileSync(destination, normalizedContent, "utf8");
         } else if (existsSync(destination)) {
-            file.content = readFileSync(destination, "utf8");
+            const rawDisk = readFileSync(destination, "utf8");
+            if (rawDisk.includes("\r\n") && /\.(?:kt|kts|java|md|gradle|pro|xml|json)$/i.test(file.path)) {
+                const lfContent = rawDisk.replace(/\r\n/g, "\n");
+                writeFileSync(destination, lfContent, "utf8");
+                file.content = lfContent;
+            } else {
+                file.content = rawDisk;
+            }
         }
     }
 }
@@ -1803,6 +1821,7 @@ export function publishTargetPullRequest({
     exec("git", pushArgs, { cwd: repoRoot, env: gitEnv });
 
     const repoArg = target.hostname === "github.com" ? target.slug : `${target.hostname}/${target.slug}`;
+    const changelogLabel = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "changelog:patch" : "changelog:minor";
     const prArgs = [
         "pr",
         "create",
@@ -1821,6 +1840,11 @@ export function publishTargetPullRequest({
     const url = exec("gh", prArgs, { cwd: repoRoot, env: gitEnv });
 
     if (nonempty(url)) {
+        try {
+            exec("gh", ["pr", "edit", url, "--repo", repoArg, "--add-label", changelogLabel], { cwd: repoRoot, env: gitEnv });
+        } catch {
+            // Optional label application when label exists in target repo.
+        }
         body = upsertMarkerBlock(
             body,
             statusMarkers,
