@@ -9,6 +9,7 @@ import test from "node:test";
 import {
     OBSERVER_AGENT,
     computeRepairIdentity,
+    isSnapshotWaitingForCiOnly,
     observerCustomAgent,
     observerWorkflowDefinition,
     parsePullRequestUrl,
@@ -1245,6 +1246,94 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.equal(normalizedAuthAppTask.workItemId, 3652306);
     assert.equal(normalizedAuthAppTask.targets[0].repository, "authenticator");
     assert.equal(normalizedAuthAppTask.targets[0].baseBranch, "working");
+
+    // 5. pr-observer automatically polls while CI is queued/in-progress without pausing or burning subagents
+    const queuedSnapshot = {
+        number: 17764690,
+        state: "active",
+        mergeStateStatus: "succeeded",
+        headRefName: "users/shjameel/expanded-entra-guided-restore-3652306",
+        headRefOid: "f13c4ef24",
+        baseRefName: "working",
+        statusCheckRollup: [
+            { state: null, description: "Coverage status check queued for Android Authenticator PR Checks" },
+            { state: null, description: "Ownership Enforcer: Missing Approvals" },
+            { state: "succeeded", description: "Regional Approval Policy - Passed" },
+        ],
+        prBuilds: [
+            {
+                id: 188765080,
+                definition: "Android Authenticator PR Checks",
+                status: "inProgress",
+                result: null,
+                failedTasks: [],
+            },
+        ],
+        activeReviewThreads: [],
+    };
+    const failedDetektSnapshot = {
+        ...queuedSnapshot,
+        prBuilds: [
+            {
+                id: 188765080,
+                definition: "Android Authenticator PR Checks",
+                status: "inProgress",
+                result: null,
+                failedTasks: [
+                    {
+                        name: "gradlew detektCheck",
+                        issues: ["Error: gradlew failed with exit code 1"],
+                        excerpt: ["EntraAddAccountViewModel.kt:298:9: The function createOperationContexts is too long (60). [LongMethod]"],
+                    },
+                ],
+            },
+        ],
+    };
+    assert.equal(isSnapshotWaitingForCiOnly(queuedSnapshot), true);
+    assert.equal(isSnapshotWaitingForCiOnly(failedDetektSnapshot), false);
+
+    let snapshotPollCount = 0;
+    let sleepCalls = 0;
+    const pollPaused = [];
+    const pollCtx = context([
+        {
+            verdict: "ready",
+            repairKind: "none",
+            summary: "CI completed and passed after automatic polling.",
+            evidence: ["Build 188765080 succeeded"],
+            actionableFindings: [],
+        },
+    ]);
+    pollCtx.pause = async (key) => {
+        pollPaused.push(key);
+    };
+    pollCtx.args = {
+        prUrl: "https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/17764690",
+        options: {
+            ciPollIntervalMs: 0,
+            maxCiPollAttempts: 3,
+        },
+    };
+    const pollResult = await runPrObserver(pollCtx, {
+        fetchPrSnapshot: () => {
+            snapshotPollCount++;
+            if (snapshotPollCount < 3) return queuedSnapshot;
+            return {
+                ...queuedSnapshot,
+                statusCheckRollup: [{ state: "succeeded", description: "Coverage status check succeeded" }],
+                prBuilds: [{ id: 188765080, definition: "Android Authenticator PR Checks", status: "completed", result: "succeeded", failedTasks: [] }],
+            };
+        },
+        sleep: async () => {
+            sleepCalls++;
+        },
+        exec: () => "",
+    });
+    assert.equal(pollResult.status, currentStatuses.readyForHumanMerge);
+    assert.equal(snapshotPollCount, 3);
+    assert.equal(sleepCalls, 2);
+    assert.equal(pollPaused.length, 0);
+    assert.equal(pollCtx.calls.length, 1);
 });
 
 
