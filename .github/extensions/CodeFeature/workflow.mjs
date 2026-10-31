@@ -1003,11 +1003,17 @@ export function normalizeTask(args) {
         }));
     } else if (nonempty(raw.repository) || inputMode !== "structured") {
         const inferredFromDoc = nonempty(designDocText) ? inferRepositoriesFromText(designDocText) : [];
-        const inferredRepos = nonempty(raw.repository)
+        const inferredFromAll = inferredFromDoc.length > 0
+            ? inferredFromDoc
+            : inferRepositoriesFromText(`${designDocText}\n${promptText}`);
+        const explicitKey = normalizeRepositoryKey(raw.repository);
+        const inferredRepos = nonempty(raw.repository) && (explicitKey !== "android-complete" || inferredFromAll.length === 0)
             ? [raw.repository]
-            : inferredFromDoc.length > 0
-                ? inferredFromDoc
-                : inferRepositoriesFromText(`${designDocText}\n${promptText}`);
+            : inferredFromAll.length > 0
+                ? inferredFromAll
+                : nonempty(raw.repository)
+                    ? [raw.repository]
+                    : [];
         rawTargets = inferredRepos.map((repoName, idx) => ({
             id: nonempty(raw.targetId) && idx === 0 ? raw.targetId.trim() : `target-${idx + 1}`,
             repository: repoName,
