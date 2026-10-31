@@ -1351,6 +1351,27 @@ export function formatPrBody(
         nextAction: "Run pr-observer for this PR.",
     });
 
+    const isAdoTarget = target.repository === "authenticator" ||
+        /visualstudio\.com|dev\.azure\.com/i.test(String(target.hostname || ""));
+    const prTypeTag = /\b(fix|bug|hotfix|regression)\b/i.test(targetImpl.pr.title || target.title || "")
+        ? "bug"
+        : "feature";
+    const adoBlocks = isAdoTarget
+        ? [
+            "",
+            ...(positiveInt(Number(target.workItemId))
+                ? [`WiClose: https://identitydivision.visualstudio.com/Engineering/_workitems/edit/${target.workItemId}`, ""]
+                : []),
+            "<!-- BEGIN pr-telemetry -->",
+            "assistance: agentic-cli",
+            `type: ${prTypeTag}`,
+            "agent-tool: copilot-cli",
+            "agent-model: gpt-6.1-sol",
+            `work-item: AB#${positiveInt(Number(target.workItemId)) ? target.workItemId : 3800277}`,
+            "<!-- END pr-telemetry -->",
+        ]
+        : [];
+
     return [
         abLinks.join(" · "),
         "",
@@ -1379,6 +1400,7 @@ export function formatPrBody(
         "## Compatibility, Rollout & Breaking Changes",
         `- **Breaking changes:** ${targetImpl.pr.breakingChanges.trim()}`,
         `- **Rollout / Feature flag:** ${rolloutText}`,
+        ...adoBlocks,
         "",
         deliveryBlock,
         "",
@@ -1928,11 +1950,16 @@ export function buildBranchName(target, branchPrefix = "") {
         .replace(/-+/g, "-")
         .replace(/^-+|-+$/g, "")
         .slice(0, 48);
+    const isAdoTarget = target?.repository === "authenticator" ||
+        /visualstudio\.com|dev\.azure\.com/i.test(String(target?.hostname || ""));
+    const defaultAlias = process.env.USERNAME || "shjameel";
     const prefix = nonempty(branchPrefix)
         ? branchPrefix.trim().replace(/^\/+|\/+$/g, "")
         : nonempty(target.account)
             ? target.account.trim()
-            : "feat";
+            : isAdoTarget
+                ? `users/${defaultAlias}`
+                : "feat";
     const abSegment = positiveInt(Number(target.workItemId)) ? `ab-${Number(target.workItemId)}-` : "";
     return `${prefix}/${abSegment}${slug || "change"}`;
 }
@@ -2022,31 +2049,77 @@ export function publishTargetPullRequest({
         : ["push", "-u", "origin", branch];
     exec("git", pushArgs, { cwd: repoRoot, env: gitEnv });
 
-    const repoArg = target.hostname === "github.com" ? target.slug : `${target.hostname}/${target.slug}`;
-    const changelogLabel = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "changelog:patch" : "changelog:minor";
-    const prArgs = [
-        "pr",
-        "create",
-        "--repo",
-        repoArg,
-        "--base",
-        target.baseBranch,
-        "--head",
-        branch,
-        "--title",
-        title,
-        "--body",
-        body,
-    ];
-    if (draftPullRequest) prArgs.push("--draft");
-    const url = exec("gh", prArgs, { cwd: repoRoot, env: gitEnv });
+    const isAdoTarget = target.repository === "authenticator" ||
+        /visualstudio\.com|dev\.azure\.com/i.test(String(target.hostname || ""));
+    let url = "";
+
+    if (isAdoTarget) {
+        const slugParts = String(target.slug || "One/_git/AD-MFA-phonefactor-phoneApp-android").split("/_git/");
+        const adoProject = slugParts[0] || "One";
+        const adoRepo = slugParts[1] || "AD-MFA-phonefactor-phoneApp-android";
+        const orgUrl = target.hostname.startsWith("http") ? target.hostname : `https://${target.hostname}`;
+        const prTypeTag = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "bug" : "feature";
+        const adoArgs = [
+            "repos",
+            "pr",
+            "create",
+            "--org",
+            orgUrl,
+            "--project",
+            adoProject,
+            "--repository",
+            adoRepo,
+            "--source-branch",
+            branch,
+            "--target-branch",
+            target.baseBranch,
+            "--title",
+            title,
+            "--description",
+            body,
+            "--labels",
+            "agentic-cli",
+            prTypeTag,
+            "--query",
+            "pullRequestId",
+            "-o",
+            "tsv",
+        ];
+        if (draftPullRequest) adoArgs.push("--draft", "true");
+        const prId = exec("az", adoArgs, { cwd: repoRoot });
+        url = nonempty(prId)
+            ? `${orgUrl.replace(/\/+$/, "")}/${adoProject}/_git/${adoRepo}/pullrequest/${prId.trim()}`
+            : "";
+    } else {
+        const repoArg = target.hostname === "github.com" ? target.slug : `${target.hostname}/${target.slug}`;
+        const changelogLabel = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "changelog:patch" : "changelog:minor";
+        const prArgs = [
+            "pr",
+            "create",
+            "--repo",
+            repoArg,
+            "--base",
+            target.baseBranch,
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            body,
+        ];
+        if (draftPullRequest) prArgs.push("--draft");
+        url = exec("gh", prArgs, { cwd: repoRoot, env: gitEnv });
+
+        if (nonempty(url)) {
+            try {
+                exec("gh", ["pr", "edit", url, "--repo", repoArg, "--add-label", changelogLabel], { cwd: repoRoot, env: gitEnv });
+            } catch {
+                // Optional label application when label exists in target repo.
+            }
+        }
+    }
 
     if (nonempty(url)) {
-        try {
-            exec("gh", ["pr", "edit", url, "--repo", repoArg, "--add-label", changelogLabel], { cwd: repoRoot, env: gitEnv });
-        } catch {
-            // Optional label application when label exists in target repo.
-        }
         body = upsertMarkerBlock(
             body,
             statusMarkers,
@@ -2217,7 +2290,9 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const maxFixes = positiveInt(rawOptions.maxFixIterations)
         ? Math.min(rawOptions.maxFixIterations, MAX_FIX_ITERATIONS)
         : MAX_FIX_ITERATIONS;
-    const createPullRequests = rawOptions.createPullRequests === true;
+    const createPullRequests = rawOptions.createPullRequests !== undefined
+        ? rawOptions.createPullRequests === true
+        : Boolean(ctx?.session?.ui);
     const draftPullRequest = rawOptions.draftPullRequest === true;
     const applyToWorkspace = rawOptions.applyToWorkspace === true || createPullRequests;
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();

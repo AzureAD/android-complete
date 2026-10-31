@@ -92,11 +92,12 @@ Pass a plain-language request (optionally with `repository` and `workItemId`):
 ### Options
 
 - `maxFixIterations` (default `3`, max `3`): Maximum builder fix iterations after initial build.
-- `createPullRequests` (default `false`): When `true`, writes verified files to the target
-  repository checkout, creates branch `feat/ab-<workItemId>-<slug>`, commits with the Copilot
-  trailer, pushes to `origin` using the repository's GitHub account, and runs `gh pr create`.
-  When `false`, returns the complete verified PR title, body, branch, and file changes in the
-  packet without mutating git remotes.
+- `createPullRequests` (default `true` in live Copilot sessions, `false` in offline unit tests):
+  When `true`, writes verified files to the target repository checkout, creates branch
+  `<alias>/ab-<workItemId>-<slug>` (or `users/<alias>/...` in ADO), commits with the Copilot
+  trailer, pushes to `origin`, and opens the PR via `gh pr create` (GitHub/GHE) or
+  `az repos pr create` (Azure DevOps `authenticator` with `WiClose` and `pr-telemetry` footer).
+  Set `createPullRequests: false` for dry-run packet generation without pushing.
 - `draftPullRequest` (default `false`): Passes `--draft` to `gh pr create` when creating PRs.
 - `iterativeIntake` (default `false`): Re-invokes `code-evidence` with recorded user answers
   for up to 3 intake rounds so the extracted specification incorporates clarifications cleanly.
