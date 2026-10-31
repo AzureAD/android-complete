@@ -614,7 +614,7 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
                 exec("git", ["fetch", "origin", baseBranch, "--quiet"], { cwd: targetDir });
                 const trackedDirty = exec(
                     "git",
-                    ["--no-pager", "status", "--porcelain", "--untracked-files=no"],
+                    ["--no-pager", "status", "--porcelain", "--untracked-files=no", "--ignore-submodules=all"],
                     { cwd: targetDir },
                 );
                 if (!nonempty(trackedDirty)) {
