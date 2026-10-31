@@ -3,7 +3,9 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
     currentStatusOwners,
     currentStatuses,
@@ -15,7 +17,6 @@ import {
     BUILDER_AGENT,
     REVIEWER_AGENT,
     ensureIsolatedTargetWorktree,
-    loadAgentPromptFromFile,
     pauseForHelp,
     resolveGitHubAccount,
     resolveRoleSkillGuides,
@@ -24,6 +25,21 @@ import {
     slimReviewSchema,
     snapshotWorktree,
 } from "./workflow.mjs";
+
+function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
+    try {
+        const currentDir = path.dirname(fileURLToPath(import.meta.url));
+        const agentFile = path.resolve(currentDir, "..", "..", "agents", `${agentName}.agent.md`);
+        if (existsSync(agentFile)) {
+            const raw = readFileSync(agentFile, "utf8").replace(/\r\n/g, "\n");
+            const stripped = raw.replace(/^---\n[\s\S]*?\n---\n+/, "").trim();
+            if (stripped.length > 0) return stripped;
+        }
+    } catch {
+        // Fall back to inline prompt.
+    }
+    return fallbackPrompt;
+}
 
 export const OBSERVER_AGENT = "pr-observer";
 export const MAX_OBSERVER_ITERATIONS = 3;
@@ -60,7 +76,7 @@ export const observerCustomAgent = Object.freeze({
     description: "Monitors an Android Auth pull request's CI pipelines and review threads, classifying tactical repairs vs. ready-for-human-merge.",
     infer: false,
     tools: ["view", "glob", "grep", "skill"],
-    prompt: loadAgentPromptFromFile(
+    prompt: loadObserverAgentPrompt(
         OBSERVER_AGENT,
         `You are the read-only Autonomous PR Observer for Android Auth pull requests.
 Inspect the supplied pull request snapshot (CI check statuses, mergeability, and review comments/threads) and repository context.
