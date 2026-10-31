@@ -2072,14 +2072,19 @@ async function askUserForClarifications(questions, ctx, askUser) {
         const properties = Object.fromEntries(
             cleaned.map((question, idx) => [`q${idx + 1}`, { type: "string", title: question }]),
         );
-        const response = await ctx.session.ui.elicitation({
-            message: "Clarification needed to complete the coding task:",
-            requestedSchema: {
-                type: "object",
-                properties,
-                required: Object.keys(properties),
-            },
-        });
+        let response;
+        try {
+            response = await ctx.session.ui.elicitation({
+                message: "Clarification needed to complete the coding task:",
+                requestedSchema: {
+                    type: "object",
+                    properties,
+                    required: Object.keys(properties),
+                },
+            });
+        } catch {
+            return null;
+        }
         if (!record(response) || response.action !== "accept" || !record(response.content)) {
             return null;
         }
@@ -2229,7 +2234,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     task = JSON.parse(JSON.stringify(task));
     const approvedSnapshot = JSON.stringify(task);
     const prefix = `code-feature-v1-${createHash("sha256").update(approvedSnapshot).digest("hex")}`;
-    const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
+    const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
     const ask = (label, agentName, promptTask, schema, data, modelOverride) => ctx.agent(
@@ -2426,6 +2431,7 @@ Infer technical details from the design doc, PBI, clarifications, and existing c
             const answers = await step(
                 clarificationStepKey,
                 () => askUserForClarifications(cappedQuestions, ctx, dependencies.askUser),
+                { volatile: true },
             );
             if (Array.isArray(answers) && answers.length > 0) {
                 applyClarificationAnswersToTask(answers);
