@@ -2563,7 +2563,7 @@ If local Gradle execution fails solely because local VSTS Maven feed credentials
 Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
 
     phase("Build initial implementation");
-    const rawInitialImpl = await step("build-0", () => ask(
+    let latestRawBuilderOutput = await step("build-0", () => ask(
         "Code builder (round 1)",
         BUILDER_AGENT,
         builderTask,
@@ -2571,7 +2571,7 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
         { round: 1, maxFixIterations: maxFixes, task, evidence, skillGuides: builderGuides },
         rawOptions.builderModel,
     ));
-    implementation = normalizeImplementationResponse(rawInitialImpl, task, { workspaceRoot, exec });
+    implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
 
     const backupsByTarget = new Map();
     const restoreAll = () => {
@@ -2647,6 +2647,15 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 ...answers,
                             ];
                             implementation.blockingUnknowns = [];
+                            latestRawBuilderOutput = await step(`post-clarification-build-${round}`, () => ask(
+                                `Code builder (post-clarification round ${round + 1})`,
+                                BUILDER_AGENT,
+                                builderTask,
+                                useSlimSchemas ? slimResultSchema : implementationSchema,
+                                { round: round + 1, maxFixIterations: maxFixes, task, evidence, skillGuides: builderGuides },
+                                rawOptions.builderModel,
+                            ));
+                            implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
                         } else if (pauseOnBlocker) {
                             const recoveredImpl = await recoverWorktree(round, implementation.blockingUnknowns.join("\n"));
                             if (recoveredImpl) {
@@ -2714,17 +2723,35 @@ Evaluate unitTestsAndVerification by inspecting the authored unit tests and loca
 If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions; if the builder's summary/evidence provides a concrete technical justification for why a prior finding would violate flight-off preservation, the approved design doc, or headless local environment limits, accept that justification and do not re-raise the finding. Never require new tap-admission, debounce, or state-ownership guards on the flight=false (disabled) branch—when a feature flight is false, pass-through/no-op admission is required to preserve zero off-path side effects.
 Do not edit code or waive code-level defects. Return pass/findings=[] only when the code and unit tests are ready for human review.`,
                         useSlimSchemas ? slimReviewSchema : reviewSchema,
-                        {
-                            round: round + 1,
-                            maxFixIterations: maxFixes,
-                            task,
-                            evidence,
-                            implementation,
-                            diffsByTarget,
-                            rubric,
-                            skillGuides: reviewerGuides,
-                            priorReviews: history,
-                        },
+                        useSlimSchemas
+                            ? {
+                                round: round + 1,
+                                maxFixIterations: maxFixes,
+                                task,
+                                builderReport: latestRawBuilderOutput,
+                                changedFiles: implementation.targets.map((t) => ({
+                                    targetId: t.targetId,
+                                    repository: t.repository,
+                                    files: t.files.map((f) => ({ path: f.path, action: f.action })),
+                                    testsAddedOrUpdated: t.testsAddedOrUpdated,
+                                    pr: t.pr,
+                                })),
+                                diffsByTarget,
+                                rubric,
+                                skillGuides: reviewerGuides,
+                                priorReviews: history,
+                            }
+                            : {
+                                round: round + 1,
+                                maxFixIterations: maxFixes,
+                                task,
+                                evidence,
+                                implementation,
+                                diffsByTarget,
+                                rubric,
+                                skillGuides: reviewerGuides,
+                                priorReviews: history,
+                            },
                         rawOptions.reviewerModel,
                     ));
                     const review = normalizeReviewResponse(rawReview, task);
@@ -2832,6 +2859,7 @@ Resolve every validation error and reviewer finding in history autonomously with
                 },
                 rawOptions.builderModel,
             ));
+            latestRawBuilderOutput = rawFixImpl;
             implementation = normalizeImplementationResponse(rawFixImpl, task, { workspaceRoot, exec });
         }
     } catch (error) {
