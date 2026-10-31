@@ -457,7 +457,7 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
             if (cmd === "git" && args[0] === "rev-parse") return "deadbeef1234";
             if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
                 const repoArg = args[args.indexOf("--repo") + 1];
-                return `https://${repoArg.includes("msft.ghe.com") ? repoArg : `github.com/${repoArg}`}/pull/999`;
+                return `https://${repoArg.startsWith("msft.ghe.com/") ? repoArg : `github.com/${repoArg}`}/pull/999`;
             }
             return "";
         };

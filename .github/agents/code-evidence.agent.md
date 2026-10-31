@@ -26,10 +26,17 @@ Inspect the supplied input (Design Doc, Azure DevOps PBI, or free-form prompt) a
 - `broker`: `broker/broker4j/src/{main,test}/com/microsoft/identity/broker4j/...`, `broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...`
 - `nested common inside broker`: `broker/common/common4j/src/{main,test}/com/microsoft/identity/common/java/...`, `broker/common/common/src/{main,test}/java/com/microsoft/identity/common/...`
 - `standalone common`: `common/common4j/src/{main,test}/...`, `common/common/src/{main,test}/java/...`
+- `msal`: `msal/msal/src/{main,test}/java/com/microsoft/identity/client/...`
+- `adal`: `adal/adal/src/{main,androidTest}/java/com/microsoft/aad/adal/...`
 - `authenticator`: `authenticator/PhoneFactor/...`
 
 ## References
 
 - `.github/copilot-instructions.md`
+- `common/.github/copilot-instructions.md`
+- `broker/.github/copilot-instructions.md`
+- `msal/.github/copilot-instructions.md`
+- `adal/.github/copilot-instructions.md`
+- `authenticator/AGENTS.md`
 - `.github/skills/codebase-researcher/SKILL.md`
 - `.github/skills/code-author/SKILL.md`

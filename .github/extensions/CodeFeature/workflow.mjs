@@ -308,6 +308,7 @@ export const SKILL_GUIDES = Object.freeze({
         authenticator: Object.freeze([
             ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
+            "authenticator/AGENTS.md",
             "authenticator/.github/skills/codebase-researcher/references/architecture-overview.md",
             "authenticator/.github/skills/android-feature-development/SKILL.md",
             "authenticator/.github/skills/android-ui-development/SKILL.md",
@@ -341,6 +342,7 @@ export const SKILL_GUIDES = Object.freeze({
         authenticator: Object.freeze([
             ".github/copilot-instructions.md",
             ".github/skills/code-author/SKILL.md",
+            "authenticator/AGENTS.md",
             "authenticator/.github/skills/codebase-researcher/references/architecture-overview.md",
             "authenticator/.github/skills/pr-reviewer/references/android-patterns.md",
             "authenticator/.github/skills/pr-reviewer/references/security-checklist.md",
@@ -368,6 +370,7 @@ export function resolveRoleSkillGuides(role, targets = []) {
                 guides.add(`${repo}/.github/copilot-instructions.md`);
             }
             if (repo === "authenticator") {
+                guides.add("authenticator/AGENTS.md");
                 guides.add("authenticator/.github/skills/codebase-researcher/references/architecture-overview.md");
             }
         }
@@ -462,10 +465,10 @@ function stripHtml(textValue) {
         .replace(/<br\s*\/?>/gi, "\n")
         .replace(/<[^>]+>/g, " ")
         .replace(/&nbsp;/gi, " ")
-        .replace(/&amp;/gi, "&")
         .replace(/&lt;/gi, "<")
         .replace(/&gt;/gi, ">")
         .replace(/&quot;/gi, "\"")
+        .replace(/&amp;/gi, "&")
         .replace(/[ \t]+/g, " ")
         .replace(/\n\s*\n+/g, "\n\n")
         .trim();
