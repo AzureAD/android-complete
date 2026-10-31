@@ -1338,19 +1338,12 @@ export function isProtectedPipelineOrQualityPath(filePath) {
 }
 
 export function isPipelineModificationAuthorized(task, target = null) {
+    if (task?.allowPipelineEdits === true || target?.allowPipelineEdits === true) return true;
     const repo = String(target?.repository || task?.targets?.[0]?.repository || "").trim().toLowerCase();
     if (repo === "1es-pipelines") return true;
-    const combinedText = [
-        task?.title,
-        task?.designSummary,
-        target?.title,
-        target?.description,
-        ...(Array.isArray(task?.requirements) ? task.requirements.map((r) => r?.text) : []),
-    ]
-        .filter(nonempty)
-        .join("\n");
-    return /\b(?:\.pipelines\/|1es-pipelines|azure-pipelines\/|\.github\/workflows\/|(?:modify|update|edit|change|author)\s+(?:the\s+)?(?:ci\s+)?(?:pipeline|workflow\s+yaml|detekt\.yml|checkstyle\.xml))\b/i.test(
-        combinedText,
+    const titleText = [task?.title, target?.title].filter(nonempty).join("\n");
+    return /\b(?:\.pipelines\/|azure-pipelines\/|\.github\/workflows\/|(?:modify|update|edit|change|author)\s+(?:the\s+)?(?:ci\s+)?(?:pipeline|workflow\s+yaml|detekt\.yml|checkstyle\.xml))\b/i.test(
+        titleText,
     );
 }
 
