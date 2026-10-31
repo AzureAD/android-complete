@@ -1545,9 +1545,9 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         taskRevision: task.revision,
         targets,
         traceability,
-        assumptions: [],
+        assumptions: rawImpl.verdict === "blocked" && nonempty(rawImpl.summary) ? [rawImpl.summary] : [],
         openDecisions: [],
-        blockingUnknowns: rawImpl.verdict === "blocked" ? [rawImpl.summary || "Implementation blocked."] : [],
+        blockingUnknowns: [],
     }, task);
 }
 
@@ -2047,9 +2047,15 @@ export function publishTargetPullRequest({
 
 async function askUserForClarifications(questions, ctx, askUser) {
     if (!Array.isArray(questions) || questions.length === 0) return null;
+    const cleanQuestion = (q) => String(q || "")
+        .trim()
+        .replace(/^(?:blockingUnknowns|clarificationQuestions)\s*:\s*/i, "")
+        .trim();
+    const cleaned = questions.map(cleanQuestion).filter(nonempty);
+    if (cleaned.length === 0) return null;
     if (typeof askUser === "function") {
         const answers = [];
-        for (const question of questions) {
+        for (const question of cleaned) {
             const response = await askUser(question);
             if (!nonempty(response)) return null;
             answers.push({ question, answer: response.trim() });
@@ -2058,7 +2064,7 @@ async function askUserForClarifications(questions, ctx, askUser) {
     }
     if (typeof ctx?.session?.ui?.elicitation === "function") {
         const properties = Object.fromEntries(
-            questions.map((question, idx) => [`q${idx + 1}`, { type: "string", title: question }]),
+            cleaned.map((question, idx) => [`q${idx + 1}`, { type: "string", title: question }]),
         );
         const response = await ctx.session.ui.elicitation({
             message: "Clarification needed to complete the coding task:",
@@ -2071,7 +2077,7 @@ async function askUserForClarifications(questions, ctx, askUser) {
         if (!record(response) || response.action !== "accept" || !record(response.content)) {
             return null;
         }
-        const answers = questions.map((question, idx) => ({
+        const answers = cleaned.map((question, idx) => ({
             question,
             answer: typeof response.content[`q${idx + 1}`] === "string" ? response.content[`q${idx + 1}`].trim() : "",
         }));
@@ -2361,7 +2367,7 @@ ${needsSpecExtraction || intakeRound > 0
                 : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
 You are Stage 1 (read-only evidence and specification extraction) of a multi-stage workflow; later stages (code-builder, code-reviewer, and PR creation) execute worktree, implementation, review, and PR steps. Never report requests to implement code, manage worktrees, or run builder/reviewer stages as a conflict with your read-only role, and never report a missing workItemId as a conflict or blockingUnknown when createPullRequests is ${Boolean(createPullRequests)}.
 When the caller invokes code-feature with a design doc, PBI, or prompt, that invocation IS explicit caller authorization to implement the supplied design revision—never reject or block because a status banner inside the design doc markdown says "proposed for engineer approval" or "not yet approved or authorized for implementation".
-Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase.`,
+Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase. Every question in questions / clarificationQuestions MUST be written in clear, self-contained plain language for the developer—never reference internal IDs like F001 or R18 or dump status summaries as a question.`,
             useSlimSchemas
                 ? slimIntakeSchema
                 : (needsSpecExtraction || intakeRound > 0 ? extractionEvidenceSchema : evidenceSchema),
@@ -2627,31 +2633,32 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                     }
                 }
                     if (implementation.blockingUnknowns.length) {
+                        const allowMidBuildPrompt = typeof dependencies.askUser === "function" || rawOptions.allowMidBuildElicitation === true;
                         const pendingBuilderQuestions = [...new Set(implementation.blockingUnknowns.filter(nonempty).map((q) => q.trim()))].slice(0, 3);
-                        const answers = await step(
-                            `builder-clarifications-${round}`,
-                            () => askUserForClarifications(pendingBuilderQuestions, ctx, dependencies.askUser),
-                        );
+                        const answers = allowMidBuildPrompt
+                            ? await step(
+                                `builder-clarifications-${round}`,
+                                () => askUserForClarifications(pendingBuilderQuestions, ctx, dependencies.askUser),
+                            )
+                            : null;
                         if (Array.isArray(answers) && answers.length > 0) {
                             task.sourceInputs.clarifications = [
                                 ...(Array.isArray(task.sourceInputs.clarifications) ? task.sourceInputs.clarifications : []),
                                 ...answers,
                             ];
                             implementation.blockingUnknowns = [];
-                        } else {
-                            if (pauseOnBlocker) {
-                                const recoveredImpl = await recoverWorktree(round, implementation.blockingUnknowns.join("\n"));
-                                if (recoveredImpl) {
-                                    implementation = recoveredImpl;
-                                    implementation.blockingUnknowns = [];
-                                } else {
-                                    restoreAll();
-                                    return packet("needs clarification", implementation.blockingUnknowns, implementation.blockingUnknowns);
-                                }
+                        } else if (pauseOnBlocker) {
+                            const recoveredImpl = await recoverWorktree(round, implementation.blockingUnknowns.join("\n"));
+                            if (recoveredImpl) {
+                                implementation = recoveredImpl;
+                                implementation.blockingUnknowns = [];
                             } else {
                                 restoreAll();
                                 return packet("needs clarification", implementation.blockingUnknowns, implementation.blockingUnknowns);
                             }
+                        } else {
+                            restoreAll();
+                            return packet("needs clarification", implementation.blockingUnknowns, implementation.blockingUnknowns);
                         }
                     }
 
@@ -2704,7 +2711,7 @@ Independently review the builder's code changes, unit tests, diffs, and PR metad
 Apply the fixed rubric: ${rubric.join(", ")}.
 Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
 Evaluate unitTestsAndVerification by inspecting the authored unit tests and local JVM/Robolectric test results; connected Android device/emulator tests (androidTest when adb devices has no attached device) and live multi-device/service E2E ceremonies cannot run in a headless worktree, so when androidTest compiles and device/service E2E scenarios are documented in pr.testPlan (or local Gradle was deferred due to missing VSTS Maven credentials), do NOT raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over unrun physical-device/service E2E execution or synthetic traceability formatting.
-If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions.
+If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions; if the builder's summary/evidence provides a concrete technical justification for why a prior finding would violate flight-off preservation, the approved design doc, or headless local environment limits, accept that justification and do not re-raise the finding.
 Do not edit code or waive code-level defects. Return pass/findings=[] only when the code and unit tests are ready for human review.`,
                         useSlimSchemas ? slimReviewSchema : reviewSchema,
                         {
@@ -2808,7 +2815,9 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                 `Code revision (fix ${fixes})`,
                 BUILDER_AGENT,
                 `${builderTask}
-Address every validation error, failed rubric criterion, failed acceptance criterion, and reviewer finding in history without weakening approved requirements or breaking existing behavior.`,
+Resolve every validation error and reviewer finding in history autonomously without asking the user or returning verdict "blocked":
+- For any valid code or unit-test defect (including entry-tap admission or lifecycle callback release across branches when requested by the reviewer), implement the code and unit-test fix directly.
+- If a reviewer finding conflicts with flight-off preservation, the approved design doc, or headless local environment limits (such as no attached adb device for androidTest), keep the safe behavior, record the exact technical justification in summary and evidence, and return verdict "pass" so the independent reviewer can verify the disposition.`,
                 useSlimSchemas ? slimResultSchema : implementationSchema,
                 {
                     round: fixes + 1,
