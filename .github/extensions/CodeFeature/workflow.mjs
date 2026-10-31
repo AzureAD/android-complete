@@ -618,10 +618,15 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
                     { cwd: targetDir },
                 );
                 if (!nonempty(trackedDirty)) {
+                    const featureBranch = buildBranchName(target);
                     for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
                         try {
                             exec("git", ["rev-parse", "--verify", candidate], { cwd: targetDir });
-                            exec("git", ["checkout", "--detach", candidate], { cwd: targetDir });
+                            try {
+                                exec("git", ["checkout", "-B", featureBranch, candidate], { cwd: targetDir });
+                            } catch {
+                                exec("git", ["checkout", "--detach", candidate], { cwd: targetDir });
+                            }
                             break;
                         } catch {
                             // Try next candidate ref.
