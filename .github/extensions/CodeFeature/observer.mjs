@@ -84,7 +84,37 @@ function defaultExec(command, args, options = {}) {
 
 export function parsePullRequestUrl(prUrl) {
     if (!nonempty(prUrl)) return null;
-    const match = prUrl.trim().match(/^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/([1-9]\d*)(?:\/.*)?$/i);
+    const trimmed = prUrl.trim();
+    const adoMatch = trimmed.match(
+        /^https:\/\/(?:dev\.azure\.com\/([^/\s]+)\/([^/\s]+)|([^.\s]+)\.visualstudio\.com\/(?:DefaultCollection\/)?([^/\s]+))\/_git\/([^/\s?]+)\/pullrequest\/([1-9]\d*)(?:[/?#].*)?$/i,
+    );
+    if (adoMatch) {
+        const org = adoMatch[1] || adoMatch[3];
+        const project = decodeURIComponent(adoMatch[2] || adoMatch[4]);
+        const repoName = decodeURIComponent(adoMatch[5]);
+        const prNumber = Number(adoMatch[6]);
+        const hostname = adoMatch[1] ? "dev.azure.com" : `${org}.visualstudio.com`;
+        const orgUrl = adoMatch[1] ? `https://dev.azure.com/${org}` : `https://${org}.visualstudio.com`;
+        const lowerRepo = repoName.toLowerCase();
+        const repository = lowerRepo.includes("phonefactor-phoneapp-android") || lowerRepo === "authenticator"
+            ? "authenticator"
+            : "android-complete";
+        return {
+            provider: "ado",
+            prUrl: `${orgUrl}/${project}/_git/${repoName}/pullrequest/${prNumber}`,
+            hostname,
+            org,
+            orgUrl,
+            project,
+            repoName,
+            slug: `${project}/_git/${repoName}`,
+            prNumber,
+            repository,
+            localPath: repository === "android-complete" ? "." : repository,
+        };
+    }
+
+    const match = trimmed.match(/^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/([1-9]\d*)(?:\/.*)?$/i);
     if (!match) return null;
     const [, hostname, slug, numStr] = match;
     const lowerSlug = slug.toLowerCase();
@@ -98,6 +128,7 @@ export function parsePullRequestUrl(prUrl) {
                     ? "adal"
                     : "android-complete";
     return {
+        provider: "github",
         prUrl: `https://${hostname}/${slug}/pull/${numStr}`,
         hostname,
         slug,
@@ -108,6 +139,26 @@ export function parsePullRequestUrl(prUrl) {
 }
 
 export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
+    if (parsedPr?.provider === "ado") {
+        const orgUrl = parsedPr.orgUrl || `https://${parsedPr.hostname}`;
+        const psScript = [
+            "$ErrorActionPreference = 'Stop'",
+            "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+            "$headers = @{ Authorization = \"Bearer $token\" }",
+            `$base = '${orgUrl.replace(/\/+$/, "").replace(/'/g, "''")}/${encodeURIComponent(parsedPr.project)}/_apis/git/repositories/${encodeURIComponent(parsedPr.repoName)}/pullRequests/${parsedPr.prNumber}'`,
+            "$pr = Invoke-RestMethod -Uri ($base + '?api-version=7.0') -Headers $headers -Method Get",
+            "$threads = (Invoke-RestMethod -Uri ($base + '/threads?api-version=7.0') -Headers $headers -Method Get).value",
+            "$statuses = (Invoke-RestMethod -Uri ($base + '/statuses?api-version=7.0') -Headers $headers -Method Get).value",
+            "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
+            "$latestStatuses = @($statuses | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
+            `$out = @{ number = $pr.pullRequestId; title = $pr.title; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; activeReviewThreads = $activeThreads; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+            "[Console]::Out.Write(($out | ConvertTo-Json -Depth 8 -Compress))",
+        ].join("; ");
+        const rawJson = exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
+        return JSON.parse(rawJson);
+    }
+
     const account = resolveGitHubAccount(
         { hostname: parsedPr.hostname, account: "" },
         workspaceRoot,

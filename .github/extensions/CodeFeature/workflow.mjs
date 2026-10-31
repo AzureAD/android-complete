@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runPrObserver } from "./observer.mjs";
 import {
     currentStatusOwners,
     currentStatuses,
@@ -2327,6 +2328,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     let evidence = null;
     let implementation = null;
     let pullRequests = [];
+    const observations = [];
     let fixes = 0;
 
     let task = normalizeTask(resolvedArgs);
@@ -2342,6 +2344,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         implementation,
         reviews: history,
         pullRequests,
+        observations,
         rubric: [...rubric],
         nextAction: recommendation === "GO to PR Review"
             ? "Human must review the verified pull request packet and approve/merge in GitHub."
@@ -2945,6 +2948,36 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                         }
                         return created;
                     });
+                    const shouldObservePrs = rawOptions.observePullRequests !== undefined
+                        ? rawOptions.observePullRequests === true
+                        : (createPullRequests && Boolean(ctx?.session?.ui));
+                    if (shouldObservePrs) {
+                        phase("Observe PR and repair CI/review findings");
+                        for (const prEntry of pullRequests) {
+                            if (!nonempty(prEntry?.url)) continue;
+                            const target = task.targets.find((t) => t.id === prEntry.targetId);
+                            const observerCtx = {
+                                ...ctx,
+                                args: {
+                                    prUrl: prEntry.url,
+                                    repository: prEntry.repository,
+                                    verificationCommands: target?.verificationCommands || [],
+                                    options: {
+                                        ...rawOptions,
+                                        workspaceRoot,
+                                    },
+                                },
+                            };
+                            const obsResult = await runPrObserver(observerCtx, {
+                                exec,
+                                fetchPrSnapshot: dependencies.fetchPrSnapshot,
+                            });
+                            observations.push(obsResult);
+                            if (nonempty(obsResult?.status)) {
+                                prEntry.currentStatus = obsResult.status;
+                            }
+                        }
+                    }
                     const deferredLocalBuild = implementation.targets.some(
                         (item) => !Array.isArray(item.verificationCommandsRun) || item.verificationCommandsRun.length === 0,
                     ) || (Array.isArray(implementation.assumptions) && implementation.assumptions.some(isLocalBuildEnvBlocker));
@@ -3010,6 +3043,7 @@ export const workflowDefinition = {
             { title: "Build initial implementation" },
             { title: "Independent code review and bounded fixes" },
             { title: "Prepare and create pull requests" },
+            { title: "Observe PR and repair CI/review findings" },
         ],
         argsSchema: {
             type: "object",
@@ -3031,7 +3065,7 @@ export const workflowDefinition = {
         },
         limits: {
             maxConcurrentSubagents: 1,
-            maxTotalSubagents: 9,
+            maxTotalSubagents: 18,
         },
     },
     run: runCodeFeature,
