@@ -25,7 +25,9 @@ modifying production code.
     without blocking) from **enforcement mode** (`Enforce*` flight, `default = false`).
 - **When the flight is `false`, the legacy path must execute with zero new side effects**:
   - Do not initialize new ViewModels/coordinators, alter navigation graphs, write new
-    saved-state markers, or emit new diagnostic logs on the flight-off path.
+    saved-state markers, apply new tap-admission/debounce ownership guards, or emit new
+    diagnostic logs on the flight-off path (disabled branches should use pass-through/no-op
+    admission so legacy flight-off behavior is 100% untouched).
   - Keep only the minimal flight-read check needed to select between the legacy path and the
     flighted path.
 - Write unit tests for **both** `flight = true` and `flight = false`.
