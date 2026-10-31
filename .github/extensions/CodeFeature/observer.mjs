@@ -18,8 +18,9 @@ import {
     REVIEWER_AGENT,
     ensureIsolatedTargetWorktree,
     pauseForHelp,
-    resolveGitHubAccount,
+     resolveGitHubAccount,
     resolveRoleSkillGuides,
+    revertUnauthorizedProtectedFiles,
     runLocalVerificationGate,
     slimResultSchema,
     slimReviewSchema,
@@ -549,6 +550,14 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
                 evidence: repairResult?.evidence || [],
                 iterations: iteration + 1,
             };
+        }
+
+        const revertedProtected = revertUnauthorizedProtectedFiles(repoRoot, {
+            allowPipelineEdits: false,
+            exec,
+        });
+        if (revertedProtected.length > 0) {
+            log(`Reverted unauthorized CI pipeline / static-analysis config edits during tactical repair: ${revertedProtected.join(", ")}`);
         }
 
         if (target.verificationCommands.length > 0) {

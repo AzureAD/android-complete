@@ -27,6 +27,7 @@ Implement approved Android Auth changes and comprehensive unit tests in the targ
   $jbr = "C:\Program Files\Android\Android Studio\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\gradlew.bat :broker4j:test --tests "<Pattern>" --no-daemon
   ```
 - Never run `git push`, `gh pr create`, or merge commands directly; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
+- **Never modify CI pipeline YAML files (`.pipelines/**`, `azure-pipelines/**`, `1ES-Pipelines/**`, `.github/workflows/**`) or static-analysis rule configs (`detekt*.yml`, `checkstyle*.xml`, `pmd*.xml`, `spotbugs*.xml`, `lint*.xml`) to make a feature build pass.** Always fix the underlying Kotlin/Java source or test code. Downstream pipeline tasks (such as `Publish checkstyle report`) that fail only because an earlier Gradle check failed will pass automatically once the code is fixed.
 
 ## Android Auth Source Layout Reference
 

@@ -32,11 +32,14 @@ import {
     extractRunnableVerificationCommand,
     formatPrBody,
     formatPrTitle,
+    isPipelineModificationAuthorized,
+    isProtectedPipelineOrQualityPath,
     isSafeRelativeFilePath,
     normalizeTask,
     parseAdoDesignDocUrl,
     resolveInputSources,
     resolveRoleSkillGuides,
+    revertUnauthorizedProtectedFiles,
     rubric,
     runCodeFeature,
     runLocalVerificationGate,
@@ -1334,6 +1337,44 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.equal(sleepCalls, 2);
     assert.equal(pollPaused.length, 0);
     assert.equal(pollCtx.calls.length, 1);
+
+    // 6. Protected CI pipeline & static-analysis config files are blocked and auto-reverted on feature PRs
+    assert.equal(isProtectedPipelineOrQualityPath(".pipelines/AndroidPR.yml"), true);
+    assert.equal(isProtectedPipelineOrQualityPath("PhoneFactor/code_quality_tools/configs/detekt.yml"), true);
+    assert.equal(isProtectedPipelineOrQualityPath("PhoneFactor/app/src/main/java/Foo.kt"), false);
+    assert.equal(isPipelineModificationAuthorized(normalizedAuthAppTask, normalizedAuthAppTask.targets[0]), false);
+
+    const unauthorizedImpl = implementation();
+    unauthorizedImpl.targets[0].files.push({
+        path: ".pipelines/AndroidPR.yml",
+        action: "modify",
+        content: "steps: []\n",
+        summary: "Weaken checkstyle publish condition",
+    });
+    const pipelineErrors = validateImplementation(unauthorizedImpl, task());
+    assert.ok(pipelineErrors.some((e) => e.includes("modified protected CI pipeline or static-analysis config (.pipelines/AndroidPR.yml)")));
+
+    const tempProtectRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-protect-"));
+    try {
+        mkdirSync(path.join(tempProtectRoot, ".git"), { recursive: true });
+        const checkoutCalls = [];
+        const reverted = revertUnauthorizedProtectedFiles(tempProtectRoot, {
+            allowPipelineEdits: false,
+            exec: (cmd, args) => {
+                if (args.includes("status")) {
+                    return " M .pipelines/AndroidPR.yml\n M PhoneFactor/app/src/main/java/Foo.kt";
+                }
+                if (args.includes("checkout")) {
+                    checkoutCalls.push(args);
+                }
+                return "";
+            },
+        });
+        assert.deepEqual(reverted, [".pipelines/AndroidPR.yml"]);
+        assert.equal(checkoutCalls.length, 1);
+    } finally {
+        rmSync(tempProtectRoot, { recursive: true, force: true });
+    }
 });
 
 

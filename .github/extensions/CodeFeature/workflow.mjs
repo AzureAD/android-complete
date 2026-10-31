@@ -1319,6 +1319,81 @@ export function isSafeRelativeFilePath(filePath) {
     return true;
 }
 
+export function isProtectedPipelineOrQualityPath(filePath) {
+    if (!nonempty(filePath)) return false;
+    const normalized = filePath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    if (/^(?:\.pipelines|azure-pipelines|1ES-Pipelines|\.github\/workflows)\//i.test(normalized)) {
+        return true;
+    }
+    if (/(?:^|\/)(?:\.pipelines|azure-pipelines|\.github\/workflows)\//i.test(normalized)) {
+        return true;
+    }
+    if (/(?:^|\/)(?:code_quality_tools|config|configs)\/.*\.(?:ya?ml|xml)$/i.test(normalized)) {
+        return true;
+    }
+    if (/(?:^|\/)(?:detekt[^/]*\.ya?ml|checkstyle[^/]*\.xml|pmd[^/]*\.xml|spotbugs[^/]*\.xml|lint[^/]*\.xml)$/i.test(normalized)) {
+        return true;
+    }
+    return false;
+}
+
+export function isPipelineModificationAuthorized(task, target = null) {
+    const repo = String(target?.repository || task?.targets?.[0]?.repository || "").trim().toLowerCase();
+    if (repo === "1es-pipelines") return true;
+    const combinedText = [
+        task?.title,
+        task?.designSummary,
+        target?.title,
+        target?.description,
+        ...(Array.isArray(task?.requirements) ? task.requirements.map((r) => r?.text) : []),
+    ]
+        .filter(nonempty)
+        .join("\n");
+    return /\b(?:\.pipelines\/|1es-pipelines|azure-pipelines\/|\.github\/workflows\/|(?:modify|update|edit|change|author)\s+(?:the\s+)?(?:ci\s+)?(?:pipeline|workflow\s+yaml|detekt\.yml|checkstyle\.xml))\b/i.test(
+        combinedText,
+    );
+}
+
+export function revertUnauthorizedProtectedFiles(
+    repoRoot,
+    { allowPipelineEdits = false, exec = defaultExec } = {},
+) {
+    if (allowPipelineEdits || !nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git"))) {
+        return [];
+    }
+    const reverted = [];
+    try {
+        const porcelain = exec(
+            "git",
+            ["--no-pager", "status", "--porcelain", "--untracked-files=all"],
+            { cwd: repoRoot },
+        ) || "";
+        for (const rawLine of porcelain.split(/\r?\n/)) {
+            const lineMatch = rawLine.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
+            if (!lineMatch) continue;
+            const status = lineMatch[1];
+            const rawPath = lineMatch[2].trim().replace(/^"(.*)"$/, "$1");
+            const relPath = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop().trim() : rawPath;
+            if (!isSafeRelativeFilePath(relPath) || !isProtectedPipelineOrQualityPath(relPath)) continue;
+            const normalizedRel = relPath.replace(/\\/g, "/");
+            try {
+                if (status.includes("?")) {
+                    const fullPath = path.resolve(repoRoot, relPath);
+                    if (existsSync(fullPath)) rmSync(fullPath, { force: true });
+                } else {
+                    exec("git", ["checkout", "HEAD", "--", normalizedRel], { cwd: repoRoot });
+                }
+                reverted.push(normalizedRel);
+            } catch {
+                // Best-effort revert on disk.
+            }
+        }
+    } catch {
+        // Ignore git status failures in synthetic test roots.
+    }
+    return reverted;
+}
+
 export function formatPrTitle(title, workItemId) {
     const base = String(title || "").trim().replace(/,\s*Fixes\s+AB#\d+\s*$/i, "").trim();
     if (/\bfix(es|ed)?\b.*AB#\d+/i.test(base)) return base;
@@ -1428,11 +1503,18 @@ export function formatPrBody(
     ].join("\n");
 }
 
-export function discoverChangedFilesFromGit(repoRoot, exec = defaultExec) {
+export function discoverChangedFilesFromGit(
+    repoRoot,
+    exec = defaultExec,
+    { allowPipelineEdits = false } = {},
+) {
     if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git"))) {
         return { files: [], testsAddedOrUpdated: [] };
     }
     try {
+        if (!allowPipelineEdits) {
+            revertUnauthorizedProtectedFiles(repoRoot, { allowPipelineEdits: false, exec });
+        }
         const porcelain = exec(
             "git",
             ["--no-pager", "status", "--porcelain", "--untracked-files=all"],
@@ -1447,6 +1529,7 @@ export function discoverChangedFilesFromGit(repoRoot, exec = defaultExec) {
             const rawPath = lineMatch[2].trim().replace(/^"(.*)"$/, "$1");
             const relPath = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop().trim() : rawPath;
             if (!isSafeRelativeFilePath(relPath) || /(?:^|[\\/])local\.properties$/i.test(relPath)) continue;
+            if (!allowPipelineEdits && isProtectedPipelineOrQualityPath(relPath)) continue;
             const fullPath = path.resolve(repoRoot, relPath);
             const action = status.includes("D")
                 ? "delete"
@@ -1549,11 +1632,12 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
     if (!record(rawImpl) || !record(task)) return rawImpl;
     if (Array.isArray(rawImpl.targets)) {
         for (const expectedTarget of task.targets || []) {
+            const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
             const actual = rawImpl.targets.find((t) => t?.targetId === expectedTarget.id) ||
                 (rawImpl.targets.length === 1 ? rawImpl.targets[0] : null);
             if (record(actual) && (!Array.isArray(actual.files) || actual.files.length === 0) && nonempty(workspaceRoot)) {
                 const repoRoot = path.resolve(workspaceRoot, expectedTarget.localPath || ".");
-                const discovered = discoverChangedFilesFromGit(repoRoot, exec);
+                const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits });
                 if (discovered.files.length > 0) {
                     actual.files = discovered.files;
                 }
@@ -1570,13 +1654,17 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
 
     const evidenceList = Array.isArray(rawImpl.evidence) ? rawImpl.evidence.filter(nonempty) : [];
     const targets = (task.targets || []).map((expectedTarget) => {
+        const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
         const repoRoot = nonempty(workspaceRoot)
             ? path.resolve(workspaceRoot, expectedTarget.localPath || ".")
             : "";
-        const discovered = discoverChangedFilesFromGit(repoRoot, exec);
+        const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits });
         const fallbackFiles = evidenceList
             .map((item) => item.split(":")[0]?.trim())
-            .filter((candidate) => isSafeRelativeFilePath(candidate) && /\.[a-z0-9]+$/i.test(candidate))
+            .filter((candidate) =>
+                isSafeRelativeFilePath(candidate) &&
+                /\.[a-z0-9]+$/i.test(candidate) &&
+                (allowPipelineEdits || !isProtectedPipelineOrQualityPath(candidate)))
             .map((relPath) => ({
                 path: relPath.replace(/\\/g, "/"),
                 action: "modify",
@@ -1738,6 +1826,7 @@ export function validateImplementation(implementation, task, { workspaceRoot = "
             if (!nonempty(actual.summary)) {
                 errors.push(`Target ${expectedTarget.id} is missing an implementation summary.`);
             }
+            const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
             const repoRoot = nonempty(workspaceRoot) ? path.resolve(workspaceRoot, expectedTarget.localPath || ".") : "";
             if (!Array.isArray(actual.files) || actual.files.length === 0 ||
                 !unique(actual.files.map((f) => f?.path))) {
@@ -1747,6 +1836,12 @@ export function validateImplementation(implementation, task, { workspaceRoot = "
                     if (!record(file) || !isSafeRelativeFilePath(file.path) ||
                         !["create", "modify", "delete"].includes(file.action) || !nonempty(file.summary)) {
                         errors.push(`Target ${expectedTarget.id} has an invalid file entry (${file?.path || "unknown"}).`);
+                        continue;
+                    }
+                    if (!allowPipelineEdits && isProtectedPipelineOrQualityPath(file.path)) {
+                        errors.push(
+                            `Target ${expectedTarget.id} modified protected CI pipeline or static-analysis config (${file.path}) without explicit authorization; fix the source/test code instead of modifying pipelines or quality configs.`,
+                        );
                         continue;
                     }
                     const existsOnDisk = nonempty(repoRoot) && existsSync(path.resolve(repoRoot, file.path));
