@@ -581,8 +581,39 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
     const localPath = nonempty(target?.localPath) ? target.localPath.trim() : ".";
     const targetDir = path.resolve(workspaceRoot, localPath);
     if (localPath === "." || localPath === "") return targetDir;
+    const baseBranch = nonempty(target?.baseBranch) ? target.baseBranch.trim() : "dev";
     const mainCheckout = resolveMainCheckoutRoot(workspaceRoot, exec);
-    if (!mainCheckout) return targetDir;
+    if (!mainCheckout) {
+        if (existsSync(path.join(targetDir, ".git"))) {
+            try {
+                ensureAndroidLocalProperties(targetDir, targetDir);
+            } catch {
+                // Best-effort local.properties check in main checkout.
+            }
+            try {
+                exec("git", ["fetch", "origin", baseBranch, "--quiet"], { cwd: targetDir });
+                const trackedDirty = exec(
+                    "git",
+                    ["--no-pager", "status", "--porcelain", "--untracked-files=no"],
+                    { cwd: targetDir },
+                );
+                if (!nonempty(trackedDirty)) {
+                    for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
+                        try {
+                            exec("git", ["rev-parse", "--verify", candidate], { cwd: targetDir });
+                            exec("git", ["checkout", "--detach", candidate], { cwd: targetDir });
+                            break;
+                        } catch {
+                            // Try next candidate ref.
+                        }
+                    }
+                }
+            } catch {
+                // Best-effort base-branch sync in non-worktree checkout.
+            }
+        }
+        return targetDir;
+    }
     const sourceRepo = path.resolve(mainCheckout, localPath);
     if (!existsSync(path.join(sourceRepo, ".git"))) return targetDir;
     const canonicalSource = realpathSync(sourceRepo);
@@ -603,7 +634,6 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
     }
 
     mkdirSync(path.dirname(targetDir), { recursive: true });
-    const baseBranch = nonempty(target?.baseBranch) ? target.baseBranch.trim() : "dev";
     try {
         exec("git", ["fetch", "origin", baseBranch, "--quiet"], { cwd: canonicalSource });
     } catch {
