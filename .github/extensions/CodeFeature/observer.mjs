@@ -500,7 +500,15 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
         // verdict === "repair"
         phase("Repair");
         try {
-            ensureIsolatedTargetWorktree(workspaceRoot, { ...target, baseBranch: headBranch }, exec);
+            let currentBranch = "";
+            try {
+                currentBranch = exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoRoot });
+            } catch {
+                currentBranch = "";
+            }
+            if (currentBranch !== headBranch) {
+                ensureIsolatedTargetWorktree(workspaceRoot, { ...target, baseBranch: headBranch }, exec);
+            }
         } catch {
             // Best-effort worktree preparation in mock/test environments.
         }
