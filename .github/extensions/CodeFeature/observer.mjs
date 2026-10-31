@@ -45,6 +45,7 @@ export const OBSERVER_AGENT = "pr-observer";
 export const MAX_OBSERVER_ITERATIONS = 3;
 export const DEFAULT_CI_POLL_INTERVAL_MS = 30_000;
 export const DEFAULT_MAX_CI_POLL_ATTEMPTS = 60;
+export const MAX_JS_POLLS_BEFORE_HEARTBEAT = 14;
 
 const text = { type: "string" };
 const texts = { type: "array", items: text };
@@ -173,7 +174,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             `$builds = (Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds?branchName=refs/pull/${parsedPr.prNumber}/merge&api-version=7.0") -Headers $headers -Method Get).value`,
             "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
             "$latestStatuses = @($statuses | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
-            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; $failedTasks = @(); if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; foreach ($rec in @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' })) { $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers $headers -Method Get; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/' -and $_ -match 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|error:' } | Select-Object -Last 25) } catch {} }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt } } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
+            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; $failedTasks = @(); if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers $headers -Method Get; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/' -and $_ -match 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|error:' } | Select-Object -Last 25) } catch {} }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt } } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
             `$out = @{ number = $pr.pullRequestId; title = $pr.title; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; activeReviewThreads = $activeThreads; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
             "[Console]::Out.Write(($out | ConvertTo-Json -Depth 8 -Compress))",
@@ -352,30 +353,31 @@ export async function runPrObserver(ctx, dependencies = {}) {
         log(`Observing ${parsedPr.prUrl} (iteration ${iteration + 1}/${maxIterations})`);
 
         let snapshot = await step(`snapshot-${iteration}`, async () => fetchSnapshot(parsedPr), { volatile: true });
-        for (
-            let pollAttempt = 0;
-            pollAttempt < maxCiPollAttempts && isSnapshotWaitingForCiOnly(snapshot);
-            pollAttempt++
-        ) {
-            log(`PR #${parsedPr.prNumber} CI checks are still running with no failures yet; polling again in ${Math.round(ciPollIntervalMs / 1000)}s (${pollAttempt + 1}/${maxCiPollAttempts})...`);
-            await sleep(ciPollIntervalMs);
-            snapshot = await step(
-                `snapshot-${iteration}-poll-${pollAttempt + 1}`,
-                async () => fetchSnapshot(parsedPr),
-                { volatile: true },
-            );
-        }
-
-        if (record(snapshot) && nonempty(snapshot.baseRefName)) {
-            target.baseBranch = snapshot.baseRefName;
-        }
-        const headBranch = record(snapshot) && nonempty(snapshot.headRefName)
-            ? snapshot.headRefName
-            : `pr-${parsedPr.prNumber}`;
-
+        let totalPollsUsed = 0;
         let observation = null;
         let afterObserveSnap = snapshotWorktree(repoRoot, exec);
+
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
+            for (
+                let batchPoll = 0;
+                batchPoll < MAX_JS_POLLS_BEFORE_HEARTBEAT &&
+                totalPollsUsed < maxCiPollAttempts &&
+                isSnapshotWaitingForCiOnly(snapshot);
+                batchPoll++
+            ) {
+                totalPollsUsed++;
+                log(`PR #${parsedPr.prNumber} CI checks are still running with no failures yet; polling again in ${Math.round(ciPollIntervalMs / 1000)}s (${totalPollsUsed}/${maxCiPollAttempts})...`);
+                await sleep(ciPollIntervalMs);
+                snapshot = await step(
+                    `snapshot-${iteration}-poll-${totalPollsUsed}`,
+                    async () => fetchSnapshot(parsedPr),
+                    { volatile: true },
+                );
+            }
+
+            if (record(snapshot) && nonempty(snapshot.baseRefName)) {
+                target.baseBranch = snapshot.baseRefName;
+            }
             const beforeObserveSnap = snapshotWorktree(repoRoot, exec);
             const observeGuides = resolveRoleSkillGuides("evidence", [target]);
             const stepKey = ciWaitRound === 0
@@ -404,10 +406,11 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
                     iterations: iteration + 1,
                 };
             }
-            if (!record(observation) || observation.verdict !== "waiting-for-ci" || ciWaitRound >= maxCiPollAttempts) {
+            if (!record(observation) || observation.verdict !== "waiting-for-ci" || totalPollsUsed >= maxCiPollAttempts) {
                 break;
             }
-            log(`Observer reported waiting-for-ci on PR #${parsedPr.prNumber}; sleeping ${Math.round(ciPollIntervalMs / 1000)}s before re-checking (${ciWaitRound + 1}/${maxCiPollAttempts})...`);
+            totalPollsUsed++;
+            log(`Observer reported waiting-for-ci on PR #${parsedPr.prNumber}; sleeping ${Math.round(ciPollIntervalMs / 1000)}s before re-checking (${totalPollsUsed}/${maxCiPollAttempts})...`);
             await sleep(ciPollIntervalMs);
             snapshot = await step(
                 `snapshot-${iteration}-after-wait-${ciWaitRound + 1}`,
@@ -415,6 +418,10 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
                 { volatile: true },
             );
         }
+
+        const headBranch = record(snapshot) && nonempty(snapshot.headRefName)
+            ? snapshot.headRefName
+            : `pr-${parsedPr.prNumber}`;
 
         if (!record(observation) || !nonempty(observation.verdict)) {
             return {
@@ -519,6 +526,7 @@ Apply a surgical tactical fix in ${target.repository} for the reported PR findin
 ${(observation.actionableFindings || []).map((f) => `- ${f}`).join("\n")}
 Follow Android Auth PR maintenance rules:
 - Never amend or force-push; keep commits incremental/fast-forward.
+- Never modify CI pipeline YAML files (.pipelines/*.yml, .github/workflows/*.yml, azure-pipelines/*.yml) during a tactical repair unless the PR itself is a pipeline change.
 - When merging origin/${target.baseBranch}, if a release was cut on ${target.baseBranch}, ensure this PR's CHANGELOG.md / changes.txt entry remains under the active vNext section; if ${target.baseBranch} deleted an adjacent retired flight enum entry, keep the retired flight deleted.
 Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, snapshot })}`,
             {
