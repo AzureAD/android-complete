@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
     currentStatusOwners,
     currentStatuses,
@@ -386,6 +387,21 @@ export function resolveRoleSkillGuides(role, targets = []) {
     return [...guides];
 }
 
+export function loadAgentPromptFromFile(agentName, fallbackPrompt = "") {
+    try {
+        const currentDir = path.dirname(fileURLToPath(import.meta.url));
+        const agentFile = path.resolve(currentDir, "..", "..", "agents", `${agentName}.agent.md`);
+        if (existsSync(agentFile)) {
+            const raw = readFileSync(agentFile, "utf8").replace(/\r\n/g, "\n");
+            const stripped = raw.replace(/^---\n[\s\S]*?\n---\n+/, "").trim();
+            if (nonempty(stripped)) return stripped;
+        }
+    } catch {
+        // Fall back to inline prompt if agent file cannot be read.
+    }
+    return fallbackPrompt;
+}
+
 export const customAgents = Object.freeze([
     {
         name: EVIDENCE_AGENT,
@@ -393,7 +409,7 @@ export const customAgents = Object.freeze([
         description: "Read-only repository evidence gatherer for the code-feature workflow.",
         infer: false,
         tools: ["view", "glob", "grep", "skill"],
-        prompt: readerBoundaries,
+        prompt: loadAgentPromptFromFile(EVIDENCE_AGENT, readerBoundaries),
     },
     {
         name: BUILDER_AGENT,
@@ -401,7 +417,7 @@ export const customAgents = Object.freeze([
         description: "Implementation and test builder for the code-feature workflow.",
         infer: false,
         tools: ["view", "glob", "grep", "skill", "edit", "create", "apply_patch", "powershell"],
-        prompt: builderBoundaries,
+        prompt: loadAgentPromptFromFile(BUILDER_AGENT, builderBoundaries),
     },
     {
         name: REVIEWER_AGENT,
@@ -409,7 +425,7 @@ export const customAgents = Object.freeze([
         description: "Read-only independent code reviewer for the code-feature workflow.",
         infer: false,
         tools: ["view", "glob", "grep", "skill"],
-        prompt: readerBoundaries,
+        prompt: loadAgentPromptFromFile(REVIEWER_AGENT, readerBoundaries),
     },
 ]);
 

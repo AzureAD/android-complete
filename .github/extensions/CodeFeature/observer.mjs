@@ -15,6 +15,7 @@ import {
     BUILDER_AGENT,
     REVIEWER_AGENT,
     ensureIsolatedTargetWorktree,
+    loadAgentPromptFromFile,
     pauseForHelp,
     resolveGitHubAccount,
     resolveRoleSkillGuides,
@@ -59,7 +60,9 @@ export const observerCustomAgent = Object.freeze({
     description: "Monitors an Android Auth pull request's CI pipelines and review threads, classifying tactical repairs vs. ready-for-human-merge.",
     infer: false,
     tools: ["view", "glob", "grep", "skill"],
-    prompt: `You are the read-only Autonomous PR Observer for Android Auth pull requests.
+    prompt: loadAgentPromptFromFile(
+        OBSERVER_AGENT,
+        `You are the read-only Autonomous PR Observer for Android Auth pull requests.
 Inspect the supplied pull request snapshot (CI check statuses, mergeability, and review comments/threads) and repository context.
 Classify the PR into one verdict:
 - "ready": All required CI checks have passed, there are no merge conflicts, and there are no unresolved actionable review findings.
@@ -67,6 +70,7 @@ Classify the PR into one verdict:
 - "waiting-for-ci": Checks are still queued/in-progress and there are no actionable failures or review findings yet.
 - "needs-owner-decision": A reviewer requested a breaking architectural or product-scope change that requires human owner confirmation.
 Never merge or approve a PR on a human's behalf.`,
+    ),
 });
 
 function defaultExec(command, args, options = {}) {
