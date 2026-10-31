@@ -988,15 +988,19 @@ test("thin { verdict, summary, evidence } schemas and on-disk git file discovery
         const fakeGitExec = (_cmd, args) => {
             if (args.includes("status") && args.includes("--porcelain")) {
                 return [
-                    "?? broker4j/src/main/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottle.kt",
+                    " M broker4j/src/main/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottle.kt",
                     "?? broker4j/src/test/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottleTest.kt",
-                ].join("\n");
+                ].join("\n").trim();
             }
             if (args.includes("rev-parse")) return "e428039b7";
             return "";
         };
         const discovered = discoverChangedFilesFromGit(brokerDir, fakeGitExec);
         assert.equal(discovered.files.length, 2);
+        assert.equal(
+            discovered.files[0].path,
+            "broker4j/src/main/com/microsoft/identity/broker4j/broker/throttling/SilentRequestThrottle.kt",
+        );
         assert.equal(discovered.testsAddedOrUpdated.length, 1);
 
         const packet = await runCodeFeature(ctx, { exec: fakeGitExec });

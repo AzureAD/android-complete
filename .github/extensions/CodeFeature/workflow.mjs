@@ -1363,16 +1363,25 @@ export function discoverChangedFilesFromGit(repoRoot, exec = defaultExec) {
         const files = [];
         const testsAddedOrUpdated = [];
         for (const rawLine of porcelain.split(/\r?\n/)) {
-            if (!rawLine || rawLine.length < 4) continue;
-            const status = rawLine.slice(0, 2);
-            const rawPath = rawLine.slice(3).trim().replace(/^"(.*)"$/, "$1");
+            const lineMatch = rawLine.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
+            if (!lineMatch) continue;
+            const status = lineMatch[1];
+            const rawPath = lineMatch[2].trim().replace(/^"(.*)"$/, "$1");
             const relPath = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop().trim() : rawPath;
             if (!isSafeRelativeFilePath(relPath) || /(?:^|[\\/])local\.properties$/i.test(relPath)) continue;
+            const fullPath = path.resolve(repoRoot, relPath);
             const action = status.includes("D")
                 ? "delete"
                 : status.includes("?") || status.includes("A")
                     ? "create"
                     : "modify";
+            if (action !== "delete") {
+                try {
+                    if (!existsSync(fullPath) || !lstatSync(fullPath).isFile()) continue;
+                } catch {
+                    continue;
+                }
+            }
             files.push({
                 path: relPath.replace(/\\/g, "/"),
                 action,
