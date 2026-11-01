@@ -46,7 +46,7 @@ function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
 export const OBSERVER_AGENT = "pr-observer";
 export const MAX_OBSERVER_ITERATIONS = 3;
 export const DEFAULT_CI_POLL_INTERVAL_MS = 30_000;
-export const DEFAULT_MAX_CI_POLL_ATTEMPTS = 60;
+export const DEFAULT_MAX_CI_POLL_ATTEMPTS = 120;
 export const MAX_JS_POLLS_BEFORE_HEARTBEAT = 14;
 
 const text = { type: "string" };
@@ -176,7 +176,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             `$builds = (Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds?branchName=refs/pull/${parsedPr.prNumber}/merge&api-version=7.0") -Headers $headers -Method Get).value`,
             "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
             "$latestStatuses = @($statuses | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
-            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; $failedTasks = @(); if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); $failedTests = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers $headers -Method Get; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/' -and $_ -cmatch 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|error:' } | Select-Object -Last 25); $runIds = @([regex]::Matches($logText, 'run id:\\s*(\\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique); foreach ($rid in $runIds) { try { $tr = (Invoke-RestMethod -Uri (\"$projectBase/_apis/test/Runs/$rid/results?outcomes=Failed&api-version=7.0\") -Headers $headers -Method Get).value; foreach ($tc in @($tr | Select-Object -First 20)) { $failedTests += @{ testClass = $tc.automatedTestStorage; testName = $tc.automatedTestName; errorMessage = $tc.errorMessage; stackTrace = @(($tc.stackTrace -split \"`r?`n\") | Select-Object -First 8) } } } catch {} } } catch {} }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt; failedTests = $failedTests } } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
+            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; $failedTasks = @(); if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); $failedTests = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers $headers -Method Get; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/|\\sw:\\s' -and $_ -cmatch 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|Caused by:|error:' } | Select-Object -Last 25); $runIds = @([regex]::Matches($logText, 'run id:\\s*(\\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique); foreach ($rid in $runIds) { try { $tr = (Invoke-RestMethod -Uri (\"$projectBase/_apis/test/Runs/$rid/results?outcomes=Failed&api-version=7.0\") -Headers $headers -Method Get).value; foreach ($tc in @($tr | Select-Object -First 20)) { $failedTests += @{ testClass = $tc.automatedTestStorage; testName = $tc.automatedTestName; errorMessage = $tc.errorMessage; stackTrace = @(($tc.stackTrace -split \"`r?`n\") | Select-Object -First 8) } } } catch {} } } catch {} }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt; failedTests = $failedTests } } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
             `$out = @{ number = $pr.pullRequestId; title = $pr.title; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; activeReviewThreads = $activeThreads; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
             "[Console]::Out.Write(($out | ConvertTo-Json -Depth 8 -Compress))",
@@ -284,6 +284,42 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
     return hasRunningBuild || hasPendingCheck;
 }
 
+export function computeSnapshotFingerprint(snapshot) {
+    if (!record(snapshot)) return "";
+    const checks = Array.isArray(snapshot.statusCheckRollup)
+        ? snapshot.statusCheckRollup.map((c) => ({
+            name: c?.context?.name || c?.name || "",
+            state: c?.state || c?.status || "",
+            conclusion: c?.conclusion || "",
+            description: c?.description || "",
+        }))
+        : [];
+    const builds = Array.isArray(snapshot.prBuilds)
+        ? snapshot.prBuilds.map((b) => ({
+            id: b?.id || 0,
+            definition: b?.definition || "",
+            status: b?.status || "",
+            result: b?.result || "",
+            failedTasks: Array.isArray(b?.failedTasks)
+                ? b.failedTasks.map((t) => `${t?.name || ""}:${(t?.failedTests || []).length}`)
+                : [],
+        }))
+        : [];
+    const threads = Array.isArray(snapshot.activeReviewThreads)
+        ? snapshot.activeReviewThreads.map((t) => `${t?.id || ""}:${t?.status || ""}:${(t?.comments || []).length}`)
+        : [];
+    return createHash("sha256")
+        .update(JSON.stringify({
+            headRefOid: snapshot.headRefOid || "",
+            mergeStateStatus: snapshot.mergeStateStatus || "",
+            checks,
+            builds,
+            threads,
+        }))
+        .digest("hex")
+        .slice(0, 16);
+}
+
 export function computeRepairIdentity({ observation, snapshot, worktreeSnap }) {
     const findings = Array.isArray(observation?.actionableFindings)
         ? [...observation.actionableFindings].map((s) => String(s || "").trim()).filter(Boolean).sort()
@@ -360,13 +396,15 @@ export async function runPrObserver(ctx, dependencies = {}) {
         let totalPollsUsed = 0;
         let observation = null;
         let afterObserveSnap = snapshotWorktree(repoRoot, exec);
+        let lastWaitingFingerprint = null;
 
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
             for (
                 let batchPoll = 0;
                 batchPoll < MAX_JS_POLLS_BEFORE_HEARTBEAT &&
                 totalPollsUsed < maxCiPollAttempts &&
-                isSnapshotWaitingForCiOnly(snapshot);
+                (isSnapshotWaitingForCiOnly(snapshot) ||
+                    (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint));
                 batchPoll++
             ) {
                 totalPollsUsed++;
@@ -381,6 +419,10 @@ export async function runPrObserver(ctx, dependencies = {}) {
 
             if (record(snapshot) && nonempty(snapshot.baseRefName)) {
                 target.baseBranch = snapshot.baseRefName;
+            }
+            const currentFingerprint = computeSnapshotFingerprint(snapshot);
+            if (nonempty(lastWaitingFingerprint) && currentFingerprint === lastWaitingFingerprint && totalPollsUsed < maxCiPollAttempts) {
+                continue;
             }
             const beforeObserveSnap = snapshotWorktree(repoRoot, exec);
             const observeGuides = resolveRoleSkillGuides("evidence", [target]);
@@ -413,6 +455,7 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
             if (!record(observation) || observation.verdict !== "waiting-for-ci" || totalPollsUsed >= maxCiPollAttempts) {
                 break;
             }
+            lastWaitingFingerprint = currentFingerprint;
             totalPollsUsed++;
             log(`Observer reported waiting-for-ci on PR #${parsedPr.prNumber}; sleeping ${Math.round(ciPollIntervalMs / 1000)}s before re-checking (${totalPollsUsed}/${maxCiPollAttempts})...`);
             await sleep(ciPollIntervalMs);
@@ -682,7 +725,7 @@ export const observerWorkflowDefinition = {
         },
         limits: {
             maxConcurrentSubagents: 1,
-            maxTotalSubagents: 24,
+            maxTotalSubagents: 50,
         },
     },
     run: runPrObserver,

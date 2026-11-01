@@ -3286,7 +3286,7 @@ export const workflowDefinition = {
         },
         limits: {
             maxConcurrentSubagents: 1,
-            maxTotalSubagents: 18,
+            maxTotalSubagents: 50,
         },
     },
     run: runCodeFeature,
