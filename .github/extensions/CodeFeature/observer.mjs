@@ -522,6 +522,7 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
         }
 
         if (observation.verdict === "ready") {
+            const hostLabel = parsedPr.provider === "ado" ? "Azure DevOps" : "GitHub/GHE";
             const readyStatusBlock = renderCurrentStatusBlock({
                 status: currentStatuses.readyForHumanMerge,
                 owner: currentStatusOwners.human,
@@ -529,7 +530,7 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
                 repository: parsedPr.repository,
                 prUrl: parsedPr.prUrl,
                 summary: observation.summary,
-                nextAction: "Human review and merge in GitHub/GHE.",
+                nextAction: `Human review and merge in ${hostLabel}.`,
             });
             return {
                 status: currentStatuses.readyForHumanMerge,
