@@ -2234,7 +2234,7 @@ export function publishTargetPullRequest({
     exec = defaultExec,
 }) {
     const account = createPullRequests ? resolveGitHubAccount(target, workspaceRoot, exec) : (target.account || "");
-    const branch = buildBranchName(target, branchPrefix || account);
+    let branch = buildBranchName(target, branchPrefix || account);
     const title = formatPrTitle(targetImpl.pr.title || target.title, target.workItemId);
     let body = formatPrBody(target, targetImpl, traceability, reviewRoundCount, parentWorkItemId, {
         runId,
@@ -2270,6 +2270,21 @@ export function publishTargetPullRequest({
     const gitEnv = nonempty(token)
         ? { GH_TOKEN: token, GITHUB_TOKEN: token, GIT_CONFIG_PARAMETERS: "", GIT_CONFIG_COUNT: "" }
         : undefined;
+
+    if (exec === defaultExec) {
+        try {
+            const remoteHead = exec("git", ["ls-remote", "--heads", "origin", `refs/heads/${branch}`], {
+                cwd: repoRoot,
+                env: gitEnv,
+            });
+            if (nonempty(remoteHead)) {
+                const runSuffix = String(runId || randomUUID()).replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase() || "r2";
+                branch = `${branch}-${runSuffix}`;
+            }
+        } catch {
+            // Best-effort remote branch collision check.
+        }
+    }
 
     exec("git", ["checkout", "-B", branch], { cwd: repoRoot, env: gitEnv });
     for (const file of targetImpl.files) {
