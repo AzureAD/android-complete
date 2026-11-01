@@ -16,9 +16,10 @@ import {
 import {
     BUILDER_AGENT,
     REVIEWER_AGENT,
+    discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
     pauseForHelp,
-     resolveGitHubAccount,
+    resolveGitHubAccount,
     resolveRoleSkillGuides,
     revertUnauthorizedProtectedFiles,
     runLocalVerificationGate,
@@ -606,7 +607,20 @@ Independently verify that the tactical repair resolves all actionableFindings wi
                         // Fall back to ambient auth.
                     }
                 }
-                exec("git", ["add", "-A"], { cwd: repoRoot, env: gitEnv });
+                const discovered = discoverChangedFilesFromGit(repoRoot, exec, {
+                    allowPipelineEdits: false,
+                });
+                if (discovered.files.length > 0) {
+                    for (const file of discovered.files) {
+                        if (file.action === "delete") {
+                            exec("git", ["rm", "--ignore-unmatch", "--", file.path], { cwd: repoRoot, env: gitEnv });
+                        } else {
+                            exec("git", ["add", "--", file.path], { cwd: repoRoot, env: gitEnv });
+                        }
+                    }
+                } else {
+                    exec("git", ["add", "-A"], { cwd: repoRoot, env: gitEnv });
+                }
                 exec(
                     "git",
                     [
