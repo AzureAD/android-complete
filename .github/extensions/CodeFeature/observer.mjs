@@ -225,28 +225,38 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
 
     if (exec === defaultExec && record(parsedSnapshot)) {
         try {
-            const rawInline = exec(
-                "gh",
-                [
-                    "api",
-                    "--hostname",
-                    parsedPr.hostname,
-                    `repos/${parsedPr.slug}/pulls/${parsedPr.prNumber}/comments`,
-                ],
-                { cwd: workspaceRoot, env: gitEnv },
-            );
-            const inlineArr = JSON.parse(rawInline);
-            if (Array.isArray(inlineArr) && inlineArr.length > 0) {
-                parsedSnapshot.inlineReviewComments = inlineArr.map((c) => ({
-                    id: c?.id,
-                    path: c?.path,
-                    line: c?.line || c?.original_line,
-                    author: c?.user?.login,
-                    body: c?.body,
-                }));
+            const [owner, repoName] = String(parsedPr.slug || "").split("/");
+            if (nonempty(owner) && nonempty(repoName)) {
+                const gqlQuery = `query { repository(owner: "${owner.replace(/"/g, '\\"')}", name: "${repoName.replace(/"/g, '\\"')}") { pullRequest(number: ${parsedPr.prNumber}) { reviewThreads(first: 50) { nodes { id isResolved path line comments(first: 10) { nodes { databaseId author { login } body } } } } } } }`;
+                const rawGql = exec(
+                    "gh",
+                    ["api", "--hostname", parsedPr.hostname, "graphql", "-f", `query=${gqlQuery}`],
+                    { cwd: workspaceRoot, env: gitEnv },
+                );
+                const parsedGql = JSON.parse(rawGql);
+                const threadNodes = parsedGql?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+                if (Array.isArray(threadNodes)) {
+                    const unresolved = threadNodes
+                        .filter((t) => record(t) && t.isResolved === false)
+                        .map((t) => {
+                            const firstComment = Array.isArray(t.comments?.nodes) ? t.comments.nodes[0] : null;
+                            return {
+                                threadId: t.id,
+                                id: firstComment?.databaseId,
+                                path: t.path,
+                                line: t.line,
+                                author: firstComment?.author?.login,
+                                body: firstComment?.body,
+                            };
+                        })
+                        .filter((c) => nonempty(c.body));
+                    if (unresolved.length > 0) {
+                        parsedSnapshot.inlineReviewComments = unresolved;
+                    }
+                }
             }
         } catch {
-            // Optional inline review comment enrichment.
+            // Optional inline review thread enrichment.
         }
 
         const checks = Array.isArray(parsedSnapshot.statusCheckRollup) ? parsedSnapshot.statusCheckRollup : [];
@@ -834,6 +844,49 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                     ]
                     : ["push", "origin", `HEAD:${headBranch}`];
                 exec("git", pushArgs, { cwd: repoRoot, env: gitEnv });
+                if (
+                    parsedPr.provider === "github" &&
+                    exec === defaultExec &&
+                    Array.isArray(snapshot?.inlineReviewComments) &&
+                    snapshot.inlineReviewComments.length > 0
+                ) {
+                    let pushedSha = "";
+                    try {
+                        pushedSha = exec("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, env: gitEnv });
+                    } catch {
+                        pushedSha = "";
+                    }
+                    for (const thread of snapshot.inlineReviewComments) {
+                        try {
+                            if (positiveInt(Number(thread?.id))) {
+                                exec(
+                                    "gh",
+                                    [
+                                        "api",
+                                        "--hostname",
+                                        parsedPr.hostname,
+                                        "--method",
+                                        "POST",
+                                        `repos/${parsedPr.slug}/pulls/${parsedPr.prNumber}/comments/${Number(thread.id)}/replies`,
+                                        "-f",
+                                        `body=Addressed in ${pushedSha || "latest commit"}: ${repairResult.summary || "applied verified tactical repair"}.`,
+                                    ],
+                                    { cwd: workspaceRoot, env: gitEnv },
+                                );
+                            }
+                            if (nonempty(thread?.threadId)) {
+                                const mut = `mutation { resolveReviewThread(input: {threadId: "${String(thread.threadId).replace(/"/g, '\\"')}"}) { thread { isResolved } } }`;
+                                exec(
+                                    "gh",
+                                    ["api", "--hostname", parsedPr.hostname, "graphql", "-f", `query=${mut}`],
+                                    { cwd: workspaceRoot, env: gitEnv },
+                                );
+                            }
+                        } catch {
+                            // Best-effort review thread reply and resolution after push.
+                        }
+                    }
+                }
                 return true;
             });
         }
