@@ -247,8 +247,10 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
     const prBuilds = Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [];
     let hasRunningBuild = false;
     for (const build of prBuilds) {
+        const defName = String(build?.definition || "");
+        const isNonBlockingAiReviewer = /PR-Reviewer|AI PR Review/i.test(defName);
         const failedTasks = Array.isArray(build?.failedTasks) ? build.failedTasks : [];
-        if (failedTasks.length > 0 || String(build?.result || "").toLowerCase() === "failed") {
+        if (!isNonBlockingAiReviewer && (failedTasks.length > 0 || String(build?.result || "").toLowerCase() === "failed")) {
             return false;
         }
         const status = String(build?.status || "").toLowerCase();
@@ -680,7 +682,7 @@ export const observerWorkflowDefinition = {
         },
         limits: {
             maxConcurrentSubagents: 1,
-            maxTotalSubagents: 9,
+            maxTotalSubagents: 24,
         },
     },
     run: runPrObserver,
