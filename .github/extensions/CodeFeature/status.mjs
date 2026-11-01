@@ -17,13 +17,13 @@ export const currentStatusOwners = Object.freeze({
 });
 
 export const statusMarkers = Object.freeze({
-    begin: "<!-- BEGIN code-feature-status -->",
-    end: "<!-- END code-feature-status -->",
+    begin: "<!-- BEGIN code-feature-status",
+    end: "END code-feature-status -->",
 });
 
 export const deliveryDecisionMarkers = Object.freeze({
-    begin: "<!-- BEGIN code-feature-delivery-decisions -->",
-    end: "<!-- END code-feature-delivery-decisions -->",
+    begin: "<!-- BEGIN code-feature-delivery-decisions",
+    end: "END code-feature-delivery-decisions -->",
 });
 
 export function renderDeliveryDecisionBlock({

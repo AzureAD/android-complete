@@ -1500,7 +1500,7 @@ export function formatPrBody(
 
     const rolloutText = targetImpl.pr.rolloutAndFlag.trim();
     const deliveryBlock = renderDeliveryDecisionBlock({
-        rolloutTag: /none|not[\s-]applicable/i.test(rolloutText) ? "not-applicable" : "feature-flag",
+        rolloutTag: /^(?:none|n\/a|not[\s-]applicable)\b/i.test(rolloutText) ? "not-applicable" : "feature-flag",
         rolloutJustification: rolloutText,
         testCoverageTag: "unit-tests",
         testCoverageJustification: `${targetImpl.testsAddedOrUpdated.length} unit test target(s) verified.`,
