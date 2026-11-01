@@ -1465,7 +1465,7 @@ export function formatPrBody(
         ]
         : [];
 
-    return [
+    const fullBody = [
         abLinks.join(" · "),
         "",
         "## Summary",
@@ -1493,6 +1493,52 @@ export function formatPrBody(
         "## Compatibility, Rollout & Breaking Changes",
         `- **Breaking changes:** ${targetImpl.pr.breakingChanges.trim()}`,
         `- **Rollout / Feature flag:** ${rolloutText}`,
+        ...adoBlocks,
+        "",
+        deliveryBlock,
+        "",
+        statusBlock,
+    ].join("\n");
+
+    if (!isAdoTarget || fullBody.length <= 3900) {
+        return fullBody;
+    }
+
+    const compactFiles = targetImpl.files
+        .slice(0, 12)
+        .map((file) => `- \`${path.posix.basename(file.path.replace(/\\/g, "/"))}\` (${file.action})`)
+        .concat(targetImpl.files.length > 12 ? [`- _+${targetImpl.files.length - 12} additional file(s)_`] : [])
+        .join("\n");
+    const compactTests = targetImpl.testsAddedOrUpdated
+        .slice(0, 8)
+        .map((testItem) => `- \`${path.posix.basename(String(testItem).replace(/\\/g, "/"))}\``)
+        .concat(
+            targetImpl.testsAddedOrUpdated.length > 8
+                ? [`- _+${targetImpl.testsAddedOrUpdated.length - 8} additional test(s)_`]
+                : [],
+        )
+        .join("\n");
+
+    return [
+        abLinks.join(" · "),
+        "",
+        "## Summary",
+        targetImpl.pr.summary.trim().slice(0, 600),
+        "",
+        `## Changes (${targetImpl.files.length} file(s))`,
+        compactFiles,
+        "",
+        "## Validation & Testing",
+        targetImpl.pr.testPlan.trim().slice(0, 500),
+        "",
+        "### Unit Tests Added / Updated",
+        compactTests,
+        "",
+        `Independent AI code review passed in ${reviewRoundCount} round(s) across all ${rubric.length} rubric dimensions (${traceabilityRows.length} requirement(s) traced).`,
+        "",
+        "## Compatibility, Rollout & Breaking Changes",
+        `- **Breaking changes:** ${targetImpl.pr.breakingChanges.trim().slice(0, 200)}`,
+        `- **Rollout / Feature flag:** ${rolloutText.slice(0, 250)}`,
         ...adoBlocks,
         "",
         deliveryBlock,
