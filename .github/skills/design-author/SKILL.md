@@ -66,6 +66,26 @@ Use the `codebase-researcher` skill to:
 - Find existing patterns to follow (feature flags, error handling, telemetry, IPC contracts)
 - Check for any existing design docs in `design-docs/` on the same topic
 
+#### Baseline and necessity gates (including direct authoring)
+
+Before drafting, pin relevant source revisions and record scenario traces from the
+trigger and applicable flags/account types through callbacks, state/result changes,
+observers, and completion/lifecycle handlers to the final observable outcome.
+Include success, failure, cancellation, and retry branches relevant to the requirements.
+For configuration/contract requirements, follow the configuration to its effect.
+Do not splice revisions into a single execution path. Missing relevant source or an
+unresolved terminal path is a blocking unknown, not evidence that behavior is absent.
+Trace the current implementation, not an imaginary execution of future requirements:
+an expected feature delta is not a source conflict. For externally owned UI, verify
+the app handoff/return contract without claiming a particular server challenge order.
+Keep release sign-off/operational gates explicit and separate from unresolved app
+contracts. Final design approval is intentionally pending, not an input prerequisite.
+
+For example, absence of an error-ending call in a telemetry callback does **not**
+establish a defect if the caller subsequently posts failed results and a completion
+observer ends the operation. Read that chain and preserve existing attribution and
+ordering before proposing an extra callback.
+
 ### Step 3: Research Existing Designs
 
 Search the `design-docs/` folder for related designs:
@@ -94,6 +114,23 @@ Use the standard template sections. For the **Solution options** section:
 - Make a clear recommendation in the Solution Decision section
 
 ### Step 5: Present Design for Review
+
+Before marking a design review-ready, include a visible necessity register for every
+implementation mandate (including incidental fixes): requirement, section, pinned
+baseline trace, existing behavior, requested delta, necessity, inspected counterevidence,
+and verification. Classify each entry as new feature work, verified defect, existing
+behavior to preserve (regression-only), optional improvement (deferred), or unresolved.
+Actively search downstream consumers, alternate paths, and tests for behavior that
+disproves a "missing behavior" claim. Already-handled behavior must not become new
+required work; unresolved necessity blocks readiness instead of being hidden as an assumption.
+
+Use the `design-feature` workflow's independent source review before a validated
+handoff. The reviewer must inspect the full paths and challenge each change, not just
+verify that citations exist. Review new mandates after revisions too. Direct authoring
+uses the same evidence/necessity checks; it is not a bypass for a failed or incomplete
+workflow. Without independent review, label the artifact **unvalidated draft** and
+record the missing review explicitly; do not claim readiness, approval, or a GO.
+Human approval of the exact artifact remains separate from automated review.
 
 After writing the spec, **STOP and present choices to the developer**. Do NOT auto-create
 a PR or auto-proceed. Present the design summary and these explicit options:
