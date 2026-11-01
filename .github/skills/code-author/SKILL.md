@@ -12,6 +12,13 @@ review or CI round-trips.
 Read [implementation standards](references/implementation-standards.md) before writing or
 modifying production code.
 
+## Default Workflow Execution (`code-feature`)
+
+When a user asks in a top-level session to implement a feature, PBI, or design document (and `run_dynamic_workflow` is available):
+- **Immediately start the `code-feature` dynamic workflow** via `run_dynamic_workflow({ name: "code-feature", args: { ... } })`.
+- Pass the user's request naturally in `args` (for example `{ prompt: "<user prompt verbatim>" }`, or `{ pbiId, designDocPath, prompt }`).
+- **Omit `options`** unless the user explicitly requested local-only / no-PR execution: `code-feature` defaults to `createPullRequests: true` and `observePullRequests: true`, driving the change end-to-end through Stage 1 (`code-evidence`), Stage 2 (`code-builder`), Stage 3 (`code-reviewer`), Stage 4 (PR publication), and Stage 5 (`pr-observer` CI/review verification).
+
 ## Core Implementation Rules
 
 ### 1. Strict Flight Isolation (Zero Off-Path Side Effects)

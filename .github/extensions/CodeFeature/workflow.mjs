@@ -454,14 +454,51 @@ function parseWorkItemNumber(value, { requirePrefixInText = false } = {}) {
         }
         const abMatch = trimmed.match(/\bAB#([1-9]\d*)\b/i);
         if (abMatch) return Number(abMatch[1]);
+        const urlMatch = trimmed.match(/_workitems\/edit\/([1-9]\d*)/i);
+        if (urlMatch) return Number(urlMatch[1]);
+        const pbiMatch = trimmed.match(/\bPBI[-\s#]*([1-9]\d{4,})\b/i);
+        if (pbiMatch) return Number(pbiMatch[1]);
     }
     return null;
+}
+
+function extractWorkItemIdsFromText(textValue) {
+    if (!nonempty(textValue)) return [];
+    const textStr = String(textValue);
+    const ids = new Set();
+    for (const match of textStr.matchAll(/_workitems\/edit\/([1-9]\d*)/gi)) {
+        const num = Number(match[1]);
+        if (positiveInt(num)) ids.add(num);
+    }
+    return [...ids];
+}
+
+export function fetchAdoWorkItemById(id, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
+    const psScript = [
+        "$ErrorActionPreference = 'Stop'",
+        "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+        "$headers = @{ Authorization = \"Bearer $token\" }",
+        `$wi = Invoke-RestMethod -Uri 'https://identitydivision.visualstudio.com/_apis/wit/workitems/${Number(id)}?\$expand=relations&api-version=7.0' -Headers $headers -Method Get`,
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+        "[Console]::Out.Write(($wi | ConvertTo-Json -Depth 8 -Compress))",
+    ].join("; ");
+    try {
+        return JSON.parse(exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot }));
+    } catch {
+        return JSON.parse(exec("az", [
+            "boards", "work-item", "show",
+            "--id", String(id),
+            "--org", "https://identitydivision.visualstudio.com",
+            "-o", "json",
+        ], { cwd: workspaceRoot }));
+    }
 }
 
 function stripHtml(textValue) {
     if (!nonempty(textValue)) return "";
     return String(textValue)
-        .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, "\n")
+        .replace(/<li\b[^>]*>/gi, "\n- ")
+        .replace(/<\/(p|div|h[1-6]|li|tr|ul|ol)>/gi, "\n")
         .replace(/<br\s*\/?>/gi, "\n")
         .replace(/<[^>]+>/g, " ")
         .replace(/&nbsp;/gi, " ")
@@ -470,6 +507,7 @@ function stripHtml(textValue) {
         .replace(/&quot;/gi, "\"")
         .replace(/&amp;/gi, "&")
         .replace(/[ \t]+/g, " ")
+        .replace(/\n[ \t]+/g, "\n")
         .replace(/\n\s*\n+/g, "\n\n")
         .trim();
 }
@@ -916,12 +954,16 @@ export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec 
         }
     }
 
-    const pbiIdList = [
+    const explicitPbiIds = [
         ...(Array.isArray(container.pbiIds) ? container.pbiIds : []),
         ...(container.pbiId !== undefined ? [container.pbiId] : []),
     ]
         .map(parseWorkItemNumber)
         .filter((id) => positiveInt(id));
+    const promptPbiIds = explicitPbiIds.length === 0 && nonempty(container.prompt)
+        ? extractWorkItemIdsFromText(container.prompt)
+        : [];
+    const pbiIdList = explicitPbiIds.length > 0 ? explicitPbiIds : promptPbiIds;
 
     if (pbiIdList.length > 0 && !Array.isArray(container.pbis) && !record(container.pbi)) {
         const resolvedPbis = [];
@@ -929,14 +971,19 @@ export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec 
             try {
                 const wi = typeof fetchWorkItem === "function"
                     ? fetchWorkItem(id)
-                    : JSON.parse(exec("az", [
-                        "boards", "work-item", "show",
-                        "--id", String(id),
-                        "--org", "https://identitydivision.visualstudio.com",
-                        "-o", "json",
-                    ], { cwd: workspaceRoot }));
+                    : fetchAdoWorkItemById(id, { workspaceRoot, exec });
                 if (record(wi)) {
                     const fields = record(wi.fields) ? wi.fields : wi;
+                    const relations = Array.isArray(wi.relations) ? wi.relations : [];
+                    const parentRel = relations.find((r) => r?.rel === "System.LinkTypes.Hierarchy-Reverse" && typeof r?.url === "string");
+                    const parentFromRel = parentRel ? Number(parentRel.url.match(/\/workItems\/([1-9]\d*)$/i)?.[1]) : null;
+                    const combinedText = [
+                        fields["System.AreaPath"],
+                        fields["System.Title"] || fields.title,
+                        fields["System.Description"] || fields.description,
+                    ]
+                        .filter(nonempty)
+                        .join("\n");
                     resolvedPbis.push({
                         id: Number(wi.id || id),
                         workItemId: Number(wi.id || id),
@@ -945,9 +992,9 @@ export function resolveInputSources(args, { workspaceRoot = process.cwd(), exec 
                         acceptanceCriteria: Array.isArray(fields.acceptanceCriteria)
                             ? fields.acceptanceCriteria
                             : extractBulletsFromText(fields["Microsoft.VSTS.Common.AcceptanceCriteria"] || fields["System.Description"] || ""),
-                        repository: fields.repository || inferRepositoriesFromText(fields["System.Description"] || fields["System.Title"] || "")[0] || "",
-                        baseBranch: fields.baseBranch || "dev",
-                        parentWorkItemId: parseWorkItemNumber(fields["System.Parent"] ?? fields.parentWorkItemId),
+                        repository: fields.repository || inferRepositoriesFromText(combinedText)[0] || "",
+                        baseBranch: fields.baseBranch || "",
+                        parentWorkItemId: parseWorkItemNumber(fields["System.Parent"] ?? fields.parentWorkItemId ?? parentFromRel),
                     });
                 }
             } catch (error) {
@@ -987,10 +1034,11 @@ export function normalizeTask(args) {
             : [];
     const promptText = nonempty(raw.prompt) ? raw.prompt.trim() : "";
 
-    const inputMode = nonempty(designDocText) || nonempty(raw.designDocPath) || designPacket
-        ? "design_doc"
-        : pbiList.length > 0 || raw.pbiId !== undefined || Array.isArray(raw.pbiIds)
-            ? "pbi"
+    const hasPbiScope = pbiList.length > 0 || raw.pbiId !== undefined || Array.isArray(raw.pbiIds);
+    const inputMode = hasPbiScope
+        ? "pbi"
+        : nonempty(designDocText) || nonempty(raw.designDocPath) || designPacket
+            ? "design_doc"
             : nonempty(promptText)
                 ? "prompt"
                 : "structured";
@@ -1002,21 +1050,22 @@ export function normalizeTask(args) {
     const headingMatch = designDocText.match(/^#\s+(.+)$/m);
     const derivedTitle = nonempty(raw.title)
         ? raw.title.trim()
-        : nonempty(designPacket?.stage0?.title)
-            ? designPacket.stage0.title.trim()
-            : headingMatch && nonempty(headingMatch[1])
-                ? headingMatch[1].trim()
-                : nonempty(pbiList[0]?.title)
-                    ? String(pbiList[0].title).trim()
+        : nonempty(pbiList[0]?.title)
+            ? String(pbiList[0].title).trim()
+            : nonempty(designPacket?.stage0?.title)
+                ? designPacket.stage0.title.trim()
+                : headingMatch && nonempty(headingMatch[1])
+                    ? headingMatch[1].trim()
                     : nonempty(promptText)
                         ? promptText.split(/\r?\n/)[0].slice(0, 80).trim()
                         : "";
 
     const abFromText = parseWorkItemNumber(
-        raw.workItemId ?? raw.pbiId ?? pbiList[0]?.parentWorkItemId ?? pbiList[0]?.workItemId ?? pbiList[0]?.id ??
-        (designDocText.match(/AB#([1-9]\d*)/i)?.[1] ||
-            designDocText.match(/_workitems\/edit\/([1-9]\d*)/i)?.[1] ||
-            promptText.match(/AB#([1-9]\d*)/i)?.[1]),
+        raw.workItemId ?? raw.pbiId ?? pbiList[0]?.workItemId ?? pbiList[0]?.id ?? pbiList[0]?.parentWorkItemId ??
+        (promptText.match(/_workitems\/edit\/([1-9]\d*)/i)?.[1] ||
+            promptText.match(/AB#([1-9]\d*)/i)?.[1] ||
+            designDocText.match(/AB#([1-9]\d*)/i)?.[1] ||
+            designDocText.match(/_workitems\/edit\/([1-9]\d*)/i)?.[1]),
     );
 
     const rawRequirements = Array.isArray(raw.requirements) && raw.requirements.length > 0
@@ -1027,10 +1076,14 @@ export function normalizeTask(args) {
 
     let synthesizedRequirements = rawRequirements;
     if (synthesizedRequirements.length === 0 && inputMode !== "structured") {
-        const bullets = [
-            ...extractBulletsFromText(designDocText),
-            ...pbiList.flatMap((item) => Array.isArray(item.acceptanceCriteria) ? item.acceptanceCriteria : extractBulletsFromText(item.description || "")),
-        ].filter(nonempty);
+        const pbiBullets = pbiList
+            .flatMap((item) => Array.isArray(item.acceptanceCriteria) && item.acceptanceCriteria.length > 0
+                ? item.acceptanceCriteria
+                : extractBulletsFromText(item.description || ""))
+            .filter(nonempty);
+        const bullets = pbiBullets.length > 0
+            ? pbiBullets
+            : extractBulletsFromText(designDocText).filter(nonempty);
         if (bullets.length > 0) {
             synthesizedRequirements = bullets.slice(0, 8).map((item, idx) => ({ id: `R${idx + 1}`, text: item }));
         } else if (nonempty(derivedTitle) || nonempty(promptText)) {
@@ -1045,7 +1098,7 @@ export function normalizeTask(args) {
         rawTargets = pbiList.map((item, idx) => ({
             id: nonempty(item.id) && !positiveInt(Number(item.id)) ? String(item.id) : `pbi-${item.workItemId || item.id || idx + 1}`,
             repository: item.repository || raw.repository || inferRepositoriesFromText(`${item.title || ""} ${item.description || ""}`)[0] || "",
-            baseBranch: item.baseBranch || raw.baseBranch || "dev",
+            baseBranch: item.baseBranch || raw.baseBranch || "",
             workItemId: parseWorkItemNumber(item.workItemId ?? item.id ?? abFromText),
             title: item.title || derivedTitle,
             description: stripHtml(item.description || ""),
@@ -1133,6 +1186,21 @@ export function normalizeTask(args) {
         targets.some((t) => !nonempty(t.repository) || !positiveInt(Number(t.workItemId)))
     );
 
+    const pbiSummaryText = pbiList.length > 0
+        ? [
+            "SCOPED PBI IMPLEMENTATION TARGET (Authoritative Scope Boundary — implement ONLY this PBI scope; do NOT implement work belonging to other PBIs):",
+            ...pbiList.map((p) => `### PBI AB#${p.workItemId || p.id}: ${p.title}\n${p.description || ""}`),
+            ...(nonempty(designDocText)
+                ? [
+                    "",
+                    "---",
+                    "SUPPORTING DESIGN DOCUMENT CONTEXT (Reference only for contracts/types mentioned in the PBI above):",
+                    designDocText,
+                ]
+                : []),
+        ].join("\n\n")
+        : "";
+
     return {
         inputMode,
         isExplicitStage0,
@@ -1143,9 +1211,11 @@ export function normalizeTask(args) {
         workItemId: abFromText,
         designSummary: nonempty(raw.designSummary)
             ? raw.designSummary.trim()
-            : nonempty(designDocText)
-                ? designDocText
-                : promptText,
+            : nonempty(pbiSummaryText)
+                ? pbiSummaryText
+                : nonempty(designDocText)
+                    ? designDocText
+                    : promptText,
         sourceInputs: {
             ...(nonempty(raw.designDocPath) ? { designDocPath: raw.designDocPath.trim() } : {}),
             ...(nonempty(designDocText) ? { designDoc: designDocText } : {}),
@@ -1165,10 +1235,11 @@ export function mergeExtractedSpec(task, evidence) {
     const spec = evidence.extractedSpec;
     const merged = JSON.parse(JSON.stringify(task));
     const hadPromptDerivedTitle = merged.inputMode === "prompt";
-    if ((!nonempty(merged.title) || hadPromptDerivedTitle) && nonempty(spec.title)) {
+    const hasScopedPbi = merged.inputMode === "pbi" && Array.isArray(merged.sourceInputs?.pbis) && merged.sourceInputs.pbis.length > 0;
+    if ((!nonempty(merged.title) || hadPromptDerivedTitle) && !hasScopedPbi && nonempty(spec.title)) {
         merged.title = spec.title.trim();
     }
-    if ((!nonempty(merged.designSummary) || hadPromptDerivedTitle) && nonempty(spec.designSummary)) {
+    if ((!nonempty(merged.designSummary) || hadPromptDerivedTitle) && !hasScopedPbi && nonempty(spec.designSummary)) {
         merged.designSummary = spec.designSummary.trim();
     }
     const updatedRequirements = Array.isArray(spec.requirements) && spec.requirements.length > 0 &&
@@ -1650,9 +1721,11 @@ export function normalizeEvidenceResponse(rawEvidence, task) {
                     id: task?.targets?.[0]?.id || "target-1",
                     repository: repoKey,
                     baseBranch,
-                    workItemId: positiveInt(Number(rawEvidence.workItemId))
-                        ? Number(rawEvidence.workItemId)
-                        : (task?.workItemId ?? null),
+                    workItemId: task?.inputMode === "pbi" && positiveInt(Number(task?.workItemId))
+                        ? Number(task.workItemId)
+                        : positiveInt(Number(rawEvidence.workItemId))
+                            ? Number(rawEvidence.workItemId)
+                            : (task?.workItemId ?? null),
                     title: task?.title || rawEvidence.summary || "Android Auth change",
                     description: rawEvidence.summary || task?.designSummary || "",
                     acceptanceCriteria: reqList.map((r) => r.text),
@@ -2642,6 +2715,9 @@ Verify that the approval/input record binds to revision (${task.revision}) and r
 ${needsSpecExtraction || intakeRound > 0
                 ? `Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, prompt, and recorded clarifications. Always include at least one target repository and non-empty acceptanceCriteria; set workItemId to null if no AB#<id> work item is provided.`
                 : "Distinguish verified facts, conflicts, assumptions, unknowns, and blocking unknowns."}
+${Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
+                ? `SCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—extract requirements, target files, and acceptance criteria ONLY for the specified PBI scope, and do NOT include work explicitly deferred to other PBIs.`
+                : ""}
 You are Stage 1 (read-only evidence and specification extraction) of a multi-stage workflow; later stages (code-builder, code-reviewer, and PR creation) execute worktree, implementation, review, and PR steps. Never report requests to implement code, manage worktrees, or run builder/reviewer stages as a conflict with your read-only role, and never report a missing workItemId as a conflict or blockingUnknown when createPullRequests is ${Boolean(createPullRequests)}.
 When the caller invokes code-feature with a design doc, PBI, or prompt, that invocation IS explicit caller authorization to implement the supplied design revision—never reject or block because a status banner inside the design doc markdown says "proposed for engineer approval" or "not yet approved or authorized for implementation".
 Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase. Every question in questions / clarificationQuestions MUST be written in clear, self-contained plain language for the developer—never reference internal IDs like F001 or R18 or dump status summaries as a question.`,
@@ -2832,9 +2908,12 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
 
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
+    const pbiScopeInstruction = Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
+        ? `\nSCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—implement and test ONLY the specified PBI scope, and do NOT implement or require work explicitly deferred to other PBIs.`
+        : "";
     const builderTask = `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
 Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
-Preserve all approved requirements and acceptance criteria verbatim.
+Preserve all approved requirements and acceptance criteria verbatim.${pbiScopeInstruction}
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
 If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
@@ -2994,7 +3073,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                         `Independent code reviewer (round ${round + 1})`,
                         REVIEWER_AGENT,
                         `Read and apply these repository code-review skills and reference guides: ${reviewerGuides.join(", ")}.
-Independently review the builder's code changes, unit tests, diffs, and PR metadata against the approved task and evidence.
+Independently review the builder's code changes, unit tests, diffs, and PR metadata against the approved task and evidence.${pbiScopeInstruction}
 Apply the fixed rubric: ${rubric.join(", ")}.
 Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
 Evaluate unitTestsAndVerification by inspecting the authored unit tests and local JVM/Robolectric test results; connected Android device/emulator tests (androidTest when adb devices has no attached device) and live multi-device/service E2E ceremonies cannot run in a headless worktree, so when androidTest compiles and device/service E2E scenarios are documented in pr.testPlan (or local Gradle was deferred due to missing VSTS Maven credentials), do NOT raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over unrun physical-device/service E2E execution or synthetic traceability formatting.

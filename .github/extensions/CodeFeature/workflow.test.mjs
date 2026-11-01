@@ -1375,6 +1375,44 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     } finally {
         rmSync(tempProtectRoot, { recursive: true, force: true });
     }
+
+    // 7. Natural prompt with both a PBI URL and a Design Doc URL scopes to the PBI while retaining design doc context
+    const naturalResolved = resolveInputSources(
+        {
+            prompt:
+                "Implement https://dev.azure.com/IdentityDivision/Engineering/_workitems/edit/3804404 using this design doc for additional context: https://dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview/pullrequest/28487?path=/%5BAndroid%5D%20Backup%20%26%20Restore%20(v2)/Expanded%20Entra%20Guided%20Restore/expanded-entra-guided-restore-design.v2.md",
+        },
+        {
+            linkSubrepos: false,
+            fetchWorkItem: (id) => ({
+                id,
+                fields: {
+                    "System.AreaPath": "Engineering\\Auth Client\\Android Authenticator App",
+                    "System.Title": "[Entra Guided Restore] Make guided navigation marker-aware and lifecycle-safe",
+                    "System.Description":
+                        "<p>PBI-1 of Feature 3804403. Repository: AD-MFA-phonefactor-phoneApp-android; base working.</p><ul><li>Add required Boolean hadPasskeyOnOldDevice to GuidedRestoreActivity.newIntent.</li></ul>",
+                },
+                relations: [
+                    {
+                        rel: "System.LinkTypes.Hierarchy-Reverse",
+                        url: "https://identitydivision.visualstudio.com/_apis/wit/workItems/3804403",
+                    },
+                ],
+            }),
+            fetchDesignDoc: () =>
+                "# [Android] Expanded Entra Guided Restore\n\n**Feature:** [3652306](https://identitydivision.visualstudio.com/Engineering/_workitems/edit/3652306)\n\nFull multi-PBI design doc context.",
+        },
+    );
+    const naturalTask = normalizeTask(naturalResolved);
+    assert.equal(naturalTask.inputMode, "pbi");
+    assert.equal(naturalTask.workItemId, 3804404);
+    assert.equal(naturalTask.title, "[Entra Guided Restore] Make guided navigation marker-aware and lifecycle-safe");
+    assert.equal(naturalTask.targets.length, 1);
+    assert.equal(naturalTask.targets[0].repository, "authenticator");
+    assert.equal(naturalTask.targets[0].baseBranch, "working");
+    assert.equal(naturalTask.targets[0].workItemId, 3804404);
+    assert.ok(naturalTask.designSummary.includes("SCOPED PBI IMPLEMENTATION TARGET"));
+    assert.ok(naturalTask.designSummary.includes("SUPPORTING DESIGN DOCUMENT CONTEXT"));
 });
 
 
