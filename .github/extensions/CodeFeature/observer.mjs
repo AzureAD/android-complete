@@ -227,10 +227,23 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
         try {
             const [owner, repoName] = String(parsedPr.slug || "").split("/");
             if (nonempty(owner) && nonempty(repoName)) {
-                const gqlQuery = `query { repository(owner: "${owner.replace(/"/g, '\\"')}", name: "${repoName.replace(/"/g, '\\"')}") { pullRequest(number: ${parsedPr.prNumber}) { reviewThreads(first: 50) { nodes { id isResolved path line comments(first: 10) { nodes { databaseId author { login } body } } } } } } }`;
+                const gqlQuery = "query($owner: String!, $name: String!, $prNumber: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $prNumber) { reviewThreads(first: 50) { nodes { id isResolved path line comments(first: 10) { nodes { databaseId author { login } body } } } } } } }";
                 const rawGql = exec(
                     "gh",
-                    ["api", "--hostname", parsedPr.hostname, "graphql", "-f", `query=${gqlQuery}`],
+                    [
+                        "api",
+                        "--hostname",
+                        parsedPr.hostname,
+                        "graphql",
+                        "-f",
+                        `owner=${owner}`,
+                        "-f",
+                        `name=${repoName}`,
+                        "-F",
+                        `prNumber=${parsedPr.prNumber}`,
+                        "-f",
+                        `query=${gqlQuery}`,
+                    ],
                     { cwd: workspaceRoot, env: gitEnv },
                 );
                 const parsedGql = JSON.parse(rawGql);
@@ -875,10 +888,19 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                                 );
                             }
                             if (nonempty(thread?.threadId)) {
-                                const mut = `mutation { resolveReviewThread(input: {threadId: "${String(thread.threadId).replace(/"/g, '\\"')}"}) { thread { isResolved } } }`;
+                                const mut = "mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { isResolved } } }";
                                 exec(
                                     "gh",
-                                    ["api", "--hostname", parsedPr.hostname, "graphql", "-f", `query=${mut}`],
+                                    [
+                                        "api",
+                                        "--hostname",
+                                        parsedPr.hostname,
+                                        "graphql",
+                                        "-f",
+                                        `threadId=${String(thread.threadId)}`,
+                                        "-f",
+                                        `query=${mut}`,
+                                    ],
                                     { cwd: workspaceRoot, env: gitEnv },
                                 );
                             }
