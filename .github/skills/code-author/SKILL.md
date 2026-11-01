@@ -9,15 +9,13 @@ Author production-ready code, tests, telemetry, and pull requests across the And
 repositories (`common`, `broker`, `msal`, `adal`, and `authenticator`) without avoidable
 review or CI round-trips.
 
-Read [implementation standards](references/implementation-standards.md) before writing or
-modifying production code.
-
 ## Default Workflow Execution (`code-feature`)
 
-When a user asks in a top-level session to implement a feature, PBI, or design document (and `run_dynamic_workflow` is available):
-- **Immediately start the `code-feature` dynamic workflow** via `run_dynamic_workflow({ name: "code-feature", args: { ... } })`.
-- Pass the user's request naturally in `args` (for example `{ prompt: "<user prompt verbatim>" }`, or `{ pbiId, designDocPath, prompt }`).
-- **Omit `options`** unless the user explicitly requested local-only / no-PR execution: `code-feature` defaults to `createPullRequests: true` and `observePullRequests: true`, driving the change end-to-end through Stage 1 (`code-evidence`), Stage 2 (`code-builder`), Stage 3 (`code-reviewer`), Stage 4 (PR publication), and Stage 5 (`pr-observer` CI/review verification).
+When a user asks in a top-level session to implement a feature, PBI, or design document and `run_dynamic_workflow` is available:
+- **Your VERY FIRST action must be to call `run_dynamic_workflow({ name: "code-feature", args: { prompt: "<user prompt verbatim>" } })` immediately.**
+- **Do NOT pre-read `references/implementation-standards.md`, `AGENTS.md`, PBI details, or target repository files in the outer session before starting `code-feature`**—Stage 1 (`code-evidence`), Stage 2 (`code-builder`), Stage 3 (`code-reviewer`), Stage 4 (PR publication), and Stage 5 (`pr-observer`) inside `code-feature` automatically fetch the PBI/design doc, prepare the target checkout (`authenticator/`, `broker/`, `common/`, `msal/`, `adal/`), and execute the full implementation and CI verification loop.
+- **Omit `options`** unless the user explicitly requested local-only / no-PR execution (`code-feature` defaults to `createPullRequests: true` and `observePullRequests: true`).
+- Only read [implementation standards](references/implementation-standards.md) directly when you are executing *inside* a `code-builder` / `code-reviewer` subagent (where `run_dynamic_workflow` is not used).
 
 ## Core Implementation Rules
 
