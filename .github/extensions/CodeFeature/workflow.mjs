@@ -1792,8 +1792,15 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         const testsAddedOrUpdated = discovered.testsAddedOrUpdated.length > 0
             ? discovered.testsAddedOrUpdated
             : evidenceList.filter((item) => /test/i.test(item));
-        const inferredCommandsRun = evidenceList
-            .filter((item) => /gradlew|gradle\b|test.*passed|BUILD SUCCESSFUL/i.test(item))
+        const candidateLines = [
+            ...evidenceList,
+            ...String(rawImpl.testPlan || "").split(/\r?\n/),
+            ...String(rawImpl.summary || "").split(/\r?\n/),
+        ]
+            .map((s) => s.trim())
+            .filter(nonempty);
+        const inferredCommandsRun = candidateLines
+            .filter((item) => /gradlew|gradle\b|tests?\s+passed|pass(?:ed)?\s+local\s+validation|\b\d+\s+(?:focused\s+|JVM\s+|unit\s+|app\s+|ECS\s+|API-\d+\s+|instrumentation\s+)*tests?\b|BUILD SUCCESSFUL/i.test(item))
             .slice(0, 5);
 
         return {
@@ -2175,6 +2182,23 @@ export function resolveGitHubAccount(target, workspaceRoot, exec = defaultExec) 
     return "";
 }
 
+export function extractAdoPullRequestId(rawOutput) {
+    if (typeof rawOutput === "number" && positiveInt(rawOutput)) return String(rawOutput);
+    if (!nonempty(rawOutput)) return "";
+    const trimmed = String(rawOutput).trim();
+    if (/^[1-9]\d*$/.test(trimmed)) return trimmed;
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (positiveInt(Number(parsed?.pullRequestId))) {
+            return String(Number(parsed.pullRequestId));
+        }
+    } catch {
+        // Fall through to regex extraction.
+    }
+    const match = trimmed.match(/"pullRequestId"\s*:\s*([1-9]\d*)/);
+    return match ? match[1] : "";
+}
+
 export function buildBranchName(target, branchPrefix = "") {
     const slug = `${target.id}-${target.title}`
         .toLowerCase()
@@ -2289,38 +2313,65 @@ export function publishTargetPullRequest({
         const slugParts = String(target.slug || "One/_git/AD-MFA-phonefactor-phoneApp-android").split("/_git/");
         const adoProject = slugParts[0] || "One";
         const adoRepo = slugParts[1] || "AD-MFA-phonefactor-phoneApp-android";
-        const orgUrl = target.hostname.startsWith("http") ? target.hostname : `https://${target.hostname}`;
-        const prTypeTag = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "bug" : "feature";
-        const adoArgs = [
-            "repos",
-            "pr",
-            "create",
-            "--org",
-            orgUrl,
-            "--project",
-            adoProject,
-            "--repository",
-            adoRepo,
-            "--source-branch",
-            branch,
-            "--target-branch",
-            target.baseBranch,
-            "--title",
-            title,
-            "--description",
-            body,
-            "--labels",
-            "agentic-cli",
-            prTypeTag,
-            "--query",
-            "pullRequestId",
-            "-o",
-            "tsv",
-        ];
-        if (draftPullRequest) adoArgs.push("--draft", "true");
-        const prId = exec("az", adoArgs, { cwd: repoRoot });
+        const orgUrl = (target.hostname.startsWith("http") ? target.hostname : `https://${target.hostname}`).replace(/\/+$/, "");
+        const prTypeTag = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "bug" : "Feature";
+        let prId = "";
+        if (exec === defaultExec) {
+            const createPayloadB64 = Buffer.from(
+                JSON.stringify({
+                    sourceRefName: `refs/heads/${branch}`,
+                    targetRefName: `refs/heads/${target.baseBranch}`,
+                    title,
+                    description: body,
+                    isDraft: Boolean(draftPullRequest),
+                    labels: [{ name: "agentic-cli" }, { name: prTypeTag }],
+                }),
+                "utf8",
+            ).toString("base64");
+            const apiBase = `${orgUrl}/${encodeURIComponent(adoProject)}/_apis/git/repositories/${encodeURIComponent(adoRepo)}/pullRequests`;
+            const psCreate = [
+                "$ErrorActionPreference = 'Stop'",
+                "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+                "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
+                `$bytes = [System.Convert]::FromBase64String('${createPayloadB64}')`,
+                `$pr = Invoke-RestMethod -Uri '${apiBase.replace(/'/g, "''")}?api-version=7.0' -Headers $headers -Method Post -Body $bytes`,
+                "[Console]::Out.Write($pr.pullRequestId)",
+            ].join("; ");
+            const rawCreate = exec("powershell", ["-NoProfile", "-Command", psCreate], { cwd: repoRoot });
+            prId = extractAdoPullRequestId(rawCreate);
+        } else {
+            const adoArgs = [
+                "repos",
+                "pr",
+                "create",
+                "--org",
+                orgUrl,
+                "--project",
+                adoProject,
+                "--repository",
+                adoRepo,
+                "--source-branch",
+                branch,
+                "--target-branch",
+                target.baseBranch,
+                "--title",
+                title,
+                "--query",
+                "pullRequestId",
+                "-o",
+                "tsv",
+                "--labels",
+                "agentic-cli",
+                prTypeTag.toLowerCase(),
+                "--description",
+                body,
+            ];
+            if (draftPullRequest) adoArgs.push("--draft", "true");
+            const rawPrId = exec("az", adoArgs, { cwd: repoRoot });
+            prId = extractAdoPullRequestId(rawPrId);
+        }
         url = nonempty(prId)
-            ? `${orgUrl.replace(/\/+$/, "")}/${adoProject}/_git/${adoRepo}/pullrequest/${prId.trim()}`
+            ? `${orgUrl}/${adoProject}/_git/${adoRepo}/pullrequest/${prId}`
             : "";
     } else {
         const repoArg = target.hostname === "github.com" ? target.slug : `${target.hostname}/${target.slug}`;
@@ -2365,6 +2416,29 @@ export function publishTargetPullRequest({
                 nextAction: "Run pr-observer for this PR.",
             }),
         );
+        if (isAdoTarget && exec === defaultExec) {
+            try {
+                const slugParts = String(target.slug || "One/_git/AD-MFA-phonefactor-phoneApp-android").split("/_git/");
+                const adoProject = slugParts[0] || "One";
+                const adoRepo = slugParts[1] || "AD-MFA-phonefactor-phoneApp-android";
+                const orgUrl = (target.hostname.startsWith("http") ? target.hostname : `https://${target.hostname}`).replace(/\/+$/, "");
+                const prNum = url.match(/\/pullrequest\/([1-9]\d*)$/i)?.[1];
+                if (prNum) {
+                    const patchPayloadB64 = Buffer.from(JSON.stringify({ description: body }), "utf8").toString("base64");
+                    const patchUri = `${orgUrl}/${encodeURIComponent(adoProject)}/_apis/git/repositories/${encodeURIComponent(adoRepo)}/pullRequests/${prNum}?api-version=7.0`;
+                    const psPatch = [
+                        "$ErrorActionPreference = 'Stop'",
+                        "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+                        "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
+                        `$bytes = [System.Convert]::FromBase64String('${patchPayloadB64}')`,
+                        `Invoke-RestMethod -Uri '${patchUri.replace(/'/g, "''")}' -Headers $headers -Method Patch -Body $bytes | Out-Null`,
+                    ].join("; ");
+                    exec("powershell", ["-NoProfile", "-Command", psPatch], { cwd: repoRoot });
+                }
+            } catch {
+                // Best-effort status block URL patch on ADO PR.
+            }
+        }
     }
 
     return {
@@ -2547,6 +2621,16 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     let fixes = 0;
 
     let task = normalizeTask(resolvedArgs);
+    const getHostingLabel = () => {
+        const hasAdo = (task?.targets || []).some(
+            (t) => t?.repository === "authenticator" || /visualstudio\.com|dev\.azure\.com/i.test(String(t?.hostname || "")),
+        );
+        const hasGh = (task?.targets || []).some(
+            (t) => t?.repository !== "authenticator" && !/visualstudio\.com|dev\.azure\.com/i.test(String(t?.hostname || "")),
+        );
+        if (hasAdo && hasGh) return "GitHub/GHE and Azure DevOps";
+        return hasAdo ? "Azure DevOps" : "GitHub";
+    };
     const packet = (recommendation, reasons, questions = []) => ({
         recommendation,
         humanApproval: "pending",
@@ -2562,7 +2646,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         observations,
         rubric: [...rubric],
         nextAction: recommendation === "GO to PR Review"
-            ? "Human must review the verified pull request packet and approve/merge in GitHub."
+            ? `Human must review the verified pull request packet and approve/merge in ${getHostingLabel()}.`
             : "Resolve the listed issues; obtain a new task approval if requirements or scope change.",
     });
 

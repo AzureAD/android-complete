@@ -388,7 +388,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
         return {
             status: "needs-owner-decision",
             prUrl: args.prUrl || null,
-            summary: "Supply a valid GitHub or GHE pull request URL (https://<host>/<owner>/<repo>/pull/<number>).",
+            summary: "Supply a valid GitHub/GHE (https://<host>/<owner>/<repo>/pull/<number>) or Azure DevOps (https://<org>.visualstudio.com/<project>/_git/<repo>/pullrequest/<number>) pull request URL.",
             evidence: [],
             iterations: 0,
         };
