@@ -767,7 +767,8 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
         phase("Verify & Push");
         const reviewResult = await step(`review-repair-${iteration}`, () => ctx.agent(
             `Read and apply these repository code-review guides: ${reviewerGuides.join(", ")}.
-Independently verify that the tactical repair resolves all actionableFindings without regressions.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, repairResult })}`,
+Independently verify that the local tactical code/test repair in the worktree resolves the code/test defects in actionableFindings without regressions.
+IMPORTANT: Git commit, git push, PR title/description metadata updates, and remote CI pipeline re-runs (such as Compare Jacoco Coverage or Validate PBI) are executed by the deterministic push-repair step immediately AFTER your review returns verdict "pass". Never return verdict "repair" or raise findings because changes are uncommitted/unpushed in the worktree or because remote CI checks have not re-run yet—return verdict "pass" with findings=[] as soon as the local code and unit-test changes are sound.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, repairResult })}`,
             {
                 label: `Verify tactical repair (round ${iteration + 1})`,
                 agent: REVIEWER_AGENT,
