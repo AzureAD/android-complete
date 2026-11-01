@@ -221,7 +221,90 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
         ],
         { cwd: workspaceRoot, env: gitEnv },
     );
-    return JSON.parse(rawJson);
+    const parsedSnapshot = JSON.parse(rawJson);
+
+    if (exec === defaultExec && record(parsedSnapshot)) {
+        try {
+            const rawInline = exec(
+                "gh",
+                [
+                    "api",
+                    "--hostname",
+                    parsedPr.hostname,
+                    `repos/${parsedPr.slug}/pulls/${parsedPr.prNumber}/comments`,
+                ],
+                { cwd: workspaceRoot, env: gitEnv },
+            );
+            const inlineArr = JSON.parse(rawInline);
+            if (Array.isArray(inlineArr) && inlineArr.length > 0) {
+                parsedSnapshot.inlineReviewComments = inlineArr.map((c) => ({
+                    id: c?.id,
+                    path: c?.path,
+                    line: c?.line || c?.original_line,
+                    author: c?.user?.login,
+                    body: c?.body,
+                }));
+            }
+        } catch {
+            // Optional inline review comment enrichment.
+        }
+
+        const checks = Array.isArray(parsedSnapshot.statusCheckRollup) ? parsedSnapshot.statusCheckRollup : [];
+        const adoBuildRefs = new Map();
+        for (const check of checks) {
+            const conclusion = String(check?.conclusion || check?.state || "").toLowerCase();
+            if (conclusion !== "failure" && conclusion !== "failed") continue;
+            const detailsUrl = String(check?.detailsUrl || "");
+            const m = detailsUrl.match(/^(https:\/\/(?:[^/]+\.visualstudio\.com|dev\.azure\.com\/[^/]+)\/[^/]+)\/_build\/results\?[^\s"']*?\bbuildId=(\d+)/i);
+            if (m) {
+                const buildId = Number(m[2]);
+                if (!adoBuildRefs.has(buildId)) {
+                    adoBuildRefs.set(buildId, { projectBase: m[1], buildId, checkName: check?.name || `Build ${buildId}` });
+                }
+            }
+        }
+
+        if (adoBuildRefs.size > 0) {
+            const entriesJson = JSON.stringify([...adoBuildRefs.values()]);
+            const entriesB64 = Buffer.from(entriesJson, "utf8").toString("base64");
+            const psCheckLogs = [
+                "$ErrorActionPreference = 'Stop'",
+                "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+                "$headers = @{ Authorization = \"Bearer $token\" }",
+                `$entries = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${entriesB64}')) | ConvertFrom-Json`,
+                "$outBuilds = @()",
+                "foreach ($e in $entries) {",
+                "  $failedTasks = @()",
+                "  try {",
+                "    $tl = Invoke-RestMethod -Uri \"$($e.projectBase)/_apis/build/builds/$($e.buildId)/timeline?api-version=7.0\" -Headers $headers -Method Get",
+                "    foreach ($rec in @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' })) {",
+                "      $issues = @($rec.issues | ForEach-Object { $_.message })",
+                "      $excerpt = @()",
+                "      if ($rec.log.url) {",
+                "        try {",
+                "          $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers $headers -Method Get",
+                "          $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/' } | Select-Object -Last 30)",
+                "        } catch {}",
+                "      }",
+                "      $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt }",
+                "    }",
+                "  } catch {}",
+                "  $outBuilds += @{ id = $e.buildId; definition = $e.checkName; status = 'completed'; result = 'failed'; failedTasks = $failedTasks }",
+                "}",
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+                "[Console]::Out.Write(($outBuilds | ConvertTo-Json -Depth 6 -Compress))",
+            ].join("; ");
+            try {
+                const rawBuilds = exec("powershell", ["-NoProfile", "-Command", psCheckLogs], { cwd: workspaceRoot });
+                const parsedBuilds = JSON.parse(rawBuilds);
+                parsedSnapshot.prBuilds = Array.isArray(parsedBuilds) ? parsedBuilds : [parsedBuilds];
+            } catch {
+                // Optional Azure Pipelines check log enrichment.
+            }
+        }
+    }
+
+    return parsedSnapshot;
 }
 
 export function isSnapshotWaitingForCiOnly(snapshot) {
@@ -243,6 +326,9 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
         });
     });
     if (hasActionableThread) return false;
+
+    const inlineComments = Array.isArray(snapshot.inlineReviewComments) ? snapshot.inlineReviewComments : [];
+    if (inlineComments.some((c) => nonempty(c?.body))) return false;
 
     const prBuilds = Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [];
     let hasRunningBuild = false;
@@ -308,6 +394,9 @@ export function computeSnapshotFingerprint(snapshot) {
     const threads = Array.isArray(snapshot.activeReviewThreads)
         ? snapshot.activeReviewThreads.map((t) => `${t?.id || ""}:${t?.status || ""}:${(t?.comments || []).length}`)
         : [];
+    const inlineComments = Array.isArray(snapshot.inlineReviewComments)
+        ? snapshot.inlineReviewComments.map((c) => `${c?.id || ""}:${c?.path || ""}:${c?.line || ""}`)
+        : [];
     return createHash("sha256")
         .update(JSON.stringify({
             headRefOid: snapshot.headRefOid || "",
@@ -315,6 +404,7 @@ export function computeSnapshotFingerprint(snapshot) {
             checks,
             builds,
             threads,
+            inlineComments,
         }))
         .digest("hex")
         .slice(0, 16);
