@@ -14,7 +14,7 @@ review or CI round-trips.
 When a user asks in a top-level session to implement a feature, PBI, or design document and `run_dynamic_workflow` is available:
 - **Your VERY FIRST action must be to call `run_dynamic_workflow({ name: "code-feature", args: { prompt: "<user prompt verbatim>" } })` immediately.**
 - **Do NOT pre-read `references/implementation-standards.md`, `AGENTS.md`, PBI details, or target repository files in the outer session before starting `code-feature`**—Stage 1 (`code-evidence`), Stage 2 (`code-builder`), Stage 3 (`code-reviewer`), Stage 4 (PR publication), and Stage 5 (`pr-observer`) inside `code-feature` automatically fetch the PBI/design doc, prepare the target checkout (`authenticator/`, `broker/`, `common/`, `msal/`, `adal/`), and execute the full implementation and CI verification loop.
-- **Omit `options`** unless the user explicitly requested local-only / no-PR execution (`code-feature` defaults to `createPullRequests: true` and `observePullRequests: true`).
+- **Omit `options` completely** when calling `run_dynamic_workflow` (`code-feature` automatically publishes the pull request and runs `pr-observer` to green CI). Never pass `createPullRequests: false` or `observePullRequests: false`.
 - Only read [implementation standards](references/implementation-standards.md) directly when you are executing *inside* a `code-builder` / `code-reviewer` subagent (where `run_dynamic_workflow` is not used).
 
 ## Core Implementation Rules

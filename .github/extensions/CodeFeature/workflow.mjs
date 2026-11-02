@@ -2643,11 +2643,15 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const maxFixes = positiveInt(rawOptions.maxFixIterations)
         ? Math.min(rawOptions.maxFixIterations, MAX_FIX_ITERATIONS)
         : MAX_FIX_ITERATIONS;
+    const isInteractiveSession = Boolean(ctx?.session?.ui);
     const createPullRequests = rawOptions.createPullRequests !== undefined
         ? rawOptions.createPullRequests === true
-        : Boolean(ctx?.session?.ui);
+        : isInteractiveSession;
+    const effectiveCreatePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
+        ? true
+        : createPullRequests;
     const draftPullRequest = rawOptions.draftPullRequest === true;
-    const applyToWorkspace = rawOptions.applyToWorkspace === true || createPullRequests;
+    const applyToWorkspace = rawOptions.applyToWorkspace === true || effectiveCreatePrs;
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
 
@@ -3293,7 +3297,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                 reviewRoundCount: history.length,
                                 parentWorkItemId: task.workItemId,
                                 workspaceRoot,
-                                createPullRequests,
+                                createPullRequests: effectiveCreatePrs,
                                 draftPullRequest,
                                 runId: ctx?.runId || "local",
                                 exec,
@@ -3301,9 +3305,11 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                         }
                         return created;
                     });
-                    const shouldObservePrs = rawOptions.observePullRequests !== undefined
-                        ? rawOptions.observePullRequests === true
-                        : (createPullRequests && Boolean(ctx?.session?.ui));
+                    const shouldObservePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
+                        ? true
+                        : rawOptions.observePullRequests !== undefined
+                            ? rawOptions.observePullRequests === true
+                            : (effectiveCreatePrs && isInteractiveSession);
                     if (shouldObservePrs) {
                         phase("Observe PR and repair CI/review findings");
                         for (const prEntry of pullRequests) {
