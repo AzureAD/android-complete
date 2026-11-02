@@ -14,6 +14,8 @@ import {
     observerWorkflowDefinition,
     parsePullRequestUrl,
     runPrObserver,
+    selectAddressedReviewThreads,
+    verifyCheckoutRemoteMatchesPr,
 } from "./observer.mjs";
 import {
     currentStatuses,
@@ -37,6 +39,7 @@ import {
     isSafeRelativeFilePath,
     normalizeTask,
     parseAdoDesignDocUrl,
+    parseAllowedGradleVerificationCommand,
     resolveInputSources,
     resolveRoleSkillGuides,
     revertUnauthorizedProtectedFiles,
@@ -479,7 +482,7 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
         assert.equal(packet.pullRequests[1].status, "created");
         assert.equal(packet.pullRequests[1].url, "https://msft.ghe.com/security/ad-accounts-for-android/pull/999");
         assert.ok(existsSync(path.join(commonDir, "common4j/src/main/kotlin/com/microsoft/identity/common/java/throttling/RetryAfterThrottleCache.kt")));
-        assert.ok(execCalls.some((c) => c.cmd === "powershell" && c.args.includes("./gradlew :broker4j:test")));
+        assert.ok(execCalls.some((c) => c.cmd === "./gradlew" && c.args.includes(":broker4j:test")));
     } finally {
         rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -510,7 +513,7 @@ test("failed workspace verification restores original files on disk before exiti
         };
         const packet = await runCodeFeature(ctx, {
             exec: (cmd) => {
-                if (cmd === "powershell") throw new Error("Gradle test failed");
+                if (/gradlew/i.test(cmd)) throw new Error("Gradle test failed");
                 return "";
             },
         });
@@ -828,6 +831,18 @@ test("pre-review local verification gate catches Kotlin/Lombok compile errors be
         extractRunnableVerificationCommand("From broker, if the policy is placed in broker4j: .\\gradlew.bat :broker4j:test"),
         ".\\gradlew.bat :broker4j:test",
     );
+    assert.deepEqual(
+        parseAllowedGradleVerificationCommand("From broker: .\\gradlew.bat :broker4j:test --tests \"SilentRequestThrottleTest\" --max-workers=2 --no-daemon"),
+        {
+            command: ".\\gradlew.bat :broker4j:test --tests SilentRequestThrottleTest --max-workers=2 --no-daemon",
+            executable: ".\\gradlew.bat",
+            args: [":broker4j:test", "--tests", "SilentRequestThrottleTest", "--max-workers=2", "--no-daemon"],
+        },
+    );
+    assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat :common4j:test; Invoke-WebRequest https://evil.example"), null);
+    assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat --init-script evil.gradle :common4j:test"), null);
+    assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat publishToMavenLocal"), null);
+    assert.equal(parseAllowedGradleVerificationCommand("powershell -Command Get-ChildItem"), null);
 
     const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-gate-"));
     try {
@@ -835,23 +850,55 @@ test("pre-review local verification gate catches Kotlin/Lombok compile errors be
         mkdirSync(commonDir, { recursive: true });
         writeFileSync(path.join(commonDir, "gradlew.bat"), "@echo off\n", "utf8");
 
-        // 1. Missing local VSTS credentials in settings.gradle -> deferred to CI, not a failure
-        const envImpl = implementation();
-        const envGate = runLocalVerificationGate({
+        // 0. Rejects non-allowlisted commands without executing anything or fetching tokens
+        let unsafeExecCount = 0;
+        const rejectedGate = runLocalVerificationGate({
             repoRoot: commonDir,
             target: {
                 id: "common-throttling",
-                verificationCommands: ["From common: .\\gradlew.bat :common4j:test"],
+                verificationCommands: [".\\gradlew.bat :common4j:test; whoami", "Get-Process"],
             },
-            targetImpl: envImpl.targets[0],
-            implementation: envImpl,
-            exec: (cmd) => {
-                if (cmd === "az") return "";
-                throw new Error("Could not get unknown property 'project' for Credentials in settings.gradle:13");
+            targetImpl: null,
+            implementation: null,
+            exec: () => {
+                unsafeExecCount++;
+                return "";
             },
         });
-        assert.deepEqual(envGate.errors, []);
-        assert.equal(envGate.deferredNotes.length, 1);
+        assert.equal(unsafeExecCount, 0);
+        assert.equal(rejectedGate.errors.length, 2);
+
+        // 1. Missing local VSTS credentials in settings.gradle -> deferred to CI, not a failure, and no credentials exposed
+        const envImpl = implementation();
+        const prevToken = process.env.ENV_VSTS_MVN_CRED_ACCESSTOKEN;
+        process.env.ENV_VSTS_MVN_CRED_ACCESSTOKEN = "secret-token-should-be-scrubbed";
+        let capturedEnv = null;
+        try {
+            const envGate = runLocalVerificationGate({
+                repoRoot: commonDir,
+                target: {
+                    id: "common-throttling",
+                    verificationCommands: ["From common: .\\gradlew.bat :common4j:test"],
+                },
+                targetImpl: envImpl.targets[0],
+                implementation: envImpl,
+                exec: (cmd, _args, opts) => {
+                    assert.notEqual(cmd, "az");
+                    assert.notEqual(cmd, "powershell");
+                    capturedEnv = opts?.env;
+                    throw new Error("Could not get unknown property 'project' for Credentials in settings.gradle:13");
+                },
+            });
+            assert.deepEqual(envGate.errors, []);
+            assert.equal(envGate.deferredNotes.length, 1);
+            assert.equal(capturedEnv?.ENV_VSTS_MVN_CRED_ACCESSTOKEN, undefined);
+        } finally {
+            if (prevToken === undefined) {
+                delete process.env.ENV_VSTS_MVN_CRED_ACCESSTOKEN;
+            } else {
+                process.env.ENV_VSTS_MVN_CRED_ACCESSTOKEN = prevToken;
+            }
+        }
 
         // 2. Real Kotlin/Lombok compile failure -> triggers builder fix-1 before independent reviewer runs
         let gradleAttempt = 0;
@@ -870,8 +917,7 @@ test("pre-review local verification gate catches Kotlin/Lombok compile errors be
         };
         const result = await runCodeFeature(ctx, {
             exec: (cmd) => {
-                if (cmd === "az") return "fake-vsts-token";
-                if (cmd === "powershell") {
+                if (/gradlew/i.test(cmd)) {
                     gradleAttempt++;
                     if (gradleAttempt === 1) {
                         throw new Error("> Task :broker4j:compileKotlin FAILED\nUnresolved reference: isShouldResolveInterrupt");
@@ -1025,13 +1071,24 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
     assert.equal(parsedGhe.hostname, "msft.ghe.com");
     assert.equal(parsedGhe.repository, "broker");
     assert.equal(parsedGhe.prNumber, 362);
+    assert.equal(parsePullRequestUrl("https://evil.example.com/AzureAD/android-complete/pull/1"), null);
+    assert.equal(parsePullRequestUrl("https://github.com/octocat/Hello-World/pull/1"), null);
+    assert.equal(parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/UnrelatedRepo/pullrequest/99"), null);
+    assert.equal(
+        verifyCheckoutRemoteMatchesPr("C:\\repo\\broker", parsedGhe, () => "https://github.com/octocat/Hello-World.git").ok,
+        false,
+    );
+    assert.equal(
+        verifyCheckoutRemoteMatchesPr("C:\\repo\\broker", parsedGhe, () => "https://msft.ghe.com/security/ad-accounts-for-android.git").ok,
+        true,
+    );
 
     const observeRepair = {
         verdict: "repair",
-        repairKind: "ci-failure",
+        repairKind: "review-comment",
         summary: "CI :broker4j:compileKotlin failed on SilentRequestIdentity.kt:51.",
         evidence: ["https://msft.ghe.com/security/ad-accounts-for-android/pull/362/checks"],
-        actionableFindings: ["Declare explicit isShouldResolveInterrupt() Java getter in BrokerSilentTokenCommandParametersForResourceAccount."],
+        actionableFindings: ["SilentRequestIdentity.kt:51: Declare explicit isShouldResolveInterrupt() Java getter in BrokerSilentTokenCommandParametersForResourceAccount."],
     };
     const builderFix = {
         verdict: "pass",
@@ -1056,6 +1113,40 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
         actionableFindings: [],
     };
 
+    const inlineThreads = [
+        {
+            threadId: "PRRT_addressed_1",
+            id: 101,
+            path: "broker4j/src/main/SilentRequestIdentity.kt",
+            line: 51,
+            author: "copilot-pull-request-reviewer",
+            body: "Declare explicit `isShouldResolveInterrupt()` getter.",
+        },
+        {
+            threadId: "PRRT_unrelated_same_file",
+            id: 102,
+            path: "broker4j/src/main/SilentRequestIdentity.kt",
+            line: 140,
+            author: "human-reviewer",
+            body: "Unrelated question about `correlationId` formatting.",
+        },
+        {
+            threadId: "PRRT_unrelated_other_file",
+            id: 103,
+            path: "broker4j/src/main/OtherClass.kt",
+            line: 20,
+            author: "human-reviewer",
+            body: "Please keep this thread open.",
+        },
+    ];
+    const matchedThreads = selectAddressedReviewThreads({
+        threads: inlineThreads,
+        observation: observeRepair,
+        repairResult: builderFix,
+        changedFiles: ["broker4j/src/main/SilentRequestIdentity.kt"],
+    });
+    assert.deepEqual(matchedThreads.map((t) => t.threadId), ["PRRT_addressed_1"]);
+
     const gitCommands = [];
     const ctx = context([observeRepair, builderFix, reviewerPass, observeReady]);
     ctx.args = {
@@ -1068,10 +1159,13 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
             mergeStateStatus: "CLEAN",
             headRefName: "shjameel/broker-silent-server-throttling",
             baseRefName: "dev",
+            inlineReviewComments: inlineThreads,
         }),
         exec: (cmd, args) => {
             gitCommands.push({ cmd, args });
             if (cmd === "gh" && args[0] === "auth" && args[1] === "token") return "ghe-token";
+            if (cmd === "git" && args[0] === "remote") return "https://msft.ghe.com/security/ad-accounts-for-android.git";
+            if (cmd === "git" && args.includes("--porcelain")) return " M broker4j/src/main/SilentRequestIdentity.kt";
             return "";
         },
     });
@@ -1079,6 +1173,12 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
     assert.equal(result.iterations, 2);
     assert.equal(result.humanMergeOnly, true);
     assert.ok(gitCommands.some((c) => c.cmd === "git" && c.args.includes("push")));
+    const resolvedThreadArgs = gitCommands
+        .filter((c) => c.cmd === "gh" && c.args.includes("graphql"))
+        .flatMap((c) => c.args);
+    assert.ok(resolvedThreadArgs.includes("threadId=PRRT_addressed_1"));
+    assert.ok(!resolvedThreadArgs.includes("threadId=PRRT_unrelated_same_file"));
+    assert.ok(!resolvedThreadArgs.includes("threadId=PRRT_unrelated_other_file"));
 });
 
 test("question deduplication, pre-coding spec challenge, resume worktree inspection, PR status blocks, and observer anti-loop", async () => {
@@ -1414,7 +1514,3 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.ok(naturalTask.designSummary.includes("SCOPED PBI IMPLEMENTATION TARGET"));
     assert.ok(naturalTask.designSummary.includes("SUPPORTING DESIGN DOCUMENT CONTEXT"));
 });
-
-
-
-

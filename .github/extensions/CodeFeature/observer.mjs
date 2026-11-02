@@ -103,6 +103,49 @@ function defaultExec(command, args, options = {}) {
     }).trim();
 }
 
+const ALLOWED_GITHUB_PR_REPOS = Object.freeze({
+    "msft.ghe.com/security/ad-accounts-for-android": Object.freeze({
+        hostname: "msft.ghe.com",
+        slug: "security/ad-accounts-for-android",
+        repository: "broker",
+        localPath: "broker",
+    }),
+    "github.com/azuread/microsoft-authentication-library-common-for-android": Object.freeze({
+        hostname: "github.com",
+        slug: "AzureAD/microsoft-authentication-library-common-for-android",
+        repository: "common",
+        localPath: "common",
+    }),
+    "github.com/azuread/microsoft-authentication-library-for-android": Object.freeze({
+        hostname: "github.com",
+        slug: "AzureAD/microsoft-authentication-library-for-android",
+        repository: "msal",
+        localPath: "msal",
+    }),
+    "github.com/azuread/azure-activedirectory-library-for-android": Object.freeze({
+        hostname: "github.com",
+        slug: "AzureAD/azure-activedirectory-library-for-android",
+        repository: "adal",
+        localPath: "adal",
+    }),
+    "github.com/azuread/android-complete": Object.freeze({
+        hostname: "github.com",
+        slug: "AzureAD/android-complete",
+        repository: "android-complete",
+        localPath: ".",
+    }),
+});
+
+const ALLOWED_ADO_PR_REPOS = Object.freeze({
+    "msazure/one/ad-mfa-phonefactor-phoneapp-android": Object.freeze({
+        org: "msazure",
+        project: "One",
+        repoName: "AD-MFA-phonefactor-phoneApp-android",
+        repository: "authenticator",
+        localPath: "authenticator",
+    }),
+});
+
 export function parsePullRequestUrl(prUrl) {
     if (!nonempty(prUrl)) return null;
     const trimmed = prUrl.trim();
@@ -110,53 +153,214 @@ export function parsePullRequestUrl(prUrl) {
         /^https:\/\/(?:dev\.azure\.com\/([^/\s]+)\/([^/\s]+)|([^.\s]+)\.visualstudio\.com\/(?:DefaultCollection\/)?([^/\s]+))\/_git\/([^/\s?]+)\/pullrequest\/([1-9]\d*)(?:[/?#].*)?$/i,
     );
     if (adoMatch) {
-        const org = adoMatch[1] || adoMatch[3];
-        const project = decodeURIComponent(adoMatch[2] || adoMatch[4]);
-        const repoName = decodeURIComponent(adoMatch[5]);
+        const rawOrg = adoMatch[1] || adoMatch[3];
+        const rawProject = decodeURIComponent(adoMatch[2] || adoMatch[4]);
+        const rawRepoName = decodeURIComponent(adoMatch[5]);
         const prNumber = Number(adoMatch[6]);
-        const hostname = adoMatch[1] ? "dev.azure.com" : `${org}.visualstudio.com`;
-        const orgUrl = adoMatch[1] ? `https://dev.azure.com/${org}` : `https://${org}.visualstudio.com`;
-        const lowerRepo = repoName.toLowerCase();
-        const repository = lowerRepo.includes("phonefactor-phoneapp-android") || lowerRepo === "authenticator"
-            ? "authenticator"
-            : "android-complete";
+        const adoKey = `${rawOrg.toLowerCase()}/${rawProject.toLowerCase()}/${rawRepoName.toLowerCase()}`;
+        const allowedAdo = ALLOWED_ADO_PR_REPOS[adoKey];
+        if (!allowedAdo) return null;
+        const hostname = adoMatch[1] ? "dev.azure.com" : `${allowedAdo.org}.visualstudio.com`;
+        const orgUrl = adoMatch[1] ? `https://dev.azure.com/${allowedAdo.org}` : `https://${allowedAdo.org}.visualstudio.com`;
         return {
             provider: "ado",
-            prUrl: `${orgUrl}/${project}/_git/${repoName}/pullrequest/${prNumber}`,
+            prUrl: `${orgUrl}/${allowedAdo.project}/_git/${allowedAdo.repoName}/pullrequest/${prNumber}`,
             hostname,
-            org,
+            org: allowedAdo.org,
             orgUrl,
-            project,
-            repoName,
-            slug: `${project}/_git/${repoName}`,
+            project: allowedAdo.project,
+            repoName: allowedAdo.repoName,
+            slug: `${allowedAdo.project}/_git/${allowedAdo.repoName}`,
             prNumber,
-            repository,
-            localPath: repository === "android-complete" ? "." : repository,
+            repository: allowedAdo.repository,
+            localPath: allowedAdo.localPath,
         };
     }
 
     const match = trimmed.match(/^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/([1-9]\d*)(?:\/.*)?$/i);
     if (!match) return null;
-    const [, hostname, slug, numStr] = match;
-    const lowerSlug = slug.toLowerCase();
-    const repository = lowerSlug.includes("ad-accounts-for-android")
-        ? "broker"
-        : lowerSlug.includes("microsoft-authentication-library-common-for-android")
-            ? "common"
-            : lowerSlug.includes("microsoft-authentication-library-for-android")
-                ? "msal"
-                : lowerSlug.includes("azure-activedirectory-library-for-android")
-                    ? "adal"
-                    : "android-complete";
+    const [, rawHostname, rawSlug, numStr] = match;
+    const ghKey = `${rawHostname.toLowerCase()}/${rawSlug.toLowerCase()}`;
+    const allowedGh = ALLOWED_GITHUB_PR_REPOS[ghKey];
+    if (!allowedGh) return null;
     return {
         provider: "github",
-        prUrl: `https://${hostname}/${slug}/pull/${numStr}`,
-        hostname,
-        slug,
+        prUrl: `https://${allowedGh.hostname}/${allowedGh.slug}/pull/${numStr}`,
+        hostname: allowedGh.hostname,
+        slug: allowedGh.slug,
         prNumber: Number(numStr),
-        repository,
-        localPath: repository === "android-complete" ? "." : repository,
+        repository: allowedGh.repository,
+        localPath: allowedGh.localPath,
     };
+}
+
+export function verifyCheckoutRemoteMatchesPr(repoRoot, parsedPr, exec = defaultExec) {
+    if (!record(parsedPr) || !nonempty(repoRoot)) {
+        return { ok: false, reason: "Missing pull request target or repository root." };
+    }
+    const hasDotGit = existsSync(path.join(repoRoot, ".git"));
+    let remoteUrl = "";
+    try {
+        remoteUrl = exec("git", ["remote", "get-url", "origin"], { cwd: repoRoot });
+    } catch {
+        remoteUrl = "";
+    }
+    if (!nonempty(remoteUrl)) {
+        if (exec === defaultExec && hasDotGit) {
+            return {
+                ok: false,
+                reason: `Could not verify origin remote URL in ${repoRoot} for ${parsedPr.prUrl}.`,
+            };
+        }
+        return { ok: true, remoteUrl: "" };
+    }
+    const normalizedRemote = remoteUrl.trim().replace(/\.git$/i, "").replace(/\/+$/, "").toLowerCase();
+    if (parsedPr.provider === "github") {
+        const expectedHost = String(parsedPr.hostname || "").toLowerCase();
+        const expectedSlug = String(parsedPr.slug || "").toLowerCase();
+        const httpsMarker = `${expectedHost}/${expectedSlug}`;
+        const sshMarker = `${expectedHost}:${expectedSlug}`;
+        if (!normalizedRemote.includes(httpsMarker) && !normalizedRemote.includes(sshMarker)) {
+            return {
+                ok: false,
+                reason: `Checkout origin remote (${remoteUrl.trim()}) does not match expected GitHub repository ${parsedPr.hostname}/${parsedPr.slug}.`,
+            };
+        }
+        return { ok: true, remoteUrl: remoteUrl.trim() };
+    }
+    if (parsedPr.provider === "ado") {
+        const expectedOrg = String(parsedPr.org || "").toLowerCase();
+        const expectedRepo = String(parsedPr.repoName || "").toLowerCase();
+        if (!normalizedRemote.includes(expectedOrg) || !normalizedRemote.includes(`/_git/${expectedRepo}`)) {
+            return {
+                ok: false,
+                reason: `Checkout origin remote (${remoteUrl.trim()}) does not match expected Azure DevOps repository ${parsedPr.org}/${parsedPr.project}/_git/${parsedPr.repoName}.`,
+            };
+        }
+        return { ok: true, remoteUrl: remoteUrl.trim() };
+    }
+    return { ok: false, reason: `Unsupported pull request provider: ${parsedPr.provider}` };
+}
+
+function normalizeThreadRepoPath(value) {
+    return String(value || "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function pathsReferToSameFile(a, b) {
+    const normA = normalizeThreadRepoPath(a).toLowerCase();
+    const normB = normalizeThreadRepoPath(b).toLowerCase();
+    if (!normA || !normB) return false;
+    return normA === normB || normA.endsWith(`/${normB}`) || normB.endsWith(`/${normA}`);
+}
+
+export function selectAddressedReviewThreads({
+    threads = [],
+    observation = null,
+    repairResult = null,
+    changedFiles = [],
+} = {}) {
+    if (!Array.isArray(threads) || threads.length === 0) return [];
+    const findingsList = Array.isArray(observation?.actionableFindings)
+        ? observation.actionableFindings.map((f) => String(f || "").trim()).filter(Boolean)
+        : [];
+    const findingsLower = findingsList.join("\n").toLowerCase();
+    const repairEvidenceList = Array.isArray(repairResult?.evidence)
+        ? repairResult.evidence.map((e) => String(e || "").trim()).filter(Boolean)
+        : [];
+    const repairLower = [repairResult?.summary || "", ...repairEvidenceList].join("\n").toLowerCase();
+    const combinedLower = `${findingsLower}\n${repairLower}`;
+
+    const normalizedChanged = (Array.isArray(changedFiles) ? changedFiles : [])
+        .map(normalizeThreadRepoPath)
+        .filter(Boolean);
+    const normalizedEvidencePaths = repairEvidenceList
+        .map((entry) => normalizeThreadRepoPath(entry.split(":")[0]))
+        .filter(Boolean);
+    const confirmedFiles = normalizedChanged.length > 0 ? normalizedChanged : normalizedEvidencePaths;
+
+    const inlineThreads = threads.filter((t) => nonempty(normalizeThreadRepoPath(t?.filePath || t?.path)));
+    const pathCounts = new Map();
+    for (const t of inlineThreads) {
+        const p = normalizeThreadRepoPath(t?.filePath || t?.path).toLowerCase();
+        pathCounts.set(p, (pathCounts.get(p) || 0) + 1);
+    }
+
+    const isInlineThreadAddressed = (thread) => {
+        const numericId = positiveInt(Number(thread?.id)) ? String(Number(thread.id)) : "";
+        const graphqlId = nonempty(thread?.threadId) ? String(thread.threadId).trim().toLowerCase() : "";
+        if (graphqlId && findingsLower.includes(graphqlId) && (normalizedChanged.length > 0 || repairLower.includes(graphqlId))) {
+            return true;
+        }
+        if (numericId) {
+            const idRegex = new RegExp(`\\b(?:thread|comment|id|#)\\s*${numericId}\\b`, "i");
+            if (idRegex.test(findingsLower) && (normalizedChanged.length > 0 || idRegex.test(repairLower))) {
+                return true;
+            }
+        }
+
+        const threadPath = normalizeThreadRepoPath(thread?.filePath || thread?.path);
+        if (!nonempty(threadPath)) return false;
+
+        const fileConfirmedByRepair = confirmedFiles.some((f) => pathsReferToSameFile(f, threadPath));
+        if (!fileConfirmedByRepair) return false;
+
+        const baseName = path.posix.basename(threadPath).toLowerCase();
+        const threadBody = nonempty(thread?.body)
+            ? String(thread.body)
+            : Array.isArray(thread?.comments)
+                ? thread.comments.map((c) => String(c?.content || "")).join("\n")
+                : "";
+        const backtickTerms = [...threadBody.matchAll(/`([A-Za-z_][A-Za-z0-9_().]{2,})`/g)]
+            .map((m) => m[1].replace(/\(\)$/, "").toLowerCase())
+            .filter((t) => t.length >= 3);
+        const lineStr = positiveInt(Number(thread?.line)) ? String(Number(thread.line)) : "";
+
+        const findingMentionsFile = findingsLower.includes(threadPath.toLowerCase()) || findingsLower.includes(baseName);
+        const findingMentionsTerm = backtickTerms.some((term) => findingsLower.includes(term));
+        if (!findingMentionsFile && !findingMentionsTerm) return false;
+
+        const sameFileThreadCount = pathCounts.get(threadPath.toLowerCase()) || 1;
+        if (sameFileThreadCount > 1) {
+            const hasLineMatch = nonempty(lineStr) && new RegExp(`(?::|\\bline\\s+)${lineStr}\\b`, "i").test(combinedLower);
+            const hasTermMatch = backtickTerms.some((term) => combinedLower.includes(term));
+            if (!hasLineMatch && !hasTermMatch) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const addressedInline = new Set();
+    for (const thread of inlineThreads) {
+        if (isInlineThreadAddressed(thread)) {
+            addressedInline.add(thread);
+        }
+    }
+
+    return threads.filter((thread) => {
+        const threadPath = normalizeThreadRepoPath(thread?.filePath || thread?.path);
+        if (nonempty(threadPath)) {
+            return addressedInline.has(thread);
+        }
+        const numericId = positiveInt(Number(thread?.id)) ? String(Number(thread.id)) : "";
+        const graphqlId = nonempty(thread?.threadId) ? String(thread.threadId).trim().toLowerCase() : "";
+        if (graphqlId && findingsLower.includes(graphqlId)) return true;
+        if (numericId && new RegExp(`\\b(?:thread|comment|id|#)\\s*${numericId}\\b`, "i").test(findingsLower)) return true;
+
+        const threadBody = nonempty(thread?.body)
+            ? String(thread.body)
+            : Array.isArray(thread?.comments)
+                ? thread.comments.map((c) => String(c?.content || "")).join("\n")
+                : "";
+        if (
+            /AuthApp PR Reviewer/i.test(threadBody) &&
+            inlineThreads.length > 0 &&
+            addressedInline.size === inlineThreads.length
+        ) {
+            return true;
+        }
+        return false;
+    });
 }
 
 export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
@@ -739,6 +943,21 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
             // Best-effort worktree preparation in mock/test environments.
         }
 
+        const remoteCheck = verifyCheckoutRemoteMatchesPr(repoRoot, parsedPr, exec);
+        if (!remoteCheck.ok) {
+            if (pauseOnBlocker) {
+                await pauseForHelp(ctx, `${prefix}-remote-mismatch-${iteration}`, remoteCheck.reason);
+            }
+            return {
+                status: currentStatuses.needsOwnerDecision,
+                prUrl: parsedPr.prUrl,
+                repairKind: observation.repairKind,
+                summary: remoteCheck.reason,
+                evidence: [],
+                iterations: iteration + 1,
+            };
+        }
+
         const repairResult = await step(`repair-${iteration}`, () => ctx.agent(
             `Read and follow these repository skill guides: ${builderGuides.join(", ")}.
 Apply a surgical tactical fix in ${target.repository} for the reported PR findings (${observation.repairKind}):
@@ -894,16 +1113,22 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                         pushedSha = "";
                     }
                 }
+                const changedFilePaths = discovered.files.map((f) => f.path);
                 if (
                     parsedPr.provider === "ado" &&
-                    exec === defaultExec &&
                     Array.isArray(snapshot?.activeReviewThreads) &&
                     snapshot.activeReviewThreads.length > 0
                 ) {
+                    const addressedAdoThreads = selectAddressedReviewThreads({
+                        threads: snapshot.activeReviewThreads,
+                        observation,
+                        repairResult,
+                        changedFiles: changedFilePaths,
+                    });
                     const orgUrl = (parsedPr.orgUrl || `https://${parsedPr.hostname}`).replace(/\/+$/, "").replace(/'/g, "''");
                     const projectEnc = encodeURIComponent(parsedPr.project);
                     const repoEnc = encodeURIComponent(parsedPr.repoName);
-                    const threadIds = snapshot.activeReviewThreads
+                    const threadIds = addressedAdoThreads
                         .map((t) => Number(t?.id))
                         .filter(positiveInt);
                     if (threadIds.length > 0) {
@@ -936,11 +1161,16 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                 }
                 if (
                     parsedPr.provider === "github" &&
-                    exec === defaultExec &&
                     Array.isArray(snapshot?.inlineReviewComments) &&
                     snapshot.inlineReviewComments.length > 0
                 ) {
-                    for (const thread of snapshot.inlineReviewComments) {
+                    const addressedGithubThreads = selectAddressedReviewThreads({
+                        threads: snapshot.inlineReviewComments,
+                        observation,
+                        repairResult,
+                        changedFiles: changedFilePaths,
+                    });
+                    for (const thread of addressedGithubThreads) {
                         try {
                             if (positiveInt(Number(thread?.id))) {
                                 exec(

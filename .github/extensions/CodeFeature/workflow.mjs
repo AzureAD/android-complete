@@ -785,7 +785,7 @@ export function snapshotWorktree(repoRoot, exec = defaultExec) {
 export function extractRunnableVerificationCommand(rawCommand) {
     if (!nonempty(rawCommand)) return null;
     const trimmed = rawCommand.trim();
-    const match = trimmed.match(/(?:^|:\s+)((?:\.\\|\.\.\/|\.\/)?gradlew(?:\.bat)?\b.+)$/i);
+    const match = trimmed.match(/(?:^|:\s+)((?:\.\\|\.\.\/|\.\/|PhoneFactor[\\/])?gradlew(?:\.bat)?\b.+)$/i);
     if (match && nonempty(match[1])) {
         return match[1].trim();
     }
@@ -794,6 +794,93 @@ export function extractRunnableVerificationCommand(rawCommand) {
         return nonempty(afterColon) ? afterColon : null;
     }
     return trimmed;
+}
+
+const SAFE_GRADLE_EXECUTABLE_PATTERN = /^(?:(?:\.\\|\.\.\/|\.\/|PhoneFactor[\\/])?gradlew(?:\.bat)?)$/i;
+const SAFE_GRADLE_TASK_PATTERN = /^(?::[A-Za-z0-9_-]+)*:?(?:test[A-Za-z0-9_-]*|compile[A-Za-z0-9_-]*(?:Kotlin|Java)|assemble[A-Za-z0-9_-]*|detekt[A-Za-z0-9_-]*|check(?:style[A-Za-z0-9_-]*)?|lint[A-Za-z0-9_-]*|jacoco[A-Za-z0-9_-]*|spotbugs[A-Za-z0-9_-]*|pmd[A-Za-z0-9_-]*|verify[A-Za-z0-9_-]*)$/;
+const SAFE_GRADLE_STANDALONE_FLAGS = new Set([
+    "--no-daemon",
+    "--stacktrace",
+    "--info",
+    "--quiet",
+    "--warn",
+    "--debug",
+    "--continue",
+    "--build-cache",
+    "--no-build-cache",
+    "--rerun-tasks",
+    "--offline",
+    "--parallel",
+    "--no-configuration-cache",
+]);
+const SAFE_GRADLE_TEST_FILTER_PATTERN = /^[A-Za-z0-9_.*$#-]+$/;
+const SAFE_GRADLE_EXCLUDED_TASK_PATTERN = /^:?[A-Za-z0-9_:-]+$/;
+
+export function parseAllowedGradleVerificationCommand(rawCommand) {
+    const candidate = extractRunnableVerificationCommand(rawCommand);
+    if (!nonempty(candidate)) return null;
+    if (/[;&|`$()<>!\r\n]/.test(candidate)) return null;
+
+    const rawTokens = candidate.match(/(?:"[^"]*"|'[^']*'|\S+)/g) || [];
+    const tokens = rawTokens.map((token) => {
+        if (
+            (token.startsWith('"') && token.endsWith('"')) ||
+            (token.startsWith("'") && token.endsWith("'"))
+        ) {
+            return token.slice(1, -1);
+        }
+        return token;
+    });
+    if (tokens.length < 2) return null;
+
+    const [executable, ...rest] = tokens;
+    if (!SAFE_GRADLE_EXECUTABLE_PATTERN.test(executable)) return null;
+
+    const args = [];
+    let taskCount = 0;
+    for (let i = 0; i < rest.length; i++) {
+        const arg = rest[i];
+        if (!nonempty(arg)) return null;
+        if (SAFE_GRADLE_STANDALONE_FLAGS.has(arg) || /^--max-workers=[1-8]$/.test(arg)) {
+            args.push(arg);
+            continue;
+        }
+        if (arg === "--tests") {
+            const filter = rest[i + 1];
+            if (!nonempty(filter) || !SAFE_GRADLE_TEST_FILTER_PATTERN.test(filter)) return null;
+            args.push("--tests", filter);
+            i++;
+            continue;
+        }
+        if (arg.startsWith("--tests=")) {
+            const filter = arg.slice("--tests=".length);
+            if (!nonempty(filter) || !SAFE_GRADLE_TEST_FILTER_PATTERN.test(filter)) return null;
+            args.push(arg);
+            continue;
+        }
+        if (arg === "-x" || arg === "--exclude-task") {
+            const excluded = rest[i + 1];
+            if (!nonempty(excluded) || !SAFE_GRADLE_EXCLUDED_TASK_PATTERN.test(excluded)) return null;
+            args.push(arg, excluded);
+            i++;
+            continue;
+        }
+        if (arg.startsWith("-")) {
+            return null;
+        }
+        if (!SAFE_GRADLE_TASK_PATTERN.test(arg)) {
+            return null;
+        }
+        args.push(arg);
+        taskCount++;
+    }
+
+    if (taskCount === 0) return null;
+    return {
+        command: [executable, ...args].join(" "),
+        executable,
+        args,
+    };
 }
 
 export function isLocalBuildEnvError(textValue) {
@@ -809,55 +896,50 @@ export function runLocalVerificationGate({
     implementation,
     exec = defaultExec,
 }) {
-    const commands = Array.isArray(target?.verificationCommands)
-        ? target.verificationCommands.map(extractRunnableVerificationCommand).filter(nonempty)
+    const rawCommands = Array.isArray(target?.verificationCommands)
+        ? target.verificationCommands.filter(nonempty)
         : [];
-    if (commands.length === 0) return { errors: [], ranCommands: [], deferredNotes: [] };
+    if (rawCommands.length === 0) return { errors: [], ranCommands: [], deferredNotes: [] };
 
     const env = { ...process.env };
+    delete env.ENV_VSTS_MVN_CRED_ACCESSTOKEN;
+    delete env.ENV_VSTS_MVN_CRED_USERNAME;
+    delete env.VSTS_MAVEN_ACCESS_TOKEN;
+    delete env.SYSTEM_ACCESSTOKEN;
+    delete env.AZURE_ACCESS_TOKEN;
+    delete env.GH_TOKEN;
+    delete env.GITHUB_TOKEN;
     const defaultStudioJbr = "C:\\Program Files\\Android\\Android Studio\\jbr";
     if (!nonempty(env.JAVA_HOME) && existsSync(defaultStudioJbr)) {
         env.JAVA_HOME = defaultStudioJbr;
         env.PATH = `${path.join(defaultStudioJbr, "bin")};${env.PATH || ""}`;
     }
-    if (!nonempty(env.ENV_VSTS_MVN_CRED_ACCESSTOKEN)) {
-        try {
-            const token = exec(
-                "az",
-                [
-                    "account",
-                    "get-access-token",
-                    "--resource",
-                    "499b84ac-1321-427f-aa17-267ca6975798",
-                    "--query",
-                    "accessToken",
-                    "-o",
-                    "tsv",
-                ],
-                { cwd: repoRoot },
-            );
-            if (nonempty(token)) {
-                env.ENV_VSTS_MVN_CRED_USERNAME = env.ENV_VSTS_MVN_CRED_USERNAME || "vsts";
-                env.ENV_VSTS_MVN_CRED_ACCESSTOKEN = token.trim();
-            }
-        } catch {
-            // Optional local Azure CLI VSTS token lookup.
-        }
-    }
 
     const errors = [];
     const ranCommands = [];
     const deferredNotes = [];
-    for (const command of commands) {
+    for (const rawCommand of rawCommands) {
+        const parsed = parseAllowedGradleVerificationCommand(rawCommand);
+        if (!parsed) {
+            errors.push(
+                `Target ${target.id} workspace verification rejected non-allowlisted command (${String(rawCommand).trim()}): only allowlisted Gradle verification tasks and flags are permitted.`,
+            );
+            continue;
+        }
+        const execCwd =
+            !existsSync(path.resolve(repoRoot, parsed.executable)) &&
+            existsSync(path.resolve(repoRoot, "PhoneFactor", parsed.executable))
+                ? path.join(repoRoot, "PhoneFactor")
+                : repoRoot;
         try {
-            exec("powershell", ["-NoProfile", "-Command", command], { cwd: repoRoot, env });
-            ranCommands.push(command);
+            exec(parsed.executable, parsed.args, { cwd: execCwd, env });
+            ranCommands.push(parsed.command);
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             if (isLocalBuildEnvError(msg) && !/compileKotlin FAILED|compileJava FAILED|Unresolved reference:|Compilation error|There were failing tests/i.test(msg)) {
-                deferredNotes.push(`Local command deferred to CI (${command}): ${msg}`);
+                deferredNotes.push(`Local command deferred to CI (${parsed.command}): ${msg}`);
             } else {
-                errors.push(`Target ${target.id} workspace verification failed (${command}): ${msg}`);
+                errors.push(`Target ${target.id} workspace verification failed (${parsed.command}): ${msg}`);
             }
         }
     }
