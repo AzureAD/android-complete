@@ -3305,6 +3305,9 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                         }
                         return created;
                     });
+                    if (effectiveCreatePrs) {
+                        backupsByTarget.clear();
+                    }
                     const shouldObservePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
                         ? true
                         : rawOptions.observePullRequests !== undefined
