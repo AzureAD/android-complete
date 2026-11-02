@@ -824,6 +824,7 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, {
                     allowPipelineEdits: false,
                 });
+                const isRealGitCheckout = exec === defaultExec && existsSync(path.join(repoRoot, ".git"));
                 if (discovered.files.length > 0) {
                     for (const file of discovered.files) {
                         if (file.action === "delete") {
@@ -832,20 +833,31 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                             exec("git", ["add", "--", file.path], { cwd: repoRoot, env: gitEnv });
                         }
                     }
-                } else {
+                    exec(
+                        "git",
+                        [
+                            "commit",
+                            "-m",
+                            repairResult.prTitle || `Address PR #${parsedPr.prNumber} ${observation.repairKind}`,
+                            "-m",
+                            "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+                        ],
+                        { cwd: repoRoot, env: gitEnv },
+                    );
+                } else if (!isRealGitCheckout) {
                     exec("git", ["add", "-A"], { cwd: repoRoot, env: gitEnv });
+                    exec(
+                        "git",
+                        [
+                            "commit",
+                            "-m",
+                            repairResult.prTitle || `Address PR #${parsedPr.prNumber} ${observation.repairKind}`,
+                            "-m",
+                            "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+                        ],
+                        { cwd: repoRoot, env: gitEnv },
+                    );
                 }
-                exec(
-                    "git",
-                    [
-                        "commit",
-                        "-m",
-                        repairResult.prTitle || `Address PR #${parsedPr.prNumber} ${observation.repairKind}`,
-                        "-m",
-                        "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
-                    ],
-                    { cwd: repoRoot, env: gitEnv },
-                );
                 const pushArgs = nonempty(gitEnv.GH_TOKEN)
                     ? [
                         "-c",
@@ -858,18 +870,60 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                     ]
                     : ["push", "origin", `HEAD:${headBranch}`];
                 exec("git", pushArgs, { cwd: repoRoot, env: gitEnv });
+                let pushedSha = "";
+                if (exec === defaultExec) {
+                    try {
+                        pushedSha = exec("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, env: gitEnv });
+                    } catch {
+                        pushedSha = "";
+                    }
+                }
+                if (
+                    parsedPr.provider === "ado" &&
+                    exec === defaultExec &&
+                    Array.isArray(snapshot?.activeReviewThreads) &&
+                    snapshot.activeReviewThreads.length > 0
+                ) {
+                    const orgUrl = (parsedPr.orgUrl || `https://${parsedPr.hostname}`).replace(/\/+$/, "").replace(/'/g, "''");
+                    const projectEnc = encodeURIComponent(parsedPr.project);
+                    const repoEnc = encodeURIComponent(parsedPr.repoName);
+                    const threadIds = snapshot.activeReviewThreads
+                        .map((t) => Number(t?.id))
+                        .filter(positiveInt);
+                    if (threadIds.length > 0) {
+                        const replyB64 = Buffer.from(
+                            JSON.stringify({
+                                content: `Addressed in ${pushedSha || "latest commit"}: ${repairResult.summary || "applied verified tactical repair"}.`,
+                                parentCommentId: 1,
+                                commentType: 1,
+                            }),
+                            "utf8",
+                        ).toString("base64");
+                        const psResolveAdo = [
+                            "$ErrorActionPreference = 'Stop'",
+                            "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+                            "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
+                            `$base = '${orgUrl}/${projectEnc}/_apis/git/repositories/${repoEnc}/pullRequests/${parsedPr.prNumber}/threads'`,
+                            `$replyBytes = [System.Convert]::FromBase64String('${replyB64}')`,
+                            "$statusBytes = [System.Text.Encoding]::UTF8.GetBytes('{\"status\":\"fixed\"}')",
+                            `foreach ($tid in @(${threadIds.join(",")})) {`,
+                            "  try { Invoke-RestMethod -Uri \"$base/$tid/comments?api-version=7.0\" -Headers $headers -Method Post -Body $replyBytes | Out-Null } catch {}",
+                            "  try { Invoke-RestMethod -Uri \"$base/$tid?api-version=7.0\" -Headers $headers -Method Patch -Body $statusBytes | Out-Null } catch {}",
+                            "}",
+                        ].join("; ");
+                        try {
+                            exec("powershell", ["-NoProfile", "-Command", psResolveAdo], { cwd: workspaceRoot });
+                        } catch {
+                            // Best-effort ADO thread reply and resolution after push.
+                        }
+                    }
+                }
                 if (
                     parsedPr.provider === "github" &&
                     exec === defaultExec &&
                     Array.isArray(snapshot?.inlineReviewComments) &&
                     snapshot.inlineReviewComments.length > 0
                 ) {
-                    let pushedSha = "";
-                    try {
-                        pushedSha = exec("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, env: gitEnv });
-                    } catch {
-                        pushedSha = "";
-                    }
                     for (const thread of snapshot.inlineReviewComments) {
                         try {
                             if (positiveInt(Number(thread?.id))) {
