@@ -659,11 +659,37 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
                     const featureBranch = buildBranchName(target);
                     for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
                         try {
-                            exec("git", ["rev-parse", "--verify", candidate], { cwd: targetDir });
+                            const candidateSha = exec("git", ["rev-parse", "--verify", candidate], { cwd: targetDir });
+                            let headSha = "";
+                            let currentAbbrev = "";
+                            try {
+                                headSha = exec("git", ["rev-parse", "HEAD"], { cwd: targetDir });
+                                currentAbbrev = exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: targetDir });
+                            } catch {
+                                headSha = "";
+                                currentAbbrev = "";
+                            }
+                            if (
+                                nonempty(candidateSha) &&
+                                headSha === candidateSha &&
+                                nonempty(currentAbbrev) &&
+                                currentAbbrev !== "HEAD" &&
+                                currentAbbrev.startsWith(featureBranch)
+                            ) {
+                                break;
+                            }
                             try {
                                 exec("git", ["checkout", "-B", featureBranch, candidate], { cwd: targetDir });
                             } catch {
-                                exec("git", ["checkout", "--detach", candidate], { cwd: targetDir });
+                                try {
+                                    exec(
+                                        "git",
+                                        ["checkout", "-B", `${featureBranch}-${randomUUID().slice(0, 6)}`, candidate],
+                                        { cwd: targetDir },
+                                    );
+                                } catch {
+                                    exec("git", ["checkout", "--detach", candidate], { cwd: targetDir });
+                                }
                             }
                             break;
                         } catch {
@@ -2286,7 +2312,13 @@ export function publishTargetPullRequest({
         }
     }
 
-    exec("git", ["checkout", "-B", branch], { cwd: repoRoot, env: gitEnv });
+    try {
+        exec("git", ["checkout", "-B", branch], { cwd: repoRoot, env: gitEnv });
+    } catch {
+        const fallbackSuffix = randomUUID().replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase();
+        branch = `${branch}-${fallbackSuffix}`;
+        exec("git", ["checkout", "-B", branch], { cwd: repoRoot, env: gitEnv });
+    }
     for (const file of targetImpl.files) {
         if (file.action === "delete") {
             exec("git", ["rm", "--ignore-unmatch", "--", file.path], { cwd: repoRoot, env: gitEnv });
