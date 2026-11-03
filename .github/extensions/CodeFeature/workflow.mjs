@@ -873,7 +873,13 @@ export function snapshotWorktree(repoRoot, exec = defaultExec) {
 
 export function extractRunnableVerificationCommand(rawCommand) {
     if (!nonempty(rawCommand)) return null;
-    const trimmed = rawCommand.trim();
+    const trimmed = rawCommand
+        .trim()
+        .replace(
+            /^(?:(?:cd|Set-Location|Push-Location)\s+(?:"[^"\r\n;&|`$()<>!]+"|'[^'\r\n;&|`$()<>!]+'|[A-Za-z0-9_./\\:-]+)\s*(?:&&|;)\s*)+/i,
+            "",
+        )
+        .trim();
     const match = trimmed.match(/(?:^|:\s+)((?:\.\\|\.\.\/|\.\/|PhoneFactor[\\/])?gradlew(?:\.bat)?\b.+)$/i);
     if (match && nonempty(match[1])) {
         return match[1].trim();
@@ -1000,7 +1006,7 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
 }
 
 export function isLocalBuildEnvError(textValue) {
-    return /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|DaemonDisappearedException|daemon has disappeared|Unable to make field .* accessible|local.*build.*environment|Bluebird|MCP-SETUP/i.test(
+    return /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|DaemonDisappearedException|daemon has disappeared|Unable to make field .* accessible|No tests found for given includes|local.*build.*environment|Bluebird|MCP-SETUP/i.test(
         String(textValue || ""),
     );
 }
@@ -3454,7 +3460,15 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                         const hasOnDiskEdits = manageWorkspace &&
                             existsSync(path.join(repoRoot, "gradlew.bat")) &&
                             targetImpl.files.some((f) => !nonempty(f.content) && existsSync(path.resolve(repoRoot, f.path)));
-                        const shouldRunLocalGate = applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits;
+                        const builderAlreadyVerifiedOnDisk =
+                            useSlimSchemas &&
+                            latestRawBuilderOutput?.verdict === "pass" &&
+                            Array.isArray(targetImpl?.verificationCommandsRun) &&
+                            targetImpl.verificationCommandsRun.length > 0 &&
+                            rawOptions.runLocalVerification !== true;
+                        const shouldRunLocalGate =
+                            !builderAlreadyVerifiedOnDisk &&
+                            (applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits);
                         if (applyToWorkspace) {
                             try {
                                 applyTargetFiles(repoRoot, targetImpl.files, backups);
