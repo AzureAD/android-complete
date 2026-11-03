@@ -1009,13 +1009,16 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
             log(`Reverted unauthorized CI pipeline / static-analysis config edits during tactical repair: ${revertedProtected.join(", ")}`);
         }
 
-        if (target.verificationCommands.length > 0) {
+        if (
+            target.verificationCommands.length > 0 &&
+            (rawOptions.runLocalVerification === true || repairResult.verdict !== "pass")
+        ) {
             const gate = runLocalVerificationGate({
                 repoRoot,
                 target,
                 targetImpl: null,
                 implementation: null,
-                exec,
+                ...(dependencies.exec ? { exec: dependencies.exec } : {}),
             });
             if (gate.errors.length > 0) {
                 log(`Local verification failed during tactical repair: ${gate.errors.join("; ")}`);
