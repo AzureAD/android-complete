@@ -232,7 +232,7 @@ class ReleaseState:
                 validate_progress(step.data["last_write_progress"])
             if "last_approval" in step.data:
                 from .approvals import validate_closed_approval
-                validate_closed_approval(step.data["last_approval"])
+                validate_closed_approval(step.data["last_approval"], state=obj, key=key)
             review = step.data.get("last_write_review")
             if "last_write_review" in step.data and (
                 not isinstance(review, dict)

@@ -48,6 +48,9 @@ def test_all_specs_are_complete_and_exact_tool_kwargs(tmp_path):
         assert result["permission_to_create"] and result["spec"] == spec
         reg.create_result(entry["key"], result["attempt_id"], "not_created", "simulated no create", spec=spec)
         assert "STOP the cleanup loop" in spec["prompt"]
+        assert "--source phase-status-email" in spec["prompt"]
+        assert "never self-approve" in spec["prompt"]
+        assert "--approved-by <release-owner-email>" in spec["prompt"]
         assert "--spec-file" in spec["prompt"] and "--observed-file" in spec["prompt"]
         assert "SAME --spec-file" in spec["prompt"] and "owning" in spec["prompt"]
     raw = (tmp_path / "2026-09" / "_automations.json").read_text(encoding="utf-8")

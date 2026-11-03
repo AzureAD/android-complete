@@ -24,13 +24,13 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import urllib.request
 from urllib.parse import quote, urlencode, urlsplit
 
 from tools import pipelines as P
 from tools.coordinates import coords
+from tools.executables import find_azure_cli
 
 _REPO = coords.repo("oneauth")                       # {org, project, name}
 ORG, PROJECT, REPO = _REPO["org"], _REPO["project"], _REPO["name"]
@@ -165,7 +165,7 @@ def apply_edits(files: dict, common: str, msal: str, *, paths=None) -> dict:
 
 # ============================ REST helpers ============================
 def _token(timeout=60):
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return None
     try:

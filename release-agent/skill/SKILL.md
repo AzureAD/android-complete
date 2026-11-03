@@ -1,6 +1,6 @@
 ---
 name: release-agent
-description: Onboard the release engineer and drive an Android release using the Release Orchestrator. Use for /release-agent, "set up release agent", "onboard", "check setup", "finish setup", "start a release", "continue the release", "advance the release", "approve the gate", "release status", or release run-state. Guided onboarding handles portable installation paths, supported connections and read checks without starting a release. The engine owns release sequencing and human gates.
+description: Onboard the release engineer and drive an Android release using the Release Orchestrator. Use for /release-agent, "set up release agent", "onboard", "check setup", "finish setup", "start a release", "continue the release", "advance the release", "approve the gate", "release status", "draft a release update", "send a status email", or release run-state. Guided onboarding handles portable installation paths, supported connections and read checks without starting a release. The engine owns release sequencing and human gates.
 ---
 
 # /release-agent — Release Orchestrator conductor
@@ -352,7 +352,9 @@ not a connection or permission.
 
 ## The universal loop
 **Every notification uses one delivery contract, including specialized follow-ups.**
-On every run, including silent or terminal producer outcomes, discover `notification prepare
+After advancing and on every run, including release completion, first prepare
+`notification prepare --release <id> --source phase-status-email`. These drafts
+report workflow completion, not proof that DUMMY operations happened. Then discover `notification prepare
 --release <id> --source pending`. Finalize sent records with empty completion status;
 claim only eligible prepared/not_sent records. Keep expired/closed work unsent and
 surface claimed/uncertain work for evidence-based owner recovery.
@@ -361,8 +363,13 @@ permission. Run `notification prepare --release <id> --source step|digest|status
 (step source needs the same `--phase`, `--step`, `--param` inputs).
 Review the exact destination and payload yourself, then `notification claim --release <id> --id <notification-id>
 --hash <approved-hash> --executor <session-id>`. This review is a Scout/engine safety check,
-not an owner approval prompt: do NOT call `m_ask_user` or pause for send approval unless the
-engine returned an explicit human gate/review. Send exactly the returned tool/payload ONLY
+not an owner approval prompt EXCEPT for `requires_owner_approval:true` drafts.
+For those drafts, show the complete body, recipients, subject and exact hash, then
+use `m_ask_user` with **Send this draft** and **Not now**. Only an explicit Send decision
+permits claim with `--approved-by <release-owner-email>`. Unattended workers prepare
+and surface these drafts, never self-approve them. Deferral does not block unrelated
+release work. Ordinary notifications retain their existing policy.
+Send exactly the returned tool/payload ONLY
 when `permission_to_send:true`. No extra courtesy copies. For the Scout bot transport,
 verify the signed-in runner is the descriptor's owner target before claiming.
 Only preparation accepts `--as-of`; claim/result/finalize use the trusted current clock.
@@ -460,6 +467,14 @@ if it created files; use the checked publication upload handoff and owning recei
 Never switch transports or repeat an upload/send after an unknown outcome.
 
 ## Behaviour dispatch
+- **"draft/send a status email" / "email a release update":** discover the release,
+  then prepare `notification prepare --release <id> --source ad-hoc-status-email
+  --request-id <stable-request-id>`. Retain one ID for the explicit request through
+  review, delivery and recovery. Show the complete draft and obtain **Send this draft**
+  before claiming with its exact hash and `--approved-by` owner. This bypasses only
+  daily cadence, not suspension/readiness/closure. It never consumes the daily
+  checkpoint. Do not invent a new ID to bypass an owned or uncertain send; a plain
+  status question neither creates a draft nor authorizes email.
 - **Authenticator Manual/Automated split:** NEW releases use a static release
   parent with Manual Tests and Automated Tests query children. Classify only by
   verified captured Phase2 Android mapped-case IDs, not Automation Status or a

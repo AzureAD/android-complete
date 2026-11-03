@@ -100,7 +100,13 @@ def validate_approval(value, *, state=None, key=None, status=None, started_at=No
     return request
 
 
-def validate_closed_approval(value):
+def validate_closed_approval(value, *, state=None, key=None):
+    if isinstance(value, dict) and value.get("provenance") == "external_manual":
+        from .manual_approvals import validate_evidence
+        validate_evidence(value)
+        if state is not None and (value["release"] != state.release_id or value["step"] != key):
+            raise ValueError("Manual approval receipt belongs to another release or step")
+        return
     if not isinstance(value, dict) or not isinstance(value.get("execution_id"), str) or not value["execution_id"]:
         raise ValueError("Closed approval receipt requires its execution identity")
     approval = {key: item for key, item in value.items() if key != "execution_id"}

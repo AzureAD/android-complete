@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json as _json
-import shutil
+import os
 import subprocess
 from urllib.parse import quote
 
 from tools.coordinates import coords
+from tools.executables import decode_cli_output, find_azure_cli
 from tools import pipelines as _pp
 
 
@@ -19,20 +20,25 @@ RAN_RESULTS = {"succeeded", "succeededWithIssues", "failed"}
 
 def _az_json(args, timeout):
     """Run `az <args> -o json` and return (ok, parsed_json, detail)."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
         out = subprocess.run(
             [az, *args, "-o", "json"],
-            capture_output=True, text=True, timeout=timeout, encoding="utf-8",
+            capture_output=True, timeout=timeout,
+            env=dict(os.environ, PYTHONIOENCODING="utf-8"),
         )
+        stdout = decode_cli_output(out.stdout or b"", azure_cli=True)
+        stderr = decode_cli_output(out.stderr or b"", azure_cli=True)
     except subprocess.TimeoutExpired:
         return (False, None, f"timeout running az {' '.join(args[:2])}")
     except OSError as e:
         return (False, None, f"failed to run az: {e}")
+    except UnicodeError as e:
+        return (False, None, f"could not decode az output: {e}")
     if out.returncode != 0:
-        err = (out.stderr or "").strip().splitlines()
+        err = stderr.strip().splitlines()
         detail = (err[-1] if err else "az returned non-zero")[:200]
         # Surface auth problems distinctly so the step can prompt `az login`.
         low = detail.lower()
@@ -40,7 +46,7 @@ def _az_json(args, timeout):
             detail = f"AUTH: {detail}"
         return (False, None, detail)
     try:
-        return (True, _json.loads(out.stdout or "null"), "")
+        return (True, _json.loads(stdout or "null"), "")
     except ValueError:
         return (False, None, "could not parse az output")
 
@@ -53,7 +59,7 @@ _ADO_RESOURCE = coords.resource_id()
 def _ado_rest_get(url, timeout):
     """GET an ADO REST url with an az-minted bearer token. Returns (ok, json, detail).
     Used only where `az devops invoke` can't reach an endpoint cleanly."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
@@ -88,7 +94,7 @@ def _ado_rest_get_h(url, timeout):
     """Like _ado_rest_get but also returns the response headers:
     (ok, json, headers_lower, detail). ADO returns paging tokens in the
     `x-ms-continuationtoken` HEADER (not the body), so header access is needed to page."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, {}, "az CLI not found")
     try:
@@ -141,7 +147,7 @@ def _ado_rest_get_all(url, timeout, cap_pages=60):
 
 def _ado_rest_get_text(url, timeout):
     """GET an ADO REST url returning PLAIN TEXT (e.g. a build log). (ok, text, detail)."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
@@ -171,7 +177,7 @@ def _ado_rest_send(url, method, body, timeout):
     """Send a JSON REST request (POST/PATCH/PUT) to ADO with an az-minted bearer token.
     Returns (ok, json, detail). The ONE write primitive — used for test-plan creates
     where `az devops invoke` has no clean surface."""
-    az = shutil.which("az")
+    az = find_azure_cli()
     if az is None:
         return (False, None, "az CLI not found")
     try:
