@@ -44,7 +44,7 @@ function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
 }
 
 export const OBSERVER_AGENT = "pr-observer";
-export const MAX_OBSERVER_ITERATIONS = 3;
+export const MAX_OBSERVER_ITERATIONS = 2;
 export const DEFAULT_CI_POLL_INTERVAL_MS = 60_000;
 export const DEFAULT_MAX_CI_POLL_ATTEMPTS = 60;
 export const MAX_JS_POLLS_BEFORE_HEARTBEAT = 7;

@@ -280,7 +280,7 @@ test("valid implementation passing first review exits loop immediately and prepa
     assert.match(pr.body, /RetryAfterThrottleCacheTest\.suppressesUntilExpiry/);
 });
 
-test("reviewer feedback loops back to builder up to 3 times and succeeds when 3rd fix passes review", async () => {
+test("reviewer feedback loops back to builder up to 2 times and succeeds when 2nd fix passes review", async () => {
     const makeFailedReview = (roundNum) => ({
         ...review(),
         findings: [
@@ -303,25 +303,21 @@ test("reviewer feedback loops back to builder up to 3 times and succeeds when 3r
         implementation(),
         makeFailedReview(2),
         implementation(),
-        makeFailedReview(3),
-        implementation(),
         review(),
     ]);
     const packet = await runCodeFeature(ctx);
     assert.equal(packet.recommendation, "GO to PR Review");
-    assert.equal(packet.fixIterations, 3);
-    assert.equal(packet.reviews.length, 4);
-    assert.equal(ctx.calls.length, 9);
+    assert.equal(packet.fixIterations, 2);
+    assert.equal(packet.reviews.length, 3);
+    assert.equal(ctx.calls.length, 7);
     assert.equal(ctx.calls[3].options.label, "Code revision (fix 1)");
     assert.match(ctx.calls[3].prompt, /Round 1 concurrency issue found/);
     assert.equal(ctx.calls[5].options.label, "Code revision (fix 2)");
     assert.match(ctx.calls[5].prompt, /Round 2 concurrency issue found/);
-    assert.equal(ctx.calls[7].options.label, "Code revision (fix 3)");
-    assert.match(ctx.calls[7].prompt, /Round 3 concurrency issue found/);
     assert.equal(packet.pullRequests.length, 1);
 });
 
-test("reaching max 3 fix iterations with unresolved reviewer findings stops with NO-GO and creates no PRs", async () => {
+test("reaching max 2 fix iterations with unresolved reviewer findings stops with NO-GO and creates no PRs", async () => {
     const failedReview = () => ({
         ...review(),
         findings: [
@@ -345,15 +341,13 @@ test("reaching max 3 fix iterations with unresolved reviewer findings stops with
         failedReview(),
         implementation(),
         failedReview(),
-        implementation(),
-        failedReview(),
     ]);
     const packet = await runCodeFeature(ctx);
     assert.equal(packet.recommendation, "NO-GO");
     assert.equal(packet.fixIterations, MAX_FIX_ITERATIONS);
-    assert.equal(packet.reviews.length, 4);
+    assert.equal(packet.reviews.length, 3);
     assert.equal(packet.pullRequests.length, 0);
-    assert.equal(ctx.calls.length, 9);
+    assert.equal(ctx.calls.length, 7);
 });
 
 test("structural validation catches unsafe paths, missing tests, and broken traceability before reviewer runs", async () => {

@@ -30,7 +30,7 @@ const record = (value) => value !== null && typeof value === "object" && !Array.
 const unique = (values) => new Set(values).size === values.length;
 const positiveInt = (value) => Number.isSafeInteger(value) && value > 0;
 
-export const MAX_FIX_ITERATIONS = 3;
+export const MAX_FIX_ITERATIONS = 2;
 export const MAX_INTAKE_ROUNDS = 3;
 export const BUILDER_AGENT = "code-builder";
 export const REVIEWER_AGENT = "code-reviewer";
@@ -3712,7 +3712,7 @@ Resolve every validation error and reviewer finding in history autonomously with
 export const workflowDefinition = {
     meta: {
         name: "code-feature",
-        description: "Evidence-backed Android coding workflow with builder, up to 3 independent review/fix iterations, and verified PR creation.",
+        description: "Evidence-backed Android coding workflow with builder, up to 2 independent review/fix iterations, and verified PR creation.",
         phases: [
             { title: "Validate task and gather evidence" },
             { title: "Build initial implementation" },

@@ -20,15 +20,15 @@ Given an approved coding task or PBI specification:
 3. **Build initial implementation (`code-builder`)**: Author production code and unit tests
    following Android Auth conventions (Kotlin-first for new code, Java style preserved for
    existing Java files, copyright headers, custom `Logger`, KDoc/JavaDoc, and traceability).
-4. **Loop with Independent Reviewer (`code-reviewer`) up to 3 fix iterations max**:
+4. **Loop with Independent Reviewer (`code-reviewer`) up to 2 fix iterations max**:
    - Deterministic checks validate file safety, non-empty unit tests, requirements-to-files/tests
      traceability, PR metadata, unified diffs, and any configured `verificationCommands`
      (such as Gradle compile/test commands).
    - `code-reviewer` (restricted to read-only `view`/`glob`/`grep` tools) evaluates the diff,
      tests, and PR packet against the 9-point fixed rubric and every target acceptance criterion.
    - If any validation error or review finding exists, the workflow returns to `code-builder`
-     with the structured findings (`fix-1`, `fix-2`, `fix-3`) until the reviewer reports zero
-     findings or the 3-fix ceiling (`maxFixIterations: 3`) is reached.
+     with the structured findings (`fix-1`, `fix-2`) until the reviewer reports zero
+     findings or the 2-fix ceiling (`maxFixIterations: 2`) is reached.
 5. **Create verified Pull Requests**:
    - Only after deterministic checks and the independent reviewer pass with zero findings, the
      workflow prepares or opens each target PR with `Fixes AB#<workItemId>` in the title and
@@ -91,7 +91,7 @@ Pass a plain-language request (optionally with `repository` and `workItemId`):
 
 ### Options
 
-- `maxFixIterations` (default `3`, max `3`): Maximum builder fix iterations after initial build.
+- `maxFixIterations` (default `2`, max `2`): Maximum builder fix iterations after initial build.
 - `createPullRequests` (default `true` in live Copilot sessions, `false` in offline unit tests):
   When `true`, writes verified files to the target repository checkout, creates branch
   `<alias>/ab-<workItemId>-<slug>` (or `users/<alias>/...` in ADO), commits with the Copilot
