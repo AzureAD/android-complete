@@ -32,6 +32,7 @@ import {
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
     extractRunnableVerificationCommand,
+    extractWorkItemIdsFromText,
     formatPrBody,
     formatPrTitle,
     isPipelineModificationAuthorized,
@@ -46,6 +47,7 @@ import {
     rubric,
     runCodeFeature,
     runLocalVerificationGate,
+    runWindowsBatchFileSafely,
     slimIntakeSchema,
     slimResultSchema,
     slimReviewSchema,
@@ -843,12 +845,44 @@ test("pre-review local verification gate catches Kotlin/Lombok compile errors be
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat --init-script evil.gradle :common4j:test"), null);
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat publishToMavenLocal"), null);
     assert.equal(parseAllowedGradleVerificationCommand("powershell -Command Get-ChildItem"), null);
+    const connectedParsed = parseAllowedGradleVerificationCommand(
+        ".\\gradlew.bat :app:connectedProductionDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.microsoft.authenticator.GuidedRestoreNavHostTest",
+    );
+    assert.equal(connectedParsed?.deferredToCi, true);
 
     const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-gate-"));
     try {
         const commonDir = path.join(tempRoot, "common");
         mkdirSync(commonDir, { recursive: true });
-        writeFileSync(path.join(commonDir, "gradlew.bat"), "@echo off\n", "utf8");
+        writeFileSync(path.join(commonDir, "gradlew.bat"), "@echo off\r\necho GRADLE_OK %*\r\n", "utf8");
+
+        // 0a. Real Windows .bat execution (including ./gradlew normalization and directory with spaces) + connectedAndroidTest deferral
+        if (process.platform === "win32") {
+            const spaceDir = path.join(tempRoot, "dir with spaces", "PhoneFactor");
+            mkdirSync(spaceDir, { recursive: true });
+            writeFileSync(path.join(spaceDir, "gradlew.bat"), "@echo off\r\necho GRADLE_SPACE_OK %*\r\n", "utf8");
+            const realImpl = implementation();
+            const realGate = runLocalVerificationGate({
+                repoRoot: path.dirname(spaceDir),
+                target: {
+                    id: "authenticator-guided-restore",
+                    verificationCommands: [
+                        "./gradlew :app:compileProductionDebugKotlin :app:compileProductionDebugAndroidTestKotlin",
+                        ".\\gradlew.bat :app:testProductionDebugUnitTest --tests com.microsoft.authenticator.EntraRestoreEntryPointCoordinatorTest",
+                        ".\\gradlew.bat :app:connectedProductionDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.microsoft.authenticator.GuidedRestoreNavHostTest",
+                    ],
+                },
+                targetImpl: realImpl.targets[0],
+                implementation: realImpl,
+            });
+            assert.deepEqual(realGate.errors, []);
+            assert.equal(realGate.ranCommands.length, 2);
+            assert.equal(realGate.deferredNotes.length, 1);
+            assert.throws(
+                () => runWindowsBatchFileSafely(path.join(spaceDir, "gradlew.bat"), [":app:test & calc.exe"], { cwd: spaceDir }),
+                /unsafe argument/i,
+            );
+        }
 
         // 0. Rejects non-allowlisted commands without executing anything or fetching tokens
         let unsafeExecCount = 0;
@@ -1513,4 +1547,30 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.equal(naturalTask.targets[0].workItemId, 3804404);
     assert.ok(naturalTask.designSummary.includes("SCOPED PBI IMPLEMENTATION TARGET"));
     assert.ok(naturalTask.designSummary.includes("SUPPORTING DESIGN DOCUMENT CONTEXT"));
+
+    // 8. Natural prompt with "PBI 3804404" and a workflow PR link containing "Fixes AB#3805593" binds 3804404 and ignores PR link AB#
+    const managerPrompt =
+        "ok then implement the PBI 3804404 using the coding and PR dynamic workflow here [Add guarded Android coding and PR dynamic workflow, Fixes AB#3805593 by shahzaibj · Pull Request #482 · AzureAD/android-complete](https://github.com/AzureAD/android-complete/pull/482)";
+    assert.deepEqual(extractWorkItemIdsFromText(managerPrompt), [3804404]);
+    const managerResolved = resolveInputSources(
+        { prompt: managerPrompt },
+        {
+            linkSubrepos: false,
+            fetchWorkItem: (id) => ({
+                id,
+                fields: {
+                    "System.AreaPath": "Engineering\\Auth Client\\Android Authenticator App",
+                    "System.Title": "[Entra Guided Restore] Make guided navigation marker-aware and lifecycle-safe",
+                    "System.Description":
+                        "<p>PBI-1 of Feature 3804403. Repository: AD-MFA-phonefactor-phoneApp-android; base working.</p><ul><li>Add required Boolean hadPasskeyOnOldDevice to GuidedRestoreActivity.newIntent.</li></ul>",
+                },
+                relations: [],
+            }),
+        },
+    );
+    const managerTask = normalizeTask(managerResolved);
+    assert.equal(managerTask.inputMode, "pbi");
+    assert.equal(managerTask.workItemId, 3804404);
+    assert.equal(managerTask.targets[0].workItemId, 3804404);
+    assert.equal(managerTask.targets[0].repository, "authenticator");
 });
