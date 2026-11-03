@@ -141,7 +141,8 @@ def record_recovery(args, progress):
             "execute", "auto_approve", "review_hash", "approved_by", "executor", "execution_id")):
         raise ValueError("Recovery is result-only; do not combine it with execution/approval options")
     if completion is not None:
-        if any(getattr(args, key, None) for key in ("repos", "pbi", "pbi_title", "repo_dir")):
+        if any(getattr(args, key, None) for key in (
+                "repos", "pbi", "pbi_title", "repo_dir", "checkout_root", "resolutions_file")):
             raise ValueError("Manual completion covers the original entire step; omit repository/PBI/path selectors")
         owner = progress.recovery_authority(args, actor, reason)
         confirmation = {"confirmed_by": owner, "reason": reason.strip(), "evidence": completion}

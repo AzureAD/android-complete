@@ -672,7 +672,8 @@ def test_oneauth_manual_completion_does_not_require_a_checkout(oneauth_compound,
     assert s.calls == calls
 
 
-@pytest.mark.parametrize("problem", ["owner", "evidence", "checkpoint", "prerequisite"])
+@pytest.mark.parametrize("problem", [
+    "owner", "evidence", "checkpoint", "prerequisite", "checkout_root", "resolutions_file"])
 def test_manual_completion_cannot_fake_verification_or_bypass_gates(
         compound, monkeypatch, problem):
     s = compound
@@ -686,6 +687,8 @@ def test_manual_completion_cannot_fake_verification_or_bypass_gates(
         options["manual_completion"] = "https://token@example.test/evidence"
     elif problem == "checkpoint":
         s.checkpoint = lambda *args: (_ for _ in ()).throw(OSError("offline save failed"))
+    elif problem in ("checkout_root", "resolutions_file"):
+        options[problem] = "original-input"
     else:
         from orchestrator.transitions import TransitionKernel
         monkeypatch.setattr(TransitionKernel, "_gate_precondition_problem", lambda *a, **k: "gate not approved")

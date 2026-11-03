@@ -1,6 +1,7 @@
 """Read-only partner digest preparation. Delivery uses notification claim/result."""
 from __future__ import annotations
 import json as _json
+import re
 
 import yaml
 
@@ -98,10 +99,112 @@ def prepare_status_email(args, st, _orch):
     }
 
 
+def _review_scope(st, orch, *, phase=None):
+    if not st.timezone or schedule.get_tz(st.timezone) is None or orch.now_local.tzinfo is None:
+        raise ValueError("Status drafts require a valid stored owner timezone and aware clock")
+    scope = {
+        "kind": "phase_completion" if phase else "release",
+        "date": orch.now_local.date().isoformat(),
+        "requires_owner_approval": True,
+        "release_matches": {"owner_email": st.owner_email},
+        "state_matches": [
+            {"path": [key], "hash": D.fingerprint(getattr(st, key))}
+            for key in ("steps", "gate_decisions", "pipeline_runs", "versions",
+                        "ccd", "target_month", "active_conditionals", "owner_name")
+        ],
+    }
+    if phase:
+        scope["phase"] = phase
+    return scope
+
+
+def _reviewed_generation(orch, logical_id):
+    pattern = re.compile(re.escape(logical_id) + r"(?::retry:([1-9][0-9]*))?:email")
+    generations = []
+    for key, record in orch.state.notification_deliveries.items():
+        match = pattern.fullmatch(key)
+        if not match:
+            continue
+        item = D.validate_record(orch, record)
+        if item["id"] != key:
+            raise ValueError("Notification ledger identity mismatch; owner recovery required")
+        generations.append((int(match.group(1) or 0), item, record))
+    if any(record["status"] in ("claimed", "uncertain", "sent")
+           for _, _, record in generations):
+        return None
+    if not generations:
+        return logical_id, None
+    generation, item, record = max(generations, key=lambda value: value[0])
+    if record["status"] == "not_sent":
+        D.require_receipt(record)
+        return f"{logical_id}:retry:{generation + 1}", item["id"]
+    return item["id"].removesuffix(":email"), item["scope"].get("retry_of")
+
+
+def prepare_reviewed_status_emails(args, st, orch):
+    """Prepare independent, owner-reviewed drafts without advancing release work."""
+    ad_hoc = args.source == "ad-hoc-status-email"
+    request_id = getattr(args, "request_id", None)
+    if ad_hoc:
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", request_id):
+            raise ValueError("Ad-hoc status requires a stable --request-id (1-80 letters/digits/._-)")
+        for record in st.notification_deliveries.values():
+            item = D.validate_record(orch, record)
+            if (item["id"].startswith("ad-hoc-status-email:")
+                    and record["status"] in ("claimed", "uncertain")):
+                raise ValueError("Resolve the existing owned ad-hoc email before preparing another request")
+        candidates = [(f"ad-hoc-status-email:{request_id}", None)]
+    else:
+        if request_id is not None:
+            raise ValueError("--request-id is only valid for an ad-hoc status draft")
+        candidates = [
+            (f"phase-status-email:{phase.definition.id}", phase.definition.id)
+            for phase in orch.scheduling().phases
+            if phase.included and phase.complete and phase.due and phase.definition.steps
+        ]
+    items, reason, changes = [], "", None
+    for logical_id, phase in candidates:
+        generation = _reviewed_generation(orch, logical_id)
+        if generation is None:
+            continue
+        logical_id, retry_of = generation
+        scope = _review_scope(st, orch, phase=phase)
+        if retry_of:
+            scope["retry_of"] = retry_of
+            scope["state_matches"].append({
+                "path": ["notification_deliveries", retry_of],
+                "hash": D.fingerprint(st.notification_deliveries[retry_of]),
+            })
+        reason = D.scope_reason(orch, scope)
+        if reason:
+            continue
+        if changes is None:
+            changes = _broker_changes(st)
+        recipients = _recipients(args.config)
+        if getattr(args, "send_to", None):
+            recipients = [value.strip() for value in args.send_to.split(",") if value.strip()]
+        result = SE.compose(
+            st, _phase_order(args.config), recipients, changes=changes,
+            selection=orch.scheduling(), purpose="ad_hoc" if ad_hoc else "phase",
+            completed_phase=phase)
+        items.append(D.descriptor(
+            st, logical_id, scope, "workiq_send_email",
+            {"to": result["to"], "subject": result["subject"], "body": result["html"], "isHtml": True}))
+    return {
+        "release": args.release, "notifications": items, "permission_to_send": False,
+        **({"reason": reason} if reason else {}),
+    }
+
+
 def cmd_status_email(args):
     try:
         st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-        print(_json.dumps(prepare_status_email(args, st, orch)))
+        if getattr(args, "ad_hoc", None) is not None:
+            args.source, args.request_id = "ad-hoc-status-email", args.ad_hoc
+            result = prepare_reviewed_status_emails(args, st, orch)
+        else:
+            result = prepare_status_email(args, st, orch)
+        print(_json.dumps(result))
     except ValueError as exc:
         print(_json.dumps({"error": str(exc)}))
         return 1
@@ -124,6 +227,8 @@ def register(sub):
                     help="Bypass business-day cadence only, never 17:00/lifecycle/acknowledgement guards")
     se.add_argument("--send-to", default=None,
                     help="Redirect recipients to these address(es) (comma-separated) for a test run")
+    se.add_argument("--ad-hoc", metavar="REQUEST_ID",
+                    help="Preview an engineer-requested draft outside daily cadence; reuse its identity for recovery")
     se.set_defaults(func=cmd_status_email)
 
     rs = sub.add_parser("record-status-email",

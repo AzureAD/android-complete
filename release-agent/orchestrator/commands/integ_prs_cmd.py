@@ -68,6 +68,10 @@ def register(sub):
     p.add_argument("--execute", action="store_true", help="Execute the approved, checked write plan")
     p.add_argument("--repos", nargs="*", default=None,
                    help="Limit to these repo keys (common msal broker authenticator)")
+    p.add_argument("--checkout-root",
+                   help="Absolute parent directory of separate clean selected repository checkouts")
+    p.add_argument("--resolutions-file",
+                   help="Absolute version-1 JSON pinning the supported MSAL/Authenticator conflict choices")
     p.add_argument("--pbi", default=None, help="Reuse this PBI id instead of creating one")
     p.add_argument("--pbi-title", default=None, help="Title for the created PBI")
     W.add_auto_approve_argument(
