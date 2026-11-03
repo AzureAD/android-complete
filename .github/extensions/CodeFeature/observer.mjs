@@ -1151,8 +1151,8 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                             `$replyBytes = [System.Convert]::FromBase64String('${replyB64}')`,
                             "$statusBytes = [System.Text.Encoding]::UTF8.GetBytes('{\"status\":\"fixed\"}')",
                             `foreach ($tid in @(${threadIds.join(",")})) {`,
-                            "  try { Invoke-RestMethod -Uri \"$base/$tid/comments?api-version=7.0\" -Headers $headers -Method Post -Body $replyBytes | Out-Null } catch {}",
-                            "  try { Invoke-RestMethod -Uri \"$base/$tid?api-version=7.0\" -Headers $headers -Method Patch -Body $statusBytes | Out-Null } catch {}",
+                            "  try { Invoke-RestMethod -Uri \"$base/$($tid)/comments?api-version=7.0\" -Headers $headers -Method Post -Body $replyBytes | Out-Null } catch {}",
+                            "  try { Invoke-RestMethod -Uri \"$base/$($tid)?api-version=7.0\" -Headers $headers -Method Patch -Body $statusBytes | Out-Null } catch {}",
                             "}",
                         ].join("; ");
                         try {
