@@ -276,6 +276,7 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
   * authenticator: authenticator/PhoneFactor/... (Gradle working directory is authenticator/PhoneFactor)
 - When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2, and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
   $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon
+- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example `compile*Kotlin` + `test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon`) so Gradle only runs once per round.
 - Never let a Gradle command hang indefinitely: if a background Gradle command produces no new task output for more than 10 minutes (or exceeds 25 minutes total), stop that shell with stop_powershell and retry once with --no-daemon --max-workers=2 (or defer to CI if composite build locks persist).
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
@@ -627,26 +628,43 @@ export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = def
 }
 
 export function ensureAndroidLocalProperties(sourceRepo, targetDir) {
-    const targetLocalProps = path.join(targetDir, "local.properties");
-    if (existsSync(targetLocalProps)) return targetLocalProps;
-    const sourceLocalProps = path.join(sourceRepo, "local.properties");
-    if (existsSync(sourceLocalProps)) {
-        writeFileSync(targetLocalProps, readFileSync(sourceLocalProps));
-        return targetLocalProps;
-    }
-    const candidates = [
-        process.env.ANDROID_HOME,
-        process.env.ANDROID_SDK_ROOT,
-        process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Android", "Sdk") : "",
-    ].filter(nonempty);
-    for (const sdkPath of candidates) {
-        if (existsSync(sdkPath)) {
-            const escaped = sdkPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:");
-            writeFileSync(targetLocalProps, `sdk.dir=${escaped}\n`, "utf8");
-            return targetLocalProps;
+    const writeLocalPropsFile = (srcDir, dstDir) => {
+        const dstFile = path.join(dstDir, "local.properties");
+        if (existsSync(dstFile)) return dstFile;
+        const srcFile = path.join(srcDir, "local.properties");
+        if (existsSync(srcFile)) {
+            writeFileSync(dstFile, readFileSync(srcFile));
+            return dstFile;
+        }
+        const candidates = [
+            process.env.ANDROID_HOME,
+            process.env.ANDROID_SDK_ROOT,
+            process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Android", "Sdk") : "",
+        ].filter(nonempty);
+        for (const sdkPath of candidates) {
+            if (existsSync(sdkPath)) {
+                const escaped = sdkPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:");
+                writeFileSync(dstFile, `sdk.dir=${escaped}\n`, "utf8");
+                return dstFile;
+            }
+        }
+        return null;
+    };
+
+    const primary = writeLocalPropsFile(sourceRepo, targetDir);
+    const targetPhoneFactor = path.join(targetDir, "PhoneFactor");
+    if (existsSync(targetPhoneFactor)) {
+        const sourcePhoneFactor = existsSync(path.join(sourceRepo, "PhoneFactor"))
+            ? path.join(sourceRepo, "PhoneFactor")
+            : sourceRepo;
+        writeLocalPropsFile(sourcePhoneFactor, targetPhoneFactor);
+        const secureProps = path.join(targetPhoneFactor, "secure.properties");
+        const secureTemplate = path.join(targetPhoneFactor, "secure.properties.template");
+        if (!existsSync(secureProps) && existsSync(secureTemplate)) {
+            writeFileSync(secureProps, readFileSync(secureTemplate));
         }
     }
-    return null;
+    return primary;
 }
 
 function buildTargetRemoteCloneUrl(target) {
@@ -828,14 +846,16 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
     } catch {
         // Best-effort longpaths config on new worktree.
     }
-    const sourceCommon = path.join(canonicalSource, "common");
-    const targetCommon = path.join(targetDir, "common");
-    if (existsSync(path.join(sourceCommon, ".git")) && !existsSync(path.join(targetCommon, ".git"))) {
-        try {
-            if (existsSync(targetCommon)) rmSync(targetCommon, { recursive: true, force: true });
-            exec("git", ["worktree", "add", "--detach", targetCommon, "HEAD"], { cwd: sourceCommon });
-        } catch {
-            // Best-effort nested common submodule worktree initialization.
+    for (const commonRel of ["common", path.join("PhoneFactor", "common")]) {
+        const sourceCommon = path.join(canonicalSource, commonRel);
+        const targetCommon = path.join(targetDir, commonRel);
+        if (existsSync(path.join(sourceCommon, ".git")) && !existsSync(path.join(targetCommon, ".git"))) {
+            try {
+                if (existsSync(targetCommon)) rmSync(targetCommon, { recursive: true, force: true });
+                exec("git", ["-c", "core.longpaths=true", "worktree", "add", "--detach", targetCommon, "HEAD"], { cwd: sourceCommon });
+            } catch {
+                // Best-effort nested common submodule worktree initialization.
+            }
         }
     }
     try {
