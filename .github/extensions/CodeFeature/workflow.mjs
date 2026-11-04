@@ -963,6 +963,7 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
     if (!SAFE_GRADLE_EXECUTABLE_PATTERN.test(executable)) return null;
 
     const args = [];
+    const filteredArgs = [];
     let taskCount = 0;
     let connectedTaskCount = 0;
     let deferredLintTaskCount = 0;
@@ -976,12 +977,14 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
             SAFE_GRADLE_SYSTEM_PROP_PATTERN.test(arg)
         ) {
             args.push(arg);
+            filteredArgs.push(arg);
             continue;
         }
         if (arg === "--tests") {
             const filter = rest[i + 1];
             if (!nonempty(filter) || !SAFE_GRADLE_TEST_FILTER_PATTERN.test(filter)) return null;
             args.push("--tests", filter);
+            filteredArgs.push("--tests", filter);
             i++;
             continue;
         }
@@ -989,12 +992,14 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
             const filter = arg.slice("--tests=".length);
             if (!nonempty(filter) || !SAFE_GRADLE_TEST_FILTER_PATTERN.test(filter)) return null;
             args.push(arg);
+            filteredArgs.push(arg);
             continue;
         }
         if (arg === "-x" || arg === "--exclude-task") {
             const excluded = rest[i + 1];
             if (!nonempty(excluded) || !SAFE_GRADLE_EXCLUDED_TASK_PATTERN.test(excluded)) return null;
             args.push(arg, excluded);
+            filteredArgs.push(arg, excluded);
             i++;
             continue;
         }
@@ -1015,6 +1020,7 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
             return null;
         }
         args.push(arg);
+        filteredArgs.push(arg);
         taskCount++;
     }
 
@@ -1036,11 +1042,6 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
     }
 
     if (taskCount === 0) return null;
-    const filteredArgs = (connectedTaskCount > 0 || deferredLintTaskCount > 0)
-        ? args.filter(
-            (a) => !CONNECTED_DEVICE_GRADLE_TASK_PATTERN.test(a) && !HEAVY_CI_LINT_GRADLE_TASK_PATTERN.test(a),
-        )
-        : args;
     return {
         command: [executable, ...filteredArgs].join(" "),
         executable,
@@ -1056,13 +1057,6 @@ export function isLocalBuildEnvError(textValue) {
 
 export function isDefinitiveCodeOrTestFailure(textValue) {
     const msg = String(textValue || "");
-    if (
-        /UnknownHostException|Connection reset by peer|ETIMEDOUT|ECONNRESET|502 Bad Gateway|503 Service Unavailable|Could not GET 'https?:\/\/|Could not resolve all (?:files|artifacts|dependencies)|A problem occurred (?:starting process|evaluating settings|configuring project)|DaemonDisappearedException|daemon has disappeared|LockOwner|Timeout waiting to lock|ENOSPC|OutOfMemoryError|spawnSync\s+\S+\s+(?:ENOENT|EINVAL|ETIMEDOUT)/i.test(
-            msg,
-        )
-    ) {
-        return false;
-    }
     return /Unresolved reference:|Type mismatch:|Conflicting overloads:|Overload resolution ambiguity|Suspend function .* should be called only from a coroutine|e:\s+file:\/\/\/.*\.(?:kt|java):\d+|\b[A-Za-z0-9_/-]+\.(?:kt|java):\d+:\s*error:|Compilation error|There were failing tests|Gradle test failed|FAILED\s*\r?\n\s*(?:org\.junit|java\.lang\.AssertionError|kotlin\.AssertionError)|weighted issues were found|MaxIssuesReached|Checkstyle rule violations|PMD rule violations|SpotBugs rule violations/i.test(
         msg,
     );
@@ -1244,7 +1238,7 @@ function readJavaMajorVersion(javaHomeDir) {
 export function resolveTargetJavaHome(target, env = process.env) {
     const repoKey = normalizeRepositoryKey(target?.repository);
     const preferredMajors = repoKey === "authenticator" ? [21] : [21, 17];
-    const currentJavaHome = env?.JAVA_HOME || process.env.JAVA_HOME || "";
+    const currentJavaHome = env?.JAVA_HOME !== undefined ? env.JAVA_HOME : (process.env.JAVA_HOME || "");
 
     if (nonempty(currentJavaHome) && existsSync(currentJavaHome)) {
         const detected = readJavaMajorVersion(currentJavaHome);
@@ -1256,6 +1250,30 @@ export function resolveTargetJavaHome(target, env = process.env) {
     const candidates = [
         "C:\\Program Files\\Android\\Android Studio\\jbr",
     ];
+    const rawPathVal = env?.PATH ?? env?.Path ?? process.env.PATH ?? process.env.Path ?? "";
+    if (nonempty(rawPathVal)) {
+        const hasWinStyle = process.platform === "win32" || rawPathVal.includes(";");
+        const sep = hasWinStyle ? ";" : path.delimiter;
+        for (const rawDir of String(rawPathVal).split(sep)) {
+            const dir = rawDir.trim();
+            if (!nonempty(dir)) continue;
+            const javaBinWin = path.join(dir, "java.exe");
+            const javaBinPosix = path.join(dir, "java");
+            if (existsSync(javaBinWin) || existsSync(javaBinPosix)) {
+                let resolvedJavaBin = existsSync(javaBinWin) ? javaBinWin : javaBinPosix;
+                try {
+                    resolvedJavaBin = realpathSync(resolvedJavaBin);
+                } catch {
+                    // Keep original path if realpath fails.
+                }
+                const binDir = path.dirname(resolvedJavaBin);
+                const candidateHome = path.basename(binDir).toLowerCase() === "bin" ? path.dirname(binDir) : binDir;
+                if (existsSync(candidateHome)) {
+                    candidates.push(candidateHome);
+                }
+            }
+        }
+    }
     if (process.platform === "win32") {
         const userProfile = env?.USERPROFILE || process.env.USERPROFILE || "";
         const localAppData = env?.LOCALAPPDATA || process.env.LOCALAPPDATA || "";
@@ -1293,14 +1311,27 @@ export function resolveTargetJavaHome(target, env = process.env) {
         }
     }
 
-    const defaultStudioJbr = "C:\\Program Files\\Android\\Android Studio\\jbr";
-    if (existsSync(defaultStudioJbr)) {
-        const studioDetected = readJavaMajorVersion(defaultStudioJbr);
-        if (studioDetected === null || preferredMajors.includes(studioDetected)) {
-            return defaultStudioJbr;
+    for (const candidate of candidates) {
+        if (!existsSync(candidate)) continue;
+        const detected = readJavaMajorVersion(candidate);
+        if (detected === null) {
+            return candidate;
         }
     }
+
     return nonempty(currentJavaHome) ? currentJavaHome : "";
+}
+
+function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd()) {
+    if (!nonempty(rawValue)) return "";
+    const unescaped = String(rawValue)
+        .trim()
+        .replace(/\\:/g, ":")
+        .replace(/\\\\/g, "\\");
+    const resolved = path.isAbsolute(unescaped) || /^[A-Za-z]:[\\/]/.test(unescaped)
+        ? unescaped
+        : path.resolve(baseDir, unescaped);
+    return existsSync(resolved) ? resolved : "";
 }
 
 export function runTargetEnvironmentPreflight(workspaceRoot, target, env = process.env) {
@@ -1318,10 +1349,16 @@ export function runTargetEnvironmentPreflight(workspaceRoot, target, env = proce
     const localPropsPath = path.join(buildRoot, "local.properties");
     const androidHomeVal = env?.ANDROID_HOME !== undefined ? env.ANDROID_HOME : process.env.ANDROID_HOME;
     const androidSdkRootVal = env?.ANDROID_SDK_ROOT !== undefined ? env.ANDROID_SDK_ROOT : process.env.ANDROID_SDK_ROOT;
-    let sdkConfigured = nonempty(androidHomeVal) || nonempty(androidSdkRootVal);
+    let sdkConfigured =
+        nonempty(resolveConfiguredSdkDir(androidHomeVal, buildRoot)) ||
+        nonempty(resolveConfiguredSdkDir(androidSdkRootVal, buildRoot));
     if (!sdkConfigured && existsSync(localPropsPath)) {
         try {
-            sdkConfigured = /^\s*sdk\.dir\s*=\s*\S+/m.test(readFileSync(localPropsPath, "utf8"));
+            const propsText = readFileSync(localPropsPath, "utf8");
+            const sdkMatch = propsText.match(/^\s*sdk\.dir\s*=\s*(.+)$/m);
+            if (sdkMatch && nonempty(sdkMatch[1])) {
+                sdkConfigured = nonempty(resolveConfiguredSdkDir(sdkMatch[1], buildRoot));
+            }
         } catch {
             sdkConfigured = false;
         }
@@ -1485,11 +1522,23 @@ export function applyPrerequisiteAnswers(answers, { workspaceRoot = process.cwd(
             env.ANDROID_HOME = rawAns;
             env.ANDROID_SDK_ROOT = rawAns;
             const escapedSdk = rawAns.replace(/\\/g, "\\\\").replace(/:/g, "\\:");
+            const mentionedRepo = q.match(/for\s+'([^']+)'/i)?.[1]?.trim().toLowerCase() || "";
             for (const target of Array.isArray(targets) ? targets : []) {
+                const targetRepo = String(target?.repository || "").trim().toLowerCase();
+                if (nonempty(mentionedRepo) && targetRepo !== mentionedRepo) continue;
                 const preflight = runTargetEnvironmentPreflight(workspaceRoot, target, env);
                 if (existsSync(preflight.buildRoot)) {
                     try {
-                        writeFileSync(path.join(preflight.buildRoot, "local.properties"), `sdk.dir=${escapedSdk}\n`, "utf8");
+                        const propsPath = path.join(preflight.buildRoot, "local.properties");
+                        if (existsSync(propsPath)) {
+                            const existingProps = readFileSync(propsPath, "utf8");
+                            const updatedProps = /^\s*sdk\.dir\s*=/m.test(existingProps)
+                                ? existingProps.replace(/^\s*sdk\.dir\s*=.*$/m, `sdk.dir=${escapedSdk}`)
+                                : `${existingProps.replace(/\s*$/, "")}\nsdk.dir=${escapedSdk}\n`;
+                            writeFileSync(propsPath, updatedProps, "utf8");
+                        } else {
+                            writeFileSync(propsPath, `sdk.dir=${escapedSdk}\n`, "utf8");
+                        }
                     } catch {
                         // Best-effort local.properties write.
                     }
@@ -3049,6 +3098,34 @@ export function applyTargetFiles(repoRoot, files, backups) {
     }
 }
 
+export function capturePreBuilderBaselineBackups(repoRoot, backups, { exec = defaultExec } = {}) {
+    if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git")) || !(backups instanceof Map)) {
+        return;
+    }
+    try {
+        const porcelain = exec(
+            "git",
+            ["--no-pager", "status", "--porcelain", "--untracked-files=all"],
+            { cwd: repoRoot },
+        ) || "";
+        for (const rawLine of porcelain.split(/\r?\n/)) {
+            const lineMatch = rawLine.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
+            if (!lineMatch) continue;
+            const rawPath = lineMatch[2].trim().replace(/^"(.*)"$/, "$1");
+            const relPath = (rawPath.includes(" -> ") ? rawPath.split(" -> ").pop().trim() : rawPath).replace(/\\/g, "/");
+            if (!isSafeRelativeFilePath(relPath) || backups.has(relPath)) continue;
+            const fullPath = path.resolve(repoRoot, relPath);
+            const existed = existsSync(fullPath) && lstatSync(fullPath).isFile();
+            backups.set(relPath, {
+                exists: existed,
+                content: existed ? readFileSync(fullPath) : null,
+            });
+        }
+    } catch {
+        // Best-effort baseline capture of pre-existing dirty files.
+    }
+}
+
 export function restoreTargetFiles(repoRoot, backups, { exec = defaultExec } = {}) {
     if (!existsSync(repoRoot)) return;
     const canonicalRoot = realpathSync(repoRoot);
@@ -3321,8 +3398,8 @@ export function publishTargetPullRequest({
         } catch {
             localHeadSha = "";
         }
-        if (currentBranch === branch || currentBranch === suffixedBranch) {
-            branch = currentBranch;
+        if (currentBranch === suffixedBranch) {
+            branch = suffixedBranch;
         } else {
             try {
                 const remoteHead = exec("git", ["ls-remote", "--heads", "origin", `refs/heads/${branch}`], {
@@ -3331,7 +3408,17 @@ export function publishTargetPullRequest({
                 });
                 if (nonempty(remoteHead)) {
                     const remoteSha = remoteHead.trim().split(/\s+/)[0] || "";
-                    if (!nonempty(localHeadSha) || remoteSha !== localHeadSha) {
+                    let baseSha = "";
+                    try {
+                        baseSha = exec("git", ["rev-parse", `origin/${target.baseBranch}`], { cwd: repoRoot, env: gitEnv });
+                    } catch {
+                        baseSha = "";
+                    }
+                    const isSamePublishedCommit =
+                        nonempty(localHeadSha) &&
+                        remoteSha === localHeadSha &&
+                        (!nonempty(baseSha) || localHeadSha !== baseSha);
+                    if (!isSamePublishedCommit) {
                         branch = suffixedBranch;
                     }
                 }
@@ -3358,8 +3445,8 @@ export function publishTargetPullRequest({
     let shouldCommit = true;
     if (exec === defaultExec && existsSync(path.join(repoRoot, ".git"))) {
         try {
-            const statusPorcelain = exec("git", ["status", "--porcelain"], { cwd: repoRoot, env: gitEnv });
-            if (!nonempty(statusPorcelain)) {
+            const stagedNames = exec("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot, env: gitEnv });
+            if (!nonempty(stagedNames)) {
                 shouldCommit = false;
             }
         } catch {
@@ -3839,17 +3926,18 @@ export async function runCodeFeature(ctx, dependencies = {}) {
 
     const shouldVerifyPrerequisites =
         rawOptions.verifyPrerequisites === true ||
-        (Boolean(ctx?.session) && exec === defaultExec && rawOptions.verifyPrerequisites !== false && task.targets.length > 0);
-    if (shouldVerifyPrerequisites) {
+        (Boolean(ctx?.session) && exec === defaultExec && rawOptions.verifyPrerequisites !== false);
+    const runInteractivePrerequisites = async (targetsToVerify, stepPrefix) => {
+        if (!shouldVerifyPrerequisites) return null;
         for (let prereqRound = 0; prereqRound < 2; prereqRound++) {
             const prereqCheck = verifyWorkflowPrerequisites({
                 workspaceRoot,
-                targets: task.targets,
+                targets: targetsToVerify,
                 createPullRequests: effectiveCreatePrs,
                 exec,
             });
-            if (prereqCheck.ok) break;
-            const prereqStepKey = prereqRound === 0 ? "prerequisites-help" : `prerequisites-help-${prereqRound}`;
+            if (prereqCheck.ok) return null;
+            const prereqStepKey = prereqRound === 0 ? stepPrefix : `${stepPrefix}-${prereqRound}`;
             const prereqAnswers = await step(
                 prereqStepKey,
                 () => askUserForClarifications(prereqCheck.questions.slice(0, 3), ctx, dependencies.askUser),
@@ -3858,27 +3946,31 @@ export async function runCodeFeature(ctx, dependencies = {}) {
             if (Array.isArray(prereqAnswers) && prereqAnswers.length > 0) {
                 applyPrerequisiteAnswers(prereqAnswers, {
                     workspaceRoot,
-                    targets: task.targets,
+                    targets: targetsToVerify,
                 });
                 const recheck = verifyWorkflowPrerequisites({
                     workspaceRoot,
-                    targets: task.targets,
+                    targets: targetsToVerify,
                     createPullRequests: effectiveCreatePrs,
                     exec,
                 });
-                if (recheck.ok) break;
+                if (recheck.ok) return null;
                 if (prereqRound + 1 < 2) continue;
                 if (pauseOnBlocker) {
-                    await pauseForHelp(ctx, `${prefix}-prerequisites-pause`, recheck.issues.join("\n"));
+                    await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause`, recheck.issues.join("\n"));
                 }
                 return packet("needs clarification", recheck.issues, recheck.questions);
             }
             if (pauseOnBlocker) {
-                await pauseForHelp(ctx, `${prefix}-prerequisites-pause`, prereqCheck.issues.join("\n"));
+                await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause`, prereqCheck.issues.join("\n"));
             }
             return packet("needs clarification", prereqCheck.issues, prereqCheck.questions);
         }
-    }
+        return null;
+    };
+
+    const initialPrereqPacket = await runInteractivePrerequisites(task.targets, "prerequisites-help");
+    if (initialPrereqPacket) return initialPrereqPacket;
 
     phase("Validate task and gather evidence");
     const needsSpecExtraction = task.needsExtraction === true;
@@ -4185,6 +4277,21 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
         }
     }
 
+    if (needsSpecExtraction) {
+        const postIntakePrereqPacket = await runInteractivePrerequisites(task.targets, "post-intake-prerequisites-help");
+        if (postIntakePrereqPacket) return postIntakePrereqPacket;
+    }
+
+    const backupsByTarget = new Map();
+    if (applyToWorkspace && manageWorkspace) {
+        for (const target of task.targets) {
+            const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+            const targetBackups = new Map();
+            capturePreBuilderBaselineBackups(repoRoot, targetBackups, { exec });
+            backupsByTarget.set(target.id, targetBackups);
+        }
+    }
+
     const isLocalBuildEnvBlocker = isLocalBuildEnvError;
 
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
@@ -4222,7 +4329,6 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
     ));
     implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
 
-    const backupsByTarget = new Map();
     const restoreAll = () => {
         if (!applyToWorkspace) return;
         for (const target of task.targets) {

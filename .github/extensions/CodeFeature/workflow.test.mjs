@@ -35,6 +35,7 @@ import {
     applyTargetFiles,
     buildInspectedFilesContext,
     buildNormalizedProcessEnv,
+    capturePreBuilderBaselineBackups,
     collectBuildReceiptOnDisk,
     customAgents,
     discoverChangedFilesFromGit,
@@ -1709,9 +1710,9 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.ok(resolveWindowsCmdExecutable({ SystemRoot: "..\\relative" }).toLowerCase().endsWith("cmd.exe"));
 
     const lintCombined = parseAllowedGradleVerificationCommand(
-        ".\\gradlew.bat :app:detektCheck :app:lintProductionDebug",
+        ".\\gradlew.bat :app:detektCheck :app:lintProductionDebug -x lint",
     );
-    assert.deepEqual(lintCombined?.args, [":app:detektCheck"]);
+    assert.deepEqual(lintCombined?.args, [":app:detektCheck", "-x", "lint"]);
     const lintOnly = parseAllowedGradleVerificationCommand(".\\gradlew.bat :app:lintProductionDebug");
     assert.equal(lintOnly?.deferredToCi, true);
 
@@ -1772,6 +1773,25 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         });
         assert.equal(restoreCalls.length, 1);
         assert.deepEqual(restoreCalls[0].args, ["checkout", "HEAD", "--", "Foo.kt"]);
+
+        // Pre-builder dirty file baseline preserves human edits on rollback instead of resetting to HEAD
+        writeFileSync(path.join(tempDiffRoot, "Dirty.kt"), "package test\n// human edit\n", "utf8");
+        const dirtyBackups = new Map();
+        capturePreBuilderBaselineBackups(tempDiffRoot, dirtyBackups, {
+            exec: () => " M Dirty.kt",
+        });
+        writeFileSync(path.join(tempDiffRoot, "Dirty.kt"), "package test\n// builder overwrite\n", "utf8");
+        applyTargetFiles(
+            tempDiffRoot,
+            [{ path: "Dirty.kt", action: "modify", content: "", summary: "Builder modified Dirty.kt" }],
+            dirtyBackups,
+        );
+        restoreTargetFiles(tempDiffRoot, dirtyBackups, {
+            exec: () => {
+                throw new Error("Should restore from captured bytes, not git checkout HEAD");
+            },
+        });
+        assert.equal(readFileSync(path.join(tempDiffRoot, "Dirty.kt"), "utf8"), "package test\n// human edit\n");
     } finally {
         rmSync(tempDiffRoot, { recursive: true, force: true });
     }
@@ -1792,6 +1812,12 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         false,
     );
     assert.equal(
+        isDefinitiveCodeOrTestFailure(
+            "> Task :app:compileProductionDebugKotlin FAILED\nUnresolved reference: FooBar\n> Task :other:compile FAILED\nCaused by: java.net.UnknownHostException: msazure.pkgs.visualstudio.com",
+        ),
+        true,
+    );
+    assert.equal(
         isInfrastructureGateFailure(
             "FAILURE: Build failed with an exception. > A problem occurred starting process 'command 'git''",
         ),
@@ -1803,14 +1829,17 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     try {
         const pfDir = path.join(tempPrereqRoot, "authenticator", "PhoneFactor");
         const fakeJdk21 = path.join(tempPrereqRoot, "jdk-21");
+        const fakeJdk21Bin = path.join(fakeJdk21, "bin");
         const fakeSdk = path.join(tempPrereqRoot, "android-sdk");
         const xmlDir = path.join(pfDir, "app", "build", "test-results", "testProductionDebugUnitTest");
         mkdirSync(pfDir, { recursive: true });
-        mkdirSync(fakeJdk21, { recursive: true });
+        mkdirSync(fakeJdk21Bin, { recursive: true });
         mkdirSync(fakeSdk, { recursive: true });
         mkdirSync(xmlDir, { recursive: true });
         writeFileSync(path.join(pfDir, "gradlew.bat"), "@echo off\r\n", "utf8");
+        writeFileSync(path.join(pfDir, "local.properties"), "ndk.dir=/opt/android-ndk\nsdk.dir=/nonexistent/stale/sdk\n", "utf8");
         writeFileSync(path.join(fakeJdk21, "release"), 'JAVA_VERSION="21.0.4"\n', "utf8");
+        writeFileSync(path.join(fakeJdk21Bin, process.platform === "win32" ? "java.exe" : "java"), "", "utf8");
         writeFileSync(
             path.join(xmlDir, "TEST-EntraRestoreEntryPointCoordinatorTest.xml"),
             '<testsuite name="EntraRestoreEntryPointCoordinatorTest" tests="13" failures="0" errors="0"/>',
@@ -1825,7 +1854,7 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         assert.equal(receipt.testsRun, 13);
         assert.equal(receipt.testsFailed, 0);
 
-        const testEnv = { JAVA_HOME: fakeJdk21, ANDROID_HOME: "", ANDROID_SDK_ROOT: "" };
+        const testEnv = { JAVA_HOME: "", PATH: fakeJdk21Bin, ANDROID_HOME: "/nonexistent/android/home", ANDROID_SDK_ROOT: "" };
         let azLoggedIn = false;
         const prereqFail = verifyWorkflowPrerequisites({
             workspaceRoot: tempPrereqRoot,
@@ -1842,6 +1871,7 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
             },
         });
         assert.equal(prereqFail.ok, false);
+        assert.ok(!prereqFail.questions.some((q) => q.includes("JDK 21")));
         assert.ok(prereqFail.questions.some((q) => q.includes("Android SDK")));
         assert.ok(prereqFail.questions.some((q) => q.includes("az login")));
 
@@ -1853,6 +1883,8 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
             { workspaceRoot: tempPrereqRoot, targets: managerTask.targets, env: testEnv },
         );
         azLoggedIn = true;
+        const updatedLocalProps = readFileSync(path.join(pfDir, "local.properties"), "utf8");
+        assert.ok(updatedLocalProps.includes("ndk.dir=/opt/android-ndk"));
 
         const prereqPass = verifyWorkflowPrerequisites({
             workspaceRoot: tempPrereqRoot,
