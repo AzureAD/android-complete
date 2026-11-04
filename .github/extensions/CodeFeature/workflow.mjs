@@ -1285,7 +1285,9 @@ export function runTargetEnvironmentPreflight(workspaceRoot, target, env = proce
     const javaHome = resolveTargetJavaHome(target, env);
     const javaMajorVersion = nonempty(javaHome) ? readJavaMajorVersion(javaHome) : null;
     const localPropsPath = path.join(buildRoot, "local.properties");
-    let sdkConfigured = nonempty(env?.ANDROID_HOME || env?.ANDROID_SDK_ROOT || process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT);
+    const androidHomeVal = env?.ANDROID_HOME !== undefined ? env.ANDROID_HOME : process.env.ANDROID_HOME;
+    const androidSdkRootVal = env?.ANDROID_SDK_ROOT !== undefined ? env.ANDROID_SDK_ROOT : process.env.ANDROID_SDK_ROOT;
+    let sdkConfigured = nonempty(androidHomeVal) || nonempty(androidSdkRootVal);
     if (!sdkConfigured && existsSync(localPropsPath)) {
         try {
             sdkConfigured = /^\s*sdk\.dir\s*=\s*\S+/m.test(readFileSync(localPropsPath, "utf8"));
@@ -1330,7 +1332,7 @@ export function verifyWorkflowPrerequisites({
     for (const target of Array.isArray(targets) ? targets : []) {
         if (!record(target) || !nonempty(target.repository)) continue;
         const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
-        if (existsSync(repoRoot)) {
+        if (env === process.env && existsSync(repoRoot)) {
             try {
                 ensureAndroidLocalProperties(repoRoot);
             } catch {
