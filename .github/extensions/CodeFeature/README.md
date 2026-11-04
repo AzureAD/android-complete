@@ -36,6 +36,19 @@ Given an approved coding task or PBI specification:
 
 ## Input and use
 
+### Recovery safeguards
+
+- JDK discovery requires a supported major version in the installation's `release`
+  file and both `bin/java` and `bin/javac` (`.exe` on Windows). An explicitly configured
+  invalid `JAVA_HOME` requires correction rather than silently selecting another installation.
+- Concrete Detekt weighted-issue failures remain local validation failures, even if
+  the same command also reports an infrastructure error.
+- Slim review results retain the review summary and citations once in the result packet.
+- Pre-builder file backups skip directories, including dirty nested submodules.
+- Azure DevOps publication looks up an active PR matching both source and target
+  branches before creating one, and checks again after a failed creation response.
+  An absent matching PR leaves the publication error visible.
+
 `code-feature` supports **three everyday input modes** (plus pre-structured `task`/`stage0` objects):
 
 ### 1. Design Doc (`designDocPath`, `designDoc`, or `designPacket`)

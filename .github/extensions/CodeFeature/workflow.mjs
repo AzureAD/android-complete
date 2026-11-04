@@ -3,7 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPrObserver } from "./observer.mjs";
@@ -1057,7 +1057,7 @@ export function isLocalBuildEnvError(textValue) {
 
 export function isDefinitiveCodeOrTestFailure(textValue) {
     const msg = String(textValue || "");
-    return /Unresolved reference:|Type mismatch:|Conflicting overloads:|Overload resolution ambiguity|Suspend function .* should be called only from a coroutine|e:\s+file:\/\/\/.*\.(?:kt|java):\d+|\b[A-Za-z0-9_/-]+\.(?:kt|java):\d+:\s*error:|Compilation error|There were failing tests|Gradle test failed|FAILED\s*\r?\n\s*(?:org\.junit|java\.lang\.AssertionError|kotlin\.AssertionError)|weighted issues were found|MaxIssuesReached|Checkstyle rule violations|PMD rule violations|SpotBugs rule violations/i.test(
+    return /Unresolved reference:|Type mismatch:|Conflicting overloads:|Overload resolution ambiguity|Suspend function .* should be called only from a coroutine|e:\s+file:\/\/\/.*\.(?:kt|java):\d+|\b[A-Za-z0-9_/-]+\.(?:kt|java):\d+:\s*error:|Compilation error|There were failing tests|Gradle test failed|FAILED\s*\r?\n\s*(?:org\.junit|java\.lang\.AssertionError|kotlin\.AssertionError)|weighted issues were found|Analysis failed with\s+[1-9]\d*\s+weighted issues?\b|MaxIssuesReached|Checkstyle rule violations|PMD rule violations|SpotBugs rule violations/i.test(
         msg,
     );
 }
@@ -1235,21 +1235,27 @@ function readJavaMajorVersion(javaHomeDir) {
     }
 }
 
+function isSupportedJavaHome(target, javaHome) {
+    if (!nonempty(javaHome)) return false;
+    const supportedMajors = normalizeRepositoryKey(target?.repository) === "authenticator" ? [21] : [21, 17];
+    if (!supportedMajors.includes(readJavaMajorVersion(javaHome))) return false;
+    const extension = process.platform === "win32" ? ".exe" : "";
+    return ["java", "javac"].every((tool) => {
+        const executable = path.join(javaHome, "bin", `${tool}${extension}`);
+        return existsSync(executable) && statSync(executable).isFile();
+    });
+}
+
 export function resolveTargetJavaHome(target, env = process.env) {
     const repoKey = normalizeRepositoryKey(target?.repository);
     const preferredMajors = repoKey === "authenticator" ? [21] : [21, 17];
     const currentJavaHome = env?.JAVA_HOME !== undefined ? env.JAVA_HOME : (process.env.JAVA_HOME || "");
 
-    if (nonempty(currentJavaHome) && existsSync(currentJavaHome)) {
-        const detected = readJavaMajorVersion(currentJavaHome);
-        if (detected === null || preferredMajors.includes(detected)) {
-            return currentJavaHome;
-        }
+    if (nonempty(currentJavaHome)) {
+        return isSupportedJavaHome(target, currentJavaHome) ? currentJavaHome : "";
     }
 
-    const candidates = [
-        "C:\\Program Files\\Android\\Android Studio\\jbr",
-    ];
+    const candidates = [];
     const rawPathVal = env?.PATH ?? env?.Path ?? process.env.PATH ?? process.env.Path ?? "";
     if (nonempty(rawPathVal)) {
         const hasWinStyle = process.platform === "win32" || rawPathVal.includes(";");
@@ -1274,6 +1280,7 @@ export function resolveTargetJavaHome(target, env = process.env) {
             }
         }
     }
+    candidates.push("C:\\Program Files\\Android\\Android Studio\\jbr");
     if (process.platform === "win32") {
         const userProfile = env?.USERPROFILE || process.env.USERPROFILE || "";
         const localAppData = env?.LOCALAPPDATA || process.env.LOCALAPPDATA || "";
@@ -1303,23 +1310,14 @@ export function resolveTargetJavaHome(target, env = process.env) {
 
     for (const major of preferredMajors) {
         for (const candidate of candidates) {
-            if (!existsSync(candidate)) continue;
             const detected = readJavaMajorVersion(candidate);
-            if (detected === major || (detected === null && candidate.includes("Android Studio"))) {
+            if (detected === major && isSupportedJavaHome(target, candidate)) {
                 return candidate;
             }
         }
     }
 
-    for (const candidate of candidates) {
-        if (!existsSync(candidate)) continue;
-        const detected = readJavaMajorVersion(candidate);
-        if (detected === null) {
-            return candidate;
-        }
-    }
-
-    return nonempty(currentJavaHome) ? currentJavaHome : "";
+    return "";
 }
 
 function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd()) {
@@ -1424,11 +1422,7 @@ export function verifyWorkflowPrerequisites({
 
         const isAuthApp = normalizeRepositoryKey(target.repository) === "authenticator";
         const requiredJdkLabel = isAuthApp ? "JDK 21" : "JDK 17 or 21";
-        const jdkIncompatible =
-            !nonempty(preflight.javaHome) ||
-            !existsSync(preflight.javaHome) ||
-            (isAuthApp && preflight.javaMajorVersion !== null && preflight.javaMajorVersion < 21) ||
-            (!isAuthApp && preflight.javaMajorVersion !== null && preflight.javaMajorVersion < 17);
+        const jdkIncompatible = !isSupportedJavaHome(target, preflight.javaHome);
         if (jdkIncompatible) {
             issues.push(
                 `Prerequisite failed for '${target.repository}': ${requiredJdkLabel} is required (current JAVA_HOME: ${preflight.javaHome || "unset"}, detected major: ${preflight.javaMajorVersion ?? "unknown"}).`,
@@ -2874,6 +2868,8 @@ export function normalizeReviewResponse(rawReview, task) {
     }));
 
     return {
+        summary: rawReview.summary || "",
+        evidence: Array.isArray(rawReview.evidence) ? rawReview.evidence.filter(nonempty) : [],
         criteria,
         acceptanceCriteria,
         findings,
@@ -3115,7 +3111,8 @@ export function capturePreBuilderBaselineBackups(repoRoot, backups, { exec = def
             const relPath = (rawPath.includes(" -> ") ? rawPath.split(" -> ").pop().trim() : rawPath).replace(/\\/g, "/");
             if (!isSafeRelativeFilePath(relPath) || backups.has(relPath)) continue;
             const fullPath = path.resolve(repoRoot, relPath);
-            const existed = existsSync(fullPath) && lstatSync(fullPath).isFile();
+            const existed = existsSync(fullPath);
+            if (existed && !lstatSync(fullPath).isFile()) continue;
             backups.set(relPath, {
                 exists: existed,
                 content: existed ? readFileSync(fullPath) : null,
@@ -3327,6 +3324,36 @@ export function buildBranchName(target, branchPrefix = "") {
     return `${prefix}/${abSegment}${slug || "change"}`;
 }
 
+export function buildAdoPullRequestPublicationScript(apiBase, payload) {
+    const input = Buffer.from(JSON.stringify({ apiBase, payload }), "utf8").toString("base64");
+    return [
+        "$ErrorActionPreference = 'Stop'",
+        `$inputData = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${input}')) | ConvertFrom-Json`,
+        "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+        "if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$token)) { throw 'Azure DevOps authentication failed.' }",
+        '$headers = @{ Authorization = "Bearer $token"; \'Content-Type\' = \'application/json\' }',
+        "$lookupUri = $inputData.apiBase + '?searchCriteria.status=active&searchCriteria.sourceRefName=' + [uri]::EscapeDataString($inputData.payload.sourceRefName) + '&searchCriteria.targetRefName=' + [uri]::EscapeDataString($inputData.payload.targetRefName) + '&api-version=7.0'",
+        "function FindExistingPullRequest {",
+        "  $matches = @((Invoke-RestMethod -Uri $lookupUri -Headers $headers -Method Get).value | Where-Object { $_.status -eq 'active' -and $_.sourceRefName -ceq $inputData.payload.sourceRefName -and $_.targetRefName -ceq $inputData.payload.targetRefName })",
+        "  if ($matches.Count -gt 1) { throw 'Multiple active pull requests match the source and target branches.' }",
+        "  if ($matches.Count -eq 1) { return $matches[0] }",
+        "}",
+        "$pr = FindExistingPullRequest",
+        "if (-not $pr) {",
+        "  $bytes = [System.Text.Encoding]::UTF8.GetBytes(($inputData.payload | ConvertTo-Json -Depth 8 -Compress))",
+        "  try {",
+        "    $pr = Invoke-RestMethod -Uri ($inputData.apiBase + '?api-version=7.0') -Headers $headers -Method Post -Body $bytes",
+        "  } catch {",
+        "    $creationError = $_",
+        "    $pr = FindExistingPullRequest",
+        "    if (-not $pr) { throw $creationError }",
+        "  }",
+        "}",
+        "if (-not $pr.pullRequestId) { throw 'Azure DevOps publication returned no pull request ID.' }",
+        "Write-Output $pr.pullRequestId",
+    ].join("\n");
+}
+
 export function publishTargetPullRequest({
     target,
     targetImpl,
@@ -3493,26 +3520,16 @@ export function publishTargetPullRequest({
         const prTypeTag = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "bug" : "Feature";
         let prId = "";
         if (exec === defaultExec) {
-            const createPayloadB64 = Buffer.from(
-                JSON.stringify({
-                    sourceRefName: `refs/heads/${branch}`,
-                    targetRefName: `refs/heads/${target.baseBranch}`,
-                    title,
-                    description: body,
-                    isDraft: Boolean(draftPullRequest),
-                    labels: [{ name: "agentic-cli" }, { name: prTypeTag }],
-                }),
-                "utf8",
-            ).toString("base64");
+            const createPayload = {
+                sourceRefName: `refs/heads/${branch}`,
+                targetRefName: `refs/heads/${target.baseBranch}`,
+                title,
+                description: body,
+                isDraft: Boolean(draftPullRequest),
+                labels: [{ name: "agentic-cli" }, { name: prTypeTag }],
+            };
             const apiBase = `${orgUrl}/${encodeURIComponent(adoProject)}/_apis/git/repositories/${encodeURIComponent(adoRepo)}/pullRequests`;
-            const psCreate = [
-                "$ErrorActionPreference = 'Stop'",
-                "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
-                "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
-                `$bytes = [System.Convert]::FromBase64String('${createPayloadB64}')`,
-                `$pr = Invoke-RestMethod -Uri '${apiBase.replace(/'/g, "''")}?api-version=7.0' -Headers $headers -Method Post -Body $bytes`,
-                "[Console]::Out.Write($pr.pullRequestId)",
-            ].join("; ");
+            const psCreate = buildAdoPullRequestPublicationScript(apiBase, createPayload);
             const rawCreate = exec("powershell", ["-NoProfile", "-Command", psCreate], { cwd: repoRoot });
             prId = extractAdoPullRequestId(rawCreate);
         } else {

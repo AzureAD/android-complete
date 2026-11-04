@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -33,6 +34,7 @@ import {
     REVIEWER_AGENT,
     applyPrerequisiteAnswers,
     applyTargetFiles,
+    buildAdoPullRequestPublicationScript,
     buildInspectedFilesContext,
     buildNormalizedProcessEnv,
     capturePreBuilderBaselineBackups,
@@ -58,6 +60,7 @@ import {
     renderUnifiedDiff,
     resolveInputSources,
     resolveRoleSkillGuides,
+    resolveTargetJavaHome,
     resolveWindowsCmdExecutable,
     restoreTargetFiles,
     revertUnauthorizedProtectedFiles,
@@ -1840,6 +1843,7 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         writeFileSync(path.join(pfDir, "local.properties"), "ndk.dir=/opt/android-ndk\nsdk.dir=/nonexistent/stale/sdk\n", "utf8");
         writeFileSync(path.join(fakeJdk21, "release"), 'JAVA_VERSION="21.0.4"\n', "utf8");
         writeFileSync(path.join(fakeJdk21Bin, process.platform === "win32" ? "java.exe" : "java"), "", "utf8");
+        writeFileSync(path.join(fakeJdk21Bin, process.platform === "win32" ? "javac.exe" : "javac"), "", "utf8");
         writeFileSync(
             path.join(xmlDir, "TEST-EntraRestoreEntryPointCoordinatorTest.xml"),
             '<testsuite name="EntraRestoreEntryPointCoordinatorTest" tests="13" failures="0" errors="0"/>',
@@ -1941,4 +1945,159 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     } finally {
         rmSync(tempPrereqRoot, { recursive: true, force: true });
     }
+});
+
+test("Detekt weighted-issues summaries remain blocking, including mixed infrastructure failures", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-detekt-"));
+    try {
+        for (const diagnostic of [
+            "Analysis failed with 1 weighted issues.",
+            "Analysis failed with 12 weighted issues.\nCaused by: java.net.UnknownHostException: feed.invalid",
+        ]) {
+            const gate = runLocalVerificationGate({
+                repoRoot: root,
+                target: { id: "common", verificationCommands: ["./gradlew :common4j:detekt"] },
+                exec: () => { throw new Error(diagnostic); },
+            });
+            assert.equal(gate.errors.length, 1);
+            assert.equal(gate.outcomes.failed.length, 1);
+            assert.deepEqual(gate.deferredNotes, []);
+        }
+        assert.equal(isDefinitiveCodeOrTestFailure("Analysis completed with 0 weighted issues."), false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("JDK prerequisites reject invalid explicit homes and accept supported PATH installations", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-jdk-"));
+    try {
+        const home = path.join(root, "jdk");
+        const bin = path.join(home, "bin");
+        mkdirSync(bin, { recursive: true });
+        const target = { id: "auth", repository: "authenticator", localPath: "." };
+        const env = { JAVA_HOME: home, PATH: "", ANDROID_HOME: "", ANDROID_SDK_ROOT: "" };
+        const check = () => verifyWorkflowPrerequisites({
+            workspaceRoot: root, targets: [target], env,
+            exec: () => "fixture-result",
+        });
+        assert.equal(resolveTargetJavaHome(target, env), "");
+        assert.ok(check().questions.some((q) => q.includes("requires JDK 21")));
+        writeFileSync(path.join(home, "release"), 'JAVA_VERSION="21.0.4"\n');
+        assert.equal(resolveTargetJavaHome(target, env), "");
+        for (const tool of ["java", "javac"]) {
+            writeFileSync(path.join(bin, process.platform === "win32" ? `${tool}.exe` : tool), "");
+        }
+        assert.equal(resolveTargetJavaHome(target, env), home);
+        assert.ok(!check().questions.some((q) => q.includes("requires JDK 21")));
+        assert.equal(resolveTargetJavaHome(target, { ...env, JAVA_HOME: "", PATH: bin }), home);
+        for (const version of ["17.0.1", "25.0.1", "invalid"]) {
+            writeFileSync(path.join(home, "release"), `JAVA_VERSION="${version}"\n`);
+            assert.equal(resolveTargetJavaHome(target, env), "");
+            assert.ok(check().questions.some((q) => q.includes("requires JDK 21")));
+        }
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("slim normalized reviews retain successful citations once in the final review packet", () => {
+    const citations = ["Foo.kt:L10-L20 verified the null guard", "FooTest.kt:L25-L40 covers missing input"];
+    const normalized = normalizeReviewResponse({
+        verdict: "pass", summary: "Reviewed the null-input fix.", evidence: citations, findings: [],
+    }, task());
+    assert.equal(normalized.summary, "Reviewed the null-input fix.");
+    assert.deepEqual(normalized.evidence, citations);
+    assert.ok(validateReview(normalized, task()));
+    for (const citation of citations) {
+        assert.equal(JSON.stringify(normalized).split(citation).length - 1, 1);
+    }
+});
+
+test("baseline rollback skips nested submodule directories and restores remaining dirty files", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-submodule-"));
+    try {
+        mkdirSync(path.join(root, ".git"));
+        mkdirSync(path.join(root, "common"));
+        writeFileSync(path.join(root, "common", "keep.txt"), "nested work");
+        writeFileSync(path.join(root, "Foo.kt"), "human edit");
+        const backups = new Map();
+        capturePreBuilderBaselineBackups(root, backups, {
+            exec: () => " M common\n M Foo.kt\n D Deleted.kt",
+        });
+        assert.equal(backups.has("common"), false);
+        assert.equal(backups.has("Foo.kt"), true);
+        assert.equal(backups.get("Deleted.kt").exists, false);
+        writeFileSync(path.join(root, "Foo.kt"), "builder edit");
+        writeFileSync(path.join(root, "Deleted.kt"), "builder recreated");
+        restoreTargetFiles(root, backups);
+        assert.equal(readFileSync(path.join(root, "Foo.kt"), "utf8"), "human edit");
+        assert.equal(readFileSync(path.join(root, "common", "keep.txt"), "utf8"), "nested work");
+        assert.equal(existsSync(path.join(root, "Deleted.kt")), false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("ADO publication script reuses an exact active PR on retry and recovers a lost create response", {
+    skip: process.platform !== "win32" && "Windows PowerShell production-runner fixture",
+}, () => {
+    const payload = {
+        sourceRefName: "refs/heads/users/test/feature",
+        targetRefName: "refs/heads/working",
+        title: "Fixture PR",
+        description: "Fixture only",
+        isDraft: true,
+        labels: [],
+    };
+    const script = buildAdoPullRequestPublicationScript("https://ado.invalid/project/_apis/git/repositories/repo/pullRequests", payload);
+    for (const loseResponse of [false, true]) {
+        const fixture = `
+function az { $global:LASTEXITCODE = 0; 'fixture-token' }
+$script:posts = 0
+$script:gets = 0
+$script:created = $null
+function Invoke-RestMethod {
+    param($Uri, $Headers, $Method, $Body)
+    if ($Method -eq 'Get') {
+        $script:gets++
+        if ($Uri -notmatch 'searchCriteria.sourceRefName=refs%2Fheads%2Fusers%2Ftest%2Ffeature' -or $Uri -notmatch 'searchCriteria.targetRefName=refs%2Fheads%2Fworking') { throw 'Missing exact branch filters' }
+        $others = @(
+            [pscustomobject]@{ pullRequestId=7; status='abandoned'; sourceRefName='refs/heads/users/test/feature'; targetRefName='refs/heads/working' },
+            [pscustomobject]@{ pullRequestId=8; status='active'; sourceRefName='refs/heads/users/test/feature'; targetRefName='refs/heads/other' }
+        )
+        if ($script:created) { $others += $script:created }
+        return @{ value=$others }
+    }
+    if ($Method -ne 'Post') { throw 'Unexpected mutation' }
+    $script:posts++
+    $script:created = [System.Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json
+    $script:created | Add-Member -NotePropertyName pullRequestId -NotePropertyValue 123
+    $script:created | Add-Member -NotePropertyName status -NotePropertyValue active
+    ${loseResponse ? "throw 'Lost POST response'" : "return $script:created"}
+}
+$first = & { ${script} }
+$second = & { ${script} }
+@{ first=$first; second=$second; posts=$script:posts; gets=$script:gets } | ConvertTo-Json -Compress
+`;
+        const result = JSON.parse(execFileSync("powershell", [
+            "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(fixture, "utf16le").toString("base64"),
+        ], { encoding: "utf8", timeout: 30_000 }));
+        assert.equal(result.first, 123);
+        assert.equal(result.second, 123);
+        assert.equal(result.posts, 1);
+        assert.equal(result.gets, loseResponse ? 3 : 2);
+    }
+    const failureFixture = `
+function az { $global:LASTEXITCODE = 0; 'fixture-token' }
+function Invoke-RestMethod {
+    param($Uri, $Headers, $Method, $Body)
+    if ($Method -eq 'Get') { return @{ value=@() } }
+    throw 'Creation failed without a matching PR'
+}
+${script}
+`;
+    assert.throws(() => execFileSync("powershell", [
+        "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(failureFixture, "utf16le").toString("base64"),
+    ], { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] }), /Creation failed/);
 });
