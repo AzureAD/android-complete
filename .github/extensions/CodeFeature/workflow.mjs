@@ -279,9 +279,9 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
   * AADAuthenticator: broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
   * nested common in broker: broker/common/common4j/src/main/com/... and broker/common/common/src/main/java/...
   * authenticator: authenticator/PhoneFactor/... (Gradle working directory is authenticator/PhoneFactor)
-- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2 -Dkotlin.compiler.execution.strategy=in-process (so KotlinCompileDaemon never holds Windows stdout/stderr pipes open after BUILD SUCCESSFUL), and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
-  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon -Dkotlin.compiler.execution.strategy=in-process
-- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Dkotlin.compiler.execution.strategy=in-process) so Gradle only runs once per round.
+- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process (so KotlinCompileDaemon never holds Windows stdout/stderr pipes open after BUILD SUCCESSFUL), and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
+  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon -Pkotlin.compiler.execution.strategy=in-process
+- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Pkotlin.compiler.execution.strategy=in-process) so Gradle only runs once per round.
 - Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately stop that shell with stop_powershell, do NOT retry locally, record in testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds to independent code review, PR creation, and remote CI pipeline verification.
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
@@ -1055,8 +1055,16 @@ export function isLocalBuildEnvError(textValue) {
 }
 
 export function isDefinitiveCodeOrTestFailure(textValue) {
-    return /compile\w*(?:Kotlin|Java)\s+FAILED|Unresolved reference:|Type mismatch:|Conflicting overloads:|e:\s+file:\/\/\/.*\.(?:kt|java):\d+|\.java:\d+:\s+error:|Compilation error|There were failing tests|Gradle test failed|> Task :[\w:-]+test[\w:-]* FAILED|detekt\w*\s+FAILED|weighted issues were found|checkstyle\w*\s+FAILED|Checkstyle rule violations/i.test(
-        String(textValue || ""),
+    const msg = String(textValue || "");
+    if (
+        /UnknownHostException|Connection reset by peer|ETIMEDOUT|ECONNRESET|502 Bad Gateway|503 Service Unavailable|Could not GET 'https?:\/\/|Could not resolve all (?:files|artifacts|dependencies)|A problem occurred (?:starting process|evaluating settings|configuring project)|DaemonDisappearedException|daemon has disappeared|LockOwner|Timeout waiting to lock|ENOSPC|OutOfMemoryError|spawnSync\s+\S+\s+(?:ENOENT|EINVAL|ETIMEDOUT)/i.test(
+            msg,
+        )
+    ) {
+        return false;
+    }
+    return /Unresolved reference:|Type mismatch:|Conflicting overloads:|Overload resolution ambiguity|Suspend function .* should be called only from a coroutine|e:\s+file:\/\/\/.*\.(?:kt|java):\d+|\b[A-Za-z0-9_/-]+\.(?:kt|java):\d+:\s*error:|Compilation error|There were failing tests|Gradle test failed|FAILED\s*\r?\n\s*(?:org\.junit|java\.lang\.AssertionError|kotlin\.AssertionError)|weighted issues were found|MaxIssuesReached|Checkstyle rule violations|PMD rule violations|SpotBugs rule violations/i.test(
+        msg,
     );
 }
 
@@ -1105,13 +1113,17 @@ export function buildNormalizedProcessEnv(
     const source = record(baseEnv) ? baseEnv : {};
     const extra = record(overrides) ? overrides : {};
     const isWin = process.platform === "win32";
-    const stripSet = new Set(stripKeys.map((k) => (isWin ? String(k).toUpperCase() : String(k))));
+    const hasWinStyleInput =
+        isWin ||
+        Object.keys(source).some((k) => k === "Path" || k === "SystemRoot" || k === "SYSTEMROOT") ||
+        Object.keys(extra).some((k) => k === "Path" || k === "SystemRoot" || k === "SYSTEMROOT");
+    const sep = hasWinStyleInput ? ";" : path.delimiter;
+    const stripSet = new Set(stripKeys.map((k) => String(k).toUpperCase()));
 
     const out = {};
     const pathSegments = [];
     const addPathParts = (rawVal) => {
         if (!nonempty(rawVal)) return;
-        const sep = isWin ? ";" : path.delimiter;
         for (const part of String(rawVal).split(sep)) {
             const trimmed = part.trim();
             if (nonempty(trimmed)) pathSegments.push(trimmed);
@@ -1119,7 +1131,7 @@ export function buildNormalizedProcessEnv(
     };
 
     for (const [key, val] of Object.entries(source)) {
-        const normKey = isWin ? key.toUpperCase() : key;
+        const normKey = key.toUpperCase();
         if (stripSet.has(normKey)) continue;
         if (normKey === "PATH") {
             addPathParts(val);
@@ -1132,11 +1144,10 @@ export function buildNormalizedProcessEnv(
 
     const overridePathSegments = [];
     for (const [key, val] of Object.entries(extra)) {
-        const normKey = isWin ? key.toUpperCase() : key;
+        const normKey = key.toUpperCase();
         if (stripSet.has(normKey)) continue;
         if (normKey === "PATH") {
             if (val === undefined || val === null) continue;
-            const sep = isWin ? ";" : path.delimiter;
             for (const part of String(val).split(sep)) {
                 const trimmed = part.trim();
                 if (nonempty(trimmed)) overridePathSegments.push(trimmed);
@@ -1145,13 +1156,13 @@ export function buildNormalizedProcessEnv(
         }
         if (val === undefined) {
             for (const existingKey of Object.keys(out)) {
-                if ((isWin ? existingKey.toUpperCase() : existingKey) === normKey) {
+                if (existingKey.toUpperCase() === normKey) {
                     delete out[existingKey];
                 }
             }
         } else {
             for (const existingKey of Object.keys(out)) {
-                if (existingKey !== key && (isWin ? existingKey.toUpperCase() : existingKey) === normKey) {
+                if (existingKey !== key && existingKey.toUpperCase() === normKey) {
                     delete out[existingKey];
                 }
             }
@@ -1164,7 +1175,7 @@ export function buildNormalizedProcessEnv(
     const pushUniqueDir = (dir) => {
         if (!nonempty(dir)) return;
         const cleaned = String(dir).trim();
-        const key = isWin ? cleaned.replace(/\//g, "\\").toLowerCase() : cleaned;
+        const key = hasWinStyleInput ? cleaned.replace(/\//g, "\\").toLowerCase() : cleaned;
         if (seenPath.has(key)) return;
         seenPath.add(key);
         finalPathList.push(cleaned);
@@ -1199,8 +1210,8 @@ export function buildNormalizedProcessEnv(
         }
     }
 
-    const sep = isWin ? ";" : path.delimiter;
     out.PATH = finalPathList.join(sep);
+    Object.defineProperty(out, "__completeEnv", { value: true, enumerable: false });
     return out;
 }
 
@@ -1431,12 +1442,22 @@ export function verifyWorkflowPrerequisites({
 
         if (createPullRequests && !isAdoRepo && nonempty(target.hostname)) {
             const account = resolveGitHubAccount(target, workspaceRoot, exec);
-            if (!nonempty(account)) {
+            let ghAuthenticated = false;
+            try {
+                const ghArgs = nonempty(account)
+                    ? ["auth", "token", "--hostname", target.hostname, "--user", account]
+                    : ["auth", "token", "--hostname", target.hostname];
+                const ghToken = exec("gh", ghArgs, { cwd: workspaceRoot, env: normalizedEnv });
+                ghAuthenticated = nonempty(ghToken);
+            } catch {
+                ghAuthenticated = false;
+            }
+            if (!ghAuthenticated) {
                 issues.push(
-                    `Prerequisite failed for '${target.repository}': GitHub CLI is not authenticated for ${target.hostname}.`,
+                    `Prerequisite failed for '${target.repository}': GitHub CLI is not authenticated for ${target.hostname}${nonempty(account) ? ` (account: ${account})` : ""}.`,
                 );
                 questions.push(
-                    `GitHub CLI authentication for ${target.hostname} (${target.slug}) is missing or expired. Please run 'gh auth login --hostname ${target.hostname}' in a terminal, then reply 'ready' to continue.`,
+                    `GitHub CLI authentication for ${target.hostname} (${target.slug}${nonempty(account) ? `, account ${account}` : ""}) is missing or expired. Please run 'gh auth login --hostname ${target.hostname}' in a terminal, then reply 'ready' to continue.`,
                 );
             }
         }
@@ -1632,34 +1653,8 @@ export function runLocalVerificationGate({
             ranCommands.push(parsed.command);
             outcomes.passed.push({ command: parsed.command, durationMs: Date.now() - cmdStartMs });
         } catch (error) {
-            let msg = error instanceof Error ? error.message : String(error);
-            if (
-                /Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible/i.test(msg) &&
-                existsSync(defaultStudioJbr) &&
-                env.JAVA_HOME !== defaultStudioJbr
-            ) {
-                const retryEnv = buildNormalizedProcessEnv(
-                    env,
-                    { JAVA_HOME: defaultStudioJbr },
-                    {
-                        stripKeys: CREDENTIAL_ENV_KEYS_TO_STRIP,
-                        prependPathDirs: [path.join(defaultStudioJbr, "bin")],
-                    },
-                );
-                try {
-                    exec(parsed.executable, parsed.args, {
-                        cwd: execCwd,
-                        env: retryEnv,
-                        timeout: DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS,
-                    });
-                    ranCommands.push(parsed.command);
-                    outcomes.passed.push({ command: parsed.command, durationMs: Date.now() - cmdStartMs });
-                    continue;
-                } catch (retryError) {
-                    msg = retryError instanceof Error ? retryError.message : String(retryError);
-                }
-            }
-            if (!isDefinitiveCodeOrTestFailure(msg) && (isLocalBuildEnvError(msg) || isInfrastructureGateFailure(msg))) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (!isDefinitiveCodeOrTestFailure(msg)) {
                 const deferNote = `Local command short-circuited to CI (${parsed.command}): ${msg}`;
                 deferredNotes.push(deferNote);
                 outcomes.deferred.push({ command: parsed.command, reason: msg });
@@ -3130,7 +3125,9 @@ export function runWindowsBatchFileSafely(batPath, args = [], options = {}) {
     }
     const quoteCmdToken = (value) => `"${String(value).replace(/"/g, '""')}"`;
     const cmdLine = `"${[quoteCmdToken(resolvedBat), ...safeArgs.map(quoteCmdToken)].join(" ")}"`;
-    const execEnv = options.env ? buildNormalizedProcessEnv(options.env) : buildNormalizedProcessEnv(process.env);
+    const execEnv = options.env
+        ? (options.env.__completeEnv ? options.env : buildNormalizedProcessEnv(process.env, options.env))
+        : buildNormalizedProcessEnv(process.env);
     return execFileSync(resolveWindowsCmdExecutable(execEnv), ["/d", "/s", "/v:off", "/c", cmdLine], {
         cwd: options.cwd,
         env: execEnv,
@@ -3142,7 +3139,9 @@ export function runWindowsBatchFileSafely(batPath, args = [], options = {}) {
 }
 
 function defaultExec(command, args, options = {}) {
-    const execEnv = options.env ? buildNormalizedProcessEnv(options.env) : buildNormalizedProcessEnv(process.env);
+    const execEnv = options.env
+        ? (options.env.__completeEnv ? options.env : buildNormalizedProcessEnv(process.env, options.env))
+        : buildNormalizedProcessEnv(process.env);
     if (process.platform === "win32" && command === "az") {
         const quoted = (args || []).map((a) => `'${String(a).replace(/'/g, "''")}'`).join(" ");
         return execFileSync("powershell", ["-NoProfile", "-Command", `& az ${quoted}`], {
@@ -3169,7 +3168,7 @@ function defaultExec(command, args, options = {}) {
             normalizedArgs.push("--max-workers=2");
         }
         if (!normalizedArgs.some((a) => /kotlin\.compiler\.execution\.strategy/i.test(String(a)))) {
-            normalizedArgs.push("-Dkotlin.compiler.execution.strategy=in-process");
+            normalizedArgs.push("-Pkotlin.compiler.execution.strategy=in-process");
         }
         return runWindowsBatchFileSafely(resolvedBat, normalizedArgs, {
             ...options,
@@ -3299,21 +3298,46 @@ export function publishTargetPullRequest({
         }
     }
     const gitEnv = nonempty(token)
-        ? { GH_TOKEN: token, GITHUB_TOKEN: token, GIT_CONFIG_PARAMETERS: "", GIT_CONFIG_COUNT: "" }
+        ? buildNormalizedProcessEnv(process.env, {
+            GH_TOKEN: token,
+            GITHUB_TOKEN: token,
+            GIT_CONFIG_PARAMETERS: "",
+            GIT_CONFIG_COUNT: "",
+        })
         : undefined;
 
+    const runSuffix = String(runId || randomUUID()).replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase() || "r2";
+    const suffixedBranch = `${branch}-${runSuffix}`;
     if (exec === defaultExec) {
+        let currentBranch = "";
+        let localHeadSha = "";
         try {
-            const remoteHead = exec("git", ["ls-remote", "--heads", "origin", `refs/heads/${branch}`], {
-                cwd: repoRoot,
-                env: gitEnv,
-            });
-            if (nonempty(remoteHead)) {
-                const runSuffix = String(runId || randomUUID()).replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase() || "r2";
-                branch = `${branch}-${runSuffix}`;
-            }
+            currentBranch = exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoRoot, env: gitEnv });
         } catch {
-            // Best-effort remote branch collision check.
+            currentBranch = "";
+        }
+        try {
+            localHeadSha = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
+        } catch {
+            localHeadSha = "";
+        }
+        if (currentBranch === branch || currentBranch === suffixedBranch) {
+            branch = currentBranch;
+        } else {
+            try {
+                const remoteHead = exec("git", ["ls-remote", "--heads", "origin", `refs/heads/${branch}`], {
+                    cwd: repoRoot,
+                    env: gitEnv,
+                });
+                if (nonempty(remoteHead)) {
+                    const remoteSha = remoteHead.trim().split(/\s+/)[0] || "";
+                    if (!nonempty(localHeadSha) || remoteSha !== localHeadSha) {
+                        branch = suffixedBranch;
+                    }
+                }
+            } catch {
+                // Best-effort remote branch collision check.
+            }
         }
     }
 
@@ -3689,13 +3713,55 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const exec = dependencies.exec || defaultExec;
 
     const manageWorkspace = applyToWorkspace || Boolean(ctx?.session) || nonempty(rawOptions.workspaceRoot);
-    const resolvedArgs = resolveInputSources(ctx.args, {
+    const pauseOnBlocker = rawOptions.pauseOnBlocker !== undefined
+        ? rawOptions.pauseOnBlocker === true && typeof ctx?.pause === "function"
+        : typeof ctx?.pause === "function";
+    let resolvedArgs = resolveInputSources(ctx.args, {
         workspaceRoot,
         exec,
         fetchWorkItem: dependencies.fetchWorkItem,
         fetchDesignDoc: dependencies.fetchDesignDoc,
         linkSubrepos: manageWorkspace,
     });
+    if (
+        nonempty(resolvedArgs?.resolutionError) &&
+        (rawOptions.verifyPrerequisites === true ||
+            (Boolean(ctx?.session) && exec === defaultExec && rawOptions.verifyPrerequisites !== false))
+    ) {
+        const authRecoveryPrefix = `code-feature-v1-auth-${createHash("sha256").update(JSON.stringify(ctx.args)).digest("hex").slice(0, 16)}`;
+        const adoProbeTarget = {
+            id: "ado-input-resolution",
+            repository: "authenticator",
+            localPath: "authenticator",
+            hostname: "msazure.visualstudio.com",
+            slug: "One/_git/AD-MFA-phonefactor-phoneApp-android",
+            baseBranch: "working",
+        };
+        const authPrereq = verifyWorkflowPrerequisites({
+            workspaceRoot,
+            targets: [adoProbeTarget],
+            createPullRequests: true,
+            exec,
+        });
+        const authQuestions = authPrereq.questions.filter((q) => /az login|git/i.test(q));
+        if (authQuestions.length > 0) {
+            const authAnswers = await ctx.step(
+                `${authRecoveryPrefix}-input-auth-help`,
+                () => askUserForClarifications(authQuestions.slice(0, 2), ctx, dependencies.askUser),
+                { volatile: true },
+            );
+            if (Array.isArray(authAnswers) && authAnswers.length > 0) {
+                applyPrerequisiteAnswers(authAnswers, { workspaceRoot, targets: [adoProbeTarget] });
+                resolvedArgs = resolveInputSources(ctx.args, {
+                    workspaceRoot,
+                    exec,
+                    fetchWorkItem: dependencies.fetchWorkItem,
+                    fetchDesignDoc: dependencies.fetchDesignDoc,
+                    linkSubrepos: manageWorkspace,
+                });
+            }
+        }
+    }
     const initialErrors = validateTask(resolvedArgs, { allowDeferredTargets: true });
     const history = [];
     let evidence = null;
@@ -3771,9 +3837,6 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         }
     }
 
-    const pauseOnBlocker = rawOptions.pauseOnBlocker !== undefined
-        ? rawOptions.pauseOnBlocker === true && typeof ctx?.pause === "function"
-        : typeof ctx?.pause === "function";
     const shouldVerifyPrerequisites =
         rawOptions.verifyPrerequisites === true ||
         (Boolean(ctx?.session) && exec === defaultExec && rawOptions.verifyPrerequisites !== false && task.targets.length > 0);
@@ -4141,8 +4204,8 @@ DATA.inspectedFiles already pre-loads the exact repo-relative file paths and num
 DATA.executionEnvironments provides the pre-validated buildRoot and JAVA_HOME (${primaryJavaHome}) for this host—use that exact JAVA_HOME and buildRoot when running .\\gradlew.bat in PowerShell so your shell environment matches the workflow verification gate.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
-Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Dkotlin.compiler.execution.strategy=in-process); connected emulator tests run in CI.
-Always pass -Dkotlin.compiler.execution.strategy=in-process alongside --no-daemon --max-workers=2 when running .\\gradlew.bat on Windows so KotlinCompileDaemon never holds stdout/stderr pipes open after BUILD SUCCESSFUL.
+Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Pkotlin.compiler.execution.strategy=in-process); connected emulator tests run in CI.
+Always pass -Pkotlin.compiler.execution.strategy=in-process alongside --no-daemon --max-workers=2 when running .\\gradlew.bat on Windows so KotlinCompileDaemon never holds stdout/stderr pipes open after BUILD SUCCESSFUL.
 Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle build/test command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately call stop_powershell on that shellId, do NOT retry locally, record in pr.testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds immediately to independent code review, PR creation, and remote CI pipeline verification.
 If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="${primaryJavaHome}" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
 Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
@@ -4343,7 +4406,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                     round === maxFixes &&
                     (effectiveCreatePrs || rawOptions.failForwardToCi === true) &&
                     rawOptions.failForwardToCi !== false &&
-                    validationErrors.every((e) => /workspace verification failed \(/i.test(e))
+                    validationErrors.every((e) => /workspace verification failed \(/i.test(e) && !isDefinitiveCodeOrTestFailure(e))
                 ) {
                     log("Local Gradle verification did not complete after bounded attempts; failing forward to independent code review and remote CI pipeline verification.");
                     implementation.assumptions = [
@@ -4450,45 +4513,25 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                 if (criteriaPassed && acceptancePassed && review.findings.length === 0) {
                     backupsByTarget.clear();
                     phase("Prepare and create pull requests");
-                    try {
-                        pullRequests = await step("pull-requests", async () => {
-                            const created = [];
-                            for (const target of task.targets) {
-                                const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
-                                created.push(publishTargetPullRequest({
-                                    target,
-                                    targetImpl,
-                                    traceability: implementation.traceability,
-                                    reviewRoundCount: history.length,
-                                    parentWorkItemId: task.workItemId,
-                                    workspaceRoot,
-                                    createPullRequests: effectiveCreatePrs,
-                                    draftPullRequest,
-                                    runId: ctx?.runId || "local",
-                                    exec,
-                                }));
-                            }
-                            return created;
-                        });
-                    } catch (publishError) {
-                        const pubMsg = publishError instanceof Error ? publishError.message : String(publishError);
-                        log(`PR publication encountered an error after review passed (preserving reviewed worktree): ${pubMsg}`);
-                        pullRequests = task.targets.map((target) => ({
-                            targetId: target.id,
-                            repository: target.repository,
-                            hostname: target.hostname,
-                            slug: target.slug,
-                            baseBranch: target.baseBranch,
-                            branch: buildBranchName(target, target.account || ""),
-                            workItemId: Number(target.workItemId),
-                            title: formatPrTitle(target.title, target.workItemId),
-                            body: "",
-                            status: "publish_retry_needed",
-                            url: null,
-                            headSha: null,
-                            error: pubMsg,
-                        }));
-                    }
+                    pullRequests = await step("pull-requests", async () => {
+                        const created = [];
+                        for (const target of task.targets) {
+                            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+                            created.push(publishTargetPullRequest({
+                                target,
+                                targetImpl,
+                                traceability: implementation.traceability,
+                                reviewRoundCount: history.length,
+                                parentWorkItemId: task.workItemId,
+                                workspaceRoot,
+                                createPullRequests: effectiveCreatePrs,
+                                draftPullRequest,
+                                runId: ctx?.runId || "local",
+                                exec,
+                            }));
+                        }
+                        return created;
+                    });
                     const shouldObservePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
                         ? true
                         : rawOptions.observePullRequests !== undefined
@@ -4521,6 +4564,13 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                     prEntry.currentStatus = obsResult.status;
                                 }
                             } catch (obsError) {
+                                if (
+                                    ctx?.signal?.aborted ||
+                                    ["AbortError", "ConnectionError", "ResponseError"].includes(obsError?.name) ||
+                                    /workflow_limit_reached/.test(`${obsError?.code || ""} ${obsError?.message || ""}`)
+                                ) {
+                                    throw obsError;
+                                }
                                 const obsMsg = obsError instanceof Error ? obsError.message : String(obsError);
                                 log(`PR observer encountered a non-fatal error on ${prEntry.url}: ${obsMsg}`);
                                 observations.push({

@@ -1778,13 +1778,19 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
 
     // 12. Stage 0 prerequisite check + interactive human recovery + XML build receipts + in-process Kotlin flag
     const inProcessCmd = parseAllowedGradleVerificationCommand(
-        ".\\gradlew.bat :app:compileProductionDebugKotlin -Dkotlin.compiler.execution.strategy=in-process --no-daemon",
+        ".\\gradlew.bat :app:compileProductionDebugKotlin -Pkotlin.compiler.execution.strategy=in-process --no-daemon",
     );
     assert.deepEqual(inProcessCmd?.args, [
         ":app:compileProductionDebugKotlin",
-        "-Dkotlin.compiler.execution.strategy=in-process",
+        "-Pkotlin.compiler.execution.strategy=in-process",
         "--no-daemon",
     ]);
+    assert.equal(
+        isDefinitiveCodeOrTestFailure(
+            "> Task :app:compileProductionDebugKotlin FAILED\nCaused by: java.net.UnknownHostException: msazure.pkgs.visualstudio.com",
+        ),
+        false,
+    );
     assert.equal(
         isInfrastructureGateFailure(
             "FAILURE: Build failed with an exception. > A problem occurred starting process 'command 'git''",

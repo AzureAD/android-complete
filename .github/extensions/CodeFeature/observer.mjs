@@ -97,7 +97,7 @@ Never merge or approve a PR on a human's behalf.`,
 
 function defaultExec(command, args, options = {}) {
     const execEnv = options.env
-        ? buildNormalizedProcessEnv(process.env, options.env)
+        ? (options.env.__completeEnv ? options.env : buildNormalizedProcessEnv(process.env, options.env))
         : buildNormalizedProcessEnv(process.env);
     return execFileSync(command, args, {
         cwd: options.cwd,
@@ -402,7 +402,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
         workspaceRoot,
         exec,
     );
-    const gitEnv = {
+    const tokenOverrides = {
         GH_TOKEN: undefined,
         GITHUB_TOKEN: undefined,
     };
@@ -410,13 +410,14 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
         try {
             const token = exec("gh", ["auth", "token", "--user", account, "-h", parsedPr.hostname], { cwd: workspaceRoot });
             if (nonempty(token)) {
-                gitEnv.GH_TOKEN = token;
-                gitEnv.GITHUB_TOKEN = token;
+                tokenOverrides.GH_TOKEN = token;
+                tokenOverrides.GITHUB_TOKEN = token;
             }
         } catch {
             // Fall back to ambient gh auth.
         }
     }
+    const gitEnv = buildNormalizedProcessEnv(process.env, tokenOverrides);
     const repoArg = parsedPr.hostname === "github.com"
         ? parsedPr.slug
         : `${parsedPr.hostname}/${parsedPr.slug}`;
@@ -1275,18 +1276,19 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
         if (pushRepairs) {
             await step(`push-repair-${iteration}`, async () => {
                 const account = resolveGitHubAccount(target, workspaceRoot, exec);
-                const gitEnv = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined };
+                const tokenOverrides = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined };
                 if (nonempty(account)) {
                     try {
                         const token = exec("gh", ["auth", "token", "--user", account, "-h", target.hostname], { cwd: workspaceRoot });
                         if (nonempty(token)) {
-                            gitEnv.GH_TOKEN = token;
-                            gitEnv.GITHUB_TOKEN = token;
+                            tokenOverrides.GH_TOKEN = token;
+                            tokenOverrides.GITHUB_TOKEN = token;
                         }
                     } catch {
                         // Fall back to ambient auth.
                     }
                 }
+                const gitEnv = buildNormalizedProcessEnv(process.env, tokenOverrides);
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, {
                     allowPipelineEdits: false,
                 });
