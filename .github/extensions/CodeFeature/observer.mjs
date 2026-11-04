@@ -16,6 +16,7 @@ import {
 import {
     BUILDER_AGENT,
     REVIEWER_AGENT,
+    buildNormalizedProcessEnv,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
     pauseForHelp,
@@ -95,9 +96,12 @@ Never merge or approve a PR on a human's behalf.`,
 });
 
 function defaultExec(command, args, options = {}) {
+    const execEnv = options.env
+        ? buildNormalizedProcessEnv(process.env, options.env)
+        : buildNormalizedProcessEnv(process.env);
     return execFileSync(command, args, {
         cwd: options.cwd,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
+        env: execEnv,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
     }).trim();

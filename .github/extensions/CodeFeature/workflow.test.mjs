@@ -31,7 +31,9 @@ import {
     EVIDENCE_AGENT,
     MAX_FIX_ITERATIONS,
     REVIEWER_AGENT,
+     applyTargetFiles,
     buildInspectedFilesContext,
+    buildNormalizedProcessEnv,
     customAgents,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
@@ -42,11 +44,16 @@ import {
     isPipelineModificationAuthorized,
     isProtectedPipelineOrQualityPath,
     isSafeRelativeFilePath,
+    normalizeEvidenceResponse,
+    normalizeReviewResponse,
     normalizeTask,
     parseAdoDesignDocUrl,
     parseAllowedGradleVerificationCommand,
+    renderUnifiedDiff,
     resolveInputSources,
     resolveRoleSkillGuides,
+    resolveWindowsCmdExecutable,
+    restoreTargetFiles,
     revertUnauthorizedProtectedFiles,
     rubric,
     runCodeFeature,
@@ -1671,4 +1678,94 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         ["PhoneFactor/app/Foo.kt"],
     );
     assert.equal(listPrChangedFiles("", { baseRefName: "dev" }), null);
+
+    // 11. Windows Path/PATH normalization, cmd.exe resolution, lint deferral, and on-disk git diff rendering
+    const mixedCaseEnv = buildNormalizedProcessEnv(
+        {
+            SystemRoot: "C:\\Windows",
+            Path: "C:\\Program Files\\Git\\cmd;C:\\Windows\\System32",
+            GH_TOKEN: "secret-gh-token",
+            ENV_VSTS_MVN_CRED_ACCESSTOKEN: "secret-vsts-token",
+        },
+        { JAVA_HOME: "C:\\Program Files\\Android\\Android Studio\\jbr" },
+        {
+            stripKeys: ["GH_TOKEN", "ENV_VSTS_MVN_CRED_ACCESSTOKEN"],
+            prependPathDirs: ["C:\\Program Files\\Android\\Android Studio\\jbr\\bin"],
+            includeStandardWindowsToolDirs: false,
+        },
+    );
+    assert.equal(mixedCaseEnv.Path, undefined);
+    assert.equal(mixedCaseEnv.GH_TOKEN, undefined);
+    assert.equal(mixedCaseEnv.ENV_VSTS_MVN_CRED_ACCESSTOKEN, undefined);
+    assert.ok(mixedCaseEnv.PATH.includes("C:\\Program Files\\Android\\Android Studio\\jbr\\bin"));
+    assert.ok(mixedCaseEnv.PATH.includes("C:\\Program Files\\Git\\cmd"));
+    assert.ok(resolveWindowsCmdExecutable({ SystemRoot: "..\\relative" }).toLowerCase().endsWith("cmd.exe"));
+
+    const lintCombined = parseAllowedGradleVerificationCommand(
+        ".\\gradlew.bat :app:detektCheck :app:lintProductionDebug",
+    );
+    assert.deepEqual(lintCombined?.args, [":app:detektCheck"]);
+    const lintOnly = parseAllowedGradleVerificationCommand(".\\gradlew.bat :app:lintProductionDebug");
+    assert.equal(lintOnly?.deferredToCi, true);
+
+    const normalizedEv = normalizeEvidenceResponse(
+        {
+            verdict: "ready",
+            summary: "Ready",
+            repository: "authenticator",
+            baseBranch: "working",
+            workItemId: 3804404,
+            requirements: ["R1: Add marker"],
+            verificationCommands: [
+                "From the isolated authenticator checkout: git rev-parse HEAD; git status --short",
+                "From authenticator/PhoneFactor: .\\gradlew.bat :app:compileProductionDebugKotlin",
+            ],
+            questions: [],
+            evidence: ["GuidedRestoreActivity.kt:L1-L20"],
+        },
+        managerTask,
+    );
+    assert.equal(normalizedEv.extractedSpec.targets[0].verificationCommands.length, 1);
+    assert.ok(normalizedEv.extractedSpec.targets[0].verificationCommands[0].includes("compileProductionDebugKotlin"));
+
+    const slimRev = normalizeReviewResponse(
+        {
+            verdict: "pass",
+            summary: "All good",
+            evidence: ["A".repeat(2000), "B".repeat(2000)],
+            findings: [],
+        },
+        managerTask,
+    );
+    assert.ok(slimRev.acceptanceCriteria[0].evidence.length < 100);
+
+    const tempDiffRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-diff-"));
+    try {
+        mkdirSync(path.join(tempDiffRoot, ".git"), { recursive: true });
+        writeFileSync(path.join(tempDiffRoot, "Foo.kt"), "package test\r\nclass Foo\r\n", "utf8");
+        const backups = new Map();
+        const files = [{ path: "Foo.kt", action: "modify", content: "", summary: "Updated Foo" }];
+        applyTargetFiles(tempDiffRoot, files, backups);
+        assert.equal(files[0].content, "");
+        assert.equal(readFileSync(path.join(tempDiffRoot, "Foo.kt"), "utf8"), "package test\nclass Foo\n");
+        const rendered = renderUnifiedDiff(backups, files, {
+            repoRoot: tempDiffRoot,
+            exec: (cmd, args) => {
+                if (cmd === "git" && args.includes("diff")) return "diff --git a/Foo.kt b/Foo.kt\n+class Foo";
+                return "";
+            },
+        });
+        assert.equal(rendered, "diff --git a/Foo.kt b/Foo.kt\n+class Foo");
+        const restoreCalls = [];
+        restoreTargetFiles(tempDiffRoot, backups, {
+            exec: (cmd, args) => {
+                restoreCalls.push({ cmd, args });
+                return "";
+            },
+        });
+        assert.equal(restoreCalls.length, 1);
+        assert.deepEqual(restoreCalls[0].args, ["checkout", "HEAD", "--", "Foo.kt"]);
+    } finally {
+        rmSync(tempDiffRoot, { recursive: true, force: true });
+    }
 });
