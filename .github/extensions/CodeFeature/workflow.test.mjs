@@ -9,6 +9,7 @@ import test from "node:test";
 import {
     OBSERVER_AGENT,
     computeRepairIdentity,
+    isSnapshotReadyForHumanMerge,
     isSnapshotWaitingForCiOnly,
     observerCustomAgent,
     observerWorkflowDefinition,
@@ -28,6 +29,7 @@ import {
     EVIDENCE_AGENT,
     MAX_FIX_ITERATIONS,
     REVIEWER_AGENT,
+    buildInspectedFilesContext,
     customAgents,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
@@ -1434,15 +1436,7 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     let snapshotPollCount = 0;
     let sleepCalls = 0;
     const pollPaused = [];
-    const pollCtx = context([
-        {
-            verdict: "ready",
-            repairKind: "none",
-            summary: "CI completed and passed after automatic polling.",
-            evidence: ["Build 188765080 succeeded"],
-            actionableFindings: [],
-        },
-    ]);
+    const pollCtx = context([]);
     pollCtx.pause = async (key) => {
         pollPaused.push(key);
     };
@@ -1450,18 +1444,23 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         prUrl: "https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/17764690",
         options: {
             ciPollIntervalMs: 0,
-            maxCiPollAttempts: 3,
+            maxCiPollAttempts: 12,
         },
     };
+    const greenSnapshot = {
+        ...queuedSnapshot,
+        statusCheckRollup: [{ state: "succeeded", description: "Coverage status check succeeded" }],
+        prBuilds: [{ id: 188765080, definition: "Android Authenticator PR Checks", status: "completed", result: "succeeded", failedTasks: [] }],
+    };
+    assert.equal(isSnapshotReadyForHumanMerge(queuedSnapshot), false);
+    assert.equal(isSnapshotReadyForHumanMerge(failedDetektSnapshot), false);
+    assert.equal(isSnapshotReadyForHumanMerge(greenSnapshot), true);
+
     const pollResult = await runPrObserver(pollCtx, {
         fetchPrSnapshot: () => {
             snapshotPollCount++;
-            if (snapshotPollCount < 3) return queuedSnapshot;
-            return {
-                ...queuedSnapshot,
-                statusCheckRollup: [{ state: "succeeded", description: "Coverage status check succeeded" }],
-                prBuilds: [{ id: 188765080, definition: "Android Authenticator PR Checks", status: "completed", result: "succeeded", failedTasks: [] }],
-            };
+            if (snapshotPollCount < 10) return queuedSnapshot;
+            return greenSnapshot;
         },
         sleep: async () => {
             sleepCalls++;
@@ -1469,10 +1468,10 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         exec: () => "",
     });
     assert.equal(pollResult.status, currentStatuses.readyForHumanMerge);
-    assert.equal(snapshotPollCount, 3);
-    assert.equal(sleepCalls, 2);
+    assert.equal(snapshotPollCount, 10);
+    assert.equal(sleepCalls, 9);
     assert.equal(pollPaused.length, 0);
-    assert.equal(pollCtx.calls.length, 1);
+    assert.equal(pollCtx.calls.length, 0);
 
     // 6. Protected CI pipeline & static-analysis config files are blocked and auto-reverted on feature PRs
     assert.equal(isProtectedPipelineOrQualityPath(".pipelines/AndroidPR.yml"), true);
@@ -1575,4 +1574,32 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.equal(managerTask.workItemId, 3804404);
     assert.equal(managerTask.targets[0].workItemId, 3804404);
     assert.equal(managerTask.targets[0].repository, "authenticator");
+
+    // 9. buildInspectedFilesContext pre-loads cited file excerpts with 1-based line numbers for code-builder
+    const tempContextRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-context-"));
+    try {
+        const authFileDir = path.join(tempContextRoot, "authenticator", "PhoneFactor", "app", "src", "main");
+        mkdirSync(authFileDir, { recursive: true });
+        writeFileSync(
+            path.join(authFileDir, "GuidedRestoreActivity.kt"),
+            ["package com.microsoft.authenticator", "", "class GuidedRestoreActivity {", "    fun newIntent() = Unit", "}"].join("\n"),
+            "utf8",
+        );
+        const preloaded = buildInspectedFilesContext(tempContextRoot, managerTask, {
+            references: [
+                {
+                    id: "E1",
+                    repository: "authenticator",
+                    revision: "HEAD",
+                    path: "authenticator/PhoneFactor/app/src/main/GuidedRestoreActivity.kt:L1-L5",
+                    locator: "PhoneFactor/app/src/main/GuidedRestoreActivity.kt:L1-L5 — add hadPasskeyOnOldDevice param",
+                },
+            ],
+        });
+        assert.equal(preloaded.length, 1);
+        assert.equal(preloaded[0].path, "PhoneFactor/app/src/main/GuidedRestoreActivity.kt");
+        assert.ok(preloaded[0].excerpt.includes("4:     fun newIntent() = Unit"));
+    } finally {
+        rmSync(tempContextRoot, { recursive: true, force: true });
+    }
 });

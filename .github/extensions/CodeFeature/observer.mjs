@@ -605,6 +605,92 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
     return hasRunningBuild || hasPendingCheck;
 }
 
+export function isSnapshotReadyForHumanMerge(snapshot) {
+    if (!record(snapshot)) return false;
+    if (isSnapshotWaitingForCiOnly(snapshot)) return false;
+
+    const mergeState = String(snapshot.mergeStateStatus || "").toLowerCase();
+    if (!["clean", "succeeded", "has_hooks"].includes(mergeState)) {
+        return false;
+    }
+
+    const activeThreads = Array.isArray(snapshot.activeReviewThreads) ? snapshot.activeReviewThreads : [];
+    const hasActionableThread = activeThreads.some((thread) => {
+        const comments = Array.isArray(thread?.comments) ? thread.comments : [];
+        return comments.some((c) => {
+            const text = String(c?.content || "");
+            if (/AuthApp PR Reviewer.*\bApprove\b.*No blocking issues found/is.test(text)) {
+                return false;
+            }
+            return nonempty(text);
+        });
+    });
+    if (hasActionableThread) return false;
+
+    const inlineComments = Array.isArray(snapshot.inlineReviewComments) ? snapshot.inlineReviewComments : [];
+    if (inlineComments.some((c) => nonempty(c?.body))) return false;
+
+    const prBuilds = Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [];
+    const checks = Array.isArray(snapshot.statusCheckRollup) ? snapshot.statusCheckRollup : [];
+    if (prBuilds.length === 0 && checks.length === 0) {
+        return false;
+    }
+
+    for (const build of prBuilds) {
+        const defName = String(build?.definition || "");
+        const isNonBlockingAiReviewer = /PR-Reviewer|AI PR Review/i.test(defName);
+        const status = String(build?.status || "").toLowerCase();
+        const result = String(build?.result || "").toLowerCase();
+        const failedTasks = Array.isArray(build?.failedTasks) ? build.failedTasks : [];
+        if (status !== "completed") return false;
+        if (
+            !isNonBlockingAiReviewer &&
+            (failedTasks.length > 0 || (result !== "succeeded" && result !== "partiallysucceeded"))
+        ) {
+            return false;
+        }
+    }
+
+    for (const check of checks) {
+        const state = String(check?.state || check?.status || "").toLowerCase();
+        const conclusion = String(check?.conclusion || "").toLowerCase();
+        const description = String(check?.description || "");
+        if (/Missing Approvals/i.test(description)) {
+            continue;
+        }
+        const checkPassed =
+            state === "succeeded" ||
+            state === "success" ||
+            state === "notapplicable" ||
+            conclusion === "success" ||
+            conclusion === "neutral" ||
+            conclusion === "skipped";
+        if (!checkPassed) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export function listPrChangedFiles(repoRoot, baseBranch = "dev", exec = defaultExec) {
+    if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git"))) return [];
+    try {
+        const diffOut = exec(
+            "git",
+            ["--no-pager", "diff", "--name-only", `origin/${baseBranch}...HEAD`],
+            { cwd: repoRoot },
+        ) || "";
+        return diffOut
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(nonempty)
+            .slice(0, 50);
+    } catch {
+        return [];
+    }
+}
+
 export function computeSnapshotFingerprint(snapshot) {
     if (!record(snapshot)) return "";
     const checks = Array.isArray(snapshot.statusCheckRollup)
@@ -788,13 +874,10 @@ export async function runPrObserver(ctx, dependencies = {}) {
         let lastWaitingFingerprint = null;
 
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
-            for (
-                let batchPoll = 0;
-                batchPoll < MAX_JS_POLLS_BEFORE_HEARTBEAT &&
+            while (
                 totalPollsUsed < maxCiPollAttempts &&
                 (isSnapshotWaitingForCiOnly(snapshot) ||
-                    (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint));
-                batchPoll++
+                    (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))
             ) {
                 totalPollsUsed++;
                 pollSeq++;
@@ -816,17 +899,50 @@ export async function runPrObserver(ctx, dependencies = {}) {
             if (record(snapshot) && nonempty(snapshot.baseRefName)) {
                 target.baseBranch = snapshot.baseRefName;
             }
+
+            if (isSnapshotWaitingForCiOnly(snapshot)) {
+                const runningBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
+                    .filter((b) => ["inprogress", "notstarted", "postponed"].includes(String(b?.status || "").toLowerCase()))
+                    .map((b) => `${b.definition || "CI"} (${b.buildNumber || b.id || "running"})`);
+                observation = {
+                    verdict: "waiting-for-ci",
+                    repairKind: "none",
+                    summary: `PR #${parsedPr.prNumber} CI checks are still in progress (${runningBuilds.join(", ") || "pending checks"}) with no failures or unresolved review threads.`,
+                    evidence: runningBuilds.length > 0 ? runningBuilds : [`PR #${parsedPr.prNumber} checks still running`],
+                    actionableFindings: [],
+                };
+                break;
+            }
+
+            if (isSnapshotReadyForHumanMerge(snapshot)) {
+                const passedBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
+                    .map((b) => `${b.definition || "build"} (${b.buildNumber || b.id}): ${b.result || "succeeded"}`);
+                observation = {
+                    verdict: "ready",
+                    repairKind: "none",
+                    summary: `All required CI checks passed on PR #${parsedPr.prNumber} with no merge conflicts or unresolved review threads.`,
+                    evidence: [
+                        `mergeStateStatus: ${snapshot.mergeStateStatus}`,
+                        ...passedBuilds,
+                        "activeReviewThreads: 0 unresolved",
+                    ],
+                    actionableFindings: [],
+                };
+                break;
+            }
+
             const currentFingerprint = computeSnapshotFingerprint(snapshot);
             const beforeObserveSnap = snapshotWorktree(repoRoot, exec);
-            const observeGuides = resolveRoleSkillGuides("evidence", [target]);
+            const prChangedFiles = listPrChangedFiles(repoRoot, target.baseBranch, exec);
             const stepKey = ciWaitRound === 0
                 ? `observe-${iteration}`
                 : `observe-${iteration}-wait-${ciWaitRound}`;
             observation = await step(
                 stepKey,
                 () => ctx.agent(
-                    `Read and apply these repository instructions: ${observeGuides.join(", ")}.
-Inspect the pull request snapshot and classify whether it is ready for human merge, needs a tactical repair (CI failure, review comment, or merge conflict), is waiting for CI, or needs an owner decision.\nFresh observation request: ${randomUUID()}\nDATA:\n${JSON.stringify({ pr: parsedPr, snapshot, iteration: iteration + 1 })}`,
+                    `Classify the pull request snapshot in a SINGLE turn directly from the supplied DATA (snapshot.prBuilds, snapshot.statusCheckRollup, snapshot.activeReviewThreads, snapshot.inlineReviewComments, snapshot.mergeStateStatus, and prChangedFiles).
+Do NOT load codebase-researcher skill guides or crawl the repository with broad glob/grep/view searches—root-cause code investigation and fixes belong to code-builder. Only use view on a specific cited file if an inline review comment cannot be classified without reading the cited lines.
+If the only CI failure is in a test class whose tested component is outside prChangedFiles (a pre-existing base-branch regression on ${target.baseBranch}), classify as "needs-owner-decision" rather than "repair".\nFresh observation request: ${randomUUID()}\nDATA:\n${JSON.stringify({ pr: parsedPr, prChangedFiles, snapshot, iteration: iteration + 1 })}`,
                     {
                         label: `Observe PR #${parsedPr.prNumber} (round ${iteration + 1})`,
                         agent: OBSERVER_AGENT,

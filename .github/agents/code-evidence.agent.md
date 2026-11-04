@@ -15,6 +15,7 @@ Inspect the supplied input (Design Doc, Azure DevOps PBI, or free-form prompt) a
 ## Workflow & Boundaries
 
 - Inspect repository sources and return structured JSON matching the supplied stage schema, not files.
+- Format every entry in `evidence` (or `references[].locator`) as `<repo-relative-path>:L<start>-L<end> — <concise summary of symbols/methods to add or update>` for each production and test file that `code-builder` will edit or reference, so Stage 2 can pre-load those exact file slices directly without re-searching the repository.
 - Later workflow stages (`code-builder`, `code-reviewer`, and PR publishing) perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
 - Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy during this stage.
 - Unavailable or unconfigured MCP/code-intelligence servers (such as Bluebird MCP, `mcp_bluebirdrepos2_`, `enghub`, `kusto`, or `icm`) are NEVER blockers—use local checkout tools (`view`, `glob`, `grep`) directly on the local repository worktree.
