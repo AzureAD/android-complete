@@ -40,7 +40,10 @@ Given an approved coding task or PBI specification:
 
 - JDK discovery requires a supported major version in the installation's `release`
   file and both `bin/java` and `bin/javac` (`.exe` on Windows). An explicitly configured
-  invalid `JAVA_HOME` requires correction rather than silently selecting another installation.
+  invalid `JAVA_HOME` is reported with its path and detected version; the workflow offers
+  any discovered compatible JDK for this run, or accepts another compatible path. The
+  selected JDK is passed to the builder and local verification without changing the
+  host's global environment.
 - Concrete Detekt weighted-issue failures remain local validation failures, even if
   the same command also reports an infrastructure error.
 - Slim review results retain the review summary and citations once in the result packet.

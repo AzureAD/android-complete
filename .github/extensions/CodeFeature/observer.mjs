@@ -1195,6 +1195,7 @@ Follow Android Auth PR maintenance rules:
 - Never amend or force-push; keep commits incremental/fast-forward.
 - Never modify CI pipeline YAML files (.pipelines/*.yml, .github/workflows/*.yml, azure-pipelines/*.yml) during a tactical repair unless the PR itself is a pipeline change.
 - When verifying a CI test failure locally, run ONLY the targeted failing test class(es) with --tests "<ClassName>" --max-workers=2 (never run the unfiltered full-repo unitTestReport -Pcoverage task locally on Windows, where unrelated native SQLite/Room tests fail outside the macOS CI runner). Once the targeted test class(es) pass locally, return verdict "pass" so the fix is reviewed and pushed to CI.
+${nonempty(dependencies.environment?.JAVA_HOME) ? `- Use JAVA_HOME ${dependencies.environment.JAVA_HOME} for local verification in this workflow run.` : ""}
 - When merging origin/${target.baseBranch}, if a release was cut on ${target.baseBranch}, ensure this PR's CHANGELOG.md / changes.txt entry remains under the active vNext section; if ${target.baseBranch} deleted an adjacent retired flight enum entry, keep the retired flight deleted.
 Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, snapshot })}`,
             {
@@ -1248,6 +1249,7 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
                 targetImpl: null,
                 implementation: null,
                 ...(dependencies.exec ? { exec: dependencies.exec } : {}),
+                ...(dependencies.environment ? { environment: dependencies.environment } : {}),
             });
             if (gate.errors.length > 0) {
                 log(`Local verification failed during tactical repair: ${gate.errors.join("; ")}`);

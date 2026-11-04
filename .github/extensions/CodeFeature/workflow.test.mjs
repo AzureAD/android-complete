@@ -2001,6 +2001,84 @@ test("JDK prerequisites reject invalid explicit homes and accept supported PATH 
     }
 });
 
+test("JDK recovery reports the configured home and uses the approved alternative for the run", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-jdk-recovery-"));
+    try {
+        const oldJdk = path.join(root, "jdk8");
+        const newJdk = path.join(root, "jdk21");
+        const sdk = path.join(root, "sdk");
+        const repo = path.join(root, "common");
+        for (const [home, version] of [[oldJdk, "1.8.0"], [newJdk, "21.0.4"]]) {
+            mkdirSync(path.join(home, "bin"), { recursive: true });
+            writeFileSync(path.join(home, "release"), `JAVA_VERSION="${version}"\n`);
+            for (const tool of ["java", "javac"]) {
+                writeFileSync(path.join(home, "bin", process.platform === "win32" ? `${tool}.exe` : tool), "");
+            }
+        }
+        mkdirSync(sdk);
+        mkdirSync(repo);
+        writeFileSync(path.join(repo, "gradlew.bat"), "");
+        const env = { ...process.env, JAVA_HOME: oldJdk, PATH: path.join(newJdk, "bin"), ANDROID_HOME: sdk };
+        const target = { repository: "common", localPath: "common", verificationCommands: ["./gradlew :common4j:test"] };
+        const exec = () => "ok";
+        const failed = verifyWorkflowPrerequisites({ workspaceRoot: root, targets: [target], env, exec });
+        const question = failed.questions.find((item) => item.includes("JDK"));
+        assert.ok(question.includes(oldJdk));
+        assert.match(question, /JDK 8/);
+        assert.ok(question.includes(newJdk));
+        assert.ok(!question.includes("JAVA_HOME: unset"));
+
+        const unchanged = { ...env };
+        applyPrerequisiteAnswers([{ question, answer: path.join(root, "missing") }], {
+            workspaceRoot: root, targets: [target], env: unchanged,
+        });
+        assert.equal(unchanged.JAVA_HOME, oldJdk);
+        assert.equal(verifyWorkflowPrerequisites({ workspaceRoot: root, targets: [target], env: unchanged, exec }).ok, false);
+        applyPrerequisiteAnswers([{ question: "Repository 'common' requires JDK 17 or 21.", answer: "yes" }], {
+            workspaceRoot: root, targets: [target], env: unchanged,
+        });
+        assert.equal(unchanged.JAVA_HOME, oldJdk);
+
+        const originalHostHome = process.env.JAVA_HOME;
+        const runTask = task();
+        runTask.targets[0].verificationCommands = target.verificationCommands;
+        const ctx = context([evidence(), implementation(), review()], runTask, {
+            workspaceRoot: root, verifyPrerequisites: true, runLocalVerification: true,
+        });
+        let capturedGateEnv;
+        const result = await runCodeFeature(ctx, {
+            environment: env,
+            askUser: async (prompt) => {
+                assert.ok(prompt.includes(newJdk));
+                return "yes";
+            },
+            exec: (command, _args, options) => {
+                if (/gradlew/i.test(command)) capturedGateEnv = options.env;
+                return "ok";
+            },
+        });
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.ok(ctx.calls.find((call) => call.options.agent === BUILDER_AGENT).prompt.includes(newJdk));
+        assert.equal(capturedGateEnv.JAVA_HOME, newJdk);
+        assert.equal(env.JAVA_HOME, oldJdk);
+        assert.equal(process.env.JAVA_HOME, originalHostHome);
+
+        const manual = { ...env };
+        applyPrerequisiteAnswers([{ question, answer: newJdk }], {
+            workspaceRoot: root, targets: [target], env: manual,
+        });
+        assert.equal(manual.JAVA_HOME, newJdk);
+        rmSync(path.join(newJdk, "bin", process.platform === "win32" ? "javac.exe" : "javac"));
+        const disappeared = { ...env };
+        applyPrerequisiteAnswers([{ question, answer: "yes" }], {
+            workspaceRoot: root, targets: [target], env: disappeared,
+        });
+        assert.equal(disappeared.JAVA_HOME, oldJdk);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test("slim normalized reviews retain successful citations once in the final review packet", () => {
     const citations = ["Foo.kt:L10-L20 verified the null guard", "FooTest.kt:L25-L40 covers missing input"];
     const normalized = normalizeReviewResponse({

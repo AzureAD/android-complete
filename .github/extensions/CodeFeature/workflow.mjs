@@ -1246,12 +1246,12 @@ function isSupportedJavaHome(target, javaHome) {
     });
 }
 
-export function resolveTargetJavaHome(target, env = process.env) {
+export function resolveTargetJavaHome(target, env = process.env, { ignoreConfigured = false } = {}) {
     const repoKey = normalizeRepositoryKey(target?.repository);
     const preferredMajors = repoKey === "authenticator" ? [21] : [21, 17];
     const currentJavaHome = env?.JAVA_HOME !== undefined ? env.JAVA_HOME : (process.env.JAVA_HOME || "");
 
-    if (nonempty(currentJavaHome)) {
+    if (!ignoreConfigured && nonempty(currentJavaHome)) {
         return isSupportedJavaHome(target, currentJavaHome) ? currentJavaHome : "";
     }
 
@@ -1379,6 +1379,7 @@ export function verifyWorkflowPrerequisites({
     createPullRequests = false,
     exec = defaultExec,
     env = process.env,
+    seedLocalProperties = env === process.env,
 } = {}) {
     const normalizedEnv = buildNormalizedProcessEnv(env);
     const issues = [];
@@ -1398,7 +1399,7 @@ export function verifyWorkflowPrerequisites({
     for (const target of Array.isArray(targets) ? targets : []) {
         if (!record(target) || !nonempty(target.repository)) continue;
         const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
-        if (env === process.env && existsSync(repoRoot)) {
+        if (seedLocalProperties && existsSync(repoRoot)) {
             try {
                 ensureAndroidLocalProperties(repoRoot);
             } catch {
@@ -1424,11 +1425,20 @@ export function verifyWorkflowPrerequisites({
         const requiredJdkLabel = isAuthApp ? "JDK 21" : "JDK 17 or 21";
         const jdkIncompatible = !isSupportedJavaHome(target, preflight.javaHome);
         if (jdkIncompatible) {
+            const configuredHome = nonempty(env?.JAVA_HOME) ? String(env.JAVA_HOME).trim() : "";
+            const configuredMajor = readJavaMajorVersion(configuredHome);
+            const configuredDescription = configuredHome
+                ? `${configuredHome} (${configuredMajor ? `JDK ${configuredMajor}` : "version unknown"})`
+                : "unset";
+            const alternative = resolveTargetJavaHome(target, env, { ignoreConfigured: true });
             issues.push(
-                `Prerequisite failed for '${target.repository}': ${requiredJdkLabel} is required (current JAVA_HOME: ${preflight.javaHome || "unset"}, detected major: ${preflight.javaMajorVersion ?? "unknown"}).`,
+                `Prerequisite failed for '${target.repository}': ${requiredJdkLabel} is required (configured JAVA_HOME: ${configuredDescription}).`,
             );
             questions.push(
-                `Repository '${target.repository}' requires ${requiredJdkLabel} (current JAVA_HOME is ${preflight.javaHome || "unset"}${preflight.javaMajorVersion ? `, JDK ${preflight.javaMajorVersion}` : ""}). Please install ${requiredJdkLabel} or reply with the full path to your ${requiredJdkLabel} installation directory.`,
+                `Repository '${target.repository}' requires ${requiredJdkLabel} (configured JAVA_HOME: ${configuredDescription}). ` +
+                (alternative
+                    ? `A compatible JDK was found at ${alternative}. Reply 'yes' to use it for this workflow run, or provide another ${requiredJdkLabel} installation directory.`
+                    : `Please install ${requiredJdkLabel} or provide the full path to a compatible installation directory.`),
             );
         }
 
@@ -1507,11 +1517,18 @@ export function applyPrerequisiteAnswers(answers, { workspaceRoot = process.cwd(
     for (const entry of answers) {
         const q = String(entry?.question || "");
         const rawAns = String(entry?.answer || "").trim().replace(/^["']|["']$/g, "");
-        if (!nonempty(rawAns) || /^(?:ready|done|ok|yes|fixed|continue|retry)$/i.test(rawAns)) {
+        if (!nonempty(rawAns)) {
             continue;
         }
-        if (/JDK|JAVA_HOME/i.test(q) && existsSync(rawAns)) {
-            env.JAVA_HOME = rawAns;
+        if (/JDK|JAVA_HOME/i.test(q)) {
+            const mentionedRepo = q.match(/Repository\s+'([^']+)'/i)?.[1]?.trim().toLowerCase() || "";
+            const target = targets.find((item) => String(item?.repository || "").trim().toLowerCase() === mentionedRepo);
+            const selectedHome = /^(?:yes)$/i.test(rawAns) && target
+                ? (q.match(/A compatible JDK was found at (.+)\. Reply 'yes'/)?.[1] || "")
+                : rawAns;
+            if (target && isSupportedJavaHome(target, selectedHome)) env.JAVA_HOME = selectedHome;
+        } else if (/^(?:ready|done|ok|yes|fixed|continue|retry)$/i.test(rawAns)) {
+            continue;
         } else if (/Android SDK|local\.properties|ANDROID_HOME/i.test(q) && existsSync(rawAns)) {
             env.ANDROID_HOME = rawAns;
             env.ANDROID_SDK_ROOT = rawAns;
@@ -1633,6 +1650,7 @@ export function runLocalVerificationGate({
     implementation,
     exec = defaultExec,
     log = null,
+    environment = process.env,
 }) {
     const rawCommands = Array.isArray(target?.verificationCommands)
         ? target.verificationCommands.filter(nonempty)
@@ -1642,10 +1660,10 @@ export function runLocalVerificationGate({
         return { errors: [], infraBlockers: [], ranCommands: [], deferredNotes: [], outcomes, receipt: null };
     }
 
-    const preflight = runTargetEnvironmentPreflight(path.dirname(repoRoot), target, process.env);
-    const resolvedJavaHome = preflight.javaHome || resolveTargetJavaHome(target, process.env);
+    const preflight = runTargetEnvironmentPreflight(path.dirname(repoRoot), target, environment);
+    const resolvedJavaHome = preflight.javaHome || resolveTargetJavaHome(target, environment);
     const env = buildNormalizedProcessEnv(
-        process.env,
+        environment,
         nonempty(resolvedJavaHome) ? { JAVA_HOME: resolvedJavaHome } : {},
         {
             stripKeys: CREDENTIAL_ENV_KEYS_TO_STRIP,
@@ -3815,6 +3833,12 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const applyToWorkspace = rawOptions.applyToWorkspace === true || effectiveCreatePrs;
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
+    const workflowEnv = { ...(dependencies.environment || process.env) };
+    const applyWorkflowAnswers = (answers, targets) => {
+        const otherAnswers = answers.filter(({ question }) => !/JDK|JAVA_HOME/i.test(String(question || "")));
+        applyPrerequisiteAnswers(otherAnswers, { workspaceRoot, targets, env: process.env });
+        applyPrerequisiteAnswers(answers, { workspaceRoot, targets, env: workflowEnv });
+    };
 
     const manageWorkspace = applyToWorkspace || Boolean(ctx?.session) || nonempty(rawOptions.workspaceRoot);
     const pauseOnBlocker = rawOptions.pauseOnBlocker !== undefined
@@ -3846,6 +3870,8 @@ export async function runCodeFeature(ctx, dependencies = {}) {
             targets: [adoProbeTarget],
             createPullRequests: true,
             exec,
+            env: workflowEnv,
+            seedLocalProperties: exec === defaultExec,
         });
         const authQuestions = authPrereq.questions.filter((q) => /az login|git/i.test(q));
         if (authQuestions.length > 0) {
@@ -3855,7 +3881,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
                 { volatile: true },
             );
             if (Array.isArray(authAnswers) && authAnswers.length > 0) {
-                applyPrerequisiteAnswers(authAnswers, { workspaceRoot, targets: [adoProbeTarget] });
+                applyWorkflowAnswers(authAnswers, [adoProbeTarget]);
                 resolvedArgs = resolveInputSources(ctx.args, {
                     workspaceRoot,
                     exec,
@@ -3952,6 +3978,8 @@ export async function runCodeFeature(ctx, dependencies = {}) {
                 targets: targetsToVerify,
                 createPullRequests: effectiveCreatePrs,
                 exec,
+                env: workflowEnv,
+                seedLocalProperties: exec === defaultExec,
             });
             if (prereqCheck.ok) return null;
             const prereqStepKey = prereqRound === 0 ? stepPrefix : `${stepPrefix}-${prereqRound}`;
@@ -3961,15 +3989,14 @@ export async function runCodeFeature(ctx, dependencies = {}) {
                 { volatile: true },
             );
             if (Array.isArray(prereqAnswers) && prereqAnswers.length > 0) {
-                applyPrerequisiteAnswers(prereqAnswers, {
-                    workspaceRoot,
-                    targets: targetsToVerify,
-                });
+                applyWorkflowAnswers(prereqAnswers, targetsToVerify);
                 const recheck = verifyWorkflowPrerequisites({
                     workspaceRoot,
                     targets: targetsToVerify,
                     createPullRequests: effectiveCreatePrs,
                     exec,
+                    env: workflowEnv,
+                    seedLocalProperties: exec === defaultExec,
                 });
                 if (recheck.ok) return null;
                 if (prereqRound + 1 < 2) continue;
@@ -4314,7 +4341,7 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
     const executionEnvironments = manageWorkspace
-        ? task.targets.map((target) => runTargetEnvironmentPreflight(workspaceRoot, target, process.env))
+        ? task.targets.map((target) => runTargetEnvironmentPreflight(workspaceRoot, target, workflowEnv))
         : [];
     const primaryJavaHome = executionEnvironments[0]?.javaHome || "C:\\Program Files\\Android\\Android Studio\\jbr";
     const inspectedFiles = manageWorkspace ? buildInspectedFilesContext(workspaceRoot, task, evidence) : [];
@@ -4499,6 +4526,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 implementation,
                                 exec,
                                 log,
+                                environment: workflowEnv,
                             });
                             validationErrors.push(...gate.errors);
                             if (
@@ -4681,6 +4709,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                 const obsResult = await runPrObserver(observerCtx, {
                                     exec,
                                     fetchPrSnapshot: dependencies.fetchPrSnapshot,
+                                    environment: workflowEnv,
                                 });
                                 observations.push(obsResult);
                                 if (nonempty(obsResult?.status)) {
@@ -4775,6 +4804,7 @@ Resolve every validation error and reviewer finding in history autonomously with
                     task,
                     evidence,
                     inspectedFiles,
+                    executionEnvironments,
                     previousImplementation: slimPreviousImplementation,
                     rubric,
                     skillGuides: builderGuides,
