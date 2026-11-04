@@ -2045,23 +2045,46 @@ export function buildInspectedFilesContext(workspaceRoot, task, evidence) {
         if (!nonempty(pathBeforeColon)) continue;
 
         const repoKey = normalizeRepositoryKey(ref.repository);
-        const target = targets.find((t) => normalizeRepositoryKey(t?.repository) === repoKey) || targets[0] || null;
-        const localDir = target?.localPath || (repoKey && REPOSITORY_DEFAULTS[repoKey]?.localPath) || ".";
+        const matchingTarget = nonempty(repoKey)
+            ? targets.find((t) => normalizeRepositoryKey(t?.repository) === repoKey) || null
+            : targets[0] || null;
+        const effectiveRepo = matchingTarget?.repository || repoKey || targets[0]?.repository || "repo";
+        const localDir =
+            matchingTarget?.localPath ||
+            (nonempty(repoKey) && REPOSITORY_DEFAULTS[repoKey]?.localPath) ||
+            targets[0]?.localPath ||
+            ".";
         const repoRoot = path.resolve(workspaceRoot, localDir);
 
-        let cleanRel = pathBeforeColon.replace(/\\/g, "/").replace(/^\.\/+/, "");
+        const rawRel = pathBeforeColon.replace(/\\/g, "/").replace(/^\.\/+/, "");
         const normalizedLocalDir = String(localDir).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-        if (nonempty(normalizedLocalDir) && normalizedLocalDir !== "." && cleanRel.startsWith(`${normalizedLocalDir}/`)) {
-            cleanRel = cleanRel.slice(normalizedLocalDir.length + 1);
+        const strippedRel =
+            nonempty(normalizedLocalDir) && normalizedLocalDir !== "." && rawRel.startsWith(`${normalizedLocalDir}/`)
+                ? rawRel.slice(normalizedLocalDir.length + 1)
+                : "";
+        const candidates = [rawRel, strippedRel].filter(
+            (candidate) => isSafeRelativeFilePath(candidate) && /\.[a-z0-9]+$/i.test(candidate),
+        );
+        let cleanRel = "";
+        let fullPath = "";
+        for (const candidate of candidates) {
+            const candidateFull = path.resolve(repoRoot, candidate);
+            try {
+                if (existsSync(candidateFull) && lstatSync(candidateFull).isFile()) {
+                    cleanRel = candidate;
+                    fullPath = candidateFull;
+                    break;
+                }
+            } catch {
+                // Continue checking fallback candidate.
+            }
         }
-        if (!isSafeRelativeFilePath(cleanRel) || !/\.[a-z0-9]+$/i.test(cleanRel)) continue;
+        if (!nonempty(cleanRel) || !nonempty(fullPath)) continue;
 
-        const dedupKey = `${target?.repository || repoKey || "repo"}:${cleanRel}`;
+        const dedupKey = `${effectiveRepo}:${cleanRel}`;
         if (seen.has(dedupKey)) continue;
 
-        const fullPath = path.resolve(repoRoot, cleanRel);
         try {
-            if (!existsSync(fullPath) || !lstatSync(fullPath).isFile()) continue;
             const content = readFileSync(fullPath, "utf8");
             const lines = content.split(/\r?\n/);
             const rangeMatch =
@@ -2089,7 +2112,7 @@ export function buildInspectedFilesContext(workspaceRoot, task, evidence) {
             const excerpt = numberedLines.join("\n").slice(0, 6000);
             seen.add(dedupKey);
             results.push({
-                repository: target?.repository || repoKey || "repo",
+                repository: effectiveRepo,
                 path: cleanRel,
                 locator: rawLocator || cleanRel,
                 startLine,

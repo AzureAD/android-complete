@@ -9,8 +9,10 @@ import test from "node:test";
 import {
     OBSERVER_AGENT,
     computeRepairIdentity,
+    hasActionableReviewOrCommentFeedback,
     isSnapshotReadyForHumanMerge,
     isSnapshotWaitingForCiOnly,
+    listPrChangedFiles,
     observerCustomAgent,
     observerWorkflowDefinition,
     parsePullRequestUrl,
@@ -1579,10 +1581,17 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     const tempContextRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-context-"));
     try {
         const authFileDir = path.join(tempContextRoot, "authenticator", "PhoneFactor", "app", "src", "main");
+        const commonNestedDir = path.join(tempContextRoot, "common", "common", "src", "main");
         mkdirSync(authFileDir, { recursive: true });
+        mkdirSync(commonNestedDir, { recursive: true });
         writeFileSync(
             path.join(authFileDir, "GuidedRestoreActivity.kt"),
             ["package com.microsoft.authenticator", "", "class GuidedRestoreActivity {", "    fun newIntent() = Unit", "}"].join("\n"),
+            "utf8",
+        );
+        writeFileSync(
+            path.join(commonNestedDir, "CommonExample.kt"),
+            ["package com.microsoft.identity.common", "class CommonExample"].join("\n"),
             "utf8",
         );
         const preloaded = buildInspectedFilesContext(tempContextRoot, managerTask, {
@@ -1594,12 +1603,61 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
                     path: "authenticator/PhoneFactor/app/src/main/GuidedRestoreActivity.kt:L1-L5",
                     locator: "PhoneFactor/app/src/main/GuidedRestoreActivity.kt:L1-L5 — add hadPasskeyOnOldDevice param",
                 },
+                {
+                    id: "E2",
+                    repository: "common",
+                    revision: "HEAD",
+                    path: "common/src/main/CommonExample.kt:L1-L2",
+                    locator: "common/src/main/CommonExample.kt:L1-L2 — verify cross-repo reference and module-prefixed path",
+                },
             ],
         });
-        assert.equal(preloaded.length, 1);
+        assert.equal(preloaded.length, 2);
+        assert.equal(preloaded[0].repository, "authenticator");
         assert.equal(preloaded[0].path, "PhoneFactor/app/src/main/GuidedRestoreActivity.kt");
         assert.ok(preloaded[0].excerpt.includes("4:     fun newIntent() = Unit"));
+        assert.equal(preloaded[1].repository, "common");
+        assert.equal(preloaded[1].path, "common/src/main/CommonExample.kt");
+        assert.ok(preloaded[1].excerpt.includes("2: class CommonExample"));
     } finally {
         rmSync(tempContextRoot, { recursive: true, force: true });
     }
+
+    // 10. Reviews, top-level comments, uppercase FAILURE status contexts, and verified prChangedFiles
+    assert.equal(
+        isSnapshotReadyForHumanMerge({
+            ...greenSnapshot,
+            reviews: [{ author: { login: "reviewer1" }, state: "CHANGES_REQUESTED", body: "Please update error handling." }],
+        }),
+        false,
+    );
+    assert.equal(
+        isSnapshotReadyForHumanMerge({
+            ...greenSnapshot,
+            comments: [{ author: { login: "reviewer1" }, body: "Can we also cover the null case?" }],
+        }),
+        false,
+    );
+    assert.equal(
+        hasActionableReviewOrCommentFeedback({
+            comments: [{ author: { login: "github-actions" }, body: "<!-- code: lcc-200 -->" }],
+            reviews: [{ author: { login: "copilot-pull-request-reviewer" }, state: "COMMENTED", body: "<!-- ccr-overview-v2 -->" }],
+        }),
+        false,
+    );
+    assert.equal(
+        isSnapshotWaitingForCiOnly({
+            ...queuedSnapshot,
+            statusCheckRollup: [
+                { state: "FAILURE", description: "StatusContext check failed" },
+                { state: "PENDING", description: "Another check running" },
+            ],
+        }),
+        false,
+    );
+    assert.deepEqual(
+        listPrChangedFiles("", { files: [{ path: "/PhoneFactor/app/Foo.kt" }] }),
+        ["PhoneFactor/app/Foo.kt"],
+    );
+    assert.equal(listPrChangedFiles("", { baseRefName: "dev" }), null);
 });
