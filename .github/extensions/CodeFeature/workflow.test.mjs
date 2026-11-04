@@ -31,9 +31,11 @@ import {
     EVIDENCE_AGENT,
     MAX_FIX_ITERATIONS,
     REVIEWER_AGENT,
-     applyTargetFiles,
+    applyPrerequisiteAnswers,
+    applyTargetFiles,
     buildInspectedFilesContext,
     buildNormalizedProcessEnv,
+    collectBuildReceiptOnDisk,
     customAgents,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
@@ -41,6 +43,7 @@ import {
     extractWorkItemIdsFromText,
     formatPrBody,
     formatPrTitle,
+    isInfrastructureGateFailure,
     isPipelineModificationAuthorized,
     isProtectedPipelineOrQualityPath,
     isSafeRelativeFilePath,
@@ -58,6 +61,7 @@ import {
     rubric,
     runCodeFeature,
     runLocalVerificationGate,
+    runTargetEnvironmentPreflight,
     runWindowsBatchFileSafely,
     slimIntakeSchema,
     slimResultSchema,
@@ -67,6 +71,7 @@ import {
     validateImplementation,
     validateReview,
     validateTask,
+    verifyWorkflowPrerequisites,
     workflowDefinition,
 } from "./workflow.mjs";
 
@@ -1767,5 +1772,96 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         assert.deepEqual(restoreCalls[0].args, ["checkout", "HEAD", "--", "Foo.kt"]);
     } finally {
         rmSync(tempDiffRoot, { recursive: true, force: true });
+    }
+
+    // 12. Stage 0 prerequisite check + interactive human recovery + XML build receipts + in-process Kotlin flag
+    const inProcessCmd = parseAllowedGradleVerificationCommand(
+        ".\\gradlew.bat :app:compileProductionDebugKotlin -Dkotlin.compiler.execution.strategy=in-process --no-daemon",
+    );
+    assert.deepEqual(inProcessCmd?.args, [
+        ":app:compileProductionDebugKotlin",
+        "-Dkotlin.compiler.execution.strategy=in-process",
+        "--no-daemon",
+    ]);
+    assert.equal(
+        isInfrastructureGateFailure(
+            "FAILURE: Build failed with an exception. > A problem occurred starting process 'command 'git''",
+        ),
+        true,
+    );
+    assert.equal(isInfrastructureGateFailure("Unresolved reference: FooBar"), false);
+
+    const tempPrereqRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-prereq-"));
+    try {
+        const pfDir = path.join(tempPrereqRoot, "authenticator", "PhoneFactor");
+        const fakeJdk21 = path.join(tempPrereqRoot, "jdk-21");
+        const fakeSdk = path.join(tempPrereqRoot, "android-sdk");
+        const xmlDir = path.join(pfDir, "app", "build", "test-results", "testProductionDebugUnitTest");
+        mkdirSync(pfDir, { recursive: true });
+        mkdirSync(fakeJdk21, { recursive: true });
+        mkdirSync(fakeSdk, { recursive: true });
+        mkdirSync(xmlDir, { recursive: true });
+        writeFileSync(path.join(pfDir, "gradlew.bat"), "@echo off\r\n", "utf8");
+        writeFileSync(path.join(fakeJdk21, "release"), 'JAVA_VERSION="21.0.4"\n', "utf8");
+        writeFileSync(
+            path.join(xmlDir, "TEST-EntraRestoreEntryPointCoordinatorTest.xml"),
+            '<testsuite name="EntraRestoreEntryPointCoordinatorTest" tests="13" failures="0" errors="0"/>',
+            "utf8",
+        );
+
+        const receipt = collectBuildReceiptOnDisk(path.join(tempPrereqRoot, "authenticator"), {
+            javaHome: fakeJdk21,
+            exec: () => "clean",
+        });
+        assert.equal(receipt.verified, true);
+        assert.equal(receipt.testsRun, 13);
+        assert.equal(receipt.testsFailed, 0);
+
+        const testEnv = { JAVA_HOME: fakeJdk21, ANDROID_HOME: "", ANDROID_SDK_ROOT: "" };
+        let azLoggedIn = false;
+        const prereqFail = verifyWorkflowPrerequisites({
+            workspaceRoot: tempPrereqRoot,
+            targets: managerTask.targets,
+            createPullRequests: true,
+            env: testEnv,
+            exec: (cmd) => {
+                if (cmd === "git") return "git version 2.47.0";
+                if (cmd === "az") {
+                    if (!azLoggedIn) throw new Error("Please run 'az login'");
+                    return "valid-ado-token";
+                }
+                return "";
+            },
+        });
+        assert.equal(prereqFail.ok, false);
+        assert.ok(prereqFail.questions.some((q) => q.includes("Android SDK")));
+        assert.ok(prereqFail.questions.some((q) => q.includes("az login")));
+
+        applyPrerequisiteAnswers(
+            [
+                { question: prereqFail.questions.find((q) => q.includes("Android SDK")), answer: fakeSdk },
+                { question: prereqFail.questions.find((q) => q.includes("az login")), answer: "ready" },
+            ],
+            { workspaceRoot: tempPrereqRoot, targets: managerTask.targets, env: testEnv },
+        );
+        azLoggedIn = true;
+
+        const prereqPass = verifyWorkflowPrerequisites({
+            workspaceRoot: tempPrereqRoot,
+            targets: managerTask.targets,
+            createPullRequests: true,
+            env: testEnv,
+            exec: (cmd) => {
+                if (cmd === "git") return "git version 2.47.0";
+                if (cmd === "az") return "valid-ado-token";
+                return "";
+            },
+        });
+        assert.equal(prereqPass.ok, true);
+        const preflightAfter = runTargetEnvironmentPreflight(tempPrereqRoot, managerTask.targets[0], testEnv);
+        assert.equal(preflightAfter.sdkConfigured, true);
+        assert.equal(preflightAfter.javaMajorVersion, 21);
+    } finally {
+        rmSync(tempPrereqRoot, { recursive: true, force: true });
     }
 });
