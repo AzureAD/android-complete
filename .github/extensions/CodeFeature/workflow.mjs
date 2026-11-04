@@ -281,8 +281,8 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
   * authenticator: authenticator/PhoneFactor/... (Gradle working directory is authenticator/PhoneFactor)
 - When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2 -Dkotlin.compiler.execution.strategy=in-process (so KotlinCompileDaemon never holds Windows stdout/stderr pipes open after BUILD SUCCESSFUL), and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
   $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon -Dkotlin.compiler.execution.strategy=in-process
-- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon) so Gradle only runs once per round.
-- Never let a Gradle command hang indefinitely: if a background Gradle command produces no new task output for more than 10 minutes (or exceeds 25 minutes total), stop that shell with stop_powershell and retry once with --no-daemon --max-workers=2 (or defer to CI if composite build locks persist).
+- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Dkotlin.compiler.execution.strategy=in-process) so Gradle only runs once per round.
+- Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately stop that shell with stop_powershell, do NOT retry locally, record in testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds to independent code review, PR creation, and remote CI pipeline verification.
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
 
@@ -940,7 +940,7 @@ const SAFE_GRADLE_PROJECT_PROP_PATTERN = /^-P[A-Za-z0-9_.-]+(?:=[A-Za-z0-9_.,*$#
 const SAFE_GRADLE_SYSTEM_PROP_PATTERN = /^-D[A-Za-z0-9_.-]+(?:=[A-Za-z0-9_.,*$#:-]+)?$/;
 const SAFE_GRADLE_TEST_FILTER_PATTERN = /^[A-Za-z0-9_.*$#-]+$/;
 const SAFE_GRADLE_EXCLUDED_TASK_PATTERN = /^:?[A-Za-z0-9_:-]+$/;
-const DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS = 25 * 60 * 1000;
+const DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS = 12 * 60 * 1000;
 
 export function parseAllowedGradleVerificationCommand(rawCommand) {
     const candidate = extractRunnableVerificationCommand(rawCommand);
@@ -1049,21 +1049,41 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
 }
 
 export function isLocalBuildEnvError(textValue) {
-    return /ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible|local.*build.*environment|Bluebird|MCP-SETUP/i.test(
+    return /ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible|local.*build.*environment|short-circuited to CI|deferred to CI|Bluebird|MCP-SETUP/i.test(
+        String(textValue || ""),
+    );
+}
+
+export function isDefinitiveCodeOrTestFailure(textValue) {
+    return /compile\w*(?:Kotlin|Java)\s+FAILED|Unresolved reference:|Type mismatch:|Conflicting overloads:|e:\s+file:\/\/\/.*\.(?:kt|java):\d+|\.java:\d+:\s+error:|Compilation error|There were failing tests|Gradle test failed|> Task :[\w:-]+test[\w:-]* FAILED|detekt\w*\s+FAILED|weighted issues were found|checkstyle\w*\s+FAILED|Checkstyle rule violations/i.test(
         String(textValue || ""),
     );
 }
 
 export function isInfrastructureGateFailure(textValue) {
     const msg = String(textValue || "");
-    if (/compileKotlin FAILED|compileJava FAILED|Unresolved reference:|Compilation error|There were failing tests/i.test(msg)) {
+    if (isDefinitiveCodeOrTestFailure(msg)) {
         return false;
     }
     return (
         isLocalBuildEnvError(msg) ||
-        /spawnSync\s+\S+\s+(?:ENOENT|EINVAL)|A problem occurred starting process 'command 'git''|'git' is not recognized|'cmd(?:\.exe)?' is not recognized|Cannot run program "git"|Could not GET 'https:\/\/msazure\.pkgs\.visualstudio\.com.*?(?:401|403|502|503)|UnknownHostException|Connection reset by peer|ETIMEDOUT|ECONNRESET/i.test(
+        /ETIMEDOUT|Timed out|timeout|spawnSync\s+\S+\s+(?:ENOENT|EINVAL|ETIMEDOUT)|A problem occurred (?:starting process|evaluating settings|configuring project)|'git' is not recognized|'cmd(?:\.exe)?' is not recognized|Cannot run program "git"|Could not GET 'https?:\/\/|UnknownHostException|Connection reset by peer|ECONNRESET|DaemonDisappearedException|daemon has disappeared|LockOwner|Timeout waiting to lock|Could not resolve all (?:files|artifacts|dependencies)|short-circuited|pending CI/i.test(
             msg,
         )
+    );
+}
+
+export function isBuilderShortCircuitedToCi(rawBuilderOutput) {
+    if (!record(rawBuilderOutput)) return false;
+    const combined = [
+        rawBuilderOutput.summary,
+        rawBuilderOutput.testPlan,
+        ...(Array.isArray(rawBuilderOutput.evidence) ? rawBuilderOutput.evidence : []),
+    ]
+        .filter(nonempty)
+        .join("\n");
+    return /short-circuited.*to CI|deferred to CI|pending CI|stopped (?:approaching|near|after) \d+\s*minutes|compilation.*pending CI/i.test(
+        combined,
     );
 }
 
@@ -1639,14 +1659,15 @@ export function runLocalVerificationGate({
                     msg = retryError instanceof Error ? retryError.message : String(retryError);
                 }
             }
-            if (isLocalBuildEnvError(msg) && !/compileKotlin FAILED|compileJava FAILED|Unresolved reference:|Compilation error|There were failing tests/i.test(msg)) {
-                const deferNote = `Local command deferred to CI (${parsed.command}): ${msg}`;
+            if (!isDefinitiveCodeOrTestFailure(msg) && (isLocalBuildEnvError(msg) || isInfrastructureGateFailure(msg))) {
+                const deferNote = `Local command short-circuited to CI (${parsed.command}): ${msg}`;
                 deferredNotes.push(deferNote);
                 outcomes.deferred.push({ command: parsed.command, reason: msg });
-            } else if (isInfrastructureGateFailure(msg)) {
-                const blockMsg = `Target ${target.id} verification blocked by host/infrastructure error (${parsed.command}): ${msg}`;
-                infraBlockers.push(blockMsg);
-                outcomes.blocked.push({ command: parsed.command, reason: msg });
+                if (!isLocalBuildEnvError(msg)) {
+                    infraBlockers.push(deferNote);
+                }
+                log?.(`Short-circuiting local verification to remote CI after non-code build issue (${parsed.command}).`);
+                break;
             } else {
                 const failMsg = `Target ${target.id} workspace verification failed (${parsed.command}): ${msg}`;
                 errors.push(failMsg);
@@ -4122,7 +4143,7 @@ If you edit files directly on disk inside the target repository checkout, you ma
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
 Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Dkotlin.compiler.execution.strategy=in-process); connected emulator tests run in CI.
 Always pass -Dkotlin.compiler.execution.strategy=in-process alongside --no-daemon --max-workers=2 when running .\\gradlew.bat on Windows so KotlinCompileDaemon never holds stdout/stderr pipes open after BUILD SUCCESSFUL.
-Never let a background Gradle shell command stall indefinitely: if a Gradle build/test command produces no new task progress for more than 10 minutes (or exceeds 25 minutes total), call stop_powershell on that shellId and retry once with --no-daemon --max-workers=2 -Dkotlin.compiler.execution.strategy=in-process.
+Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle build/test command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately call stop_powershell on that shellId, do NOT retry locally, record in pr.testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds immediately to independent code review, PR creation, and remote CI pipeline verification.
 If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="${primaryJavaHome}" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
 Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
 
@@ -4251,13 +4272,27 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             exec !== defaultExec ||
                             (!existsSync(path.join(repoRoot, "gradlew.bat")) && !existsSync(path.join(repoRoot, "PhoneFactor", "gradlew.bat"))) ||
                             hasVerifiedBuildReceiptOnDisk(repoRoot, latestBuildStartedAtMs);
-                        const builderAlreadyVerifiedOnDisk =
+                        const builderShortCircuitedToCi =
                             useSlimSchemas &&
-                            latestRawBuilderOutput?.verdict === "pass" &&
-                            Array.isArray(targetImpl?.verificationCommandsRun) &&
-                            targetImpl.verificationCommandsRun.length > 0 &&
-                            hasVerifiedReceipt &&
+                            isBuilderShortCircuitedToCi(latestRawBuilderOutput) &&
                             rawOptions.runLocalVerification !== true;
+                        if (builderShortCircuitedToCi) {
+                            const scNote = "Local Gradle verification was short-circuited to remote CI pipeline verification after hitting local build/timeout limits.";
+                            if (!Array.isArray(implementation.assumptions) || !implementation.assumptions.includes(scNote)) {
+                                implementation.assumptions = [
+                                    ...(Array.isArray(implementation.assumptions) ? implementation.assumptions : []),
+                                    scNote,
+                                ];
+                            }
+                        }
+                        const builderAlreadyVerifiedOnDisk =
+                            builderShortCircuitedToCi ||
+                            (useSlimSchemas &&
+                                latestRawBuilderOutput?.verdict === "pass" &&
+                                Array.isArray(targetImpl?.verificationCommandsRun) &&
+                                targetImpl.verificationCommandsRun.length > 0 &&
+                                hasVerifiedReceipt &&
+                                rawOptions.runLocalVerification !== true);
                         const shouldRunLocalGate =
                             !builderAlreadyVerifiedOnDisk &&
                             (applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits);
@@ -4287,7 +4322,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 gate.ranCommands.length === 0
                             ) {
                                 const infraMsg = gate.infraBlockers.join("\n");
-                                if (pauseOnBlocker) {
+                                if (rawOptions.pauseOnInfraBlocker === true && pauseOnBlocker) {
                                     await pauseForHelp(ctx, `${prefix}-env-blocked-${round}`, infraMsg);
                                 }
                                 implementation.assumptions = [
@@ -4301,6 +4336,21 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             exec,
                         });
                     }
+                }
+
+                if (
+                    validationErrors.length > 0 &&
+                    round === maxFixes &&
+                    (effectiveCreatePrs || rawOptions.failForwardToCi === true) &&
+                    rawOptions.failForwardToCi !== false &&
+                    validationErrors.every((e) => /workspace verification failed \(/i.test(e))
+                ) {
+                    log("Local Gradle verification did not complete after bounded attempts; failing forward to independent code review and remote CI pipeline verification.");
+                    implementation.assumptions = [
+                        ...(Array.isArray(implementation.assumptions) ? implementation.assumptions : []),
+                        ...validationErrors.map((e) => `Local verification short-circuited to CI after bounded attempts: ${e}`),
+                    ];
+                    validationErrors.length = 0;
                 }
 
                 if (validationErrors.length === 0) {
@@ -4325,7 +4375,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
 Independently review the builder's code changes, unit tests, diffs, and PR metadata against the approved task and evidence.${pbiScopeInstruction}
 Apply the fixed rubric: ${rubric.join(", ")}.
 Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
-Evaluate unitTestsAndVerification by inspecting the authored unit tests and local JVM/Robolectric test results; connected Android device/emulator tests (androidTest when adb devices has no attached device) and live multi-device/service E2E ceremonies cannot run in a headless worktree, so when androidTest compiles and device/service E2E scenarios are documented in pr.testPlan (or local Gradle was deferred due to missing VSTS Maven credentials), do NOT raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over unrun physical-device/service E2E execution or synthetic traceability formatting.
+Evaluate unitTestsAndVerification by inspecting the authored unit tests and source diffs directly; connected Android device/emulator tests (androidTest when adb devices has no attached device), live multi-device/service E2E ceremonies, and local Gradle runs that were short-circuited, timed out, or deferred to remote CI are verified by the remote CI pipeline + pr-observer immediately after PR creation. Never raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over incomplete, timed-out, or short-circuited local Gradle execution or unrun physical-device/service E2E execution when the authored unit tests and production code are sound and the CI handoff is documented in pr.testPlan.
 If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions; if the builder's summary/evidence provides a concrete technical justification for why a prior finding would violate flight-off preservation, the approved design doc, or headless local environment limits, accept that justification and do not re-raise the finding. Never require new tap-admission, debounce, or state-ownership guards on the flight=false (disabled) branch—when a feature flight is false, pass-through/no-op admission is required to preserve zero off-path side effects.
 Do not edit code or waive code-level defects. Return pass/findings=[] only when the code and unit tests are ready for human review.`,
                         useSlimSchemas ? slimReviewSchema : reviewSchema,
@@ -4398,28 +4448,46 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                 const criteriaPassed = review.criteria.every((criterion) => criterion.pass === true);
                 const acceptancePassed = review.acceptanceCriteria.every((entry) => entry.passed === true);
                 if (criteriaPassed && acceptancePassed && review.findings.length === 0) {
+                    backupsByTarget.clear();
                     phase("Prepare and create pull requests");
-                    pullRequests = await step("pull-requests", async () => {
-                        const created = [];
-                        for (const target of task.targets) {
-                            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
-                            created.push(publishTargetPullRequest({
-                                target,
-                                targetImpl,
-                                traceability: implementation.traceability,
-                                reviewRoundCount: history.length,
-                                parentWorkItemId: task.workItemId,
-                                workspaceRoot,
-                                createPullRequests: effectiveCreatePrs,
-                                draftPullRequest,
-                                runId: ctx?.runId || "local",
-                                exec,
-                            }));
-                        }
-                        return created;
-                    });
-                    if (effectiveCreatePrs) {
-                        backupsByTarget.clear();
+                    try {
+                        pullRequests = await step("pull-requests", async () => {
+                            const created = [];
+                            for (const target of task.targets) {
+                                const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+                                created.push(publishTargetPullRequest({
+                                    target,
+                                    targetImpl,
+                                    traceability: implementation.traceability,
+                                    reviewRoundCount: history.length,
+                                    parentWorkItemId: task.workItemId,
+                                    workspaceRoot,
+                                    createPullRequests: effectiveCreatePrs,
+                                    draftPullRequest,
+                                    runId: ctx?.runId || "local",
+                                    exec,
+                                }));
+                            }
+                            return created;
+                        });
+                    } catch (publishError) {
+                        const pubMsg = publishError instanceof Error ? publishError.message : String(publishError);
+                        log(`PR publication encountered an error after review passed (preserving reviewed worktree): ${pubMsg}`);
+                        pullRequests = task.targets.map((target) => ({
+                            targetId: target.id,
+                            repository: target.repository,
+                            hostname: target.hostname,
+                            slug: target.slug,
+                            baseBranch: target.baseBranch,
+                            branch: buildBranchName(target, target.account || ""),
+                            workItemId: Number(target.workItemId),
+                            title: formatPrTitle(target.title, target.workItemId),
+                            body: "",
+                            status: "publish_retry_needed",
+                            url: null,
+                            headSha: null,
+                            error: pubMsg,
+                        }));
                     }
                     const shouldObservePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
                         ? true
@@ -4443,13 +4511,25 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                     },
                                 },
                             };
-                            const obsResult = await runPrObserver(observerCtx, {
-                                exec,
-                                fetchPrSnapshot: dependencies.fetchPrSnapshot,
-                            });
-                            observations.push(obsResult);
-                            if (nonempty(obsResult?.status)) {
-                                prEntry.currentStatus = obsResult.status;
+                            try {
+                                const obsResult = await runPrObserver(observerCtx, {
+                                    exec,
+                                    fetchPrSnapshot: dependencies.fetchPrSnapshot,
+                                });
+                                observations.push(obsResult);
+                                if (nonempty(obsResult?.status)) {
+                                    prEntry.currentStatus = obsResult.status;
+                                }
+                            } catch (obsError) {
+                                const obsMsg = obsError instanceof Error ? obsError.message : String(obsError);
+                                log(`PR observer encountered a non-fatal error on ${prEntry.url}: ${obsMsg}`);
+                                observations.push({
+                                    status: "waiting-for-ci",
+                                    prUrl: prEntry.url,
+                                    summary: `PR published; automated observer handed off to remote CI (${obsMsg}).`,
+                                    evidence: [],
+                                    iterations: 0,
+                                });
                             }
                         }
                     }

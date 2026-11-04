@@ -43,6 +43,8 @@ import {
     extractWorkItemIdsFromText,
     formatPrBody,
     formatPrTitle,
+    isBuilderShortCircuitedToCi,
+    isDefinitiveCodeOrTestFailure,
     isInfrastructureGateFailure,
     isPipelineModificationAuthorized,
     isProtectedPipelineOrQualityPath,
@@ -1861,6 +1863,43 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         const preflightAfter = runTargetEnvironmentPreflight(tempPrereqRoot, managerTask.targets[0], testEnv);
         assert.equal(preflightAfter.sdkConfigured, true);
         assert.equal(preflightAfter.javaMajorVersion, 21);
+
+        // 13. Fail-forward / short-circuit-to-CI when local Gradle times out or hits non-code errors
+        assert.equal(isDefinitiveCodeOrTestFailure("> Task :app:compileProductionDebugKotlin FAILED\nUnresolved reference: foo"), true);
+        assert.equal(isDefinitiveCodeOrTestFailure("Command failed: spawnSync cmd.exe ETIMEDOUT"), false);
+        assert.equal(
+            isBuilderShortCircuitedToCi({
+                verdict: "repair",
+                summary: "The bounded retry was stopped approaching 12 minutes; compilation pending CI.",
+                testPlan: "Local Gradle verification was short-circuited to CI.",
+                evidence: [],
+            }),
+            true,
+        );
+
+        let timeoutGateCalls = 0;
+        const scImpl = implementation();
+        const scGate = runLocalVerificationGate({
+            repoRoot: path.join(tempPrereqRoot, "authenticator"),
+            target: {
+                id: "pbi-3804404",
+                repository: "authenticator",
+                verificationCommands: [
+                    ".\\gradlew.bat :app:compileProductionDebugKotlin",
+                    ".\\gradlew.bat :app:testProductionDebugUnitTest --tests *CoordinatorTest",
+                ],
+            },
+            targetImpl: scImpl.targets[0],
+            implementation: scImpl,
+            exec: () => {
+                timeoutGateCalls++;
+                throw new Error("Command failed: spawnSync cmd.exe ETIMEDOUT");
+            },
+        });
+        assert.equal(timeoutGateCalls, 1);
+        assert.deepEqual(scGate.errors, []);
+        assert.equal(scGate.deferredNotes.length, 1);
+        assert.ok(scGate.deferredNotes[0].includes("short-circuited to CI"));
     } finally {
         rmSync(tempPrereqRoot, { recursive: true, force: true });
     }
