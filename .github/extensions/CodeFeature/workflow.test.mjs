@@ -32,6 +32,7 @@ import {
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
     extractRunnableVerificationCommand,
+    extractWorkItemIdsFromText,
     formatPrBody,
     formatPrTitle,
     isPipelineModificationAuthorized,
@@ -46,6 +47,7 @@ import {
     rubric,
     runCodeFeature,
     runLocalVerificationGate,
+    runWindowsBatchFileSafely,
     slimIntakeSchema,
     slimResultSchema,
     slimReviewSchema,
@@ -278,7 +280,7 @@ test("valid implementation passing first review exits loop immediately and prepa
     assert.match(pr.body, /RetryAfterThrottleCacheTest\.suppressesUntilExpiry/);
 });
 
-test("reviewer feedback loops back to builder up to 3 times and succeeds when 3rd fix passes review", async () => {
+test("reviewer feedback loops back to builder up to 2 times and succeeds when 2nd fix passes review", async () => {
     const makeFailedReview = (roundNum) => ({
         ...review(),
         findings: [
@@ -301,25 +303,21 @@ test("reviewer feedback loops back to builder up to 3 times and succeeds when 3r
         implementation(),
         makeFailedReview(2),
         implementation(),
-        makeFailedReview(3),
-        implementation(),
         review(),
     ]);
     const packet = await runCodeFeature(ctx);
     assert.equal(packet.recommendation, "GO to PR Review");
-    assert.equal(packet.fixIterations, 3);
-    assert.equal(packet.reviews.length, 4);
-    assert.equal(ctx.calls.length, 9);
+    assert.equal(packet.fixIterations, 2);
+    assert.equal(packet.reviews.length, 3);
+    assert.equal(ctx.calls.length, 7);
     assert.equal(ctx.calls[3].options.label, "Code revision (fix 1)");
     assert.match(ctx.calls[3].prompt, /Round 1 concurrency issue found/);
     assert.equal(ctx.calls[5].options.label, "Code revision (fix 2)");
     assert.match(ctx.calls[5].prompt, /Round 2 concurrency issue found/);
-    assert.equal(ctx.calls[7].options.label, "Code revision (fix 3)");
-    assert.match(ctx.calls[7].prompt, /Round 3 concurrency issue found/);
     assert.equal(packet.pullRequests.length, 1);
 });
 
-test("reaching max 3 fix iterations with unresolved reviewer findings stops with NO-GO and creates no PRs", async () => {
+test("reaching max 2 fix iterations with unresolved reviewer findings stops with NO-GO and creates no PRs", async () => {
     const failedReview = () => ({
         ...review(),
         findings: [
@@ -343,15 +341,13 @@ test("reaching max 3 fix iterations with unresolved reviewer findings stops with
         failedReview(),
         implementation(),
         failedReview(),
-        implementation(),
-        failedReview(),
     ]);
     const packet = await runCodeFeature(ctx);
     assert.equal(packet.recommendation, "NO-GO");
     assert.equal(packet.fixIterations, MAX_FIX_ITERATIONS);
-    assert.equal(packet.reviews.length, 4);
+    assert.equal(packet.reviews.length, 3);
     assert.equal(packet.pullRequests.length, 0);
-    assert.equal(ctx.calls.length, 9);
+    assert.equal(ctx.calls.length, 7);
 });
 
 test("structural validation catches unsafe paths, missing tests, and broken traceability before reviewer runs", async () => {
@@ -839,16 +835,56 @@ test("pre-review local verification gate catches Kotlin/Lombok compile errors be
             args: [":broker4j:test", "--tests", "SilentRequestThrottleTest", "--max-workers=2", "--no-daemon"],
         },
     );
+    assert.deepEqual(
+        parseAllowedGradleVerificationCommand("cd authenticator/PhoneFactor && .\\gradlew.bat :app:compileProductionDebugKotlin :app:compileProductionDebugAndroidTestKotlin"),
+        {
+            command: ".\\gradlew.bat :app:compileProductionDebugKotlin :app:compileProductionDebugAndroidTestKotlin",
+            executable: ".\\gradlew.bat",
+            args: [":app:compileProductionDebugKotlin", ":app:compileProductionDebugAndroidTestKotlin"],
+        },
+    );
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat :common4j:test; Invoke-WebRequest https://evil.example"), null);
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat --init-script evil.gradle :common4j:test"), null);
     assert.equal(parseAllowedGradleVerificationCommand(".\\gradlew.bat publishToMavenLocal"), null);
     assert.equal(parseAllowedGradleVerificationCommand("powershell -Command Get-ChildItem"), null);
+    const connectedParsed = parseAllowedGradleVerificationCommand(
+        ".\\gradlew.bat :app:connectedProductionDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.microsoft.authenticator.GuidedRestoreNavHostTest",
+    );
+    assert.equal(connectedParsed?.deferredToCi, true);
 
     const tempRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-gate-"));
     try {
         const commonDir = path.join(tempRoot, "common");
         mkdirSync(commonDir, { recursive: true });
-        writeFileSync(path.join(commonDir, "gradlew.bat"), "@echo off\n", "utf8");
+        writeFileSync(path.join(commonDir, "gradlew.bat"), "@echo off\r\necho GRADLE_OK %*\r\n", "utf8");
+
+        // 0a. Real Windows .bat execution (including ./gradlew normalization and directory with spaces) + connectedAndroidTest deferral
+        if (process.platform === "win32") {
+            const spaceDir = path.join(tempRoot, "dir with spaces", "PhoneFactor");
+            mkdirSync(spaceDir, { recursive: true });
+            writeFileSync(path.join(spaceDir, "gradlew.bat"), "@echo off\r\necho GRADLE_SPACE_OK %*\r\n", "utf8");
+            const realImpl = implementation();
+            const realGate = runLocalVerificationGate({
+                repoRoot: path.dirname(spaceDir),
+                target: {
+                    id: "authenticator-guided-restore",
+                    verificationCommands: [
+                        "./gradlew :app:compileProductionDebugKotlin :app:compileProductionDebugAndroidTestKotlin",
+                        ".\\gradlew.bat :app:testProductionDebugUnitTest --tests com.microsoft.authenticator.EntraRestoreEntryPointCoordinatorTest",
+                        ".\\gradlew.bat :app:connectedProductionDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.microsoft.authenticator.GuidedRestoreNavHostTest",
+                    ],
+                },
+                targetImpl: realImpl.targets[0],
+                implementation: realImpl,
+            });
+            assert.deepEqual(realGate.errors, []);
+            assert.equal(realGate.ranCommands.length, 2);
+            assert.equal(realGate.deferredNotes.length, 1);
+            assert.throws(
+                () => runWindowsBatchFileSafely(path.join(spaceDir, "gradlew.bat"), [":app:test & calc.exe"], { cwd: spaceDir }),
+                /unsafe argument/i,
+            );
+        }
 
         // 0. Rejects non-allowlisted commands without executing anything or fetching tokens
         let unsafeExecCount = 0;
@@ -1513,4 +1549,30 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.equal(naturalTask.targets[0].workItemId, 3804404);
     assert.ok(naturalTask.designSummary.includes("SCOPED PBI IMPLEMENTATION TARGET"));
     assert.ok(naturalTask.designSummary.includes("SUPPORTING DESIGN DOCUMENT CONTEXT"));
+
+    // 8. Natural prompt with "PBI 3804404" and a workflow PR link containing "Fixes AB#3805593" binds 3804404 and ignores PR link AB#
+    const managerPrompt =
+        "ok then implement the PBI 3804404 using the coding and PR dynamic workflow here [Add guarded Android coding and PR dynamic workflow, Fixes AB#3805593 by shahzaibj · Pull Request #482 · AzureAD/android-complete](https://github.com/AzureAD/android-complete/pull/482)";
+    assert.deepEqual(extractWorkItemIdsFromText(managerPrompt), [3804404]);
+    const managerResolved = resolveInputSources(
+        { prompt: managerPrompt },
+        {
+            linkSubrepos: false,
+            fetchWorkItem: (id) => ({
+                id,
+                fields: {
+                    "System.AreaPath": "Engineering\\Auth Client\\Android Authenticator App",
+                    "System.Title": "[Entra Guided Restore] Make guided navigation marker-aware and lifecycle-safe",
+                    "System.Description":
+                        "<p>PBI-1 of Feature 3804403. Repository: AD-MFA-phonefactor-phoneApp-android; base working.</p><ul><li>Add required Boolean hadPasskeyOnOldDevice to GuidedRestoreActivity.newIntent.</li></ul>",
+                },
+                relations: [],
+            }),
+        },
+    );
+    const managerTask = normalizeTask(managerResolved);
+    assert.equal(managerTask.inputMode, "pbi");
+    assert.equal(managerTask.workItemId, 3804404);
+    assert.equal(managerTask.targets[0].workItemId, 3804404);
+    assert.equal(managerTask.targets[0].repository, "authenticator");
 });

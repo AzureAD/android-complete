@@ -30,7 +30,7 @@ const record = (value) => value !== null && typeof value === "object" && !Array.
 const unique = (values) => new Set(values).size === values.length;
 const positiveInt = (value) => Number.isSafeInteger(value) && value > 0;
 
-export const MAX_FIX_ITERATIONS = 3;
+export const MAX_FIX_ITERATIONS = 2;
 export const MAX_INTAKE_ROUNDS = 3;
 export const BUILDER_AGENT = "code-builder";
 export const REVIEWER_AGENT = "code-reviewer";
@@ -274,8 +274,10 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
   * AADAuthenticator: broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
   * nested common in broker: broker/common/common4j/src/main/com/... and broker/common/common/src/main/java/...
   * authenticator: authenticator/PhoneFactor/... (Gradle working directory is authenticator/PhoneFactor)
-- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
-  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --no-daemon
+- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2, and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
+  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon
+- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon) so Gradle only runs once per round.
+- Never let a Gradle command hang indefinitely: if a background Gradle command produces no new task output for more than 10 minutes (or exceeds 25 minutes total), stop that shell with stop_powershell and retry once with --no-daemon --max-workers=2 (or defer to CI if composite build locks persist).
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
 
@@ -462,13 +464,26 @@ function parseWorkItemNumber(value, { requirePrefixInText = false } = {}) {
     return null;
 }
 
-function extractWorkItemIdsFromText(textValue) {
+function stripPullRequestReferenceText(textValue) {
+    if (!nonempty(textValue)) return "";
+    return String(textValue).replace(
+        /\[[^\]]*\]\(https?:\/\/[^)\s]+\/(?:pull|pullrequest)\/\d+(?!\?[^\s)]*\bpath=)[^)\s]*\)/gi,
+        " ",
+    );
+}
+
+export function extractWorkItemIdsFromText(textValue) {
     if (!nonempty(textValue)) return [];
-    const textStr = String(textValue);
+    const textStr = stripPullRequestReferenceText(textValue);
     const ids = new Set();
-    for (const match of textStr.matchAll(/_workitems\/edit\/([1-9]\d*)/gi)) {
-        const num = Number(match[1]);
-        if (positiveInt(num)) ids.add(num);
+    for (const pattern of [
+        /_workitems\/edit\/([1-9]\d*)/gi,
+        /\bPBI(?:[-\s#]+|\s+id\s*[:=]?\s*)([1-9]\d{4,})\b/gi,
+    ]) {
+        for (const match of textStr.matchAll(pattern)) {
+            const num = Number(match[1]);
+            if (positiveInt(num)) ids.add(num);
+        }
     }
     return [...ids];
 }
@@ -613,26 +628,55 @@ export function ensureSubrepoCheckouts(workspaceRoot = process.cwd(), exec = def
 }
 
 export function ensureAndroidLocalProperties(sourceRepo, targetDir) {
-    const targetLocalProps = path.join(targetDir, "local.properties");
-    if (existsSync(targetLocalProps)) return targetLocalProps;
-    const sourceLocalProps = path.join(sourceRepo, "local.properties");
-    if (existsSync(sourceLocalProps)) {
-        writeFileSync(targetLocalProps, readFileSync(sourceLocalProps));
-        return targetLocalProps;
-    }
-    const candidates = [
-        process.env.ANDROID_HOME,
-        process.env.ANDROID_SDK_ROOT,
-        process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Android", "Sdk") : "",
-    ].filter(nonempty);
-    for (const sdkPath of candidates) {
-        if (existsSync(sdkPath)) {
-            const escaped = sdkPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:");
-            writeFileSync(targetLocalProps, `sdk.dir=${escaped}\n`, "utf8");
-            return targetLocalProps;
+    const writeLocalPropsFile = (srcDir, dstDir) => {
+        const dstFile = path.join(dstDir, "local.properties");
+        if (existsSync(dstFile)) return dstFile;
+        const srcFile = path.join(srcDir, "local.properties");
+        if (existsSync(srcFile)) {
+            writeFileSync(dstFile, readFileSync(srcFile));
+            return dstFile;
+        }
+        const candidates = [
+            process.env.ANDROID_HOME,
+            process.env.ANDROID_SDK_ROOT,
+            process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Android", "Sdk") : "",
+        ].filter(nonempty);
+        for (const sdkPath of candidates) {
+            if (existsSync(sdkPath)) {
+                const escaped = sdkPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:");
+                writeFileSync(dstFile, `sdk.dir=${escaped}\n`, "utf8");
+                return dstFile;
+            }
+        }
+        return null;
+    };
+
+    const primary = writeLocalPropsFile(sourceRepo, targetDir);
+    const targetPhoneFactor = path.join(targetDir, "PhoneFactor");
+    if (existsSync(targetPhoneFactor)) {
+        const sourcePhoneFactor = existsSync(path.join(sourceRepo, "PhoneFactor"))
+            ? path.join(sourceRepo, "PhoneFactor")
+            : sourceRepo;
+        writeLocalPropsFile(sourcePhoneFactor, targetPhoneFactor);
+        const secureProps = path.join(targetPhoneFactor, "secure.properties");
+        const secureTemplate = path.join(targetPhoneFactor, "secure.properties.template");
+        if (!existsSync(secureProps) && existsSync(secureTemplate)) {
+            writeFileSync(secureProps, readFileSync(secureTemplate));
         }
     }
-    return null;
+    return primary;
+}
+
+function buildTargetRemoteCloneUrl(target) {
+    const repoKey = normalizeRepositoryKey(target?.repository);
+    const defaults = REPOSITORY_DEFAULTS[repoKey] || null;
+    const hostname = nonempty(target?.hostname) ? target.hostname.trim() : (defaults?.hostname || "");
+    const slug = nonempty(target?.slug) ? target.slug.trim() : (defaults?.slug || "");
+    if (!nonempty(hostname) || !nonempty(slug)) return null;
+    if (slug.includes("/_git/") || /visualstudio\.com|dev\.azure\.com/i.test(hostname)) {
+        return `https://${hostname}/${slug}`;
+    }
+    return `https://${hostname}/${slug.replace(/\.git$/i, "")}.git`;
 }
 
 export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defaultExec) {
@@ -641,8 +685,37 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
     if (localPath === "." || localPath === "") return targetDir;
     const baseBranch = nonempty(target?.baseBranch) ? target.baseBranch.trim() : "dev";
     const mainCheckout = resolveMainCheckoutRoot(workspaceRoot, exec);
+    const rootCheckout = mainCheckout || workspaceRoot;
+    const isRealAndroidCompleteWorkspace =
+        exec === defaultExec &&
+        existsSync(path.join(rootCheckout, ".git")) &&
+        existsSync(path.join(rootCheckout, ".github", "extensions", "CodeFeature"));
     if (!mainCheckout) {
+        if (!existsSync(path.join(targetDir, ".git")) && isRealAndroidCompleteWorkspace) {
+            const cloneUrl = buildTargetRemoteCloneUrl(target);
+            if (nonempty(cloneUrl) && !existsSync(targetDir)) {
+                mkdirSync(path.dirname(targetDir), { recursive: true });
+                try {
+                    exec(
+                        "git",
+                        ["-c", "core.longpaths=true", "clone", "--branch", baseBranch, cloneUrl, targetDir],
+                        { cwd: workspaceRoot },
+                    );
+                } catch {
+                    try {
+                        exec("git", ["-c", "core.longpaths=true", "clone", cloneUrl, targetDir], { cwd: workspaceRoot });
+                    } catch {
+                        // Best-effort auto-clone when sub-repository checkout is absent.
+                    }
+                }
+            }
+        }
         if (existsSync(path.join(targetDir, ".git"))) {
+            try {
+                exec("git", ["config", "core.longpaths", "true"], { cwd: targetDir });
+            } catch {
+                // Best-effort longpaths config.
+            }
             try {
                 ensureAndroidLocalProperties(targetDir, targetDir);
             } catch {
@@ -679,16 +752,16 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
                                 break;
                             }
                             try {
-                                exec("git", ["checkout", "-B", featureBranch, candidate], { cwd: targetDir });
+                                exec("git", ["-c", "core.longpaths=true", "checkout", "-B", featureBranch, candidate], { cwd: targetDir });
                             } catch {
                                 try {
                                     exec(
                                         "git",
-                                        ["checkout", "-B", `${featureBranch}-${randomUUID().slice(0, 6)}`, candidate],
+                                        ["-c", "core.longpaths=true", "checkout", "-B", `${featureBranch}-${randomUUID().slice(0, 6)}`, candidate],
                                         { cwd: targetDir },
                                     );
                                 } catch {
-                                    exec("git", ["checkout", "--detach", candidate], { cwd: targetDir });
+                                    exec("git", ["-c", "core.longpaths=true", "checkout", "--detach", candidate], { cwd: targetDir });
                                 }
                             }
                             break;
@@ -704,15 +777,44 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
         return targetDir;
     }
     const sourceRepo = path.resolve(mainCheckout, localPath);
+    if (!existsSync(path.join(sourceRepo, ".git")) && isRealAndroidCompleteWorkspace) {
+        const cloneUrl = buildTargetRemoteCloneUrl(target);
+        if (nonempty(cloneUrl) && !existsSync(sourceRepo)) {
+            mkdirSync(path.dirname(sourceRepo), { recursive: true });
+            try {
+                exec(
+                    "git",
+                    ["-c", "core.longpaths=true", "clone", "--branch", baseBranch, cloneUrl, sourceRepo],
+                    { cwd: mainCheckout },
+                );
+            } catch {
+                try {
+                    exec("git", ["-c", "core.longpaths=true", "clone", cloneUrl, sourceRepo], { cwd: mainCheckout });
+                } catch {
+                    // Best-effort auto-clone into main checkout.
+                }
+            }
+        }
+    }
     if (!existsSync(path.join(sourceRepo, ".git"))) return targetDir;
     const canonicalSource = realpathSync(sourceRepo);
     const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
+    try {
+        exec("git", ["config", "core.longpaths", "true"], { cwd: canonicalSource });
+    } catch {
+        // Best-effort longpaths config on source repo.
+    }
 
     if (existsSync(targetDir)) {
         const stat = lstatSync(targetDir);
         if (stat.isSymbolicLink() || normalize(realpathSync(targetDir)) === normalize(canonicalSource)) {
             removeDirectoryJunction(targetDir);
         } else if (existsSync(path.join(targetDir, ".git"))) {
+            try {
+                exec("git", ["config", "core.longpaths", "true"], { cwd: targetDir });
+            } catch {
+                // Best-effort longpaths config on existing worktree.
+            }
             try {
                 ensureAndroidLocalProperties(canonicalSource, targetDir);
             } catch {
@@ -738,15 +840,22 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
             // Try next ref if remote-tracking ref is absent.
         }
     }
-    exec("git", ["worktree", "add", "--detach", targetDir, baseRef], { cwd: canonicalSource });
-    const sourceCommon = path.join(canonicalSource, "common");
-    const targetCommon = path.join(targetDir, "common");
-    if (existsSync(path.join(sourceCommon, ".git")) && !existsSync(path.join(targetCommon, ".git"))) {
-        try {
-            if (existsSync(targetCommon)) rmSync(targetCommon, { recursive: true, force: true });
-            exec("git", ["worktree", "add", "--detach", targetCommon, "HEAD"], { cwd: sourceCommon });
-        } catch {
-            // Best-effort nested common submodule worktree initialization.
+    exec("git", ["-c", "core.longpaths=true", "worktree", "add", "--detach", targetDir, baseRef], { cwd: canonicalSource });
+    try {
+        exec("git", ["config", "core.longpaths", "true"], { cwd: targetDir });
+    } catch {
+        // Best-effort longpaths config on new worktree.
+    }
+    for (const commonRel of ["common", path.join("PhoneFactor", "common")]) {
+        const sourceCommon = path.join(canonicalSource, commonRel);
+        const targetCommon = path.join(targetDir, commonRel);
+        if (existsSync(path.join(sourceCommon, ".git")) && !existsSync(path.join(targetCommon, ".git"))) {
+            try {
+                if (existsSync(targetCommon)) rmSync(targetCommon, { recursive: true, force: true });
+                exec("git", ["-c", "core.longpaths=true", "worktree", "add", "--detach", targetCommon, "HEAD"], { cwd: sourceCommon });
+            } catch {
+                // Best-effort nested common submodule worktree initialization.
+            }
         }
     }
     try {
@@ -784,7 +893,13 @@ export function snapshotWorktree(repoRoot, exec = defaultExec) {
 
 export function extractRunnableVerificationCommand(rawCommand) {
     if (!nonempty(rawCommand)) return null;
-    const trimmed = rawCommand.trim();
+    const trimmed = rawCommand
+        .trim()
+        .replace(
+            /^(?:(?:cd|Set-Location|Push-Location)\s+(?:"[^"\r\n;&|`$()<>!]+"|'[^'\r\n;&|`$()<>!]+'|[A-Za-z0-9_./\\:-]+)\s*(?:&&|;)\s*)+/i,
+            "",
+        )
+        .trim();
     const match = trimmed.match(/(?:^|:\s+)((?:\.\\|\.\.\/|\.\/|PhoneFactor[\\/])?gradlew(?:\.bat)?\b.+)$/i);
     if (match && nonempty(match[1])) {
         return match[1].trim();
@@ -798,6 +913,7 @@ export function extractRunnableVerificationCommand(rawCommand) {
 
 const SAFE_GRADLE_EXECUTABLE_PATTERN = /^(?:(?:\.\\|\.\.\/|\.\/|PhoneFactor[\\/])?gradlew(?:\.bat)?)$/i;
 const SAFE_GRADLE_TASK_PATTERN = /^(?::[A-Za-z0-9_-]+)*:?(?:test[A-Za-z0-9_-]*|compile[A-Za-z0-9_-]*(?:Kotlin|Java)|assemble[A-Za-z0-9_-]*|detekt[A-Za-z0-9_-]*|check(?:style[A-Za-z0-9_-]*)?|lint[A-Za-z0-9_-]*|jacoco[A-Za-z0-9_-]*|spotbugs[A-Za-z0-9_-]*|pmd[A-Za-z0-9_-]*|verify[A-Za-z0-9_-]*)$/;
+const CONNECTED_DEVICE_GRADLE_TASK_PATTERN = /^(?::[A-Za-z0-9_-]+)*:?(?:connected[A-Za-z0-9_]*AndroidTest|connectedCheck|deviceCheck|managedDevice[A-Za-z0-9_]*)$/i;
 const SAFE_GRADLE_STANDALONE_FLAGS = new Set([
     "--no-daemon",
     "--stacktrace",
@@ -812,9 +928,12 @@ const SAFE_GRADLE_STANDALONE_FLAGS = new Set([
     "--offline",
     "--parallel",
     "--no-configuration-cache",
+    "--console=plain",
 ]);
+const SAFE_GRADLE_PROJECT_PROP_PATTERN = /^-P[A-Za-z0-9_.-]+(?:=[A-Za-z0-9_.,*$#:-]+)?$/;
 const SAFE_GRADLE_TEST_FILTER_PATTERN = /^[A-Za-z0-9_.*$#-]+$/;
 const SAFE_GRADLE_EXCLUDED_TASK_PATTERN = /^:?[A-Za-z0-9_:-]+$/;
+const DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS = 25 * 60 * 1000;
 
 export function parseAllowedGradleVerificationCommand(rawCommand) {
     const candidate = extractRunnableVerificationCommand(rawCommand);
@@ -838,10 +957,15 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
 
     const args = [];
     let taskCount = 0;
+    let connectedTaskCount = 0;
     for (let i = 0; i < rest.length; i++) {
         const arg = rest[i];
         if (!nonempty(arg)) return null;
-        if (SAFE_GRADLE_STANDALONE_FLAGS.has(arg) || /^--max-workers=[1-8]$/.test(arg)) {
+        if (
+            SAFE_GRADLE_STANDALONE_FLAGS.has(arg) ||
+            /^--max-workers=[1-8]$/.test(arg) ||
+            SAFE_GRADLE_PROJECT_PROP_PATTERN.test(arg)
+        ) {
             args.push(arg);
             continue;
         }
@@ -868,6 +992,11 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
         if (arg.startsWith("-")) {
             return null;
         }
+        if (CONNECTED_DEVICE_GRADLE_TASK_PATTERN.test(arg)) {
+            connectedTaskCount++;
+            args.push(arg);
+            continue;
+        }
         if (!SAFE_GRADLE_TASK_PATTERN.test(arg)) {
             return null;
         }
@@ -875,16 +1004,29 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
         taskCount++;
     }
 
+    if (connectedTaskCount > 0 && taskCount === 0) {
+        return {
+            command: [executable, ...args].join(" "),
+            executable,
+            args,
+            deferredToCi: true,
+            deferralReason: "Connected Android device/emulator tests run in CI pipelines rather than locally.",
+        };
+    }
+
     if (taskCount === 0) return null;
+    const filteredArgs = connectedTaskCount > 0
+        ? args.filter((a) => !CONNECTED_DEVICE_GRADLE_TASK_PATTERN.test(a))
+        : args;
     return {
-        command: [executable, ...args].join(" "),
+        command: [executable, ...filteredArgs].join(" "),
         executable,
-        args,
+        args: filteredArgs,
     };
 }
 
 export function isLocalBuildEnvError(textValue) {
-    return /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|local.*build.*environment|Bluebird|MCP-SETUP/i.test(
+    return /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|DaemonDisappearedException|daemon has disappeared|Unable to make field .* accessible|No tests found for given includes|local.*build.*environment|Bluebird|MCP-SETUP/i.test(
         String(textValue || ""),
     );
 }
@@ -910,7 +1052,7 @@ export function runLocalVerificationGate({
     delete env.GH_TOKEN;
     delete env.GITHUB_TOKEN;
     const defaultStudioJbr = "C:\\Program Files\\Android\\Android Studio\\jbr";
-    if (!nonempty(env.JAVA_HOME) && existsSync(defaultStudioJbr)) {
+    if (existsSync(defaultStudioJbr) && (!nonempty(env.JAVA_HOME) || !existsSync(env.JAVA_HOME))) {
         env.JAVA_HOME = defaultStudioJbr;
         env.PATH = `${path.join(defaultStudioJbr, "bin")};${env.PATH || ""}`;
     }
@@ -926,16 +1068,48 @@ export function runLocalVerificationGate({
             );
             continue;
         }
+        if (parsed.deferredToCi) {
+            deferredNotes.push(`Local command deferred to CI (${parsed.command}): ${parsed.deferralReason}`);
+            continue;
+        }
+        const strippedExec = parsed.executable.replace(/^PhoneFactor[\\/]/i, "");
         const execCwd =
             !existsSync(path.resolve(repoRoot, parsed.executable)) &&
-            existsSync(path.resolve(repoRoot, "PhoneFactor", parsed.executable))
+            !existsSync(path.resolve(repoRoot, `${ strippedExec }.bat`)) &&
+            (existsSync(path.resolve(repoRoot, "PhoneFactor", strippedExec)) ||
+                existsSync(path.resolve(repoRoot, "PhoneFactor", `${strippedExec}.bat`)) ||
+                existsSync(path.resolve(repoRoot, "PhoneFactor", "gradlew.bat")) ||
+                existsSync(path.resolve(repoRoot, "PhoneFactor", "gradlew")))
                 ? path.join(repoRoot, "PhoneFactor")
                 : repoRoot;
         try {
-            exec(parsed.executable, parsed.args, { cwd: execCwd, env });
+            exec(parsed.executable, parsed.args, {
+                cwd: execCwd,
+                env,
+                timeout: DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS,
+            });
             ranCommands.push(parsed.command);
         } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
+            let msg = error instanceof Error ? error.message : String(error);
+            if (
+                /Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible/i.test(msg) &&
+                existsSync(defaultStudioJbr) &&
+                env.JAVA_HOME !== defaultStudioJbr
+            ) {
+                env.JAVA_HOME = defaultStudioJbr;
+                env.PATH = `${path.join(defaultStudioJbr, "bin")};${env.PATH || ""}`;
+                try {
+                    exec(parsed.executable, parsed.args, {
+                        cwd: execCwd,
+                        env,
+                        timeout: DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS,
+                    });
+                    ranCommands.push(parsed.command);
+                    continue;
+                } catch (retryError) {
+                    msg = retryError instanceof Error ? retryError.message : String(retryError);
+                }
+            }
             if (isLocalBuildEnvError(msg) && !/compileKotlin FAILED|compileJava FAILED|Unresolved reference:|Compilation error|There were failing tests/i.test(msg)) {
                 deferredNotes.push(`Local command deferred to CI (${parsed.command}): ${msg}`);
             } else {
@@ -1168,11 +1342,13 @@ export function normalizeTask(args) {
                         ? promptText.split(/\r?\n/)[0].slice(0, 80).trim()
                         : "";
 
+    const cleanedPromptForAb = stripPullRequestReferenceText(promptText);
     const abFromText = parseWorkItemNumber(
         raw.workItemId ?? raw.pbiId ?? pbiList[0]?.workItemId ?? pbiList[0]?.id ?? pbiList[0]?.parentWorkItemId ??
-        (promptText.match(/_workitems\/edit\/([1-9]\d*)/i)?.[1] ||
-            promptText.match(/AB#([1-9]\d*)/i)?.[1] ||
-            designDocText.match(/AB#([1-9]\d*)/i)?.[1] ||
+        (cleanedPromptForAb.match(/_workitems\/edit\/([1-9]\d*)/i)?.[1] ||
+            cleanedPromptForAb.match(/\bPBI(?:[-\s#]+|\s+id\s*[:=]?\s*)([1-9]\d{4,})\b/i)?.[1] ||
+            cleanedPromptForAb.match(/\bAB#([1-9]\d*)\b/i)?.[1] ||
+            designDocText.match(/\bAB#([1-9]\d*)\b/i)?.[1] ||
             designDocText.match(/_workitems\/edit\/([1-9]\d*)/i)?.[1]),
     );
 
@@ -2246,6 +2422,29 @@ export function renderUnifiedDiff(backups, files, { repoRoot = "", exec = defaul
     }).join("\n\n");
 }
 
+export function runWindowsBatchFileSafely(batPath, args = [], options = {}) {
+    const resolvedBat = path.resolve(options.cwd || process.cwd(), batPath);
+    if (/[&\r\n|^<>!%()]/.test(resolvedBat)) {
+        throw new Error(`Refusing to execute Windows batch path containing unsafe characters: ${resolvedBat}`);
+    }
+    const safeArgs = [...(args || [])];
+    for (const arg of safeArgs) {
+        if (/["&\r\n|^<>!%()]/.test(String(arg))) {
+            throw new Error(`Refusing to pass unsafe argument to Windows batch wrapper: ${arg}`);
+        }
+    }
+    const quoteCmdToken = (value) => `"${String(value).replace(/"/g, '""')}"`;
+    const cmdLine = `"${[quoteCmdToken(resolvedBat), ...safeArgs.map(quoteCmdToken)].join(" ")}"`;
+    return execFileSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/v:off", "/c", cmdLine], {
+        cwd: options.cwd,
+        env: options.env ? { ...process.env, ...options.env } : process.env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsVerbatimArguments: true,
+        ...(Number.isFinite(options.timeout) && options.timeout > 0 ? { timeout: options.timeout } : {}),
+    }).trim();
+}
+
 function defaultExec(command, args, options = {}) {
     if (process.platform === "win32" && command === "az") {
         const quoted = (args || []).map((a) => `'${String(a).replace(/'/g, "''")}'`).join(" ");
@@ -2256,11 +2455,34 @@ function defaultExec(command, args, options = {}) {
             stdio: ["ignore", "pipe", "pipe"],
         }).trim();
     }
+    if (process.platform === "win32" && /(?:^|[\\/])gradlew(?:\.bat)?$/i.test(String(command || ""))) {
+        const cwd = options.cwd || process.cwd();
+        const rawCmd = String(command).replace(/^PhoneFactor[\\/]/i, "");
+        const candidateBat = /\.bat$/i.test(rawCmd) ? rawCmd : `${rawCmd}.bat`;
+        const resolvedBat = existsSync(path.resolve(cwd, candidateBat))
+            ? path.resolve(cwd, candidateBat)
+            : existsSync(path.resolve(cwd, "gradlew.bat"))
+                ? path.resolve(cwd, "gradlew.bat")
+                : path.resolve(cwd, candidateBat);
+        const normalizedArgs = [...(args || [])];
+        if (!normalizedArgs.includes("--no-daemon")) {
+            normalizedArgs.push("--no-daemon");
+        }
+        if (!normalizedArgs.some((a) => /^--max-workers=/.test(String(a)))) {
+            normalizedArgs.push("--max-workers=2");
+        }
+        return runWindowsBatchFileSafely(resolvedBat, normalizedArgs, {
+            ...options,
+            cwd,
+            timeout: options.timeout ?? DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS,
+        });
+    }
     return execFileSync(command, args, {
         cwd: options.cwd,
         env: options.env ? { ...process.env, ...options.env } : process.env,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
+        ...(Number.isFinite(options.timeout) && options.timeout > 0 ? { timeout: options.timeout } : {}),
     }).trim();
 }
 
@@ -3133,7 +3355,8 @@ Implement the approved Android Auth changes and comprehensive unit tests for eve
 Preserve all approved requirements and acceptance criteria verbatim.${pbiScopeInstruction}
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
-Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2); connected emulator tests run in CI.
+Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon); connected emulator tests run in CI.
+Never let a background Gradle shell command stall indefinitely: if a Gradle build/test command produces no new task progress for more than 10 minutes (or exceeds 25 minutes total), call stop_powershell on that shellId and retry once with --no-daemon --max-workers=2.
 If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
 Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
 
@@ -3257,7 +3480,15 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                         const hasOnDiskEdits = manageWorkspace &&
                             existsSync(path.join(repoRoot, "gradlew.bat")) &&
                             targetImpl.files.some((f) => !nonempty(f.content) && existsSync(path.resolve(repoRoot, f.path)));
-                        const shouldRunLocalGate = applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits;
+                        const builderAlreadyVerifiedOnDisk =
+                            useSlimSchemas &&
+                            latestRawBuilderOutput?.verdict === "pass" &&
+                            Array.isArray(targetImpl?.verificationCommandsRun) &&
+                            targetImpl.verificationCommandsRun.length > 0 &&
+                            rawOptions.runLocalVerification !== true;
+                        const shouldRunLocalGate =
+                            !builderAlreadyVerifiedOnDisk &&
+                            (applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits);
                         if (applyToWorkspace) {
                             try {
                                 applyTargetFiles(repoRoot, targetImpl.files, backups);
@@ -3481,7 +3712,7 @@ Resolve every validation error and reviewer finding in history autonomously with
 export const workflowDefinition = {
     meta: {
         name: "code-feature",
-        description: "Evidence-backed Android coding workflow with builder, up to 3 independent review/fix iterations, and verified PR creation.",
+        description: "Evidence-backed Android coding workflow with builder, up to 2 independent review/fix iterations, and verified PR creation.",
         phases: [
             { title: "Validate task and gather evidence" },
             { title: "Build initial implementation" },

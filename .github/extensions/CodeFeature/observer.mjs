@@ -44,7 +44,7 @@ function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
 }
 
 export const OBSERVER_AGENT = "pr-observer";
-export const MAX_OBSERVER_ITERATIONS = 3;
+export const MAX_OBSERVER_ITERATIONS = 2;
 export const DEFAULT_CI_POLL_INTERVAL_MS = 60_000;
 export const DEFAULT_MAX_CI_POLL_ATTEMPTS = 60;
 export const MAX_JS_POLLS_BEFORE_HEARTBEAT = 7;
@@ -381,7 +381,9 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
             "$maxIter = ($statuses | Where-Object { $_.iterationId } | Measure-Object -Property iterationId -Maximum).Maximum",
             "$latestStatuses = @($statuses | Where-Object { -not $_.iterationId -or -not $maxIter -or $_.iterationId -eq $maxIter } | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
-            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; $failedTasks = @(); if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; if ($b.status -eq 'inProgress') { $hungEmu = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.name -eq 'Start emulator' -and $_.state -eq 'inProgress' -and $_.startTime -and (([DateTime]::UtcNow - [DateTime]::Parse($_.startTime)).TotalMinutes -gt 25) }); if ($hungEmu.Count -gt 0) { try { $projId = $pr.repository.project.id; $artId = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$projId/$($pr.pullRequestId)\"); $evals = (Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$artId&api-version=7.1-preview.1\") -Headers $headers -Method Get).value; $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; foreach ($ev in @($evals | Where-Object { $_.context.buildId -eq $b.id })) { Invoke-RestMethod -Method Patch -Uri (\"$projectBase/_apis/policy/evaluations/$($ev.evaluationId)?api-version=7.1-preview.1\") -Headers $jsonHeaders -Body '{}' | Out-Null } } catch {} } }; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); $failedTests = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers $headers -Method Get; if ($logText -notmatch 'BUILD FAILED' -and $rec.parentId) { $parentRec = $tl.records | Where-Object { $_.id -eq $rec.parentId } | Select-Object -First 1; if ($parentRec -and $parentRec.log.url) { try { $parentTail = Invoke-RestMethod -Uri ($parentRec.log.url + '?startLine=65000&api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($parentTail) { $logText = $logText + \"`n\" + $parentTail } } catch {} } }; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/|\\sw:\\s' -and $_ -cmatch 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|Caused by:|error:' } | Select-Object -Last 25); $runIds = @([regex]::Matches($logText, 'run id:\\s*(\\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique); foreach ($rid in $runIds) { try { $tr = (Invoke-RestMethod -Uri (\"$projectBase/_apis/test/Runs/$rid/results?outcomes=Failed&api-version=7.0\") -Headers $headers -Method Get).value; foreach ($tc in @($tr | Select-Object -First 20)) { $failedTests += @{ testClass = $tc.automatedTestStorage; testName = $tc.automatedTestName; errorMessage = $tc.errorMessage; stackTrace = @(($tc.stackTrace -split \"`r?`n\") | Select-Object -First 8) } } } catch {} } } catch {} }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt; failedTests = $failedTests } } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
+            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $sameCommitCount = @($_.Group).Count; $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; if ($b.sourceVersion) { $sameCommitCount = @($_.Group | Where-Object { $_.sourceVersion -eq $b.sourceVersion }).Count }; $failedTasks = @(); $needsPolicyRequeue = $false; $hasInfraFailure = $false; if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; if ($b.status -eq 'inProgress' -and $sameCommitCount -lt 2) { $hungEmu = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.name -eq 'Start emulator' -and $_.state -eq 'inProgress' -and $_.startTime -and (([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$_.startTime)).TotalMinutes -gt 45) }); if ($hungEmu.Count -gt 0) { $needsPolicyRequeue = $true } }; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $taskIsInfra = $false; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); $failedTests = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($logText -isnot [string] -and $logText.value) { $logText = ($logText.value -join \"`n\") }; if ($logText -notmatch 'BUILD FAILED' -and $rec.parentId) { $parentRec = $tl.records | Where-Object { $_.id -eq $rec.parentId } | Select-Object -First 1; if ($parentRec -and $parentRec.log.url) { try { $parentTail = Invoke-RestMethod -Uri ($parentRec.log.url + '?startLine=65000&api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($parentTail -isnot [string] -and $parentTail.value) { $parentTail = ($parentTail.value -join \"`n\") }; if ($parentTail) { $logText = $logText + \"`n\" + $parentTail } } catch {} } }; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/|\\sw:\\s' -and $_ -cmatch 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|Caused by:|error:|fetch-pack:' } | Select-Object -Last 25); $runIds = @([regex]::Matches($logText, 'run id:\\s*(\\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique); foreach ($rid in $runIds) { try { $tr = (Invoke-RestMethod -Uri (\"$projectBase/_apis/test/Runs/$rid/results?outcomes=Failed&api-version=7.0\") -Headers $headers -Method Get).value; foreach ($tc in @($tr | Select-Object -First 20)) { $failedTests += @{ testClass = $tc.automatedTestStorage; testName = $tc.automatedTestName; errorMessage = $tc.errorMessage; stackTrace = @(($tc.stackTrace -split \"`r?`n\") | Select-Object -First 8) } } } catch {} } } catch {} }; if ($failedTests.Count -eq 0 -and (($issues + $excerpt) -join \"`n\") -match 'UnknownHostException|nodename nor servname|502 Bad Gateway|503 Service Unavailable|ETIMEDOUT|ECONNRESET|Connection reset by peer|unexpected disconnect while reading sideband packet|Git fetch failed with exit code') { $taskIsInfra = $true }; if ($taskIsInfra -and ($b.status -eq 'inProgress' -or $sameCommitCount -lt 2)) { $hasInfraFailure = $true; continue }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt; failedTests = $failedTests } }; if ($hasInfraFailure -and $failedTasks.Count -eq 0 -and $b.status -eq 'completed') { $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; $stageRetried = $false; foreach ($st in @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -eq 'failed' -and $_.identifier -and ([int]$_.attempt -lt 2) })) { try { Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/stages/$($st.identifier)?api-version=7.0-preview.1\") -Headers $jsonHeaders -Method Patch -Body '{\"state\":1,\"forceRetryAllJobs\":false}' | Out-Null; $stageRetried = $true } catch {} }; if ($stageRetried) { $b.status = 'inProgress'; $b.result = $null } elseif ($sameCommitCount -lt 2) { $needsPolicyRequeue = $true } }; if ($needsPolicyRequeue -and $sameCommitCount -lt 2) { try { $projId = $pr.repository.project.id; $artId = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$projId/$($pr.pullRequestId)\"); $evals = (Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$artId&api-version=7.1-preview.1\") -Headers $headers -Method Get).value; $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; foreach ($ev in @($evals | Where-Object { $_.context.buildId -eq $b.id })) { Invoke-RestMethod -Method Patch -Uri (\"$projectBase/_apis/policy/evaluations/$($ev.evaluationId)?api-version=7.1-preview.1\") -Headers $jsonHeaders -Body '{}' | Out-Null }; $failedTasks = @(); $b.status = 'inProgress'; $b.result = $null } catch {} } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
+            "$runningDefNames = @($latestBuilds | Where-Object { $_.status -in @('inProgress','notStarted') -and $_.failedTasks.Count -eq 0 } | ForEach-Object { $_.definition.ToLowerInvariant() })",
+            "foreach ($st in $latestStatuses) { if ($st.state -eq 'failed' -and $st.context.name -eq 'codecoverage' -and ($runningDefNames -contains ([string]$st.context.genre).ToLowerInvariant())) { $st.state = 'pending'; $st.description = 'Coverage status check pending active build completion' } }",
             `$out = @{ number = $pr.pullRequestId; title = $pr.title; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; activeReviewThreads = $activeThreads; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
             "[Console]::Out.Write(($out | ConvertTo-Json -Depth 8 -Compress))",
@@ -579,6 +581,11 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
         const state = String(check?.state || check?.status || "").toLowerCase();
         const conclusion = String(check?.conclusion || "").toLowerCase();
         const description = String(check?.description || "");
+        const checkName = String(check?.context?.name || check?.name || "").toLowerCase();
+        if (hasRunningBuild && (checkName === "codecoverage" || /Coverage status check failed/i.test(description))) {
+            hasPendingCheck = true;
+            continue;
+        }
         if (state === "failed" || state === "error" || conclusion === "failure" || conclusion === "timed_out") {
             return false;
         }
@@ -772,6 +779,10 @@ export async function runPrObserver(ctx, dependencies = {}) {
 
         let snapshot = await step(`snapshot-${iteration}`, async () => fetchSnapshot(parsedPr), { volatile: true });
         let totalPollsUsed = 0;
+        let pollSeq = 0;
+        let buildResetCount = 0;
+        const getBuildIdsKey = (s) => Array.isArray(s?.prBuilds) ? s.prBuilds.map((b) => b?.id || 0).join(",") : "";
+        let activeBuildIdsKey = getBuildIdsKey(snapshot);
         let observation = null;
         let afterObserveSnap = snapshotWorktree(repoRoot, exec);
         let lastWaitingFingerprint = null;
@@ -786,13 +797,20 @@ export async function runPrObserver(ctx, dependencies = {}) {
                 batchPoll++
             ) {
                 totalPollsUsed++;
+                pollSeq++;
                 log(`PR #${parsedPr.prNumber} CI checks are still running with no failures yet; polling again in ${Math.round(ciPollIntervalMs / 1000)}s (${totalPollsUsed}/${maxCiPollAttempts})...`);
                 await sleep(ciPollIntervalMs);
                 snapshot = await step(
-                    `snapshot-${iteration}-poll-${totalPollsUsed}`,
+                    `snapshot-${iteration}-poll-${pollSeq}`,
                     async () => fetchSnapshot(parsedPr),
                     { volatile: true },
                 );
+                const nextBuildIdsKey = getBuildIdsKey(snapshot);
+                if (nonempty(nextBuildIdsKey) && nextBuildIdsKey !== activeBuildIdsKey && buildResetCount < MAX_OBSERVER_ITERATIONS) {
+                    activeBuildIdsKey = nextBuildIdsKey;
+                    buildResetCount++;
+                    totalPollsUsed = 0;
+                }
             }
 
             if (record(snapshot) && nonempty(snapshot.baseRefName)) {
@@ -1009,13 +1027,16 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
             log(`Reverted unauthorized CI pipeline / static-analysis config edits during tactical repair: ${revertedProtected.join(", ")}`);
         }
 
-        if (target.verificationCommands.length > 0) {
+        if (
+            target.verificationCommands.length > 0 &&
+            (rawOptions.runLocalVerification === true || repairResult.verdict !== "pass")
+        ) {
             const gate = runLocalVerificationGate({
                 repoRoot,
                 target,
                 targetImpl: null,
                 implementation: null,
-                exec,
+                ...(dependencies.exec ? { exec: dependencies.exec } : {}),
             });
             if (gate.errors.length > 0) {
                 log(`Local verification failed during tactical repair: ${gate.errors.join("; ")}`);
@@ -1148,8 +1169,8 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                             `$replyBytes = [System.Convert]::FromBase64String('${replyB64}')`,
                             "$statusBytes = [System.Text.Encoding]::UTF8.GetBytes('{\"status\":\"fixed\"}')",
                             `foreach ($tid in @(${threadIds.join(",")})) {`,
-                            "  try { Invoke-RestMethod -Uri \"$base/$tid/comments?api-version=7.0\" -Headers $headers -Method Post -Body $replyBytes | Out-Null } catch {}",
-                            "  try { Invoke-RestMethod -Uri \"$base/$tid?api-version=7.0\" -Headers $headers -Method Patch -Body $statusBytes | Out-Null } catch {}",
+                            "  try { Invoke-RestMethod -Uri \"$base/$($tid)/comments?api-version=7.0\" -Headers $headers -Method Post -Body $replyBytes | Out-Null } catch {}",
+                            "  try { Invoke-RestMethod -Uri \"$base/$($tid)?api-version=7.0\" -Headers $headers -Method Patch -Body $statusBytes | Out-Null } catch {}",
                             "}",
                         ].join("; ");
                         try {
