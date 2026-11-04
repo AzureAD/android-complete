@@ -381,10 +381,11 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
             "$maxIter = ($statuses | Where-Object { $_.iterationId } | Measure-Object -Property iterationId -Maximum).Maximum",
             "$latestStatuses = @($statuses | Where-Object { -not $_.iterationId -or -not $maxIter -or $_.iterationId -eq $maxIter } | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
-            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $sameCommitCount = @($_.Group).Count; $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; if ($b.sourceVersion) { $sameCommitCount = @($_.Group | Where-Object { $_.sourceVersion -eq $b.sourceVersion }).Count }; $failedTasks = @(); $needsPolicyRequeue = $false; $hasInfraFailure = $false; if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; if ($b.status -eq 'inProgress' -and $sameCommitCount -lt 2) { $hungEmu = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.name -eq 'Start emulator' -and $_.state -eq 'inProgress' -and $_.startTime -and (([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$_.startTime)).TotalMinutes -gt 45) }); if ($hungEmu.Count -gt 0) { $needsPolicyRequeue = $true } }; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $taskIsInfra = $false; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); $failedTests = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($logText -isnot [string] -and $logText.value) { $logText = ($logText.value -join \"`n\") }; if ($logText -notmatch 'BUILD FAILED' -and $rec.parentId) { $parentRec = $tl.records | Where-Object { $_.id -eq $rec.parentId } | Select-Object -First 1; if ($parentRec -and $parentRec.log.url) { try { $parentTail = Invoke-RestMethod -Uri ($parentRec.log.url + '?startLine=65000&api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($parentTail -isnot [string] -and $parentTail.value) { $parentTail = ($parentTail.value -join \"`n\") }; if ($parentTail) { $logText = $logText + \"`n\" + $parentTail } } catch {} } }; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/|\\sw:\\s' -and $_ -cmatch 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|Caused by:|error:|fetch-pack:' } | Select-Object -Last 25); $runIds = @([regex]::Matches($logText, 'run id:\\s*(\\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique); foreach ($rid in $runIds) { try { $tr = (Invoke-RestMethod -Uri (\"$projectBase/_apis/test/Runs/$rid/results?outcomes=Failed&api-version=7.0\") -Headers $headers -Method Get).value; foreach ($tc in @($tr | Select-Object -First 20)) { $failedTests += @{ testClass = $tc.automatedTestStorage; testName = $tc.automatedTestName; errorMessage = $tc.errorMessage; stackTrace = @(($tc.stackTrace -split \"`r?`n\") | Select-Object -First 8) } } } catch {} } } catch {} }; if ($failedTests.Count -eq 0 -and (($issues + $excerpt) -join \"`n\") -match 'UnknownHostException|nodename nor servname|502 Bad Gateway|503 Service Unavailable|ETIMEDOUT|ECONNRESET|Connection reset by peer|unexpected disconnect while reading sideband packet|Git fetch failed with exit code') { $taskIsInfra = $true }; if ($taskIsInfra -and ($b.status -eq 'inProgress' -or $sameCommitCount -lt 2)) { $hasInfraFailure = $true; continue }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt; failedTests = $failedTests } }; if ($hasInfraFailure -and $failedTasks.Count -eq 0 -and $b.status -eq 'completed') { $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; $stageRetried = $false; foreach ($st in @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -eq 'failed' -and $_.identifier -and ([int]$_.attempt -lt 2) })) { try { Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/stages/$($st.identifier)?api-version=7.0-preview.1\") -Headers $jsonHeaders -Method Patch -Body '{\"state\":1,\"forceRetryAllJobs\":false}' | Out-Null; $stageRetried = $true } catch {} }; if ($stageRetried) { $b.status = 'inProgress'; $b.result = $null } elseif ($sameCommitCount -lt 2) { $needsPolicyRequeue = $true } }; if ($needsPolicyRequeue -and $sameCommitCount -lt 2) { try { $projId = $pr.repository.project.id; $artId = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$projId/$($pr.pullRequestId)\"); $evals = (Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$artId&api-version=7.1-preview.1\") -Headers $headers -Method Get).value; $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; foreach ($ev in @($evals | Where-Object { $_.context.buildId -eq $b.id })) { Invoke-RestMethod -Method Patch -Uri (\"$projectBase/_apis/policy/evaluations/$($ev.evaluationId)?api-version=7.1-preview.1\") -Headers $jsonHeaders -Body '{}' | Out-Null }; $failedTasks = @(); $b.status = 'inProgress'; $b.result = $null } catch {} } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
+            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $sameCommitCount = @($_.Group).Count; $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; if ($b.sourceVersion) { $sameCommitCount = @($_.Group | Where-Object { $_.sourceVersion -eq $b.sourceVersion }).Count }; $failedTasks = @(); $needsPolicyRequeue = $false; $hasInfraFailure = $false; if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; if ($b.status -eq 'inProgress' -and $sameCommitCount -lt 2) { $hungEmu = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.name -eq 'Start emulator' -and $_.state -eq 'inProgress' -and $_.startTime -and (([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$_.startTime)).TotalMinutes -gt 45) }); if ($hungEmu.Count -gt 0) { $needsPolicyRequeue = $true } }; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $taskIsInfra = $false; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); $failedTests = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($logText -isnot [string] -and $logText.value) { $logText = ($logText.value -join \"`n\") }; if ($logText -notmatch 'BUILD FAILED' -and $rec.parentId) { $parentRec = $tl.records | Where-Object { $_.id -eq $rec.parentId } | Select-Object -First 1; if ($parentRec -and $parentRec.log.url) { try { $parentTail = Invoke-RestMethod -Uri ($parentRec.log.url + '?startLine=65000&api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($parentTail -isnot [string] -and $parentTail.value) { $parentTail = ($parentTail.value -join \"`n\") }; if ($parentTail) { $logText = $logText + \"`n\" + $parentTail } } catch {} } }; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/|\\sw:\\s' -and $_ -cmatch 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|Caused by:|Exception in thread|UnknownHostException|error:|fetch-pack:' } | Select-Object -Last 25); $runIds = @([regex]::Matches($logText, 'run id:\\s*(\\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique); foreach ($rid in $runIds) { try { $tr = (Invoke-RestMethod -Uri (\"$projectBase/_apis/test/Runs/$rid/results?outcomes=Failed&api-version=7.0\") -Headers $headers -Method Get).value; foreach ($tc in @($tr | Select-Object -First 20)) { $failedTests += @{ testClass = $tc.automatedTestStorage; testName = $tc.automatedTestName; errorMessage = $tc.errorMessage; stackTrace = @(($tc.stackTrace -split \"`r?`n\") | Select-Object -First 8) } } } catch {} } } catch {} }; if ($failedTests.Count -eq 0 -and (($issues + $excerpt) -join \"`n\") -match 'UnknownHostException|nodename nor servname|502 Bad Gateway|503 Service Unavailable|ETIMEDOUT|ECONNRESET|Connection reset by peer|unexpected disconnect while reading sideband packet|Git fetch failed with exit code') { $taskIsInfra = $true }; if ($taskIsInfra -and ($b.status -eq 'inProgress' -or $sameCommitCount -lt 2)) { $hasInfraFailure = $true; continue }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt; failedTests = $failedTests } }; if ($hasInfraFailure -and $failedTasks.Count -eq 0 -and $b.status -eq 'completed') { $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; $stageRetried = $false; foreach ($st in @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -eq 'failed' -and $_.identifier -and ([int]$_.attempt -lt 2) })) { try { Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/stages/$($st.identifier)?api-version=7.0-preview.1\") -Headers $jsonHeaders -Method Patch -Body '{\"state\":1,\"forceRetryAllJobs\":false}' | Out-Null; $stageRetried = $true } catch {} }; if ($stageRetried) { $b.status = 'inProgress'; $b.result = $null } elseif ($sameCommitCount -lt 2) { $needsPolicyRequeue = $true } }; if ($needsPolicyRequeue -and $sameCommitCount -lt 2) { try { $projId = $pr.repository.project.id; $artId = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$projId/$($pr.pullRequestId)\"); $evals = (Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$artId&api-version=7.1-preview.1\") -Headers $headers -Method Get).value; $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; foreach ($ev in @($evals | Where-Object { $_.context.buildId -eq $b.id })) { Invoke-RestMethod -Method Patch -Uri (\"$projectBase/_apis/policy/evaluations/$($ev.evaluationId)?api-version=7.1-preview.1\") -Headers $jsonHeaders -Body '{}' | Out-Null }; $failedTasks = @(); $b.status = 'inProgress'; $b.result = $null } catch {} } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
             "$runningDefNames = @($latestBuilds | Where-Object { $_.status -in @('inProgress','notStarted') -and $_.failedTasks.Count -eq 0 } | ForEach-Object { $_.definition.ToLowerInvariant() })",
             "foreach ($st in $latestStatuses) { if ($st.state -eq 'failed' -and $st.context.name -eq 'codecoverage' -and ($runningDefNames -contains ([string]$st.context.genre).ToLowerInvariant())) { $st.state = 'pending'; $st.description = 'Coverage status check pending active build completion' } }",
-            `$out = @{ number = $pr.pullRequestId; title = $pr.title; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; activeReviewThreads = $activeThreads; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
+            "$changedFiles = $null; try { $iters = (Invoke-RestMethod -Uri ($base + '/iterations?api-version=7.0') -Headers $headers -Method Get).value; $lastIterId = ($iters | Measure-Object -Property id -Maximum).Maximum; if ($lastIterId) { $iterChanges = (Invoke-RestMethod -Uri ($base + \"/iterations/$lastIterId/changes?api-version=7.0\") -Headers $headers -Method Get).changeEntries; $changedFiles = @($iterChanges | ForEach-Object { ([string]$_.item.path) -replace '^/+','' } | Where-Object { $_ } | Select-Object -Unique -First 50) } } catch { $changedFiles = $null }",
+            `$out = @{ number = $pr.pullRequestId; title = $pr.title; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; activeReviewThreads = $activeThreads; changedFiles = $changedFiles; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
             "[Console]::Out.Write(($out | ConvertTo-Json -Depth 8 -Compress))",
         ].join("; ");
@@ -424,11 +425,17 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             "--repo",
             repoArg,
             "--json",
-            "number,title,state,mergeStateStatus,headRefName,headRefOid,baseRefName,statusCheckRollup,reviews,comments,url",
+            "number,title,state,mergeStateStatus,headRefName,headRefOid,baseRefName,statusCheckRollup,reviews,comments,files,url",
         ],
         { cwd: workspaceRoot, env: gitEnv },
     );
     const parsedSnapshot = JSON.parse(rawJson);
+    if (record(parsedSnapshot) && Array.isArray(parsedSnapshot.files) && !Array.isArray(parsedSnapshot.changedFiles)) {
+        parsedSnapshot.changedFiles = parsedSnapshot.files
+            .map((f) => String(f?.path ?? "").trim().replace(/^\/+/, ""))
+            .filter(nonempty)
+            .slice(0, 50);
+    }
 
     if (exec === defaultExec && record(parsedSnapshot)) {
         try {
@@ -537,12 +544,8 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
     return parsedSnapshot;
 }
 
-export function isSnapshotWaitingForCiOnly(snapshot) {
+export function hasActionableReviewOrCommentFeedback(snapshot) {
     if (!record(snapshot)) return false;
-    const mergeState = String(snapshot.mergeStateStatus || "").toLowerCase();
-    if (mergeState.includes("conflict") || mergeState === "dirty") {
-        return false;
-    }
 
     const activeThreads = Array.isArray(snapshot.activeReviewThreads) ? snapshot.activeReviewThreads : [];
     const hasActionableThread = activeThreads.some((thread) => {
@@ -555,10 +558,75 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
             return nonempty(text);
         });
     });
-    if (hasActionableThread) return false;
+    if (hasActionableThread) return true;
 
     const inlineComments = Array.isArray(snapshot.inlineReviewComments) ? snapshot.inlineReviewComments : [];
-    if (inlineComments.some((c) => nonempty(c?.body))) return false;
+    if (inlineComments.some((c) => nonempty(c?.body))) return true;
+
+    const reviews = Array.isArray(snapshot.reviews) ? snapshot.reviews : [];
+    if (reviews.length > 0) {
+        const latestStateByReviewer = new Map();
+        const latestActionableBodyByReviewer = new Map();
+        for (let i = 0; i < reviews.length; i++) {
+            const review = reviews[i];
+            const state = String(review?.state || "").trim().toUpperCase();
+            const author = String(review?.author?.login || review?.user?.login || `reviewer-${i}`).trim().toLowerCase();
+            const body = String(review?.body || "").trim();
+            const isBoilerplateBody =
+                !nonempty(body) ||
+                /<!--\s*ccr-overview/i.test(body) ||
+                /AuthApp PR Reviewer.*\bApprove\b.*No blocking issues found/is.test(body);
+
+            if (state === "APPROVED" || state === "DISMISSED") {
+                latestStateByReviewer.set(author, state);
+                latestActionableBodyByReviewer.delete(author);
+                continue;
+            }
+            if (state === "CHANGES_REQUESTED") {
+                latestStateByReviewer.set(author, state);
+            }
+            if (!isBoilerplateBody) {
+                latestActionableBodyByReviewer.set(author, body);
+            }
+        }
+        for (const state of latestStateByReviewer.values()) {
+            if (state === "CHANGES_REQUESTED") {
+                return true;
+            }
+        }
+        if (latestActionableBodyByReviewer.size > 0) {
+            return true;
+        }
+    }
+
+    const topComments = Array.isArray(snapshot.comments) ? snapshot.comments : [];
+    for (const comment of topComments) {
+        const author = String(comment?.author?.login || comment?.user?.login || "").trim().toLowerCase();
+        const body = String(comment?.body || comment?.content || "").trim();
+        if (!nonempty(body)) continue;
+        if (
+            author === "azure-pipelines" ||
+            author === "github-actions" ||
+            /<!--\s*AzurePipelinesStatusComment\s*-->/i.test(body) ||
+            /<!--\s*code:\s*lcc-\d+\s*-->/i.test(body) ||
+            /^Addressed in [0-9a-f]{6,40}:/i.test(body)
+        ) {
+            continue;
+        }
+        return true;
+    }
+
+    return false;
+}
+
+export function isSnapshotWaitingForCiOnly(snapshot) {
+    if (!record(snapshot)) return false;
+    const mergeState = String(snapshot.mergeStateStatus || "").toLowerCase();
+    if (mergeState.includes("conflict") || mergeState === "dirty") {
+        return false;
+    }
+
+    if (hasActionableReviewOrCommentFeedback(snapshot)) return false;
 
     const prBuilds = Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [];
     let hasRunningBuild = false;
@@ -586,7 +654,15 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
             hasPendingCheck = true;
             continue;
         }
-        if (state === "failed" || state === "error" || conclusion === "failure" || conclusion === "timed_out") {
+        if (
+            state === "failed" ||
+            state === "failure" ||
+            state === "error" ||
+            conclusion === "failure" ||
+            conclusion === "timed_out" ||
+            conclusion === "cancelled" ||
+            conclusion === "action_required"
+        ) {
             return false;
         }
         if (/Missing Approvals/i.test(description)) {
@@ -603,6 +679,103 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
     }
 
     return hasRunningBuild || hasPendingCheck;
+}
+
+export function isSnapshotReadyForHumanMerge(snapshot) {
+    if (!record(snapshot)) return false;
+    if (isSnapshotWaitingForCiOnly(snapshot)) return false;
+
+    const mergeState = String(snapshot.mergeStateStatus || "").toLowerCase();
+    if (!["clean", "succeeded", "has_hooks"].includes(mergeState)) {
+        return false;
+    }
+
+    if (hasActionableReviewOrCommentFeedback(snapshot)) return false;
+
+    const prBuilds = Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [];
+    const checks = Array.isArray(snapshot.statusCheckRollup) ? snapshot.statusCheckRollup : [];
+    if (prBuilds.length === 0 && checks.length === 0) {
+        return false;
+    }
+
+    for (const build of prBuilds) {
+        const defName = String(build?.definition || "");
+        const isNonBlockingAiReviewer = /PR-Reviewer|AI PR Review/i.test(defName);
+        const status = String(build?.status || "").toLowerCase();
+        const result = String(build?.result || "").toLowerCase();
+        const failedTasks = Array.isArray(build?.failedTasks) ? build.failedTasks : [];
+        if (status !== "completed") return false;
+        if (
+            !isNonBlockingAiReviewer &&
+            (failedTasks.length > 0 || (result !== "succeeded" && result !== "partiallysucceeded"))
+        ) {
+            return false;
+        }
+    }
+
+    for (const check of checks) {
+        const state = String(check?.state || check?.status || "").toLowerCase();
+        const conclusion = String(check?.conclusion || "").toLowerCase();
+        const description = String(check?.description || "");
+        if (/Missing Approvals/i.test(description)) {
+            continue;
+        }
+        const checkPassed =
+            state === "succeeded" ||
+            state === "success" ||
+            state === "notapplicable" ||
+            conclusion === "success" ||
+            conclusion === "neutral" ||
+            conclusion === "skipped";
+        if (!checkPassed) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export function listPrChangedFiles(repoRoot, snapshotOrBaseBranch = "dev", exec = defaultExec) {
+    const snapshot = record(snapshotOrBaseBranch) ? snapshotOrBaseBranch : null;
+    if (snapshot) {
+        const providerFiles = Array.isArray(snapshot.changedFiles)
+            ? snapshot.changedFiles
+            : Array.isArray(snapshot.files)
+                ? snapshot.files
+                : null;
+        if (Array.isArray(providerFiles) && providerFiles.length > 0) {
+            return providerFiles
+                .map((entry) => String(entry?.path ?? entry ?? "").trim().replace(/^\/+/, ""))
+                .filter(nonempty)
+                .slice(0, 50);
+        }
+    }
+
+    if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git"))) return null;
+    const baseBranch = nonempty(snapshot?.baseRefName)
+        ? snapshot.baseRefName.trim()
+        : typeof snapshotOrBaseBranch === "string" && nonempty(snapshotOrBaseBranch)
+            ? snapshotOrBaseBranch.trim()
+            : "dev";
+    const headOid = nonempty(snapshot?.headRefOid) ? snapshot.headRefOid.trim() : "";
+    if (!nonempty(headOid)) {
+        return null;
+    }
+    try {
+        const diffOut = exec(
+            "git",
+            ["--no-pager", "diff", "--name-only", `origin/${baseBranch}...${headOid}`],
+            { cwd: repoRoot },
+        ) || "";
+        const files = diffOut
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(nonempty)
+            .slice(0, 50);
+        return files.length > 0 ? files : null;
+    } catch {
+        return null;
+    }
 }
 
 export function computeSnapshotFingerprint(snapshot) {
@@ -773,9 +946,9 @@ export async function runPrObserver(ctx, dependencies = {}) {
     const reviewerGuides = resolveRoleSkillGuides("reviewer", [target]);
     const attemptedRepairIdentities = new Set();
 
-    for (let iteration = 0; iteration < maxIterations; iteration++) {
+    for (let iteration = 0; iteration <= maxIterations; iteration++) {
         phase("Observe");
-        log(`Observing ${parsedPr.prUrl} (iteration ${iteration + 1}/${maxIterations})`);
+        log(`Observing ${parsedPr.prUrl} (iteration ${Math.min(iteration + 1, maxIterations)}/${maxIterations})`);
 
         let snapshot = await step(`snapshot-${iteration}`, async () => fetchSnapshot(parsedPr), { volatile: true });
         let totalPollsUsed = 0;
@@ -788,13 +961,10 @@ export async function runPrObserver(ctx, dependencies = {}) {
         let lastWaitingFingerprint = null;
 
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
-            for (
-                let batchPoll = 0;
-                batchPoll < MAX_JS_POLLS_BEFORE_HEARTBEAT &&
+            while (
                 totalPollsUsed < maxCiPollAttempts &&
                 (isSnapshotWaitingForCiOnly(snapshot) ||
-                    (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint));
-                batchPoll++
+                    (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))
             ) {
                 totalPollsUsed++;
                 pollSeq++;
@@ -816,17 +986,50 @@ export async function runPrObserver(ctx, dependencies = {}) {
             if (record(snapshot) && nonempty(snapshot.baseRefName)) {
                 target.baseBranch = snapshot.baseRefName;
             }
+
+            if (isSnapshotWaitingForCiOnly(snapshot)) {
+                const runningBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
+                    .filter((b) => ["inprogress", "notstarted", "postponed"].includes(String(b?.status || "").toLowerCase()))
+                    .map((b) => `${b.definition || "CI"} (${b.buildNumber || b.id || "running"})`);
+                observation = {
+                    verdict: "waiting-for-ci",
+                    repairKind: "none",
+                    summary: `PR #${parsedPr.prNumber} CI checks are still in progress (${runningBuilds.join(", ") || "pending checks"}) with no failures or unresolved review threads.`,
+                    evidence: runningBuilds.length > 0 ? runningBuilds : [`PR #${parsedPr.prNumber} checks still running`],
+                    actionableFindings: [],
+                };
+                break;
+            }
+
+            if (isSnapshotReadyForHumanMerge(snapshot)) {
+                const passedBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
+                    .map((b) => `${b.definition || "build"} (${b.buildNumber || b.id}): ${b.result || "succeeded"}`);
+                observation = {
+                    verdict: "ready",
+                    repairKind: "none",
+                    summary: `All required CI checks passed on PR #${parsedPr.prNumber} with no merge conflicts or unresolved review threads.`,
+                    evidence: [
+                        `mergeStateStatus: ${snapshot.mergeStateStatus}`,
+                        ...passedBuilds,
+                        "activeReviewThreads: 0 unresolved",
+                    ],
+                    actionableFindings: [],
+                };
+                break;
+            }
+
             const currentFingerprint = computeSnapshotFingerprint(snapshot);
             const beforeObserveSnap = snapshotWorktree(repoRoot, exec);
-            const observeGuides = resolveRoleSkillGuides("evidence", [target]);
+            const prChangedFiles = listPrChangedFiles(repoRoot, snapshot, exec);
             const stepKey = ciWaitRound === 0
                 ? `observe-${iteration}`
                 : `observe-${iteration}-wait-${ciWaitRound}`;
             observation = await step(
                 stepKey,
                 () => ctx.agent(
-                    `Read and apply these repository instructions: ${observeGuides.join(", ")}.
-Inspect the pull request snapshot and classify whether it is ready for human merge, needs a tactical repair (CI failure, review comment, or merge conflict), is waiting for CI, or needs an owner decision.\nFresh observation request: ${randomUUID()}\nDATA:\n${JSON.stringify({ pr: parsedPr, snapshot, iteration: iteration + 1 })}`,
+                    `Classify the pull request snapshot in a SINGLE turn directly from the supplied DATA (snapshot.prBuilds, snapshot.statusCheckRollup, snapshot.activeReviewThreads, snapshot.inlineReviewComments, snapshot.reviews, snapshot.comments, snapshot.mergeStateStatus, and prChangedFiles).
+Do NOT load codebase-researcher skill guides or crawl the repository with broad glob/grep/view searches—root-cause code investigation and fixes belong to code-builder. Only use view on a specific cited file if an inline review comment cannot be classified without reading the cited lines.
+Only classify a CI test failure as "needs-owner-decision" for a pre-existing base-branch issue when the snapshot provides explicit evidence that the exact same failure also occurs on the unmodified base branch (${target.baseBranch}, for example in a base-branch coverage job) and is unrelated to any shared utility or contract in prChangedFiles; otherwise classify CI failures as "repair" so code-builder can investigate.\nFresh observation request: ${randomUUID()}\nDATA:\n${JSON.stringify({ pr: parsedPr, prChangedFiles, snapshot, iteration: iteration + 1 })}`,
                     {
                         label: `Observe PR #${parsedPr.prNumber} (round ${iteration + 1})`,
                         agent: OBSERVER_AGENT,
@@ -946,6 +1149,9 @@ Inspect the pull request snapshot and classify whether it is ready for human mer
         attemptedRepairIdentities.add(repairId);
 
         // verdict === "repair"
+        if (iteration >= maxIterations) {
+            break;
+        }
         phase("Repair");
         try {
             let currentBranch = "";

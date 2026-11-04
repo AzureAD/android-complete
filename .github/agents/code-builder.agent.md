@@ -22,6 +22,7 @@ Implement approved Android Auth changes and comprehensive unit tests in the targ
 - Emit flight-gated regression telemetry and update OpenTelemetry sampler expectation tests whenever a new `SpanName` is added.
 - Use the custom `Logger` class; never use `android.util.Log` or log PII/tokens/secrets.
 - Unavailable or unconfigured MCP/code-intelligence servers (such as Bluebird MCP) are NEVER blockers—use local checkout tools (`view`, `glob`, `grep`, `edit`, `create`, `apply_patch`, `powershell`) directly on the local worktree.
+- When `DATA.inspectedFiles` is provided, use those pre-loaded repo-relative paths and numbered source excerpts directly instead of re-running broad `glob`/`grep` discovery across the repository; call `view` only for additional line ranges not already in `DATA.inspectedFiles`.
 - When running Gradle in PowerShell, always set `JAVA_HOME` and VSTS credentials in the same command, cap workers with `--max-workers=2` (so KSP/javac does not starve the Copilot CLI liveness heartbeat), and scope Android unit tests with `--tests`:
   ```powershell
   $jbr = "C:\Program Files\Android\Android Studio\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon

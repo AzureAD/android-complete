@@ -2029,6 +2029,105 @@ export function normalizeEvidenceResponse(rawEvidence, task) {
     };
 }
 
+export function buildInspectedFilesContext(workspaceRoot, task, evidence) {
+    if (!nonempty(workspaceRoot) || !record(task) || !record(evidence)) return [];
+    const refs = Array.isArray(evidence.references) ? evidence.references : [];
+    const targets = Array.isArray(task.targets) ? task.targets : [];
+    const seen = new Set();
+    const results = [];
+
+    for (const ref of refs) {
+        if (results.length >= 8) break;
+        if (!record(ref)) continue;
+        const rawLocator = String(ref.locator || ref.path || "").trim();
+        const rawPathPart = String(ref.path || rawLocator).split(/\s+(?:—|--|-)\s+/)[0].trim();
+        const pathBeforeColon = rawPathPart.replace(/:L?\d+(?:\s*-\s*L?\d+)?$/i, "").trim();
+        if (!nonempty(pathBeforeColon)) continue;
+
+        const repoKey = normalizeRepositoryKey(ref.repository);
+        const matchingTarget = nonempty(repoKey)
+            ? targets.find((t) => normalizeRepositoryKey(t?.repository) === repoKey) || null
+            : targets[0] || null;
+        const effectiveRepo = matchingTarget?.repository || repoKey || targets[0]?.repository || "repo";
+        const localDir =
+            matchingTarget?.localPath ||
+            (nonempty(repoKey) && REPOSITORY_DEFAULTS[repoKey]?.localPath) ||
+            targets[0]?.localPath ||
+            ".";
+        const repoRoot = path.resolve(workspaceRoot, localDir);
+
+        const rawRel = pathBeforeColon.replace(/\\/g, "/").replace(/^\.\/+/, "");
+        const normalizedLocalDir = String(localDir).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+        const strippedRel =
+            nonempty(normalizedLocalDir) && normalizedLocalDir !== "." && rawRel.startsWith(`${normalizedLocalDir}/`)
+                ? rawRel.slice(normalizedLocalDir.length + 1)
+                : "";
+        const candidates = [rawRel, strippedRel].filter(
+            (candidate) => isSafeRelativeFilePath(candidate) && /\.[a-z0-9]+$/i.test(candidate),
+        );
+        let cleanRel = "";
+        let fullPath = "";
+        for (const candidate of candidates) {
+            const candidateFull = path.resolve(repoRoot, candidate);
+            try {
+                if (existsSync(candidateFull) && lstatSync(candidateFull).isFile()) {
+                    cleanRel = candidate;
+                    fullPath = candidateFull;
+                    break;
+                }
+            } catch {
+                // Continue checking fallback candidate.
+            }
+        }
+        if (!nonempty(cleanRel) || !nonempty(fullPath)) continue;
+
+        const dedupKey = `${effectiveRepo}:${cleanRel}`;
+        if (seen.has(dedupKey)) continue;
+
+        try {
+            const content = readFileSync(fullPath, "utf8");
+            const lines = content.split(/\r?\n/);
+            const rangeMatch =
+                rawLocator.match(/:L?(\d+)(?:\s*-\s*L?(\d+))?/i) ||
+                rawLocator.match(/\blines?\s+(\d+)(?:\s*-\s*(\d+))?\b/i);
+            const citedStart = rangeMatch ? Number(rangeMatch[1]) : null;
+            const citedEnd = rangeMatch && rangeMatch[2] ? Number(rangeMatch[2]) : citedStart;
+
+            let startLine = 1;
+            let endLine = lines.length;
+            if (lines.length > 160) {
+                if (positiveInt(citedStart)) {
+                    startLine = Math.max(1, citedStart - 25);
+                    endLine = Math.min(lines.length, Math.max(citedEnd || citedStart, citedStart) + 35, startLine + 139);
+                } else {
+                    startLine = 1;
+                    endLine = Math.min(lines.length, 120);
+                }
+            }
+
+            const numberedLines = [];
+            for (let i = startLine; i <= endLine; i++) {
+                numberedLines.push(`${i}: ${lines[i - 1]}`);
+            }
+            const excerpt = numberedLines.join("\n").slice(0, 6000);
+            seen.add(dedupKey);
+            results.push({
+                repository: effectiveRepo,
+                path: cleanRel,
+                locator: rawLocator || cleanRel,
+                startLine,
+                endLine,
+                totalLines: lines.length,
+                excerpt,
+            });
+        } catch {
+            // Best-effort source context pre-loading.
+        }
+    }
+
+    return results;
+}
+
 export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot = "", exec = defaultExec } = {}) {
     if (!record(rawImpl) || !record(task)) return rawImpl;
     if (Array.isArray(rawImpl.targets)) {
@@ -3149,7 +3248,7 @@ Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and t
                     ? task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")
                     : "common, broker, msal, adal"
             }).
-Record exact checked-out commit revisions, file paths, and symbols/line ranges.
+Record exact checked-out commit revisions, repo-relative file paths, and exact line ranges in the format "<repo-relative-path>:L<start>-L<end> — <what to add/change>" for every production and test file that Stage 2 (code-builder) will need to edit or reference, so Stage 2 can pre-load those exact file excerpts without re-searching the repository.
 Verify that the approval/input record binds to revision (${task.revision}) and reference (${task.approval.reference}).
 ${needsSpecExtraction || intakeRound > 0
                 ? `Extract concrete requirements (R1, R2, ...) and repo-targeted implementation targets (targets[]) from the supplied design doc, PBI, prompt, and recorded clarifications. Always include at least one target repository and non-empty acceptanceCriteria; set workItemId to null if no AB#<id> work item is provided.`
@@ -3347,12 +3446,14 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
 
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
+    const inspectedFiles = manageWorkspace ? buildInspectedFilesContext(workspaceRoot, task, evidence) : [];
     const pbiScopeInstruction = Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
         ? `\nSCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—implement and test ONLY the specified PBI scope, and do NOT implement or require work explicitly deferred to other PBIs.`
         : "";
     const builderTask = `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
 Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
 Preserve all approved requirements and acceptance criteria verbatim.${pbiScopeInstruction}
+DATA.inspectedFiles already pre-loads the exact repo-relative file paths and numbered source excerpts identified by Stage 1 (code-evidence). Do NOT re-run broad glob/grep discovery across the repository for files and symbols already provided in DATA.inspectedFiles—view only additional lines if needed, apply your surgical edits, and run ONE combined Gradle verification command.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
 Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon); connected emulator tests run in CI.
@@ -3366,7 +3467,7 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
         BUILDER_AGENT,
         builderTask,
         useSlimSchemas ? slimResultSchema : implementationSchema,
-        { round: 1, maxFixIterations: maxFixes, task, evidence, skillGuides: builderGuides },
+        { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, skillGuides: builderGuides },
         rawOptions.builderModel,
     ));
     implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
@@ -3450,7 +3551,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 BUILDER_AGENT,
                                 builderTask,
                                 useSlimSchemas ? slimResultSchema : implementationSchema,
-                                { round: round + 1, maxFixIterations: maxFixes, task, evidence, skillGuides: builderGuides },
+                                { round: round + 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, skillGuides: builderGuides },
                                 rawOptions.builderModel,
                             ));
                             implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
