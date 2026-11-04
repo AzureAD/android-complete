@@ -566,28 +566,36 @@ export function hasActionableReviewOrCommentFeedback(snapshot) {
     const reviews = Array.isArray(snapshot.reviews) ? snapshot.reviews : [];
     if (reviews.length > 0) {
         const latestStateByReviewer = new Map();
+        const latestActionableBodyByReviewer = new Map();
         for (let i = 0; i < reviews.length; i++) {
             const review = reviews[i];
             const state = String(review?.state || "").trim().toUpperCase();
             const author = String(review?.author?.login || review?.user?.login || `reviewer-${i}`).trim().toLowerCase();
-            if (state === "CHANGES_REQUESTED" || state === "APPROVED" || state === "DISMISSED") {
+            const body = String(review?.body || "").trim();
+            const isBoilerplateBody =
+                !nonempty(body) ||
+                /<!--\s*ccr-overview/i.test(body) ||
+                /AuthApp PR Reviewer.*\bApprove\b.*No blocking issues found/is.test(body);
+
+            if (state === "APPROVED" || state === "DISMISSED") {
+                latestStateByReviewer.set(author, state);
+                latestActionableBodyByReviewer.delete(author);
+                continue;
+            }
+            if (state === "CHANGES_REQUESTED") {
                 latestStateByReviewer.set(author, state);
             }
-            const body = String(review?.body || "").trim();
-            if (
-                nonempty(body) &&
-                state !== "APPROVED" &&
-                state !== "DISMISSED" &&
-                !/<!--\s*ccr-overview/i.test(body) &&
-                !/AuthApp PR Reviewer.*\bApprove\b.*No blocking issues found/is.test(body)
-            ) {
-                return true;
+            if (!isBoilerplateBody) {
+                latestActionableBodyByReviewer.set(author, body);
             }
         }
         for (const state of latestStateByReviewer.values()) {
             if (state === "CHANGES_REQUESTED") {
                 return true;
             }
+        }
+        if (latestActionableBodyByReviewer.size > 0) {
+            return true;
         }
     }
 

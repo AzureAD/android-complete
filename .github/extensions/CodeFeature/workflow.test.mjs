@@ -1634,6 +1634,17 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
     assert.equal(
         isSnapshotReadyForHumanMerge({
             ...greenSnapshot,
+            reviews: [
+                { author: { login: "reviewer1" }, state: "CHANGES_REQUESTED", body: "Please update error handling." },
+                { author: { login: "reviewer1" }, state: "COMMENTED", body: "One more nit before approval." },
+                { author: { login: "reviewer1" }, state: "APPROVED", body: "LGTM!" },
+            ],
+        }),
+        true,
+    );
+    assert.equal(
+        isSnapshotReadyForHumanMerge({
+            ...greenSnapshot,
             comments: [{ author: { login: "reviewer1" }, body: "Can we also cover the null case?" }],
         }),
         false,
