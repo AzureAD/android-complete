@@ -1,7 +1,9 @@
 ---
 name: code-author
-description: Author production-ready Android Auth implementations, regression telemetry, unit tests, and pull requests across Common, Broker, MSAL, ADAL, and Authenticator. Use this skill when implementing features, bug fixes, or PBIs—either directly in chat or inside the `code-feature` dynamic workflow. Enforces strict default-off flight isolation, OTel sampler synchronization, central cross-layer placement, Java/Kotlin ABI compatibility, and PR hygiene.
+description: Author production-ready Android Auth implementations, regression telemetry, unit tests, and pull requests across Common, Broker, MSAL, ADAL, and Authenticator. Use for ordinary coding requests and for workers inside an already-running workflow. Provides coding standards, not an automatic dynamic-workflow launch. The experimental code-feature skill is a separate, explicit per-request opt-in.
 ---
+
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 
 # Code Author
 
@@ -9,20 +11,23 @@ Author production-ready code, tests, telemetry, and pull requests across the And
 repositories (`common`, `broker`, `msal`, `adal`, and `authenticator`) without avoidable
 review or CI round-trips.
 
-## Default Workflow Execution (`code-feature`)
+## Normal coding is the default
 
-When a user asks in a top-level session to implement a feature, PBI, or design document and `run_dynamic_workflow` is available:
-- **Your VERY FIRST action must be to call `run_dynamic_workflow({ name: "code-feature", args: { prompt: "<user prompt verbatim>" } })` immediately.**
-- **Do NOT pre-read `references/implementation-standards.md`, `AGENTS.md`, PBI details, or target repository files in the outer session before starting `code-feature`**—Stage 1 (`code-evidence`), Stage 2 (`code-builder`), Stage 3 (`code-reviewer`), Stage 4 (PR publication), and Stage 5 (`pr-observer`) inside `code-feature` automatically fetch the PBI/design doc, prepare the target checkout (`authenticator/`, `broker/`, `common/`, `msal/`, `adal/`), and execute the full implementation and CI verification loop.
-- **Omit `options` by default** when calling `run_dynamic_workflow` (`code-feature` publishes the pull request and runs bounded `pr-observer` observation). The exception is `options.javaHome` when the developer has already approved a specific run-scoped JDK (including unattended execution). Never pass `createPullRequests: false` or `observePullRequests: false`. Bounded observation does not guarantee green CI.
-- **After starting `run_dynamic_workflow`, NEVER run `Start-Sleep` or poll `inspect-run` in a loop.** The runtime automatically delivers a `<system_notification>` (and invokes `inspect-run`) when the background workflow reaches a terminal or paused state. In Interactive mode, simply end your turn after starting the workflow; in Autopilot mode (when `task_complete` is available), call `task_complete` immediately after starting `run_dynamic_workflow` so the session stays cleanly idle without sleep/polling commands until the workflow completion notification wakes it.
-- **Paused prerequisites need an actual recovery handoff, not just a resume call.** The resume API has no answer/environment argument. If a JDK prompt cannot be answered inside the workflow UI, obtain explicit user approval for a compatible JDK, write `{"runId":"<paused run ID>","javaHome":"<approved JDK directory>"}` to the workspace-local `.github/local-context/code-feature/<runId>.json` path in the pause log (JSON-escape Windows backslashes), then resume that same run. Never write credentials or change global `JAVA_HOME`. A plain `yes` in the outer conversation is not automatically visible to the workflow.
-- **Inspect terminal outcomes, not parent-session idleness.** If a run reports an interruption or is not resumable, preserve the checkout, report the last available durable stage and missing results, and do not claim verification succeeded or automatically restart the implementation. A replacement run needs user approval.
-- **Deliver the actual result to the developer.** On workflow settlement, read the completion receipt/status and report PR links, actual local/CI verification, remaining failures/policies, and the next responsible owner. `completed` means the workflow body returned, not that tests passed or the PR is merge-ready. Never infer test success from a builder/reviewer verdict, authored-test counts, or a `GO` label.
-- **Surface completed milestones while the workflow is still running.** The extension sends `[workflow-milestone:...]` receipts for completed evidence, implementation handoffs, source reviews, publication, and observer repair/CI steps. Relay each new receipt as a concise visible chat update, including any blocked/deferred verification caveat and PR link. Do not wait for final settlement, treat it as task completion, poll for more progress, or restart the workflow. A repeated marker is the same milestone, not new work.
-- **Use the registered read-only `code_feature_workflow_status` tool when present** to inspect a known run's phase, recent progress, accounting, and settled verification/PR receipt. The extension's durable outbox wakes the owning session on settlement and retries undelivered receipts; if the host/client is unavailable, state that delivery limitation rather than assuming the developer saw an update.
-- **Continue the right work, not the implementation from scratch.** If the user delegated PR/CI shepherding and the result is `waiting-for-ci` or `ci-not-observed`, use the supplied `observations[].continuation` to run `pr-observer` for the existing PR. If its repair budget is exhausted, report the concrete remaining diagnostics; do not silently reset the budget or start a duplicate `code-feature` run. Human approvals, presence checks and merge-strategy choices are human gates, not code defects.
-- Only read [implementation standards](references/implementation-standards.md) directly when you are executing *inside* a `code-builder` / `code-reviewer` subagent (where `run_dynamic_workflow` is not used).
+- Implement ordinary requests directly using this skill's standards. Requests such as
+  "implement PBI 3804404", "fix this bug", or "code and open a PR" do not authorize a
+  dynamic workflow, even when its tools are available. Invoking `/code-author` also
+  selects coding standards, not orchestration.
+- Do not automatically launch or offer the experimental workflow for each coding request.
+  Keep the workflow installed and available without making it the default.
+- For an explicit current request to use the coding/dynamic/coding-and-PR workflow, or
+  `/code-feature`, use the [code-feature launcher](../code-feature/SKILL.md). Its invocation
+  boundary includes the supported phrases and negative examples. Opt-in is per request,
+  not sticky for unrelated later tasks.
+- Do not launch a new workflow from a builder, reviewer, evidence worker, or other
+  delegated agent already implementing an assigned task. Follow that assignment and
+  its workflow's existing handoff instead.
+- Read [implementation standards](references/implementation-standards.md) for direct
+  coding and for code-builder/code-reviewer work. The core rules below apply in both.
 
 ## Core Implementation Rules
 

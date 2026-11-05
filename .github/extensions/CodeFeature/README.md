@@ -8,6 +8,42 @@ discovers `.github/extensions/CodeFeature/extension.mjs` and registers the `code
 workflow along with role-scoped custom agents (`code-evidence`, `code-builder`, and
 `code-reviewer`).
 
+## Experimental: explicit opt-in
+
+Normal coding is the default. `Implement PBI 3804404`, `Fix this bug`, `Code and open
+a PR`, and `/code-author ...` use ordinary coding assistance, not this workflow.
+The installed workflow remains available without a configuration toggle or a prompt
+on every coding request.
+
+Select it explicitly with the [code-feature skill](../../skills/code-feature/SKILL.md):
+
+```text
+/code-feature implement PBI 3804404
+```
+
+Or use any of these natural-language forms:
+
+```text
+Use the coding workflow to implement PBI 3804404
+Use the dynamic workflow to implement PBI 3804404
+Use the coding dynamic workflow to implement PBI 3804404
+Use the coding & PR workflow to implement PBI 3804404
+Use the coding and PR workflow to implement PBI 3804404
+Use the coding & PR dynamic workflow to implement PBI 3804404
+```
+
+`coding and PR dynamic workflow` and `Implement ... using the coding and PR dynamic
+workflow` are equivalent. Substitute the actual PBI, design doc, feature or fix; the
+developer does not need JSON or tool syntax. Selection applies to the current request
+only, not unrelated later tasks. Questions, negation, quoted examples and discussions
+about configuring the workflow do not authorize a launch. Workers already inside an
+implementation never recursively start it.
+
+The launcher is experimental and may create a PR and perform bounded CI/review work.
+Unavailable workflow tools are reported explicitly, not replaced silently with a
+standalone background agent. Reload repository customizations or use a new session
+to discover a newly added skill; an older session may retain its previous instructions.
+
 ## Goal
 
 Given an approved coding task or PBI specification:

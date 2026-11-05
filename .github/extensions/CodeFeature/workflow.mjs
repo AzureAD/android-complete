@@ -4993,7 +4993,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
 export const workflowDefinition = {
     meta: {
         name: "code-feature",
-        description: "Android source implementation and bounded independent review, with checkpointed publication and explicit verification/CI handoffs.",
+        description: "Experimental opt-in only: launch when explicitly requested via /code-feature or use the coding/dynamic/coding-and-PR workflow. Never the default for ordinary implementation prompts. Implements, source-reviews, publishes and observes PRs with explicit verification handoffs.",
         phases: [
             { title: "Validate task and gather evidence" },
             { title: "Build initial implementation" },
