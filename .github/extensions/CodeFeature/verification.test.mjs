@@ -9,7 +9,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import {
-    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, runCodeFeature,
+    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, runCodeFeature, validateImplementation,
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
@@ -206,6 +206,89 @@ test("explicit builder handoff to remote CI does not cause a duplicate determini
         assert.equal(gradleCalls, 0);
         assert.equal(result.verification[0].local.status, "deferred");
         assert.ok(!result.reasons.some((reason) => /unit tests.*passed/i.test(reason)));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("committed slim implementation metadata survives a publication error and fresh-context replay without agents or builds", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "committed-publication-replay-"));
+    const repo = path.join(root, "common");
+    try {
+        mkdirSync(repo);
+        const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: "pipe" }).trim();
+        git("init", "--quiet");
+        git("config", "user.name", "Workflow Fixture");
+        git("config", "user.email", "fixture@example.invalid");
+        writeFileSync(path.join(repo, "README"), "baseline\n");
+        git("add", "README");
+        git("commit", "--quiet", "-m", "baseline");
+        git("update-ref", "refs/remotes/origin/dev", "HEAD");
+        git("remote", "add", "origin", "https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git");
+        for (const [file, text] of [["Foo.kt", "// Copyright Microsoft\nclass Foo\n"], ["FooTest.kt", "// Copyright Microsoft\nclass FooTest\n"]]) {
+            writeFileSync(path.join(repo, file), text);
+        }
+        const rawBuild = {
+            verdict: "pass", summary: "Authored source and tests; verification deferred to remote CI.",
+            evidence: ["Foo.kt", "FooTest.kt"], testPlan: "Local verification was short-circuited to remote CI.",
+            prTitle: "Fix Foo", prSummary: "Source fix", rolloutAndFlag: "Default-off",
+        };
+        let publicationFails = true;
+        let gradleCalls = 0;
+        const exec = (command, args, options) => {
+            if (command === "gh") {
+                if (args[0] === "auth" && args[1] === "status") return "Logged in to github.com account fixture (keyring)";
+                if (args[0] === "auth" && args[1] === "token") return "fixture-token";
+                if (args[0] === "pr" && args[1] === "create") {
+                    if (publicationFails) throw new Error("Fixture publication unavailable after commit");
+                    return prUrl;
+                }
+                return "";
+            }
+            if (/gradlew/i.test(command)) { gradleCalls++; throw new Error("Unexpected duplicate local verification"); }
+            if (command === "git" && (args.includes("fetch") || args.includes("push"))) return "";
+            return execFileSync(command, args, { ...options, encoding: "utf8", stdio: "pipe" }).trim();
+        };
+        const before = normalizeImplementationResponse(rawBuild, task, { workspaceRoot: root, exec });
+        const journal = new Map();
+        const make = (results) => {
+            const context = ctx(results);
+            const agent = context.agent;
+            context.agent = (prompt, options) => {
+                if (!results.length) {
+                    const data = JSON.parse(prompt.slice(prompt.lastIndexOf("DATA:\n") + 6));
+                    throw new Error(`Unexpected ${options.label}: ${JSON.stringify(data.history || [])}`);
+                }
+                return agent.call(context, prompt, options);
+            };
+            context.args = { task, options: { workspaceRoot: root, createPullRequests: true, slimSchemas: true } };
+            context.runId = "fixture-publication-replay";
+            context.step = async (key, producer, options) => {
+                if (options?.volatile) return producer();
+                if (!journal.has(key)) journal.set(key, JSON.parse(JSON.stringify(await producer())));
+                return JSON.parse(JSON.stringify(journal.get(key)));
+            };
+            return context;
+        };
+        const evidence = {
+            approvalVerification: { verified: true, revision: "v1", reference: "approval", rationale: "Approved" },
+            references: [{ id: "E1", repository: "common", revision: "commit", path: "Foo.kt", locator: "Foo" }],
+            facts: [{ statement: "Exists", referenceIds: ["E1"] }], conflicts: [], assumptions: [], unknowns: [], blockingUnknowns: [],
+        };
+        await assert.rejects(runCodeFeature(make([evidence, rawBuild, passedReview]), { exec }), /Fixture publication unavailable/);
+        const codeStatus = () => git("status", "--porcelain").split(/\r?\n/).filter((line) => line && line !== "?? local.properties").join("\n");
+        assert.equal(codeStatus(), "");
+        const committedHead = git("rev-parse", "HEAD");
+        const after = normalizeImplementationResponse(rawBuild, task, { workspaceRoot: root, exec });
+        assert.deepEqual(after.targets[0].files.map((file) => file.path), before.targets[0].files.map((file) => file.path));
+        assert.deepEqual(after.targets[0].testsAddedOrUpdated, before.targets[0].testsAddedOrUpdated);
+        assert.deepEqual(validateImplementation(after, task, { workspaceRoot: root }), []);
+        publicationFails = false;
+        const replay = make([]);
+        const result = await runCodeFeature(replay, { exec });
+        assert.equal(result.pullRequests[0].url, prUrl);
+        assert.equal(replay.calls.length, 0);
+        assert.equal(gradleCalls, 0);
+        assert.equal(git("rev-parse", "HEAD"), committedHead);
+        assert.equal(codeStatus(), "");
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

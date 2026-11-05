@@ -113,6 +113,11 @@ crash-window duplicates remain possible. No cross-session runs or credentials ar
 On recovery, fast-forward the workflow source only after the current attempt settles,
 then resume the same run with unchanged approved task inputs. Verify that cached
 evidence/build/review steps are reused rather than starting another implementation.
+Normalized implementation metadata is journaled before publication commits; a committed
+source-branch diff also reconstructs slim file/test metadata when upgrading an older run.
+Local gate and review receipts are bound to implementation-file content rather than
+dirty-worktree status. Existing committed task branches are preserved, not reset to base,
+and publication skips commits when its staged file set is empty.
 An authored workflow with the same name can be shadowed by extension registration;
 verify the selected definition and an explicit fixture marker before treating a synthetic
 run as test evidence. Host-injected terminal inspection is not a manual user wake.

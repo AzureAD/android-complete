@@ -745,31 +745,28 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
                     for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
                         try {
                             const candidateSha = exec("git", ["rev-parse", "--verify", candidate], { cwd: targetDir });
-                            let headSha = "";
                             let currentAbbrev = "";
                             try {
-                                headSha = exec("git", ["rev-parse", "HEAD"], { cwd: targetDir });
                                 currentAbbrev = exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: targetDir });
                             } catch {
-                                headSha = "";
                                 currentAbbrev = "";
                             }
                             if (
                                 nonempty(candidateSha) &&
-                                headSha === candidateSha &&
                                 nonempty(currentAbbrev) &&
                                 currentAbbrev !== "HEAD" &&
-                                currentAbbrev.startsWith(featureBranch)
+                                (currentAbbrev.startsWith(featureBranch) ||
+                                    (positiveInt(Number(target.workItemId)) && currentAbbrev.includes(`/ab-${Number(target.workItemId)}-`)))
                             ) {
                                 break;
                             }
                             try {
-                                exec("git", ["-c", "core.longpaths=true", "checkout", "-B", featureBranch, candidate], { cwd: targetDir });
+                                exec("git", ["-c", "core.longpaths=true", "checkout", "-b", featureBranch, candidate], { cwd: targetDir });
                             } catch {
                                 try {
                                     exec(
                                         "git",
-                                        ["-c", "core.longpaths=true", "checkout", "-B", `${featureBranch}-${randomUUID().slice(0, 6)}`, candidate],
+                                        ["-c", "core.longpaths=true", "checkout", "-b", `${featureBranch}-${randomUUID().slice(0, 6)}`, candidate],
                                         { cwd: targetDir },
                                     );
                                 } catch {
@@ -2572,7 +2569,7 @@ export function formatPrBody(
 export function discoverChangedFilesFromGit(
     repoRoot,
     exec = defaultExec,
-    { allowPipelineEdits = false } = {},
+    { allowPipelineEdits = false, baseBranch = "" } = {},
 ) {
     if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git"))) {
         return { files: [], testsAddedOrUpdated: [] };
@@ -2586,9 +2583,24 @@ export function discoverChangedFilesFromGit(
             ["--no-pager", "status", "--porcelain", "--untracked-files=all"],
             { cwd: repoRoot },
         ) || "";
+        const committed = nonempty(baseBranch)
+            ? exec("git", ["-c", "core.quotepath=false", "--no-pager", "diff", "--name-status", "--no-renames", `origin/${baseBranch}...HEAD`], { cwd: repoRoot }) || ""
+            : "";
+        const changes = new Map();
+        for (const line of committed.split(/\r?\n/)) {
+            const match = line.match(/^([AMD])\t(.+)$/);
+            if (match) changes.set(match[2], `${match[1]} ${match[2]}`);
+        }
+        for (const line of porcelain.split(/\r?\n/)) {
+            const match = line.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
+            if (match) {
+                const key = match[2].trim().replace(/^"(.*)"$/, "$1").split(" -> ").pop().trim();
+                changes.set(key, line);
+            }
+        }
         const files = [];
         const testsAddedOrUpdated = [];
-        for (const rawLine of porcelain.split(/\r?\n/)) {
+        for (const rawLine of changes.values()) {
             const lineMatch = rawLine.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
             if (!lineMatch) continue;
             const status = lineMatch[1];
@@ -2615,12 +2627,15 @@ export function discoverChangedFilesFromGit(
                 content: "",
                 summary: `Updated ${relPath.replace(/\\/g, "/")} in target worktree.`,
             });
-            if (/(?:^|[\\/])(?:src[\\/](?:test|androidTest)[\\/]|.*Test[^\\/]*\.(?:kt|java)$)/i.test(relPath)) {
+            if (action !== "delete" && /(?:^|[\\/])(?:src[\\/](?:test|androidTest)[\\/]|.*Test[^\\/]*\.(?:kt|java)$)/i.test(relPath)) {
                 testsAddedOrUpdated.push(relPath.replace(/\\/g, "/"));
             }
         }
         return { files, testsAddedOrUpdated };
-    } catch {
+    } catch (error) {
+        if (nonempty(baseBranch)) {
+            throw new Error(`Could not reconstruct implementation metadata against origin/${baseBranch}: ${error.message}`);
+        }
         return { files: [], testsAddedOrUpdated: [] };
     }
 }
@@ -2807,7 +2822,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
             if (record(actual)) actual.verification = pendingVerification("Builder-reported commands have not been independently attested.");
             if (record(actual) && (!Array.isArray(actual.files) || actual.files.length === 0) && nonempty(workspaceRoot)) {
                 const repoRoot = path.resolve(workspaceRoot, expectedTarget.localPath || ".");
-                const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits });
+                const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits, baseBranch: expectedTarget.baseBranch });
                 if (discovered.files.length > 0) {
                     actual.files = discovered.files;
                 }
@@ -2828,7 +2843,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         const repoRoot = nonempty(workspaceRoot)
             ? path.resolve(workspaceRoot, expectedTarget.localPath || ".")
             : "";
-        const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits });
+        const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits, baseBranch: expectedTarget.baseBranch });
         const fallbackFiles = evidenceList
             .map((item) => item.split(":")[0]?.trim())
             .filter((candidate) =>
@@ -3531,15 +3546,9 @@ export function publishTargetPullRequest({
         }
     }
     let shouldCommit = true;
-    if (exec === defaultExec && existsSync(path.join(repoRoot, ".git"))) {
-        try {
-            const stagedNames = exec("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot, env: gitEnv });
-            if (!nonempty(stagedNames)) {
-                shouldCommit = false;
-            }
-        } catch {
-            shouldCommit = true;
-        }
+    if (existsSync(path.join(repoRoot, ".git"))) {
+        const stagedNames = exec("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot, env: gitEnv });
+        shouldCommit = nonempty(stagedNames);
     }
     if (shouldCommit) {
         exec(
@@ -3991,6 +4000,18 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const approvedSnapshot = JSON.stringify(task);
     const prefix = `code-feature-v1-${createHash("sha256").update(approvedSnapshot).digest("hex")}`;
     const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
+    const normalizeBuild = (raw, stage) => step(`normalized-${stage}-v2`, () =>
+        normalizeImplementationResponse(raw ?? null, task, { workspaceRoot, exec }));
+    const targetContentFingerprint = (target, targetImpl) => {
+        const digest = createHash("sha256");
+        const root = path.resolve(workspaceRoot, target.localPath || ".");
+        for (const file of [...targetImpl.files].sort((a, b) => a.path.localeCompare(b.path))) {
+            digest.update(`${file.path}\0${file.action}\0`);
+            const fullPath = path.resolve(root, file.path);
+            digest.update(file.action !== "delete" && existsSync(fullPath) ? readFileSync(fullPath) : String(file.content || ""));
+        }
+        return digest.digest("hex");
+    };
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
     const ask = async (label, agentName, promptTask, schema, data, modelOverride) => {
@@ -4431,7 +4452,7 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
         { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, executionEnvironments, skillGuides: builderGuides },
         rawOptions.builderModel,
     ));
-    implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
+    implementation = await normalizeBuild(latestRawBuilderOutput, "build-0");
 
     const restoreAll = () => {
         if (!applyToWorkspace) return;
@@ -4464,7 +4485,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
         if (inspectDrift.length > 0 || !record(inspection) || inspection.verdict === "blocked") {
             return null;
         }
-        return normalizeImplementationResponse(inspection, task, { workspaceRoot, exec });
+        return normalizeBuild(inspection, `inspection-${round}`);
     };
 
     phase("Independent code review and bounded fixes");
@@ -4514,7 +4535,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 { round: round + 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, skillGuides: builderGuides },
                                 rawOptions.builderModel,
                             ));
-                            implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
+                            implementation = await normalizeBuild(latestRawBuilderOutput, `post-clarification-${round}`);
                         } else if (pauseOnBlocker) {
                             const recoveredImpl = await recoverWorktree(round, implementation.blockingUnknowns.join("\n"));
                             if (recoveredImpl) {
@@ -4578,7 +4599,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             }
                         }
                         if (validationErrors.length === 0 && shouldRunLocalGate) {
-                            const gate = runLocalVerificationGate({
+                            const gate = await step(`local-verification-v2-${round}-${target.id}-${targetContentFingerprint(target, targetImpl)}`, () => runLocalVerificationGate({
                                 repoRoot,
                                 target,
                                 targetImpl,
@@ -4586,7 +4607,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 exec,
                                 log,
                                 environment: workflowEnv,
-                            });
+                            }));
                             targetImpl.verification = verificationFromGate(gate);
                             validationErrors.push(...gate.errors);
                             if (
@@ -4642,7 +4663,11 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 : {}),
                         }))
                         : history;
-                    const rawReview = await step(`independent-review-${round}`, () => ask(
+                    const reviewFingerprint = createHash("sha256").update(implementation.targets.map((item) => {
+                        const target = task.targets.find((candidate) => candidate.id === item.targetId);
+                        return targetContentFingerprint(target, item);
+                    }).join(":")).digest("hex");
+                    const rawReview = await step(`independent-review-v2-${round}-${reviewFingerprint}`, () => ask(
                         `Independent code reviewer (round ${round + 1})`,
                         REVIEWER_AGENT,
                         `Read and apply these repository code-review skills and reference guides: ${reviewerGuides.join(", ")}.
@@ -4888,7 +4913,7 @@ Resolve every validation error and reviewer finding in history autonomously with
                 rawOptions.builderModel,
             ));
             latestRawBuilderOutput = rawFixImpl;
-            implementation = normalizeImplementationResponse(rawFixImpl, task, { workspaceRoot, exec });
+            implementation = await normalizeBuild(rawFixImpl, `fix-${fixes}`);
         }
     } catch (error) {
         if (!isWorkflowControlError(ctx, error)) restoreAll();
