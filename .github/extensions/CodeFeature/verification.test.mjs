@@ -400,6 +400,30 @@ test("pending CI returns explicit continuation without spending classifier agent
     assert.equal(result.continuation.args.prUrl, prUrl);
 });
 
+test("observer continuations carry remaining repair budget and an explicit zero never resets it", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "observer-budget-"));
+    try {
+        const context = ctx([{ verdict: "pass", summary: "Fixed source", evidence: [] }, passedReview], {
+            workspaceRoot: root, pushRepairs: false,
+        });
+        let reads = 0;
+        const failed = () => snapshot({ prBuilds: [{ id: 1, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["Unresolved reference"] }] }] });
+        const result = await runPrObserver(context, {
+            exec: () => "",
+            fetchPrSnapshot: () => ++reads === 1 ? failed() : snapshot({ statusCheckRollup: [{ name: "CI", state: "pending" }] }),
+        });
+        assert.equal(result.repairAttempts, 1);
+        assert.equal(result.continuation.args.maxIterations, 1);
+        const exhausted = ctx([], { workspaceRoot: root });
+        exhausted.args.maxIterations = 0;
+        const final = await runPrObserver(exhausted, { exec: () => "", fetchPrSnapshot: failed });
+        assert.equal(final.status, "max-iterations-reached");
+        assert.equal(final.repairAttempts, 0);
+        assert.equal(final.continuation.args.maxIterations, 0);
+        assert.equal(exhausted.calls.length, 0);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("human-only policy gates are explicit and cannot trigger code repairs", async () => {
     const context = ctx();
     const result = await runPrObserver(context, {
@@ -491,6 +515,20 @@ test("standalone observer applies the approved JDK to repair verification withou
         assert.equal(gateJavaHome, jdk);
         assert.equal(process.env.JAVA_HOME, originalJavaHome);
         await assert.rejects(runPrObserver(ctx([], { javaHome: path.join(root, "missing") }), {}), /toolchain requirements/);
+        const invalid = path.join(root, "jdk8");
+        mkdirSync(invalid);
+        writeFileSync(path.join(invalid, "release"), 'JAVA_VERSION="1.8.0"\n');
+        const noSelection = ctx([{ verdict: "pass", summary: "Source fixed", evidence: [] }, passedReview], {
+            workspaceRoot: root, pushRepairs: false,
+        });
+        let moreReads = 0;
+        await runPrObserver(noSelection, {
+            environment: { JAVA_HOME: invalid }, exec: () => "",
+            fetchPrSnapshot: () => ++moreReads === 1
+                ? snapshot({ prBuilds: [{ id: 1, status: "completed", result: "failed", failedTasks: [{ name: "Compile" }] }] })
+                : snapshot(),
+        });
+        assert.ok(!noSelection.calls[0].prompt.includes(`Use JAVA_HOME ${invalid}`));
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -98,6 +98,9 @@ Given an approved coding task or PBI specification:
   `observations[].continuation` provides the `pr-observer` invocation to continue without
   rebuilding or creating another PR. Human-only approvals and merge policies are reported
   separately and must never be bypassed.
+- Continuations carry the remaining repair allowance, including an explicit zero; they
+  never silently restart two repair slots. An observer error with unknown allowance
+  hands off observation-only work until its budget is verified.
 
 ### Owning-session completion delivery
 

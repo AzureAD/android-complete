@@ -72,6 +72,10 @@ const object = (properties) => ({
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const positiveInt = (value) => Number.isSafeInteger(value) && value > 0;
+const repairLimit = (args) => {
+    const requested = args?.maxIterations ?? args?.options?.maxIterations;
+    return Number.isSafeInteger(requested) && requested >= 0 ? Math.min(requested, MAX_OBSERVER_ITERATIONS) : MAX_OBSERVER_ITERATIONS;
+};
 
 export const observationSchema = object({
     verdict: {
@@ -1065,6 +1069,7 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
 
 export async function runPrObserver(ctx, dependencies = {}) {
     let snapshot = null;
+    let repairAttempts = 0;
     const workspaceRoot = ctx.args?.options?.workspaceRoot || process.cwd();
     const environment = { ...(dependencies.environment || process.env) };
     const approvedJavaHome = ctx.args?.options?.javaHome;
@@ -1078,6 +1083,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
     const result = await runObserverLoop(ctx, {
         ...dependencies,
         environment,
+        onRepairAttempt: () => { repairAttempts++; dependencies.onRepairAttempt?.(); },
         fetchPrSnapshot: async (pr) => { snapshot = await fetch(pr); return snapshot; },
     });
     if (!snapshot) return result;
@@ -1087,6 +1093,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
         ci.evidence.push(`Awaiting validation of pushed head ${result.expectedHeadSha}; provider reports ${snapshot.headRefOid}.`);
     }
     result.ci = ci;
+    result.repairAttempts = repairAttempts;
     result.headSha = snapshot.headRefOid || null;
     result.evidence = [...new Set([...(result.evidence || []), ...ci.evidence])];
     result.remainingChecks = (snapshot.statusCheckRollup || []).filter((check) =>
@@ -1103,7 +1110,11 @@ export async function runPrObserver(ctx, dependencies = {}) {
     const waiting = [currentStatuses.waitingForCi, currentStatuses.observationExhausted].includes(result.status);
     result.continuation = waiting ? {
         workflow: "pr-observer",
-        args: { ...ctx.args, options: { ...(ctx.args.options || {}), workspaceRoot } },
+        args: {
+            ...ctx.args,
+            maxIterations: Math.max(0, repairLimit(ctx.args) - repairAttempts),
+            options: { ...(ctx.args.options || {}), workspaceRoot },
+        },
         reason: result.summary,
     } : null;
     result.statusBlock = renderCurrentStatusBlock({
@@ -1144,9 +1155,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
         };
     }
 
-    const maxIterations = positiveInt(args.maxIterations ?? rawOptions.maxIterations)
-        ? Math.min(Number(args.maxIterations ?? rawOptions.maxIterations), MAX_OBSERVER_ITERATIONS)
-        : MAX_OBSERVER_ITERATIONS;
+    const maxIterations = repairLimit(args);
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
     const fetchSnapshot = dependencies.fetchPrSnapshot || ((pr) => fetchPullRequestSnapshot(pr, { workspaceRoot, exec }));
@@ -1178,6 +1187,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
         verificationCommands: Array.isArray(args.verificationCommands) ? args.verificationCommands : [],
     };
     const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+    const selectedJavaHome = resolveTargetJavaHome(target, dependencies.environment || process.env);
     const builderGuides = resolveRoleSkillGuides("builder", [target]);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", [target]);
     const attemptedRepairIdentities = new Set();
@@ -1491,6 +1501,7 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
             };
         }
 
+        dependencies.onRepairAttempt?.();
         const repairResult = await step(`repair-${iteration}`, () => ctx.agent(
             `Read and follow these repository skill guides: ${builderGuides.join(", ")}.
 Apply a surgical tactical fix in ${target.repository} for the reported PR findings (${observation.repairKind}):
@@ -1499,7 +1510,7 @@ Follow Android Auth PR maintenance rules:
 - Never amend or force-push; keep commits incremental/fast-forward.
 - Never modify CI pipeline YAML files (.pipelines/*.yml, .github/workflows/*.yml, azure-pipelines/*.yml) during a tactical repair unless the PR itself is a pipeline change.
 - When verifying a CI test failure locally, run ONLY the targeted failing test class(es) with --tests "<ClassName>" --max-workers=2 (never run the unfiltered full-repo unitTestReport -Pcoverage task locally on Windows, where unrelated native SQLite/Room tests fail outside the macOS CI runner). Once the targeted test class(es) pass locally, return verdict "pass" so the fix is reviewed and pushed to CI.
-${nonempty(dependencies.environment?.JAVA_HOME) ? `- Use JAVA_HOME ${dependencies.environment.JAVA_HOME} for local verification in this workflow run.` : ""}
+${nonempty(selectedJavaHome) ? `- Use JAVA_HOME ${selectedJavaHome} for local verification in this workflow run.` : ""}
 - When merging origin/${target.baseBranch}, if a release was cut on ${target.baseBranch}, ensure this PR's CHANGELOG.md / changes.txt entry remains under the active vNext section; if ${target.baseBranch} deleted an adjacent retired flight enum entry, keep the retired flight deleted.
 Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, snapshot })}`,
             {

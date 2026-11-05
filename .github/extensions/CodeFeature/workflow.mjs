@@ -4901,10 +4901,10 @@ export async function runCodeFeature(ctx, dependencies = {}) {
                 ctx.log?.(`PR observer failed for ${prEntry.url}: ${message}`);
                 observation = {
                     status: "waiting-for-ci", prUrl: prEntry.url,
-                    summary: `PR published; observer requires continuation (${message}).`,
+                    summary: `PR published; observer requires observation-only continuation; repair allowance is not restarted (${message}).`,
                     evidence: [message], iterations: 0,
                     ci: { status: "unknown", headSha: prEntry.headSha || null, evidence: [message] },
-                    continuation: { workflow: "pr-observer", args: observerCtx.args },
+                    continuation: { workflow: "pr-observer", args: { ...observerCtx.args, maxIterations: 0 } },
                 };
             }
             observations.push(observation);
@@ -4952,7 +4952,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
 export const workflowDefinition = {
     meta: {
         name: "code-feature",
-        description: "Evidence-backed Android coding workflow with builder, up to 2 independent review/fix iterations, and verified PR creation.",
+        description: "Android source implementation and bounded independent review, with checkpointed publication and explicit verification/CI handoffs.",
         phases: [
             { title: "Validate task and gather evidence" },
             { title: "Build initial implementation" },
