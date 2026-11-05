@@ -80,6 +80,9 @@ Given an approved coding task or PBI specification:
 - Pure CI waiting and concrete failed tasks are handled deterministically before invoking
   a classifier. At most two tactical repairs occur; exhaustion retains exact remaining
   diagnostics and a continuation rather than an empty success-shaped packet.
+- Hosted-image brownouts and provider-unavailable cancellations retain timeline evidence
+  and return `infrastructure-blocked` without spending source/test-repair agents or
+  modifying pipeline YAML. Retry requires provider recovery or an approved owner change.
 - Pending CI is a handoff, not completion of the developer's readiness objective.
   `observations[].continuation` provides the `pr-observer` invocation to continue without
   rebuilding or creating another PR. Human-only approvals and merge policies are reported

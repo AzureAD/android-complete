@@ -38,6 +38,7 @@ export function deliveryOutcome(pullRequests, observations, { published = true }
     if (!published) return "prepared-for-review";
     if (!pullRequests.length) return "needs-owner-decision";
     if (observations.length !== pullRequests.filter((pr) => pr.url).length || !observations.length) return "ci-not-observed";
+    if (observations.some((item) => item.blockerKind === "ci-infrastructure")) return "infrastructure-blocked";
     if (observations.some((item) => item.ci?.status === "failed")) return "ci-failed";
     if (observations.some((item) => item.statusPublication?.status === "failed")) return "needs-owner-decision";
     if (observations.some((item) => ["max-iterations-reached", "needs-owner-decision"].includes(item.status))) {

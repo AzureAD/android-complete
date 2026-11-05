@@ -4804,6 +4804,8 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                     result.deliveryStatus = outcome;
                     result.nextAction = outcome === "waiting-for-ci" || outcome === "ci-not-observed"
                         ? "Continue pr-observer using observations[].continuation; CI is not yet verified."
+                        : outcome === "infrastructure-blocked"
+                            ? "Hosted CI is unavailable. Retry after provider recovery or obtain an approved pipeline-owner change; do not edit source/tests or claim CI passed."
                         : outcome === "ci-failed" || outcome === "needs-owner-decision"
                             ? "Inspect observations and resolve the explicit remaining failures; do not merge."
                             : "Human review and required repository approvals; never merge automatically.";

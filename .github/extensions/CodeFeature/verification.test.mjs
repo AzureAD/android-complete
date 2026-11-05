@@ -161,6 +161,22 @@ test("human-only policy gates are explicit and cannot trigger code repairs", asy
     assert.equal(context.calls.length, 0);
 });
 
+test("hosted runner brownouts retain actual infrastructure evidence without code-repair agents", async () => {
+    const context = ctx();
+    const result = await runPrObserver(context, {
+        exec: () => "",
+        fetchPrSnapshot: () => snapshot({
+            prBuilds: [{ id: 189612939, status: "completed", result: "canceled",
+                infrastructureIssues: ["macOS-14 image brownout: hosted provider unable to process request."] }],
+        }),
+    });
+    assert.equal(result.blockerKind, "ci-infrastructure");
+    assert.equal(result.ci.status, "failed");
+    assert.ok(result.evidence.some((line) => line.includes("brownout")));
+    assert.equal(context.calls.length, 0);
+    assert.equal(deliveryOutcome([{ url: prUrl }], [result]), "infrastructure-blocked");
+});
+
 test("stale required ADO build validation is refreshed once per durable observation, without code agents", async () => {
     const parsed = parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42");
     const id = "01234567-89ab-cdef-0123-456789abcdef";
