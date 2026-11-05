@@ -2104,7 +2104,7 @@ export function normalizeTask(args) {
                             ? `AB#${abFromText}`
                             : `${inputMode}:${revision}`,
                 }
-                : raw.approval;
+                : (raw.approval ?? null);
 
     const blockingUnknowns = Array.isArray(raw.blockingUnknowns)
         ? raw.blockingUnknowns
@@ -2112,7 +2112,7 @@ export function normalizeTask(args) {
             ? designPacket.stage0.blockingUnknowns
             : inputMode !== "structured"
                 ? []
-                : raw.blockingUnknowns;
+                : (raw.blockingUnknowns ?? null);
 
     const needsExtraction = inputMode !== "structured" && (
         !Array.isArray(raw.requirements) ||

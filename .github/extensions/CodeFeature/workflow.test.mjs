@@ -261,6 +261,39 @@ test("missing, stale, or incomplete task approval requires clarification without
     }
 });
 
+function assertWorkflowJson(value, location = "$") {
+    assert.notEqual(value, undefined, `Workflow result contains nested undefined at ${location}`);
+    if (typeof value === "number") assert.ok(Number.isFinite(value), `Nonfinite number at ${location}`);
+    if (value === null || typeof value !== "object") {
+        assert.ok(["string", "number", "boolean"].includes(typeof value) || value === null, `Non-JSON value at ${location}`);
+        return;
+    }
+    for (const [key, nested] of Object.entries(value)) assertWorkflowJson(nested, `${location}.${key}`);
+}
+
+test("invalid inputs return strict SDK-serializable clarification packets, not nested-undefined runtime errors", async () => {
+    for (const args of [{ task: {} }, { stage0: {} }, {}, { task: { title: "Incomplete", revision: "v1" } }]) {
+        const ctx = context([]);
+        ctx.args = args;
+        const result = await runCodeFeature(ctx);
+        assert.equal(result.recommendation, "needs clarification");
+        assertWorkflowJson(result);
+        assert.equal(ctx.calls.length, 0);
+    }
+});
+
+test("journaled producers and successful packets satisfy the SDK JSON boundary", async () => {
+    const ctx = context([evidence(), implementation(), review()]);
+    ctx.step = async (_key, producer) => {
+        const result = await producer();
+        assertWorkflowJson(result);
+        return result;
+    };
+    const result = await runCodeFeature(ctx);
+    assertWorkflowJson(result);
+    assert.equal(result.deliveryStatus, "prepared-for-review");
+});
+
 test("single-repository shorthand task normalizes defaults for Android Auth repos", () => {
     const normalized = normalizeTask({
         task: {
