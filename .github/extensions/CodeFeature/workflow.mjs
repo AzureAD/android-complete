@@ -21,6 +21,7 @@ const {
     renderCurrentStatusBlock,
     renderDeliveryDecisionBlock,
     renderVerificationBlock,
+    verificationMarkers,
     statusMarkers,
     upsertMarkerBlock,
 } = await import(revisionedModuleUrl("./status.mjs"));
@@ -3580,6 +3581,10 @@ export function publishTargetPullRequest({
 
     const isAdoTarget = target.repository === "authenticator" ||
         /visualstudio\.com|dev\.azure\.com/i.test(String(target.hostname || ""));
+    targetImpl.verification ||= pendingVerification();
+    targetImpl.verification.local.headSha = headSha;
+    body = upsertMarkerBlock(body, verificationMarkers, renderVerificationBlock(targetImpl.verification));
+    if (isAdoTarget) body = fitAdoDescription(body, { maximum: 3500, truncateNarrative: true });
     let url = "";
 
     if (isAdoTarget) {
@@ -3871,7 +3876,18 @@ export function normalizeQuestionKey(question) {
         .trim();
 }
 
-export async function runCodeFeature(ctx, dependencies = {}) {
+function implementationContentFingerprint(workspaceRoot, target, targetImpl) {
+    const digest = createHash("sha256");
+    const root = path.resolve(workspaceRoot, target.localPath || ".");
+    for (const file of [...targetImpl.files].sort((a, b) => a.path.localeCompare(b.path))) {
+        digest.update(`${file.path}\0${file.action}\0`);
+        const fullPath = path.resolve(root, file.path);
+        digest.update(file.action !== "delete" && existsSync(fullPath) ? readFileSync(fullPath) : String(file.content || ""));
+    }
+    return digest.digest("hex");
+}
+
+async function prepareCodeFeature(ctx, dependencies = {}) {
     const rawOptions = record(ctx.args?.options) ? ctx.args.options : {};
     const maxFixes = positiveInt(rawOptions.maxFixIterations)
         ? Math.min(rawOptions.maxFixIterations, MAX_FIX_ITERATIONS)
@@ -4002,16 +4018,7 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
     const normalizeBuild = (raw, stage) => step(`normalized-${stage}-v2`, () =>
         normalizeImplementationResponse(raw ?? null, task, { workspaceRoot, exec }));
-    const targetContentFingerprint = (target, targetImpl) => {
-        const digest = createHash("sha256");
-        const root = path.resolve(workspaceRoot, target.localPath || ".");
-        for (const file of [...targetImpl.files].sort((a, b) => a.path.localeCompare(b.path))) {
-            digest.update(`${file.path}\0${file.action}\0`);
-            const fullPath = path.resolve(root, file.path);
-            digest.update(file.action !== "delete" && existsSync(fullPath) ? readFileSync(fullPath) : String(file.content || ""));
-        }
-        return digest.digest("hex");
-    };
+    const targetContentFingerprint = (target, targetImpl) => implementationContentFingerprint(workspaceRoot, target, targetImpl);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
     const ask = async (label, agentName, promptTask, schema, data, modelOverride) => {
@@ -4748,101 +4755,23 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                 const acceptancePassed = review.acceptanceCriteria.every((entry) => entry.passed === true);
                 if (criteriaPassed && acceptancePassed && review.findings.length === 0) {
                     backupsByTarget.clear();
-                    phase("Prepare and create pull requests");
-                    pullRequests = await step("pull-requests", async () => {
-                        const created = [];
-                        for (const target of task.targets) {
-                            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
-                            created.push(publishTargetPullRequest({
-                                target,
-                                targetImpl,
-                                traceability: implementation.traceability,
-                                reviewRoundCount: history.length,
-                                parentWorkItemId: task.workItemId,
-                                workspaceRoot,
-                                createPullRequests: effectiveCreatePrs,
-                                draftPullRequest,
-                                runId: ctx?.runId || "local",
-                                exec,
-                            }));
-                        }
-                        return created;
-                    });
                     const shouldObservePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
                         ? true
                         : rawOptions.observePullRequests !== undefined
                             ? rawOptions.observePullRequests === true
                             : (effectiveCreatePrs && isInteractiveSession);
-                    if (shouldObservePrs) {
-                        const { runPrObserver } = await import(revisionedModuleUrl("./observer.mjs"));
-                        phase("Observe PR and repair CI/review findings");
-                        for (const prEntry of pullRequests) {
-                            if (!nonempty(prEntry?.url)) continue;
-                            const target = task.targets.find((t) => t.id === prEntry.targetId);
-                            const observerCtx = {
-                                ...ctx,
-                                args: {
-                                    prUrl: prEntry.url,
-                                    repository: prEntry.repository,
-                                    verificationCommands: target?.verificationCommands || [],
-                                    options: {
-                                        ...rawOptions,
-                                        workspaceRoot,
-                                    },
-                                },
-                            };
-                            try {
-                                const obsResult = await runPrObserver(observerCtx, {
-                                    exec,
-                                    fetchPrSnapshot: dependencies.fetchPrSnapshot,
-                                    environment: workflowEnv,
-                                });
-                                observations.push(obsResult);
-                                const targetImpl = implementation.targets.find((item) => item.targetId === prEntry.targetId);
-                                if (targetImpl) {
-                                    targetImpl.verification ||= pendingVerification();
-                                    targetImpl.verification.ci = obsResult.ci || { status: "unknown", headSha: null, evidence: [] };
-                                }
-                                if (nonempty(obsResult?.statusBlock)) {
-                                    prEntry.body = upsertMarkerBlock(prEntry.body, statusMarkers, obsResult.statusBlock);
-                                    prEntry.statusBlock = parseMarkerBlock(prEntry.body, statusMarkers);
-                                }
-                                if (nonempty(obsResult?.status)) {
-                                    prEntry.currentStatus = obsResult.status;
-                                }
-                            } catch (obsError) {
-                                if (isWorkflowControlError(ctx, obsError)) {
-                                    throw obsError;
-                                }
-                                const obsMsg = obsError instanceof Error ? obsError.message : String(obsError);
-                                log(`PR observer encountered a non-fatal error on ${prEntry.url}: ${obsMsg}`);
-                                observations.push({
-                                    status: "waiting-for-ci",
-                                    prUrl: prEntry.url,
-                                    summary: `PR published; automated observer handed off to remote CI (${obsMsg}).`,
-                                    evidence: [],
-                                    iterations: 0,
-                                    ci: { status: "unknown", headSha: prEntry.headSha || null, evidence: [obsMsg] },
-                                    continuation: { workflow: "pr-observer", args: observerCtx.args },
-                                });
-                            }
-                        }
-                    }
-                    const outcome = deliveryOutcome(pullRequests, observations, { published: effectiveCreatePrs });
-                    const result = packet(effectiveCreatePrs ? outcome : "GO to PR Review", [
-                        `Implementation and independent source review completed in ${history.length} review round(s).`,
-                        ...implementation.targets.map((item) => `${item.targetId}: ${verificationSummary(item.verification)}`),
-                        `Delivery outcome: ${outcome}. Human review and merge approval remain required.`,
-                    ]);
-                    result.deliveryStatus = outcome;
-                    result.nextAction = outcome === "waiting-for-ci" || outcome === "ci-not-observed"
-                        ? "Continue pr-observer using observations[].continuation; CI is not yet verified."
-                        : outcome === "infrastructure-blocked"
-                            ? "Hosted CI is unavailable. Retry after provider recovery or obtain an approved pipeline-owner change; do not edit source/tests or claim CI passed."
-                        : outcome === "ci-failed" || outcome === "needs-owner-decision"
-                            ? "Inspect observations and resolve the explicit remaining failures; do not merge."
-                            : "Human review and required repository approvals; never merge automatically.";
-                    return result;
+                    return {
+                        ...packet("publication-ready", ["Implementation and independent source review completed."]),
+                        publication: {
+                            workspaceRoot, createPullRequests: effectiveCreatePrs, draftPullRequest,
+                            observePullRequests: shouldObservePrs,
+                            javaHome: executionEnvironments[0]?.javaHome || null,
+                        },
+                        sourceBindings: task.targets.map((target) => ({
+                            targetId: target.id,
+                            digest: targetContentFingerprint(target, implementation.targets.find((item) => item.targetId === target.id)),
+                        })),
+                    };
                 }
             } else {
                 history.push({ round: round + 1, validationErrors });
@@ -4919,6 +4848,105 @@ Resolve every validation error and reviewer finding in history autonomously with
         if (!isWorkflowControlError(ctx, error)) restoreAll();
         throw error;
     }
+}
+
+export async function runCodeFeature(ctx, dependencies = {}) {
+    const key = `code-feature-publication-v3-${createHash("sha256").update(JSON.stringify(ctx.args ?? null)).digest("hex")}`;
+    const prepared = await ctx.step(`${key}-reviewed-source`, () => prepareCodeFeature(ctx, dependencies));
+    if (prepared.recommendation !== "publication-ready") return prepared;
+    const { task, implementation, publication } = prepared;
+    const { workspaceRoot } = publication;
+    const exec = dependencies.exec || defaultExec;
+    const environment = { ...(dependencies.environment || process.env) };
+    if (publication.javaHome) environment.JAVA_HOME = publication.javaHome;
+    const reviewCount = prepared.reviews.filter((entry) => entry.review).length;
+    ctx.phase?.("Prepare and create pull requests");
+    const pullRequests = await ctx.step(`${key}-pull-requests`, () => task.targets.map((target) => {
+        const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+        const binding = prepared.sourceBindings.find((item) => item.targetId === target.id);
+        if (implementationContentFingerprint(workspaceRoot, target, targetImpl) !== binding.digest) {
+            throw new Error(`Reviewed implementation changed for ${target.id}; publication requires a new source review.`);
+        }
+        return publishTargetPullRequest({
+            target, targetImpl: implementation.targets.find((item) => item.targetId === target.id),
+            traceability: implementation.traceability, reviewRoundCount: reviewCount,
+            parentWorkItemId: task.workItemId, workspaceRoot,
+            createPullRequests: publication.createPullRequests, draftPullRequest: publication.draftPullRequest,
+            runId: ctx.runId || "local", exec,
+        });
+    }));
+    const observations = [];
+    if (publication.observePullRequests) {
+        const { runPrObserver } = await import(revisionedModuleUrl("./observer.mjs"));
+        ctx.phase?.("Observe PR and repair CI/review findings");
+        for (const prEntry of pullRequests) {
+            if (!nonempty(prEntry.url)) continue;
+            const target = task.targets.find((item) => item.id === prEntry.targetId);
+            const observerCtx = {
+                ...ctx,
+                args: {
+                    prUrl: prEntry.url, repository: prEntry.repository,
+                    verificationCommands: target.verificationCommands || [],
+                    options: { ...(ctx.args?.options || {}), workspaceRoot, ...(publication.javaHome ? { javaHome: publication.javaHome } : {}) },
+                },
+            };
+            let observation;
+            try {
+                observation = await runPrObserver(observerCtx, {
+                    exec, environment, fetchPrSnapshot: dependencies.fetchPrSnapshot,
+                });
+            } catch (error) {
+                if (isWorkflowControlError(ctx, error)) throw error;
+                const message = error instanceof Error ? error.message : String(error);
+                ctx.log?.(`PR observer failed for ${prEntry.url}: ${message}`);
+                observation = {
+                    status: "waiting-for-ci", prUrl: prEntry.url,
+                    summary: `PR published; observer requires continuation (${message}).`,
+                    evidence: [message], iterations: 0,
+                    ci: { status: "unknown", headSha: prEntry.headSha || null, evidence: [message] },
+                    continuation: { workflow: "pr-observer", args: observerCtx.args },
+                };
+            }
+            observations.push(observation);
+            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+            targetImpl.verification ||= pendingVerification();
+            if (observation.headSha && prEntry.headSha && observation.headSha !== prEntry.headSha) {
+                targetImpl.verification.local = {
+                    ...targetImpl.verification.local, status: "unverified", headSha: prEntry.headSha,
+                    evidence: [...(targetImpl.verification.local.evidence || []), "Local receipt predates the observed CI repair commit."],
+                };
+            } else if (prEntry.headSha) {
+                targetImpl.verification.local.headSha = prEntry.headSha;
+            }
+            targetImpl.verification.ci = observation.ci || { status: "unknown", headSha: null, evidence: [] };
+            if (nonempty(observation.statusBlock)) {
+                prEntry.body = upsertMarkerBlock(prEntry.body, statusMarkers, observation.statusBlock);
+                prEntry.statusBlock = parseMarkerBlock(prEntry.body, statusMarkers);
+            }
+            prEntry.currentStatus = observation.status;
+            if (observation.headSha) prEntry.headSha = observation.headSha;
+        }
+    }
+    const outcome = deliveryOutcome(pullRequests, observations, { published: publication.createPullRequests });
+    const { publication: _publication, sourceBindings: _bindings, ...result } = prepared;
+    return {
+        ...result,
+        recommendation: publication.createPullRequests ? outcome : "GO to PR Review",
+        deliveryStatus: outcome, pullRequests, observations,
+        verification: implementation.targets.map((item) => ({ targetId: item.targetId, ...(item.verification || pendingVerification()) })),
+        reasons: [
+            `Implementation and independent source review completed in ${reviewCount} review round(s).`,
+            ...implementation.targets.map((item) => `${item.targetId}: ${verificationSummary(item.verification)}`),
+            `Delivery outcome: ${outcome}. Human review and merge approval remain required.`,
+        ],
+        nextAction: outcome === "waiting-for-ci" || outcome === "ci-not-observed"
+            ? "Continue pr-observer using observations[].continuation; CI is not yet verified."
+            : outcome === "infrastructure-blocked"
+                ? "Hosted CI is unavailable. Retry after provider recovery or obtain an approved pipeline-owner change."
+                : outcome === "ci-failed" || outcome === "needs-owner-decision"
+                    ? "Inspect observations and resolve the remaining failures; do not merge."
+                    : "Human review and required repository approvals; never merge automatically.",
+    };
 }
 
 export const workflowDefinition = {

@@ -90,7 +90,10 @@ Given an approved coding task or PBI specification:
   diagnostics and a continuation rather than an empty success-shaped packet.
 - Hosted-image brownouts and provider-unavailable cancellations retain timeline evidence
   and return `infrastructure-blocked` without spending source/test-repair agents or
-  modifying pipeline YAML. Retry requires provider recovery or an approved owner change.
+  modifying pipeline YAML, even if an external coverage status is pending. Retry requires
+  provider recovery or an approved owner change. Successful CI does not hide merge conflicts.
+- Standalone `pr-observer` honors an approved run-scoped `javaHome`; a local pass for an
+  older commit is never promoted to a new CI-repair head.
 - Pending CI is a handoff, not completion of the developer's readiness objective.
   `observations[].continuation` provides the `pr-observer` invocation to continue without
   rebuilding or creating another PR. Human-only approvals and merge policies are reported
@@ -113,11 +116,12 @@ crash-window duplicates remain possible. No cross-session runs or credentials ar
 On recovery, fast-forward the workflow source only after the current attempt settles,
 then resume the same run with unchanged approved task inputs. Verify that cached
 evidence/build/review steps are reused rather than starting another implementation.
-Normalized implementation metadata is journaled before publication commits; a committed
-source-branch diff also reconstructs slim file/test metadata when upgrading an older run.
-Local gate and review receipts are bound to implementation-file content rather than
-dirty-worktree status. Existing committed task branches are preserved, not reset to base,
-and publication skips commits when its staged file set is empty.
+The final publication-ready implementation, review history, verification and source-content
+bindings are journaled before publication. An unchanged publication retry bypasses all
+earlier source rounds, including a successful source-changing fix; changed reviewed content
+requires a new review and is not overwritten. Normalized metadata and a committed
+source-branch diff preserve slim file/test lists. Local gate/review receipts are content-bound,
+not dirty-status-bound. Existing task commits are preserved and empty commits are skipped.
 An authored workflow with the same name can be shadowed by extension registration;
 verify the selected definition and an explicit fixture marker before treating a synthetic
 run as test evidence. Host-injected terminal inspection is not a manual user wake.

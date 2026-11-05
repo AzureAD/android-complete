@@ -79,7 +79,10 @@ export function fitAdoDescription(body, { maximum = 4000, truncateNarrative = fa
 
 export function renderVerificationBlock(verification) {
     const receipt = {
-        local: { status: verification?.local?.status || "unverified" },
+        local: {
+            status: verification?.local?.status || "unverified",
+            headSha: verification?.local?.headSha || null,
+        },
         ci: {
             status: verification?.ci?.status || "not-observed",
             headSha: verification?.ci?.headSha || null,

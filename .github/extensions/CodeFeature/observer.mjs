@@ -32,6 +32,7 @@ const {
     pauseForHelp,
     resolveGitHubAccount,
     resolveRoleSkillGuides,
+    resolveTargetJavaHome,
     revertUnauthorizedProtectedFiles,
     runLocalVerificationGate,
     slimResultSchema,
@@ -657,7 +658,8 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
         const defName = String(build?.definition || "");
         const isNonBlockingAiReviewer = /PR-Reviewer|AI PR Review/i.test(defName);
         const failedTasks = Array.isArray(build?.failedTasks) ? build.failedTasks : [];
-        if (!isNonBlockingAiReviewer && (failedTasks.length > 0 || String(build?.result || "").toLowerCase() === "failed")) {
+        if (!isNonBlockingAiReviewer && (failedTasks.length > 0 ||
+            ["failed", "canceled", "cancelled", "partiallysucceeded"].includes(String(build?.result || "").toLowerCase()))) {
             return false;
         }
         const status = String(build?.status || "").toLowerCase();
@@ -974,6 +976,14 @@ export function infrastructureBlockersFromSnapshot(snapshot) {
         /brownout|provider.*unable.*process|hosted.*image.*unavailable|image.*retired/i.test(issue)));
 }
 
+function infrastructureHandoff(snapshot, prUrl, iterations) {
+    const evidence = infrastructureBlockersFromSnapshot(snapshot);
+    return evidence.length ? {
+        status: "needs-owner-decision", blockerKind: "ci-infrastructure", prUrl, iterations, evidence,
+        summary: "Hosted CI provider/image is unavailable; source/test edits cannot resolve this run. Retry only after provider recovery or an approved pipeline-owner change.",
+    } : null;
+}
+
 export function refreshStaleAdoBuildPolicies(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
     if (parsedPr?.provider !== "ado") return [];
     const stale = (snapshot.policyEvaluations || []).filter((policy) =>
@@ -1003,6 +1013,10 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
     const previousVerification = parseMarkerBlock(originalBody, verificationMarkers) || {
         local: { status: "unverified", commands: [], evidence: ["No independently attested local result."] },
     };
+    if (previousVerification.local?.status === "passed" &&
+        previousVerification.local.headSha !== snapshot.headRefOid) {
+        previousVerification.local.status = "unverified";
+    }
     body = upsertMarkerBlock(body, verificationMarkers, renderVerificationBlock({ ...previousVerification, ci }));
     const decisions = parseMarkerBlock(originalBody, deliveryDecisionMarkers);
     if (decisions) {
@@ -1052,9 +1066,18 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
 export async function runPrObserver(ctx, dependencies = {}) {
     let snapshot = null;
     const workspaceRoot = ctx.args?.options?.workspaceRoot || process.cwd();
+    const environment = { ...(dependencies.environment || process.env) };
+    const approvedJavaHome = ctx.args?.options?.javaHome;
+    if (approvedJavaHome !== undefined) {
+        if (!nonempty(approvedJavaHome)) throw new Error("options.javaHome must be a non-empty approved JDK installation path.");
+        environment.JAVA_HOME = approvedJavaHome;
+        const target = parsePullRequestUrl(ctx.args?.prUrl);
+        if (target && !resolveTargetJavaHome(target, environment)) throw new Error("Approved observer JDK does not satisfy the target's toolchain requirements.");
+    }
     const fetch = dependencies.fetchPrSnapshot || ((pr) => fetchPullRequestSnapshot(pr, { workspaceRoot, exec: dependencies.exec || defaultExec }));
     const result = await runObserverLoop(ctx, {
         ...dependencies,
+        environment,
         fetchPrSnapshot: async (pr) => { snapshot = await fetch(pr); return snapshot; },
     });
     if (!snapshot) return result;
@@ -1175,6 +1198,10 @@ async function runObserverLoop(ctx, dependencies = {}) {
         let lastWaitingFingerprint = null;
 
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
+            if (!expectedHeadSha || snapshot.headRefOid === expectedHeadSha) {
+                const blocked = infrastructureHandoff(snapshot, parsedPr.prUrl, iteration);
+                if (blocked) return blocked;
+            }
             if (parsedPr.provider === "ado") {
                 const staleKey = createHash("sha256").update(JSON.stringify([
                     snapshot.headRefOid, (snapshot.policyEvaluations || []).filter((policy) =>
@@ -1227,6 +1254,9 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 };
             }
 
+            const blocked = infrastructureHandoff(snapshot, parsedPr.prUrl, iteration);
+            if (blocked) return blocked;
+
             if (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot)) {
                 const runningBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
                     .filter((b) => ["inprogress", "notstarted", "postponed"].includes(String(b?.status || "").toLowerCase()))
@@ -1261,17 +1291,6 @@ async function runObserverLoop(ctx, dependencies = {}) {
             const failedTasks = (snapshot?.prBuilds || [])
                 .filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")))
                 .flatMap((build) => build.failedTasks || []);
-            const infrastructureBlockers = infrastructureBlockersFromSnapshot(snapshot);
-            if (infrastructureBlockers.length) {
-                return {
-                    status: "needs-owner-decision",
-                    blockerKind: "ci-infrastructure",
-                    prUrl: parsedPr.prUrl,
-                    summary: "Hosted CI provider/image is unavailable; source/test edits cannot resolve this run. Retry only after provider recovery or an approved pipeline-owner change.",
-                    evidence: infrastructureBlockers,
-                    iterations: iteration,
-                };
-            }
             if (failedTasks.length > 0) {
                 observation = {
                     verdict: "repair",
@@ -1285,7 +1304,9 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 };
                 break;
             }
-            if (ciEvidenceFromSnapshot(snapshot).status === "passed" && !hasActionableReviewOrCommentFeedback(snapshot)) {
+            if (ciEvidenceFromSnapshot(snapshot).status === "passed" &&
+                !/dirty|conflict/i.test(String(snapshot.mergeStateStatus || "")) &&
+                !hasActionableReviewOrCommentFeedback(snapshot)) {
                 return {
                     status: currentStatuses.awaitingHumanReview,
                     prUrl: parsedPr.prUrl,

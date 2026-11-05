@@ -9,14 +9,14 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import {
-    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, runCodeFeature, validateImplementation,
+    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, runCodeFeature, validateImplementation,
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
     ciEvidenceFromSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
 import { deliveryOutcome, pendingVerification, verificationFromGate } from "./verification.mjs";
-import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
+import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, renderVerificationBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
 
 const task = {
     title: "Test a verified delivery", revision: "v1", workItemId: 123,
@@ -108,6 +108,17 @@ test("ADO status compaction does not silently discard human-maintained narrative
     const humanBody = "Human-maintained details ".repeat(200);
     assert.throws(() => fitAdoDescription(humanBody), /refusing to discard human-maintained/);
     assert.equal(fitAdoDescription("Human-maintained details"), "Human-maintained details");
+});
+
+test("a local pass for a previous source head is not promoted to the repaired current head", () => {
+    const url = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+    const oldHead = "b".repeat(40);
+    const body = renderVerificationBlock({ local: { status: "passed", headSha: oldHead } });
+    const updated = publishObserverStatus(parsePullRequestUrl(url), snapshot({ description: body }), "status", { exec: () => "" });
+    const verification = parseMarkerBlock(updated, verificationMarkers);
+    assert.equal(verification.local.status, "unverified");
+    assert.equal(verification.local.headSha, oldHead);
+    assert.equal(verification.ci.headSha, "a".repeat(40));
 });
 
 test("bounded ADO creation leaves space for final status, current-head CI and actual PR URL", () => {
@@ -209,7 +220,7 @@ test("explicit builder handoff to remote CI does not cause a duplicate determini
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("committed slim implementation metadata survives a publication error and fresh-context replay without agents or builds", async () => {
+async function assertCommittedPublicationReplay({ fixRound = false, tamper = false, verifyLocally = false } = {}) {
     const root = mkdtempSync(path.join(os.tmpdir(), "committed-publication-replay-"));
     const repo = path.join(root, "common");
     try {
@@ -226,13 +237,16 @@ test("committed slim implementation metadata survives a publication error and fr
         for (const [file, text] of [["Foo.kt", "// Copyright Microsoft\nclass Foo\n"], ["FooTest.kt", "// Copyright Microsoft\nclass FooTest\n"]]) {
             writeFileSync(path.join(repo, file), text);
         }
+        const fixtureTask = structuredClone(task);
+        if (verifyLocally) fixtureTask.targets[0].verificationCommands = ["./gradlew :common4j:test"];
         const rawBuild = {
-            verdict: "pass", summary: "Authored source and tests; verification deferred to remote CI.",
-            evidence: ["Foo.kt", "FooTest.kt"], testPlan: "Local verification was short-circuited to remote CI.",
+            verdict: "pass", summary: verifyLocally ? "Authored source and tests." : "Authored source and tests; verification deferred to remote CI.",
+            evidence: ["Foo.kt", "FooTest.kt"], testPlan: verifyLocally ? "Run the configured gate." : "Local verification was short-circuited to remote CI.",
             prTitle: "Fix Foo", prSummary: "Source fix", rolloutAndFlag: "Default-off",
         };
         let publicationFails = true;
         let gradleCalls = 0;
+        const expectedGateCalls = verifyLocally ? (fixRound ? 2 : 1) : 0;
         const exec = (command, args, options) => {
             if (command === "gh") {
                 if (args[0] === "auth" && args[1] === "status") return "Logged in to github.com account fixture (keyring)";
@@ -243,11 +257,15 @@ test("committed slim implementation metadata survives a publication error and fr
                 }
                 return "";
             }
-            if (/gradlew/i.test(command)) { gradleCalls++; throw new Error("Unexpected duplicate local verification"); }
+            if (/gradlew/i.test(command)) {
+                gradleCalls++;
+                if (!verifyLocally) throw new Error("Unexpected duplicate local verification");
+                return "BUILD SUCCESSFUL";
+            }
             if (command === "git" && (args.includes("fetch") || args.includes("push"))) return "";
             return execFileSync(command, args, { ...options, encoding: "utf8", stdio: "pipe" }).trim();
         };
-        const before = normalizeImplementationResponse(rawBuild, task, { workspaceRoot: root, exec });
+        const before = normalizeImplementationResponse(rawBuild, fixtureTask, { workspaceRoot: root, exec });
         const journal = new Map();
         const make = (results) => {
             const context = ctx(results);
@@ -257,9 +275,12 @@ test("committed slim implementation metadata survives a publication error and fr
                     const data = JSON.parse(prompt.slice(prompt.lastIndexOf("DATA:\n") + 6));
                     throw new Error(`Unexpected ${options.label}: ${JSON.stringify(data.history || [])}`);
                 }
+                if (options.label === "Code revision (fix 1)") {
+                    writeFileSync(path.join(repo, "Foo.kt"), "// Copyright Microsoft\nclass Foo { val fixed = true }\n");
+                }
                 return agent.call(context, prompt, options);
             };
-            context.args = { task, options: { workspaceRoot: root, createPullRequests: true, slimSchemas: true } };
+            context.args = { task: fixtureTask, options: { workspaceRoot: root, createPullRequests: true, slimSchemas: true } };
             context.runId = "fixture-publication-replay";
             context.step = async (key, producer, options) => {
                 if (options?.volatile) return producer();
@@ -273,24 +294,43 @@ test("committed slim implementation metadata survives a publication error and fr
             references: [{ id: "E1", repository: "common", revision: "commit", path: "Foo.kt", locator: "Foo" }],
             facts: [{ statement: "Exists", referenceIds: ["E1"] }], conflicts: [], assumptions: [], unknowns: [], blockingUnknowns: [],
         };
-        await assert.rejects(runCodeFeature(make([evidence, rawBuild, passedReview]), { exec }), /Fixture publication unavailable/);
+        const results = fixRound
+            ? [evidence, rawBuild, { ...passedReview, verdict: "repair", findings: ["Foo.kt: fix behavior"] }, rawBuild, passedReview]
+            : [evidence, rawBuild, passedReview];
+        await assert.rejects(runCodeFeature(make(results), { exec }), /Fixture publication unavailable/);
         const codeStatus = () => git("status", "--porcelain").split(/\r?\n/).filter((line) => line && line !== "?? local.properties").join("\n");
         assert.equal(codeStatus(), "");
         const committedHead = git("rev-parse", "HEAD");
-        const after = normalizeImplementationResponse(rawBuild, task, { workspaceRoot: root, exec });
+        ensureIsolatedTargetWorktree(root, fixtureTask.targets[0], exec);
+        assert.equal(git("rev-parse", "HEAD"), committedHead);
+        const after = normalizeImplementationResponse(rawBuild, fixtureTask, { workspaceRoot: root, exec });
         assert.deepEqual(after.targets[0].files.map((file) => file.path), before.targets[0].files.map((file) => file.path));
         assert.deepEqual(after.targets[0].testsAddedOrUpdated, before.targets[0].testsAddedOrUpdated);
-        assert.deepEqual(validateImplementation(after, task, { workspaceRoot: root }), []);
+        assert.deepEqual(validateImplementation(after, fixtureTask, { workspaceRoot: root }), []);
         publicationFails = false;
         const replay = make([]);
+        if (tamper) {
+            writeFileSync(path.join(repo, "Foo.kt"), "// Human edit after source review\nclass Foo\n");
+            await assert.rejects(runCodeFeature(replay, { exec }), /Reviewed implementation changed/);
+            assert.equal(replay.calls.length, 0);
+            assert.equal(gradleCalls, expectedGateCalls);
+            assert.equal(git("rev-parse", "HEAD"), committedHead);
+            assert.match(readFileSync(path.join(repo, "Foo.kt"), "utf8"), /Human edit after source review/);
+            return;
+        }
         const result = await runCodeFeature(replay, { exec });
         assert.equal(result.pullRequests[0].url, prUrl);
         assert.equal(replay.calls.length, 0);
-        assert.equal(gradleCalls, 0);
+        assert.equal(gradleCalls, expectedGateCalls);
         assert.equal(git("rev-parse", "HEAD"), committedHead);
         assert.equal(codeStatus(), "");
     } finally { rmSync(root, { recursive: true, force: true }); }
-});
+}
+
+test("committed slim metadata survives publication-error replay without agents or builds", () => assertCommittedPublicationReplay());
+test("publication-error replay after a source-changing fix reuses the final reviewed checkpoint", () => assertCommittedPublicationReplay({ fixRound: true }));
+test("publication replay refuses changed reviewed content without overwriting human edits", () => assertCommittedPublicationReplay({ tamper: true }));
+test("publication replay after a source-changing fix does not repeat either successful gate", () => assertCommittedPublicationReplay({ fixRound: true, verifyLocally: true }));
 
 test("compile directories alone do not attest successful tests", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "verification-receipt-"));
@@ -375,6 +415,22 @@ test("human-only policy gates are explicit and cannot trigger code repairs", asy
     assert.equal(context.calls.length, 0);
 });
 
+test("successful CI with merge conflicts still reaches classification and tactical repair", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "observer-conflict-"));
+    try {
+        const context = ctx([
+            { verdict: "repair", repairKind: "merge-conflict", summary: "Merge conflict", evidence: ["DIRTY"], actionableFindings: ["Resolve the reported conflict"] },
+            { verdict: "blocked", summary: "Fixture conflict repair reached", evidence: [] },
+        ], { workspaceRoot: root });
+        const result = await runPrObserver(context, {
+            exec: () => "", fetchPrSnapshot: () => snapshot({ mergeStateStatus: "DIRTY" }),
+        });
+        assert.equal(result.status, "needs-owner-decision");
+        assert.equal(result.summary, "Fixture conflict repair reached");
+        assert.equal(context.calls.filter((call) => call.opts.agent === BUILDER_AGENT).length, 1);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("hosted runner brownouts retain actual infrastructure evidence without code-repair agents", async () => {
     const context = ctx();
     const result = await runPrObserver(context, {
@@ -389,6 +445,53 @@ test("hosted runner brownouts retain actual infrastructure evidence without code
     assert.ok(result.evidence.some((line) => line.includes("brownout")));
     assert.equal(context.calls.length, 0);
     assert.equal(deliveryOutcome([{ url: prUrl }], [result]), "infrastructure-blocked");
+});
+
+test("proven brownout takes precedence over pending coverage without waiting or agents", async () => {
+    const context = ctx([], { maxCiPollAttempts: 2 });
+    const result = await runPrObserver(context, {
+        exec: () => "",
+        sleep: async () => { throw new Error("Must not wait on already-proven provider outage"); },
+        fetchPrSnapshot: () => snapshot({
+            statusCheckRollup: [{ name: "coverage", state: "pending" }],
+            prBuilds: [{ id: 1, status: "completed", result: "canceled", infrastructureIssues: ["Scheduled macOS-14 brownout"] }],
+        }),
+    });
+    assert.equal(result.blockerKind, "ci-infrastructure");
+    assert.equal(deliveryOutcome([{ url: prUrl }], [result]), "infrastructure-blocked");
+    assert.equal(context.calls.length, 0);
+});
+
+test("standalone observer applies the approved JDK to repair verification without global mutation", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "observer-jdk-"));
+    const originalJavaHome = process.env.JAVA_HOME;
+    try {
+        const jdk = path.join(root, "jdk21");
+        mkdirSync(path.join(jdk, "bin"), { recursive: true });
+        writeFileSync(path.join(jdk, "release"), 'JAVA_VERSION="21.0.4"\n');
+        for (const tool of ["java", "javac"]) writeFileSync(path.join(jdk, "bin", `${tool}${process.platform === "win32" ? ".exe" : ""}`), "");
+        mkdirSync(path.join(root, "common"));
+        writeFileSync(path.join(root, "common", "gradlew.bat"), "");
+        const context = ctx([{ verdict: "pass", summary: "Source fixed", evidence: [] }, passedReview], {
+            workspaceRoot: root, javaHome: jdk, runLocalVerification: true, pushRepairs: false,
+        });
+        context.args.verificationCommands = ["./gradlew :common4j:test"];
+        let reads = 0;
+        let gateJavaHome = null;
+        const result = await runPrObserver(context, {
+            exec: (command, _args, options) => {
+                if (/gradlew/i.test(command)) gateJavaHome = options.env.JAVA_HOME;
+                return "";
+            },
+            fetchPrSnapshot: () => ++reads === 1
+                ? snapshot({ prBuilds: [{ id: 1, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["Unresolved reference"] }] }] })
+                : snapshot(),
+        });
+        assert.equal(result.ci.status, "passed");
+        assert.equal(gateJavaHome, jdk);
+        assert.equal(process.env.JAVA_HOME, originalJavaHome);
+        await assert.rejects(runPrObserver(ctx([], { javaHome: path.join(root, "missing") }), {}), /toolchain requirements/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("stale required ADO build validation is refreshed once per durable observation, without code agents", async () => {
