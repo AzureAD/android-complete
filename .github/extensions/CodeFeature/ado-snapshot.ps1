@@ -91,7 +91,7 @@ $latestBuilds = @($currentBuilds | Group-Object { $_.definition.id } | ForEach-O
                 # Include plugin/feed configuration errors as well as compiler and test failures.
                 $excerpt = @($logText -split "`r?`n" | Where-Object {
                     $_ -notmatch '\tat\s|\sw:\s' -and
-                    $_ -match 'FAILED|What went wrong|\.kt:\d+|\.java:\d+|Execution failed|weighted issues|Caused by:|Exception|UnknownHostException|error:|fetch-pack:|Plugin \[|could not resolve|could not be resolved|could not find|was not found|401|403|unauthorized|forbidden|HTTP|maven|https://.*(?:pkgs|packaging)'
+                    $_ -match 'FAILED|What went wrong|\.kt:\d+|\.java:\d+|Execution failed|weighted issues|Caused by:|Exception|UnknownHostException|error:|fetch-pack:|Plugin \[|could not resolve|could not be resolved|could not find|was not found|\b(?:401|403)\b|unauthorized|forbidden|HTTP|maven|https://.*(?:pkgs|packaging)'
                 } | Select-Object -Last 25)
                 $runIds = @([regex]::Matches($logText, '(?i)(?:run id:\s*|test run[^0-9]{0,20}|[?&]runId=)(\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
                 foreach ($runId in $runIds) {

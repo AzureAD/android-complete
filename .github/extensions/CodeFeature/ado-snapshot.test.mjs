@@ -131,11 +131,13 @@ test("internal Maven/KSP configuration errors are retained and cannot consume so
         timeline: { records: [{ type: "Task", name: "Gradle verification", result: "failed",
             log: { url: "https://dev.azure.com/msazure/One/_apis/build/builds/1/logs/123" } }] },
         log: [
+            "Caching disabled for transform 716c840325e2f4e116156161cfb5b22a and file403abc",
             "BUILD FAILED in 23s", "Plugin [id: 'com.google.devtools.ksp', version: '2.0.21-1.0.27'] was not found",
             "Could not resolve plugin artifact from https://msazure.pkgs.visualstudio.com/One/_packaging/AuthApp/maven/v1",
         ],
     }));
     assert.ok(snapshot.prBuilds[0].failedTasks[0].excerpt.some((line) => line.includes("com.google.devtools.ksp")));
+    assert.ok(!snapshot.prBuilds[0].failedTasks[0].excerpt.some((line) => line.includes("Caching disabled")));
     assert.ok(dependencyBlockersFromSnapshot(snapshot).length > 0);
     const result = await runPrObserver({
         args: { prUrl, options: { maxCiPollAttempts: 0, publishStatus: false } },
