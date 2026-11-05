@@ -44,6 +44,10 @@ Given an approved coding task or PBI specification:
   any discovered compatible JDK for this run, or accepts another compatible path. The
   selected JDK is passed to the builder and local verification without changing the
   host's global environment.
+- PowerShell builder examples quote `'-Pkotlin.compiler.execution.strategy=in-process'`
+  so the native Gradle invocation receives the entire property, rather than a spurious task.
+- Runtime cancellation is propagated rather than converted to a clarification answer or
+  failed review; already-written builder edits are preserved for inspection.
 - Concrete Detekt weighted-issue failures remain local validation failures, even if
   the same command also reports an infrastructure error.
 - Slim review results retain the review summary and citations once in the result packet.
@@ -123,8 +127,9 @@ Pass a plain-language request (optionally with `repository` and `workItemId`):
   Runs target `verificationCommands` with automatic `local.properties` (`sdk.dir`), `JAVA_HOME`,
   and Azure CLI VSTS token provisioning before `code-reviewer`; compiler/test failures feed
   directly into `code-builder` (`fix-1..3`), while missing local credentials defer cleanly to CI.
-- `pauseOnBlocker` (default `false`): Invokes `await ctx.pause(key)` on unresolved blockers so
-  the run can be resumed in place by `runId`.
+- `pauseOnBlocker` (default enabled when the runtime exposes `ctx.pause`): Invokes
+  `await ctx.pause(key)` on unresolved blockers. Resume starts a fresh attempt of the same
+  `runId`; it does not supply new answers or environment variables.
 - `builderModel` / `reviewerModel` / `evidenceModel`: Optional model overrides so the
   independent reviewer can run on a distinct model from the builder.
 - `slimSchemas` (default `true` in live sessions): Uses compact `{ verdict, summary, evidence }`
@@ -188,6 +193,22 @@ Each workflow agent loads the repository's existing skill and instruction files:
   `grep`) and never receive the builder's chain-of-thought reasoning.
 - If workspace verification or review fails after `maxFixIterations`, any modified workspace
   files are restored from backup and no PR is created (`recommendation: "NO-GO"`).
+- Prerequisite answers accepted in the workflow UI are journaled and reapplied on replay.
+  A resumed prerequisite checkpoint rechecks the environment before continuing; it never
+  returns a stale failure after successful recovery.
+- If the caller must collect a JDK approval outside the workflow UI (including Autopilot),
+  the pause log identifies an ignored, workspace-local file:
+  `.github/local-context/code-feature/<runId>.json`. After explicit user approval, the caller
+  writes `{"runId":"<same runId>","javaHome":"<approved JDK directory>"}` there, then resumes
+  the same run. Use JSON-escaped backslashes on Windows. The workflow validates the run ID
+  and JDK against every target before using it. No credentials or arbitrary environment
+  overrides are accepted; the host's `JAVA_HOME` remains unchanged.
+- Resuming without fixing the prerequisite does not grant approval or bypass checks:
+  at most two recovery checkpoints are attempted, then the run returns `needs clarification`.
+- A runtime error marked **not resumable** is not a successful or recoverable workflow
+  result. Preserve the target checkout and available journal evidence, report the last
+  durable stage, and obtain approval before starting a replacement run. An idle parent
+  session alone says nothing about workflow completion.
 
 ## Checks
 

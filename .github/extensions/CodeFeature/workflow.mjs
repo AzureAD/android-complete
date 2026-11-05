@@ -279,9 +279,9 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
   * AADAuthenticator: broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
   * nested common in broker: broker/common/common4j/src/main/com/... and broker/common/common/src/main/java/...
   * authenticator: authenticator/PhoneFactor/... (Gradle working directory is authenticator/PhoneFactor)
-- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process (so KotlinCompileDaemon never holds Windows stdout/stderr pipes open after BUILD SUCCESSFUL), and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
-  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon -Pkotlin.compiler.execution.strategy=in-process
-- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Pkotlin.compiler.execution.strategy=in-process) so Gradle only runs once per round.
+- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2 and the quoted property '-Pkotlin.compiler.execution.strategy=in-process' to select in-process Kotlin compilation, and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
+  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process'
+- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process') so Gradle only runs once per round.
 - Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately stop that shell with stop_powershell, do NOT retry locally, record in testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds to independent code review, PR creation, and remote CI pipeline verification.
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
@@ -1560,6 +1560,36 @@ export function applyPrerequisiteAnswers(answers, { workspaceRoot = process.cwd(
             env.PATH = `${rawAns}${process.platform === "win32" ? ";" : path.delimiter}${currentPath}`;
         }
     }
+}
+
+export function prerequisiteRecoveryPath(workspaceRoot, runId) {
+    if (!nonempty(runId)) return null;
+    if (!/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error("Invalid workflow run ID for prerequisite recovery.");
+    return path.resolve(workspaceRoot, ".github", "local-context", "code-feature", `${runId}.json`);
+}
+
+function applyPrerequisiteRecoveryFile(filePath, runId, targets, env) {
+    if (!filePath || !existsSync(filePath)) return;
+    const text = readFileSync(filePath, "utf8");
+    let recovery;
+    try {
+        recovery = JSON.parse(text);
+    } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        throw new Error(`Invalid prerequisite recovery file ${filePath}: expected valid JSON.`);
+    }
+    if (
+        !record(recovery) ||
+        recovery.runId !== runId ||
+        !nonempty(recovery.javaHome) ||
+        Object.keys(recovery).some((key) => !["runId", "javaHome"].includes(key))
+    ) {
+        throw new Error(`Invalid prerequisite recovery file ${filePath}: expected only runId and javaHome for this run.`);
+    }
+    if (!targets.every((target) => isSupportedJavaHome(target, recovery.javaHome))) {
+        throw new Error(`Invalid JDK in prerequisite recovery file ${filePath}: javaHome must support every target.`);
+    }
+    env.JAVA_HOME = recovery.javaHome;
 }
 
 export function collectBuildReceiptOnDisk(repoRoot, { minMtimeMs = 0, javaHome = null, exec = defaultExec } = {}) {
@@ -3707,19 +3737,19 @@ async function askUserForClarifications(questions, ctx, askUser) {
         const properties = Object.fromEntries(
             cleaned.map((question, idx) => [`q${idx + 1}`, { type: "string", title: question }]),
         );
-        let response;
-        try {
-            response = await ctx.session.ui.elicitation({
-                message: "Clarification needed to complete the coding task:",
-                requestedSchema: {
-                    type: "object",
-                    properties,
-                    required: Object.keys(properties),
-                },
-            });
-        } catch {
+        const attempt = await attemptAction(ctx, () => ctx.session.ui.elicitation({
+            message: "Clarification needed to complete the coding task:",
+            requestedSchema: {
+                type: "object",
+                properties,
+                required: Object.keys(properties),
+            },
+        }));
+        if (attempt.problem) {
+            ctx?.log?.(`Clarification UI failed: ${attempt.problem}`);
             return null;
         }
+        const response = attempt.result;
         if (!record(response) || response.action !== "accept" || !record(response.content)) {
             return null;
         }
@@ -3793,15 +3823,17 @@ export async function pauseForHelp(ctx, key, reason) {
     return false;
 }
 
+function isWorkflowControlError(ctx, error) {
+    return ctx?.signal?.aborted ||
+        ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name) ||
+        /workflow_limit_reached/.test(`${error?.code || ""} ${error?.message || ""}`);
+}
+
 export async function attemptAction(ctx, action) {
     try {
         return { result: (await action()) ?? null };
     } catch (error) {
-        if (
-            ctx?.signal?.aborted ||
-            ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name) ||
-            /workflow_limit_reached/.test(`${error?.code || ""} ${error?.message || ""}`)
-        ) {
+        if (isWorkflowControlError(ctx, error)) {
             throw error;
         }
         if (!(error instanceof Error)) throw error;
@@ -3973,7 +4005,9 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const runInteractivePrerequisites = async (targetsToVerify, stepPrefix) => {
         if (!shouldVerifyPrerequisites) return null;
         for (let prereqRound = 0; prereqRound < 2; prereqRound++) {
-            const prereqCheck = verifyWorkflowPrerequisites({
+            const recoveryPath = prerequisiteRecoveryPath(workspaceRoot, ctx.runId);
+            applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
+            const verify = () => verifyWorkflowPrerequisites({
                 workspaceRoot,
                 targets: targetsToVerify,
                 createPullRequests: effectiveCreatePrs,
@@ -3981,34 +4015,34 @@ export async function runCodeFeature(ctx, dependencies = {}) {
                 env: workflowEnv,
                 seedLocalProperties: exec === defaultExec,
             });
-            if (prereqCheck.ok) return null;
-            const prereqStepKey = prereqRound === 0 ? stepPrefix : `${stepPrefix}-${prereqRound}`;
+            const prereqCheck = verify();
+            const prereqStepKey = `${stepPrefix}-answers-v2-${prereqRound}`;
             const prereqAnswers = await step(
                 prereqStepKey,
-                () => askUserForClarifications(prereqCheck.questions.slice(0, 3), ctx, dependencies.askUser),
-                { volatile: true },
+                () => prereqCheck.ok
+                    ? []
+                    : askUserForClarifications(prereqCheck.questions.slice(0, 3), ctx, dependencies.askUser),
             );
             if (Array.isArray(prereqAnswers) && prereqAnswers.length > 0) {
                 applyWorkflowAnswers(prereqAnswers, targetsToVerify);
-                const recheck = verifyWorkflowPrerequisites({
-                    workspaceRoot,
-                    targets: targetsToVerify,
-                    createPullRequests: effectiveCreatePrs,
-                    exec,
-                    env: workflowEnv,
-                    seedLocalProperties: exec === defaultExec,
-                });
-                if (recheck.ok) return null;
-                if (prereqRound + 1 < 2) continue;
-                if (pauseOnBlocker) {
-                    await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause`, recheck.issues.join("\n"));
-                }
-                return packet("needs clarification", recheck.issues, recheck.questions);
             }
+            // External recovery is authoritative over previously journaled answers.
+            applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
+            const recheck = verify();
+            if (recheck.ok) return null;
+            if (Array.isArray(prereqAnswers) && prereqAnswers.length > 0 && prereqRound + 1 < 2) continue;
             if (pauseOnBlocker) {
-                await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause`, prereqCheck.issues.join("\n"));
+                const recoveryHelp = recoveryPath
+                    ? `\nFor an approved run-scoped JDK selection, write {"runId":"${ctx.runId}","javaHome":"<approved JDK directory>"} to ${recoveryPath} before resuming. Do not write this file without the user's approval. Never store credentials here.`
+                    : "";
+                await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause-v2-${prereqRound}`, recheck.issues.join("\n") + recoveryHelp);
+                applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
+                const afterResume = verify();
+                if (afterResume.ok) return null;
+                if (prereqRound + 1 < 2) continue;
+                return packet("needs clarification", afterResume.issues, afterResume.questions);
             }
-            return packet("needs clarification", prereqCheck.issues, prereqCheck.questions);
+            return packet("needs clarification", recheck.issues, recheck.questions);
         }
         return null;
     };
@@ -4355,8 +4389,8 @@ DATA.inspectedFiles already pre-loads the exact repo-relative file paths and num
 DATA.executionEnvironments provides the pre-validated buildRoot and JAVA_HOME (${primaryJavaHome}) for this host—use that exact JAVA_HOME and buildRoot when running .\\gradlew.bat in PowerShell so your shell environment matches the workflow verification gate.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
-Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon -Pkotlin.compiler.execution.strategy=in-process); connected emulator tests run in CI.
-Always pass -Pkotlin.compiler.execution.strategy=in-process alongside --no-daemon --max-workers=2 when running .\\gradlew.bat on Windows so KotlinCompileDaemon never holds stdout/stderr pipes open after BUILD SUCCESSFUL.
+Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process'); connected emulator tests run in CI.
+Always quote the entire '-Pkotlin.compiler.execution.strategy=in-process' argument alongside --no-daemon --max-workers=2 in PowerShell. Without quotes PowerShell can split it and Gradle reports Task '.compiler.execution.strategy=in-process' not found; this is a command-invocation failure, not a source-code failure.
 Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle build/test command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately call stop_powershell on that shellId, do NOT retry locally, record in pr.testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds immediately to independent code review, PR creation, and remote CI pipeline verification.
 If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="${primaryJavaHome}" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
 Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
@@ -4716,11 +4750,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                     prEntry.currentStatus = obsResult.status;
                                 }
                             } catch (obsError) {
-                                if (
-                                    ctx?.signal?.aborted ||
-                                    ["AbortError", "ConnectionError", "ResponseError"].includes(obsError?.name) ||
-                                    /workflow_limit_reached/.test(`${obsError?.code || ""} ${obsError?.message || ""}`)
-                                ) {
+                                if (isWorkflowControlError(ctx, obsError)) {
                                     throw obsError;
                                 }
                                 const obsMsg = obsError instanceof Error ? obsError.message : String(obsError);
@@ -4816,7 +4846,7 @@ Resolve every validation error and reviewer finding in history autonomously with
             implementation = normalizeImplementationResponse(rawFixImpl, task, { workspaceRoot, exec });
         }
     } catch (error) {
-        restoreAll();
+        if (!isWorkflowControlError(ctx, error)) restoreAll();
         throw error;
     }
 }

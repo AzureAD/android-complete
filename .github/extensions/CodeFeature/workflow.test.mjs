@@ -57,6 +57,7 @@ import {
     normalizeTask,
     parseAdoDesignDocUrl,
     parseAllowedGradleVerificationCommand,
+    prerequisiteRecoveryPath,
     renderUnifiedDiff,
     resolveInputSources,
     resolveRoleSkillGuides,
@@ -2074,6 +2075,201 @@ test("JDK recovery reports the configured home and uses the approved alternative
             workspaceRoot: root, targets: [target], env: disappeared,
         });
         assert.equal(disappeared.JAVA_HOME, oldJdk);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+function prerequisiteResumeFixture() {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-resume-"));
+    const javaHome = path.join(root, "jdk21");
+    const sdk = path.join(root, "sdk");
+    mkdirSync(path.join(javaHome, "bin"), { recursive: true });
+    writeFileSync(path.join(javaHome, "release"), 'JAVA_VERSION="21.0.4"\n');
+    for (const tool of ["java", "javac"]) {
+        writeFileSync(path.join(javaHome, "bin", process.platform === "win32" ? `${tool}.exe` : tool), "");
+    }
+    mkdirSync(sdk);
+    mkdirSync(path.join(root, "common"));
+    writeFileSync(path.join(root, "common", "gradlew.bat"), "");
+    const env = { ...process.env, JAVA_HOME: path.join(root, "missing-jdk"), ANDROID_HOME: sdk };
+    const journal = new Map();
+    const checkpoints = new Set();
+    const resumedTask = task();
+    resumedTask.targets[0].verificationCommands = ["./gradlew :common4j:test"];
+    const contexts = [];
+    const makeContext = (results) => {
+        const ctx = context(results, resumedTask, {
+            workspaceRoot: root, verifyPrerequisites: true, runLocalVerification: true,
+            createPullRequests: false, allowLocalOnly: true,
+        });
+        ctx.runId = "fixture-resume";
+        ctx.session = { ui: { elicitation: async () => ({ action: "cancel" }) } };
+        ctx.step = async (key, producer, options) => {
+            if (options?.volatile) return producer();
+            if (!journal.has(key)) journal.set(key, await producer());
+            return journal.get(key);
+        };
+        ctx.pause = async (key) => {
+            if (checkpoints.has(key)) return;
+            checkpoints.add(key);
+            throw Object.assign(new Error("Fixture durable checkpoint"), { name: "AbortError" });
+        };
+        contexts.push(ctx);
+        return ctx;
+    };
+    const gateEnvs = [];
+    const dependencies = {
+        environment: env,
+        exec: (command, _args, options) => {
+            if (/gradlew/i.test(command)) gateEnvs.push(options.env);
+            return "ok";
+        },
+    };
+    const writeRecovery = (value = { runId: "fixture-resume", javaHome }) => {
+        const file = prerequisiteRecoveryPath(root, "fixture-resume");
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, JSON.stringify(value));
+    };
+    return { root, javaHome, env, journal, checkpoints, contexts, makeContext, dependencies, gateEnvs, writeRecovery };
+}
+
+test("paused prerequisites recheck approved run-scoped recovery on a fresh attempt and replay without duplicate agents", async () => {
+    const f = prerequisiteResumeFixture();
+    const hostJavaHome = process.env.JAVA_HOME;
+    try {
+        const first = f.makeContext([]);
+        first.session = { ui: { elicitation: async () => ({ action: "cancel" }) } };
+        first.args.options.allowLocalOnly = true;
+        await assert.rejects(runCodeFeature(first, f.dependencies), { name: "AbortError" });
+        assert.equal(first.calls.length, 0);
+        assert.equal(f.checkpoints.size, 1);
+        assert.ok(first.logs.some((line) => line.includes(prerequisiteRecoveryPath(f.root, first.runId))));
+
+        f.writeRecovery();
+        const resumed = f.makeContext([evidence(), implementation(), review()]);
+        const result = await runCodeFeature(resumed, f.dependencies);
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.equal(resumed.calls.length, 3);
+        assert.ok(resumed.calls.find((call) => call.options.agent === BUILDER_AGENT).prompt.includes(f.javaHome));
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+        assert.equal(f.env.JAVA_HOME.endsWith("missing-jdk"), true);
+        assert.equal(process.env.JAVA_HOME, hostJavaHome);
+
+        const replay = f.makeContext([]);
+        assert.equal((await runCodeFeature(replay, f.dependencies)).recommendation, "GO to PR Review");
+        assert.equal(replay.calls.length, 0);
+    } finally {
+        rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test("inline prerequisite approval survives a later durable pause without asking again", async () => {
+    const f = prerequisiteResumeFixture();
+    let questions = 0;
+    try {
+        const first = f.makeContext([evidence()]);
+        const step = first.step;
+        first.step = async (key, producer, options) => {
+            if (key.endsWith("-build-0")) await first.pause("fixture-after-evidence");
+            return step(key, producer, options);
+        };
+        const dependencies = {
+            ...f.dependencies,
+            askUser: async () => { questions++; return f.javaHome; },
+        };
+        await assert.rejects(runCodeFeature(first, dependencies), { name: "AbortError" });
+        const resumed = f.makeContext([implementation(), review()]);
+        assert.equal((await runCodeFeature(resumed, dependencies)).recommendation, "GO to PR Review");
+        assert.equal(questions, 1);
+        assert.equal(resumed.calls.length, 2);
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+    } finally {
+        rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test("unresolved or invalid prerequisite recovery never advances to agents", async () => {
+    for (const recovery of [
+        null,
+        { runId: "another-run", javaHome: "unused" },
+        { runId: "fixture-resume", javaHome: "missing" },
+        { runId: "fixture-resume", javaHome: "unused", token: "not-an-accepted-field" },
+    ]) {
+        const f = prerequisiteResumeFixture();
+        try {
+            await assert.rejects(runCodeFeature(f.makeContext([]), f.dependencies), { name: "AbortError" });
+            if (recovery) {
+                f.writeRecovery(recovery);
+                await assert.rejects(runCodeFeature(f.makeContext([]), f.dependencies), /Invalid .*recovery file/);
+            } else {
+                await assert.rejects(runCodeFeature(f.makeContext([]), f.dependencies), { name: "AbortError" });
+                assert.equal((await runCodeFeature(f.makeContext([]), f.dependencies)).recommendation, "needs clarification");
+                assert.equal(f.checkpoints.size, 2);
+            }
+            assert.equal(f.contexts.flatMap((ctx) => ctx.calls).length, 0);
+        } finally {
+            rmSync(f.root, { recursive: true, force: true });
+        }
+    }
+    assert.throws(() => prerequisiteRecoveryPath(os.tmpdir(), "..\\escape"), /Invalid workflow run ID/);
+});
+
+test("clarification cancellation and runtime failures propagate without becoming a prerequisite pause", async () => {
+    for (const name of ["AbortError", "ConnectionError", "ResponseError"]) {
+        const f = prerequisiteResumeFixture();
+        try {
+            const ctx = f.makeContext([]);
+            ctx.args.options.allowLocalOnly = true;
+            ctx.session = { ui: { elicitation: async () => { throw Object.assign(new Error("Fixture runtime failure"), { name }); } } };
+            await assert.rejects(runCodeFeature(ctx, f.dependencies), { name });
+            assert.equal(f.checkpoints.size, 0);
+            assert.equal(ctx.calls.length, 0);
+        } finally {
+            rmSync(f.root, { recursive: true, force: true });
+        }
+    }
+});
+
+test("interrupted review preserves builder edits instead of treating cancellation as a failed review", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-interrupted-review-"));
+    try {
+        mkdirSync(path.join(root, "common"));
+        const ctx = context([evidence(), implementation()], task(), {
+            workspaceRoot: root, applyToWorkspace: true,
+        });
+        const agent = ctx.agent;
+        ctx.agent = async (prompt, options) => {
+            if (options.agent === REVIEWER_AGENT) {
+                throw Object.assign(new Error("Fixture review interrupted"), { name: "AbortError" });
+            }
+            return agent(prompt, options);
+        };
+        await assert.rejects(runCodeFeature(ctx, { exec: () => "" }), { name: "AbortError" });
+        const editedFile = path.join(root, "common", implementation().targets[0].files[0].path);
+        assert.equal(readFileSync(editedFile, "utf8"), implementation().targets[0].files[0].content);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("PowerShell builder example passes the compiler property as one native argument", {
+    skip: process.platform !== "win32" && "Windows PowerShell argument fixture",
+}, () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-powershell-args-"));
+    try {
+        writeFileSync(path.join(root, "dump-args.cjs"), "console.log(JSON.stringify(process.argv.slice(2)));\n");
+        writeFileSync(path.join(root, "gradlew.bat"), `@echo off\r\n"${process.execPath}" "%~dp0dump-args.cjs" %*\r\n`);
+        const builder = customAgents.find((item) => item.name === BUILDER_AGENT);
+        assert.ok(builder.prompt.includes("'-Pkotlin.compiler.execution.strategy=in-process'"));
+        const output = execFileSync("powershell", [
+            "-NoProfile", "-Command", ".\\gradlew.bat '-Pkotlin.compiler.execution.strategy=in-process'",
+        ], { cwd: root, encoding: "utf8" });
+        assert.deepEqual(JSON.parse(output.trim()), ["-Pkotlin.compiler.execution.strategy=in-process"]);
+        const unquoted = execFileSync("powershell", [
+            "-NoProfile", "-Command", ".\\gradlew.bat -Pkotlin.compiler.execution.strategy=in-process",
+        ], { cwd: root, encoding: "utf8" });
+        assert.notDeepEqual(JSON.parse(unquoted.trim()), ["-Pkotlin.compiler.execution.strategy=in-process"]);
     } finally {
         rmSync(root, { recursive: true, force: true });
     }
