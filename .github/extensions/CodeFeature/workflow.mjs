@@ -12,7 +12,7 @@ const revisionedModuleUrl = (name) => {
 };
 const { deliveryOutcome, pendingVerification, verificationFromGate, verificationSummary } =
     await import(revisionedModuleUrl("./verification.mjs"));
-const { recordMilestone } = await import(revisionedModuleUrl("./milestones.mjs"));
+const { recordMilestone, recordHumanInputRequest } = await import(revisionedModuleUrl("./milestones.mjs"));
 const {
     currentStatusOwners,
     currentStatuses,
@@ -1254,13 +1254,14 @@ function isSupportedJavaHome(target, javaHome) {
     });
 }
 
-export function resolveTargetJavaHome(target, env = process.env, { ignoreConfigured = false } = {}) {
+export function resolveTargetJavaHome(target, env = process.env, { ignoreConfigured = false, allowConfiguredFallback = false } = {}) {
     const repoKey = normalizeRepositoryKey(target?.repository);
     const preferredMajors = repoKey === "authenticator" ? [21] : [21, 17];
     const currentJavaHome = env?.JAVA_HOME !== undefined ? env.JAVA_HOME : (process.env.JAVA_HOME || "");
 
     if (!ignoreConfigured && nonempty(currentJavaHome)) {
-        return isSupportedJavaHome(target, currentJavaHome) ? currentJavaHome : "";
+        if (isSupportedJavaHome(target, currentJavaHome)) return currentJavaHome;
+        if (!allowConfiguredFallback) return "";
     }
 
     const candidates = [];
@@ -1326,6 +1327,16 @@ export function resolveTargetJavaHome(target, env = process.env, { ignoreConfigu
     }
 
     return "";
+}
+
+export function selectWorkflowJavaHome(targets, env, { explicit = false } = {}) {
+    if (!Array.isArray(targets) || !targets.length) return null;
+    const strictest = targets.find((target) => normalizeRepositoryKey(target.repository) === "authenticator") || targets[0];
+    const home = resolveTargetJavaHome(strictest, env, { allowConfiguredFallback: !explicit });
+    if (!home || !targets.every((target) => isSupportedJavaHome(target, home))) return null;
+    const previous = env.JAVA_HOME || null;
+    env.JAVA_HOME = home;
+    return { javaHome: home, javaMajorVersion: readJavaMajorVersion(home), replacedInheritedHome: !explicit && previous !== home };
 }
 
 function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd()) {
@@ -3840,10 +3851,15 @@ export async function confirmBriefApproval(task, ctx, askBriefApproval) {
     return { decision: "start", feedback: "" };
 }
 
-export async function pauseForHelp(ctx, key, reason) {
+export async function pauseForHelp(ctx, key, reason, { questions = [], recoveryPath = null } = {}) {
     const msg = `${reason}\nWorkflow run ${ctx?.runId || "current"} is paused at "${key}". Inspect and resolve the blocker, then resume this same run ID.`;
-    ctx?.log?.(msg);
+    await ctx?.log?.(msg);
     if (typeof ctx?.pause === "function") {
+        await recordHumanInputRequest(ctx, {
+            key,
+            questions: questions.length ? questions : [`What should happen next for this blocked workflow? ${reason}`],
+            recoveryPath,
+        });
         await ctx.pause(key);
         return true;
     }
@@ -4060,6 +4076,15 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
         for (let prereqRound = 0; prereqRound < 2; prereqRound++) {
             const recoveryPath = prerequisiteRecoveryPath(workspaceRoot, ctx.runId);
             applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
+            const selectedJava = selectWorkflowJavaHome(targetsToVerify, workflowEnv, { explicit: rawOptions.javaHome !== undefined });
+            if (selectedJava) {
+                await recordMilestone(ctx, {
+                    id: `${prefix}-toolchain-${createHash("sha256").update(selectedJava.javaHome).digest("hex")}`,
+                    title: "Build toolchain selected",
+                    outcome: "completed",
+                    summary: `Using installed JDK ${selectedJava.javaMajorVersion} at ${selectedJava.javaHome} for this workflow run only. Global JAVA_HOME is unchanged. No installation or additional approval was required.`,
+                });
+            }
             const verify = () => verifyWorkflowPrerequisites({
                 workspaceRoot,
                 targets: targetsToVerify,
@@ -4088,7 +4113,10 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
                 const recoveryHelp = recoveryPath
                     ? `\nFor an approved run-scoped JDK selection, write {"runId":"${ctx.runId}","javaHome":"<approved JDK directory>"} to ${recoveryPath} before resuming. Do not write this file without the user's approval. Never store credentials here.`
                     : "";
-                await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause-v2-${prereqRound}`, recheck.issues.join("\n") + recoveryHelp);
+                await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause-v2-${prereqRound}`, recheck.issues.join("\n") + recoveryHelp, {
+                    questions: recheck.questions,
+                    recoveryPath,
+                });
                 applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
                 const afterResume = verify();
                 if (afterResume.ok) return null;

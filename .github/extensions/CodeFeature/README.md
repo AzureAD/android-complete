@@ -80,10 +80,13 @@ Given an approved coding task or PBI specification:
 
 - JDK discovery requires a supported major version in the installation's `release`
   file and both `bin/java` and `bin/javac` (`.exe` on Windows). An explicitly configured
-  invalid `JAVA_HOME` is reported with its path and detected version; the workflow offers
-  any discovered compatible JDK for this run, or accepts another compatible path. The
-  selected JDK is passed to the builder and local verification without changing the
-  host's global environment.
+  `options.javaHome` override is validated and never silently replaced. Without an explicit
+  override, an incompatible inherited `JAVA_HOME` no longer blocks the run: the workflow
+  automatically chooses an installed compatible JDK for all target repositories, announces
+  its path/version in chat, and passes it to the builder and verification in a run-local
+  environment. Global `JAVA_HOME` is unchanged. No installation or repeated JDK approval
+  is needed. A question remains necessary when no suitable installation is found or the
+  developer's explicit override is invalid.
 - PowerShell builder examples quote `'-Pkotlin.compiler.execution.strategy=in-process'`
   so the native Gradle invocation receives the entire property, rather than a spurious task.
 - Runtime cancellation is propagated rather than converted to a clarification answer or
@@ -105,10 +108,15 @@ Given an approved coding task or PBI specification:
   directories alone never attest successful tests. The builder's local artifacts/prose
   cannot establish that every requested task passed.
 - `verification[].ci` records status, observed PR source head, and concrete check/build
-  evidence. ADO build evidence is filtered to the current PR merge commit; stale build
-  policies, partial success, failed checks, and absent results cannot produce a pass.
+  evidence. ADO builds are bound to `system.pullRequest.sourceCommitId` in the build
+  parameters, with the exact current merge commit as a fallback only when source parameters
+  are absent. Policy-referenced builds missing from the latest-build list are fetched.
+  Rejected/canceling validation for an older source cannot fail the new source, even if a
+  provider's `buildIsNotCurrent` flag is false. A head/merge change during collection
+  requires a fresh snapshot; stale policies, partial success and absent results cannot pass.
   Stale required ADO build policies are refreshed once per durable observation key;
-  queued validation is then observed without spending a code-repair iteration.
+  queued validation is then observed without spending a code-repair iteration. Already
+  running current-head validation is not requeued merely because an older policy lags.
 - PR acceptance checkboxes are not automatically checked, and authored test counts are
   not reported as executed tests. The compact verification marker carries actual states.
 - The observer updates the PR status/verification markers from its final snapshot, guarding
@@ -128,6 +136,11 @@ Given an approved coding task or PBI specification:
   and return `infrastructure-blocked` without spending source/test-repair agents or
   modifying pipeline YAML, even if an external coverage status is pending. Retry requires
   provider recovery or an approved owner change. Successful CI does not hide merge conflicts.
+- Snapshot collection is read-only. Timeline/log/test reads retain explicit diagnostic
+  errors rather than silently dropping them. Internal Maven feed/plugin-resolution
+  failures are configuration/dependency handoffs, not proven source defects; no source
+  repair is assigned without actual current-head failure evidence. Genuine compiler or
+  failing-test diagnostics take precedence over simultaneous feed errors.
 - Standalone `pr-observer` honors an approved run-scoped `javaHome`; a local pass for an
   older commit is never promoted to a new CI-repair head.
 - Pending CI is a handoff, not completion of the developer's readiness objective.
@@ -161,11 +174,19 @@ Entering a phase, routine tool logs, or `BUILD SUCCESSFUL` text alone never crea
 completed-phase notice. Source review and publication updates explicitly do not claim
 tests/CI passed. Pending CI is reported once per head, not on every poll.
 
-Milestones are journaled by stable identity, read incrementally from durable progress,
-and delivered in order through the session-scoped outbox. Missed events are caught up
+Milestones are journaled by stable identity and pushed directly from the executing
+workflow to its owning-session outbox. They do not wait for an ephemeral run-updated
+event, a status read, or terminal settlement. The next stage waits for queue admission
+(not a model response) for at most 10 seconds, so a synchronous local build cannot
+starve the milestone handoff. An unavailable chat never blocks source work indefinitely:
+its durable pending receipt and explicit diagnostic remain available for retry.
+
+Durable progress is also read incrementally for catch-up. Missed events are reconciled
 on the next lifecycle event/session resume; extension restart pages all unseen receipts.
 Failed sends remain queued for retry, and duplicate/replayed events do not repeat already
-acknowledged milestones. The same at-least-once crash-window caveat applies as to final
+acknowledged milestones. Per-message recorded/enqueued/admitted timestamps, returned
+message ID, and independently observed system-message timestamp distinguish queue
+admission from actual transcript delivery. The same at-least-once crash-window caveat applies as to final
 outcomes. Progress-storage failure is surfaced but cannot hide a terminal blocker/result.
 Caller instructions require a short visible chat update for each receipt, without starting
 a status-poll loop or restarting the still-running workflow.
@@ -340,6 +361,12 @@ Each workflow agent loads the repository's existing skill and instruction files:
 - Prerequisite answers accepted in the workflow UI are journaled and reapplied on replay.
   A resumed prerequisite checkpoint rechecks the environment before continuing; it never
   returns a stale failure after successful recovery.
+- A pause records the exact missing-input questions and recovery path. Its owning-session
+  outcome explicitly requires an actionable `ask_user` question, not a status-only reply;
+  the read-only status tool exposes the structured `pendingInput`. Ask one question at a
+  time, preserve any existing input identity, and confirm the same run remains paused.
+  Apply the actual answer before a same-run resume. No answer implicitly authorizes a
+  global toolchain change, software installation, a new implementation, or a repair-budget reset.
 - If the caller must collect a JDK approval outside the workflow UI (including Autopilot),
   the pause log identifies an ignored, workspace-local file:
   `.github/local-context/code-feature/<runId>.json`. After explicit user approval, the caller

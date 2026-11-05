@@ -17,6 +17,10 @@ const observerUrl = new URL("./observer.mjs", import.meta.url);
 
 let activeWorkflow = null;
 let completionDelivery;
+function milestoneHandoff(runId, workflowName, receipt) {
+    if (!completionDelivery) throw new Error("Owning-session chat delivery has not initialized.");
+    return completionDelivery.enqueueMilestone(runId, workflowName, receipt);
+}
 async function runExclusively(name, fn) {
     if (activeWorkflow) {
         throw new Error(`Workflow "${activeWorkflow}" is already running in this session; use a separate session for concurrent jobs.`);
@@ -39,7 +43,10 @@ const session = await joinSession({
                 completionDelivery?.track(ctx.runId, "code-feature");
                 const { mtimeMs } = statSync(workflowUrl);
                 const latest = await import(`${workflowUrl.href}?v=${mtimeMs}`);
-                return latest.runCodeFeature(ctx);
+                return latest.runCodeFeature({
+                    ...ctx,
+                    onMilestone: (receipt) => milestoneHandoff(ctx.runId, "code-feature", receipt),
+                });
             }),
         }),
         defineWorkflow({
@@ -48,7 +55,10 @@ const session = await joinSession({
                 completionDelivery?.track(ctx.runId, "pr-observer");
                 const { mtimeMs } = statSync(observerUrl);
                 const latest = await import(`${observerUrl.href}?v=${mtimeMs}`);
-                return latest.runPrObserver(ctx);
+                return latest.runPrObserver({
+                    ...ctx,
+                    onMilestone: (receipt) => milestoneHandoff(ctx.runId, "pr-observer", receipt),
+                });
             }),
         }),
     ],

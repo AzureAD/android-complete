@@ -55,8 +55,12 @@ one of the examples above. Do not pre-fetch the PBI/design or prepare target che
 the registered workflow gathers evidence, implements, source-reviews, publishes and
 observes the resulting PR.
 
-Omit `options` by default. Allow `options.javaHome` only when the developer already
-approved that run-scoped JDK. Do not silently disable PR publication or observation.
+Omit `options` by default. The workflow automatically selects an installed compatible
+JDK for the target repositories, scoped to this run, and announces the selection in chat.
+It does not change global `JAVA_HOME`, install software, or need a repeated approval merely
+because the inherited JDK is incompatible. Respect an explicit `options.javaHome` selection;
+do not silently replace an explicitly chosen incompatible installation.
+Do not silently disable PR publication or observation.
 Do not set model, effort, context, or resource ceilings without explicit user instructions.
 If the registered workflow/tool is unavailable, explain that it cannot be launched;
 do not silently substitute a standalone background agent or a different orchestrator.
@@ -75,8 +79,14 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
   local/CI receipts, PR links, remaining failures/policies, and the next responsible owner.
   `completed` is not proof of tests passing or merge readiness. Never infer success from
   authored test counts, builder/reviewer verdicts, or a `GO` label.
-- If paused for a prerequisite, resolve the actual blocker before resuming the same run.
-  Resume has no answer/environment argument. For an explicitly approved JDK, write
+- If paused for a prerequisite or owner decision, open an actual `ask_user` question
+  immediately; do not end with only a paused-status report or silently wait for the user
+  to discover the blocker. Use the recorded `pendingInput`/question data, ask one question
+  at a time, and preserve/relay an already-pending input request rather than duplicating it.
+  If the user already answered that recorded question, apply the answer instead of asking again.
+  Confirm the run is still paused, then apply the answer and resolve the blocker before
+  resuming the same run. Resume has no answer/environment argument. If no compatible
+  installed JDK is found or the user explicitly selects another JDK, write
   `{"runId":"<same run ID>","javaHome":"<approved JDK directory>"}` to the pause log's
   `.github/local-context/code-feature/<runId>.json` path, then resume. JSON-escape Windows
   backslashes; never store credentials or change global `JAVA_HOME`.

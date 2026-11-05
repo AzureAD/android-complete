@@ -155,7 +155,7 @@ test("bounded ADO creation leaves space for final status, current-head CI and ac
         prUrl: url, summary: "Concrete diagnostic ".repeat(80), nextAction: "Detailed next action ".repeat(30),
     });
     const updated = publishObserverStatus(parsePullRequestUrl(url), snapshot({
-        description: body, provider: "ado", prBuilds: [{ id: 1, status: "completed", result: "succeeded" }],
+        description: body, provider: "ado", prBuilds: [{ id: 1, status: "completed", result: "succeeded", sourceHeadSha: "a".repeat(40) }],
     }), block, { exec: () => "" });
     assert.ok(updated.length <= 4000, `Final status length: ${updated.length}`);
     assert.equal(parseMarkerBlock(updated, verificationMarkers).ci.status, "passed");
@@ -553,7 +553,7 @@ test("standalone observer applies the approved JDK to repair verification withou
         await runPrObserver(noSelection, {
             environment: { JAVA_HOME: invalid }, exec: () => "",
             fetchPrSnapshot: () => ++moreReads === 1
-                ? snapshot({ prBuilds: [{ id: 1, status: "completed", result: "failed", failedTasks: [{ name: "Compile" }] }] })
+                ? snapshot({ prBuilds: [{ id: 1, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["Unresolved reference: Foo"] }] }] })
                 : snapshot(),
         });
         assert.ok(!noSelection.calls[0].prompt.includes(`Use JAVA_HOME ${invalid}`));

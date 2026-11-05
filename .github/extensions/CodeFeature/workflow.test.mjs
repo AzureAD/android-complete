@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { milestoneFromProgress } from "./milestones.mjs";
+import { humanInputRequestFromProgress, milestoneFromProgress } from "./milestones.mjs";
 import {
     OBSERVER_AGENT,
     computeRepairIdentity,
@@ -63,6 +63,7 @@ import {
     resolveInputSources,
     resolveRoleSkillGuides,
     resolveTargetJavaHome,
+    selectWorkflowJavaHome,
     resolveWindowsCmdExecutable,
     restoreTargetFiles,
     revertUnauthorizedProtectedFiles,
@@ -2111,7 +2112,7 @@ test("JDK recovery reports the configured home and uses the approved alternative
         const runTask = task();
         runTask.targets[0].verificationCommands = target.verificationCommands;
         const ctx = context([evidence(), implementation(), review()], runTask, {
-            workspaceRoot: root, verifyPrerequisites: true, runLocalVerification: true,
+            workspaceRoot: root, verifyPrerequisites: true, runLocalVerification: true, javaHome: oldJdk,
         });
         let capturedGateEnv;
         const result = await runCodeFeature(ctx, {
@@ -2168,7 +2169,7 @@ function prerequisiteResumeFixture() {
     const makeContext = (results) => {
         const ctx = context(results, resumedTask, {
             workspaceRoot: root, verifyPrerequisites: true, runLocalVerification: true,
-            createPullRequests: false, allowLocalOnly: true,
+            createPullRequests: false, allowLocalOnly: true, javaHome: env.JAVA_HOME,
         });
         ctx.runId = "fixture-resume";
         ctx.session = { ui: { elicitation: async () => ({ action: "cancel" }) } };
@@ -2212,6 +2213,10 @@ test("paused prerequisites recheck approved run-scoped recovery on a fresh attem
         assert.equal(first.calls.length, 0);
         assert.equal(f.checkpoints.size, 1);
         assert.ok(first.logs.some((line) => line.includes(prerequisiteRecoveryPath(f.root, first.runId))));
+        const input = humanInputRequestFromProgress(first.logs.map((text) => ({ kind: "log", text })));
+        assert.ok(input.questions.some((question) => question.includes("JDK")));
+        assert.equal(input.recoveryPath, prerequisiteRecoveryPath(f.root, first.runId));
+        assert.equal(input.key, [...f.checkpoints][0]);
 
         f.writeRecovery();
         const resumed = f.makeContext([evidence(), implementation(), review()]);
@@ -2268,6 +2273,42 @@ test("preapproved run-scoped JDK supports unattended runs without changing host 
         });
         assert.equal(result.recommendation, "GO to PR Review");
         assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+        assert.equal(process.env.JAVA_HOME, original);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an inherited incompatible JAVA_HOME automatically selects the installed PATH JDK without asking", async () => {
+    const f = prerequisiteResumeFixture();
+    const original = process.env.JAVA_HOME;
+    try {
+        const context = f.makeContext([evidence(), implementation(), review()]);
+        delete context.args.options.javaHome;
+        const result = await runCodeFeature(context, {
+            ...f.dependencies,
+            environment: { ...f.env, PATH: path.join(f.javaHome, "bin") },
+            askUser: async () => { throw new Error("An installed compatible JDK must not require human approval"); },
+        });
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.equal(f.checkpoints.size, 0);
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+        assert.ok(context.logs.some((log) => log.includes("Build toolchain selected") && log.includes("Global JAVA_HOME is unchanged")));
+        assert.equal(f.env.JAVA_HOME.endsWith("missing-jdk"), true);
+        assert.equal(process.env.JAVA_HOME, original);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("automatic toolchain choice satisfies all repositories but never overrides an explicit incompatible choice", () => {
+    const f = prerequisiteResumeFixture();
+    const original = process.env.JAVA_HOME;
+    try {
+        const env = { ...f.env, PATH: path.join(f.javaHome, "bin") };
+        const selected = selectWorkflowJavaHome([{ repository: "common" }, { repository: "authenticator" }], env);
+        assert.equal(selected.javaHome, f.javaHome);
+        assert.equal(selected.javaMajorVersion, 21);
+        assert.equal(env.JAVA_HOME, f.javaHome);
+        const explicit = { ...f.env, PATH: path.join(f.javaHome, "bin") };
+        assert.equal(selectWorkflowJavaHome([{ repository: "authenticator" }], explicit, { explicit: true }), null);
+        assert.equal(explicit.JAVA_HOME, f.env.JAVA_HOME);
         assert.equal(process.env.JAVA_HOME, original);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

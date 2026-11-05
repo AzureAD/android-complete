@@ -96,6 +96,8 @@ test("explicit launch keeps milestone, recovery and budget safeguards available 
         "Preserve remaining repair budgets, including zero", "Human approvals",
     ]) assert.ok(launcher.includes(boundary), `Missing runtime safeguard: ${boundary}`);
     assert.match(launcher, /Omit `options` by default/);
+    assert.match(launcher, /automatically selects an installed compatible/);
+    assert.match(launcher, /open an actual `ask_user` question/);
     assert.match(launcher, /Do not set model, effort, context, or resource ceilings without explicit user instructions/);
     assert.match(launcher, /end the caller turn without `Start-Sleep` or inspect-run polling loops/);
 });

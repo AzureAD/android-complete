@@ -29,6 +29,7 @@ const {
     buildNormalizedProcessEnv,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
+    isDefinitiveCodeOrTestFailure,
     pauseForHelp,
     resolveGitHubAccount,
     resolveRoleSkillGuides,
@@ -385,41 +386,20 @@ export function selectAddressedReviewThreads({
     });
 }
 
+export function buildAdoSnapshotScript(parsedPr) {
+    const allowed = parsePullRequestUrl(parsedPr?.prUrl);
+    if (allowed?.provider !== "ado") throw new Error("An allowlisted ADO PR is required.");
+    const config = Buffer.from(JSON.stringify({
+        orgUrl: allowed.orgUrl, project: allowed.project, repoName: allowed.repoName,
+        prNumber: allowed.prNumber, prUrl: allowed.prUrl,
+    })).toString("base64");
+    const source = readFileSync(new URL("./ado-snapshot.ps1", import.meta.url), "utf8");
+    return `$snapshotInputBase64 = '${config}'\n${source}`;
+}
+
 export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
     if (parsedPr?.provider === "ado") {
-        const orgUrl = (parsedPr.orgUrl || `https://${parsedPr.hostname}`).replace(/\/+$/, "").replace(/'/g, "''");
-        const projectEnc = encodeURIComponent(parsedPr.project);
-        const repoEnc = encodeURIComponent(parsedPr.repoName);
-        const psScript = [
-            "$ErrorActionPreference = 'Stop'",
-            "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
-            "$headers = @{ Authorization = \"Bearer $token\" }",
-            `$projectBase = '${orgUrl}/${projectEnc}'`,
-            `$base = "$projectBase/_apis/git/repositories/${repoEnc}/pullRequests/${parsedPr.prNumber}"`,
-            "$pr = Invoke-RestMethod -Uri ($base + '?api-version=7.0') -Headers $headers -Method Get",
-            "$threads = (Invoke-RestMethod -Uri ($base + '/threads?api-version=7.0') -Headers $headers -Method Get).value",
-            "$statuses = (Invoke-RestMethod -Uri ($base + '/statuses?api-version=7.0') -Headers $headers -Method Get).value",
-            "$currentIterations = (Invoke-RestMethod -Uri ($base + '/iterations?api-version=7.0') -Headers $headers -Method Get).value",
-            "$currentIterationId = ($currentIterations | Measure-Object -Property id -Maximum).Maximum",
-            "$statuses = @($statuses | Where-Object { -not $_.iterationId -or $_.iterationId -eq $currentIterationId })",
-            `$builds = (Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds?branchName=refs/pull/${parsedPr.prNumber}/merge&api-version=7.0") -Headers $headers -Method Get).value`,
-            "$currentMerge = $pr.lastMergeCommit.commitId; $builds = @($builds | Where-Object { $currentMerge -and $_.sourceVersion -eq $currentMerge })",
-            "$policyArtifact = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$($pr.repository.project.id)/$($pr.pullRequestId)\")",
-            "$policies = @((Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$policyArtifact&api-version=7.1-preview.1\") -Headers $headers -Method Get).value | ForEach-Object { @{ evaluationId = $_.evaluationId; name = $_.configuration.type.displayName; status = $_.status; blocking = $_.configuration.isBlocking; buildIsNotCurrent = $_.context.buildIsNotCurrent; buildId = $_.context.buildId } })",
-            "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
-            "$maxIter = ($statuses | Where-Object { $_.iterationId } | Measure-Object -Property iterationId -Maximum).Maximum",
-            "$latestStatuses = @($statuses | Where-Object { -not $_.iterationId -or -not $maxIter -or $_.iterationId -eq $maxIter } | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
-            "$latestBuilds = @($builds | Group-Object { $_.definition.name } | ForEach-Object { $sameCommitCount = @($_.Group).Count; $b = $_.Group | Sort-Object id -Descending | Select-Object -First 1; if ($b.sourceVersion) { $sameCommitCount = @($_.Group | Where-Object { $_.sourceVersion -eq $b.sourceVersion }).Count }; $failedTasks = @(); $needsPolicyRequeue = $false; $hasInfraFailure = $false; if ($b.result -eq 'failed' -or $b.status -eq 'inProgress') { try { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; if ($b.status -eq 'inProgress' -and $sameCommitCount -lt 2) { $hungEmu = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.name -eq 'Start emulator' -and $_.state -eq 'inProgress' -and $_.startTime -and (([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$_.startTime)).TotalMinutes -gt 45) }); if ($hungEmu.Count -gt 0) { $needsPolicyRequeue = $true } }; $rawFailed = @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' }); $hasPrimaryFailure = @($rawFailed | Where-Object { $_.name -notmatch 'Publish .* report' }).Count -gt 0; foreach ($rec in $rawFailed) { if ($hasPrimaryFailure -and $rec.name -match 'Publish .* report') { continue }; $taskIsInfra = $false; $issues = @($rec.issues | ForEach-Object { $_.message }); $excerpt = @(); $failedTests = @(); if ($rec.log.url) { try { $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($logText -isnot [string] -and $logText.value) { $logText = ($logText.value -join \"`n\") }; if ($logText -notmatch 'BUILD FAILED' -and $rec.parentId) { $parentRec = $tl.records | Where-Object { $_.id -eq $rec.parentId } | Select-Object -First 1; if ($parentRec -and $parentRec.log.url) { try { $parentTail = Invoke-RestMethod -Uri ($parentRec.log.url + '?startLine=65000&api-version=7.0') -Headers @{ Authorization = $headers.Authorization; Accept = 'text/plain' } -Method Get; if ($parentTail -isnot [string] -and $parentTail.value) { $parentTail = ($parentTail.value -join \"`n\") }; if ($parentTail) { $logText = $logText + \"`n\" + $parentTail } } catch {} } }; $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/|\\sw:\\s' -and $_ -cmatch 'FAILED|What went wrong|\\.kt:\\d+|\\.java:\\d+|Execution failed|weighted issues|Caused by:|Exception in thread|UnknownHostException|error:|fetch-pack:' } | Select-Object -Last 25); $runIds = @([regex]::Matches($logText, 'run id:\\s*(\\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique); foreach ($rid in $runIds) { try { $tr = (Invoke-RestMethod -Uri (\"$projectBase/_apis/test/Runs/$rid/results?outcomes=Failed&api-version=7.0\") -Headers $headers -Method Get).value; foreach ($tc in @($tr | Select-Object -First 20)) { $failedTests += @{ testClass = $tc.automatedTestStorage; testName = $tc.automatedTestName; errorMessage = $tc.errorMessage; stackTrace = @(($tc.stackTrace -split \"`r?`n\") | Select-Object -First 8) } } } catch {} } } catch {} }; if ($failedTests.Count -eq 0 -and (($issues + $excerpt) -join \"`n\") -match 'UnknownHostException|nodename nor servname|502 Bad Gateway|503 Service Unavailable|ETIMEDOUT|ECONNRESET|Connection reset by peer|unexpected disconnect while reading sideband packet|Git fetch failed with exit code') { $taskIsInfra = $true }; if ($taskIsInfra -and ($b.status -eq 'inProgress' -or $sameCommitCount -lt 2)) { $hasInfraFailure = $true; continue }; $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt; failedTests = $failedTests } }; if ($hasInfraFailure -and $failedTasks.Count -eq 0 -and $b.status -eq 'completed') { $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; $stageRetried = $false; foreach ($st in @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -eq 'failed' -and $_.identifier -and ([int]$_.attempt -lt 2) })) { try { Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/stages/$($st.identifier)?api-version=7.0-preview.1\") -Headers $jsonHeaders -Method Patch -Body '{\"state\":1,\"forceRetryAllJobs\":false}' | Out-Null; $stageRetried = $true } catch {} }; if ($stageRetried) { $b.status = 'inProgress'; $b.result = $null } elseif ($sameCommitCount -lt 2) { $needsPolicyRequeue = $true } }; if ($needsPolicyRequeue -and $sameCommitCount -lt 2) { try { $projId = $pr.repository.project.id; $artId = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$projId/$($pr.pullRequestId)\"); $evals = (Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$artId&api-version=7.1-preview.1\") -Headers $headers -Method Get).value; $jsonHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/json' }; foreach ($ev in @($evals | Where-Object { $_.context.buildId -eq $b.id })) { Invoke-RestMethod -Method Patch -Uri (\"$projectBase/_apis/policy/evaluations/$($ev.evaluationId)?api-version=7.1-preview.1\") -Headers $jsonHeaders -Body '{}' | Out-Null }; $failedTasks = @(); $b.status = 'inProgress'; $b.result = $null } catch {} } } catch {} }; @{ id = $b.id; definition = $b.definition.name; buildNumber = $b.buildNumber; status = $b.status; result = $b.result; failedTasks = $failedTasks } })",
-            "$runningDefNames = @($latestBuilds | Where-Object { $_.status -in @('inProgress','notStarted') -and $_.failedTasks.Count -eq 0 } | ForEach-Object { $_.definition.ToLowerInvariant() })",
-            "foreach ($b in $latestBuilds) { if ($b.result -in @('canceled','cancelled')) { $tl = Invoke-RestMethod -Uri (\"$projectBase/_apis/build/builds/$($b.id)/timeline?api-version=7.0\") -Headers $headers -Method Get; $infraIssues = @($tl.records | ForEach-Object { $_.issues } | ForEach-Object { $_.message } | Where-Object { $_ -match 'brownout|provider.*unable.*process|hosted.*image.*unavailable|image.*retired' } | Select-Object -Unique -First 8); if ($infraIssues.Count -gt 0) { $b.infrastructureIssues = $infraIssues } } }",
-            "foreach ($st in $latestStatuses) { if ($st.state -eq 'failed' -and $st.context.name -eq 'codecoverage' -and ($runningDefNames -contains ([string]$st.context.genre).ToLowerInvariant())) { $st.state = 'pending'; $st.description = 'Coverage status check pending active build completion' } }",
-            "$changedFiles = $null; try { $iters = (Invoke-RestMethod -Uri ($base + '/iterations?api-version=7.0') -Headers $headers -Method Get).value; $lastIterId = ($iters | Measure-Object -Property id -Maximum).Maximum; if ($lastIterId) { $iterChanges = (Invoke-RestMethod -Uri ($base + \"/iterations/$lastIterId/changes?api-version=7.0\") -Headers $headers -Method Get).changeEntries; $changedFiles = @($iterChanges | ForEach-Object { ([string]$_.item.path) -replace '^/+','' } | Where-Object { $_ } | Select-Object -Unique -First 50) } } catch { $changedFiles = $null }",
-            `$out = @{ provider = 'ado'; number = $pr.pullRequestId; title = $pr.title; description = $pr.description; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; policyEvaluations = $policies; activeReviewThreads = $activeThreads; changedFiles = $changedFiles; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
-            "[Console]::Out.Write(($out | ConvertTo-Json -Depth 8 -Compress))",
-        ].join("; ");
-        const rawJson = exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
-        return JSON.parse(rawJson);
+        return scopeAdoSnapshot(JSON.parse(exec("powershell", ["-NoProfile", "-Command", buildAdoSnapshotScript(parsedPr)], { cwd: workspaceRoot })));
     }
 
     const account = resolveGitHubAccount(
@@ -650,7 +630,9 @@ export function hasActionableReviewOrCommentFeedback(snapshot) {
 }
 
 export function isSnapshotWaitingForCiOnly(snapshot) {
+    snapshot = scopeAdoSnapshot(snapshot);
     if (!record(snapshot)) return false;
+    if (snapshot.snapshotHeadChanged) return true;
     const mergeState = String(snapshot.mergeStateStatus || "").toLowerCase();
     if (mergeState.includes("conflict") || mergeState === "dirty") {
         return false;
@@ -714,7 +696,10 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
 }
 
 export function isSnapshotReadyForHumanMerge(snapshot) {
+    snapshot = scopeAdoSnapshot(snapshot);
     if (!record(snapshot)) return false;
+    if (snapshot.snapshotHeadChanged) return false;
+    if (snapshot.provider === "ado" && ciEvidenceFromSnapshot(snapshot).status !== "passed") return false;
     if (isSnapshotWaitingForCiOnly(snapshot)) return false;
 
     const mergeState = String(snapshot.mergeStateStatus || "").toLowerCase();
@@ -931,8 +916,42 @@ function isHumanApprovalCheck(check) {
         /minimum.*reviewer|require.*reviewer|merge strategy|proof of presence|comment requirements/i.test(String(check?.name || ""));
 }
 
+export function scopeAdoSnapshot(snapshot) {
+    if (snapshot?.provider !== "ado") return snapshot;
+    const sameHead = (head) => nonempty(head) && nonempty(snapshot.headRefOid) && head.toLowerCase() === snapshot.headRefOid.toLowerCase();
+    const currentBuilds = (snapshot.prBuilds || []).filter((build) => sameHead(build.sourceHeadSha));
+    const policies = (snapshot.policyEvaluations || []).map((policy) => {
+        if (!policy.buildId) return policy;
+        const linked = currentBuilds.find((build) => Number(build.id) === Number(policy.buildId));
+        return {
+            ...policy,
+            buildIsNotCurrent: policy.buildIsNotCurrent === true ||
+                !sameHead(policy.buildSourceHeadSha || linked?.sourceHeadSha),
+        };
+    });
+    const checks = (snapshot.statusCheckRollup || []).map((check) => {
+        const currentValidation = currentBuilds.filter((build) =>
+            !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")));
+        const activeValidation = currentValidation.some((build) =>
+            ["inprogress", "notstarted", "cancelling", "postponed"].includes(String(build.status || "").toLowerCase()));
+        const unboundRequiredValidation = policies.some((policy) => policy.buildId && policy.blocking && policy.buildIsNotCurrent);
+        if (String(check.context?.name || check.name || "").toLowerCase() === "codecoverage" &&
+            ["failed", "failure", "error"].includes(String(check.state || check.conclusion || "").toLowerCase()) &&
+            (activeValidation || unboundRequiredValidation) && !currentValidation.some((build) => (build.failedTasks || []).length)) {
+            return { ...check, state: "pending", conclusion: null, description: "Current source-head validation is still running; coverage has no final result." };
+        }
+        return check;
+    });
+    return { ...snapshot, prBuilds: currentBuilds, policyEvaluations: policies, statusCheckRollup: checks };
+}
+
 export function ciEvidenceFromSnapshot(snapshot) {
+    snapshot = scopeAdoSnapshot(snapshot);
     const evidence = [];
+    if (snapshot?.snapshotHeadChanged) return {
+        status: "pending", headSha: snapshot.headRefOid || null,
+        evidence: ["PR source or merge commit changed during the snapshot; fresh current-head validation must be observed."],
+    };
     const builds = (snapshot?.prBuilds || []).filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")));
     const checks = (snapshot?.statusCheckRollup || []).filter((check) => !isHumanApprovalCheck(check));
     let failed = false;
@@ -944,6 +963,7 @@ export function ciEvidenceFromSnapshot(snapshot) {
         const result = String(build.result || "").toLowerCase();
         evidence.push(`Build ${build.id || "unknown"} ${build.definition || ""}: ${status}/${result || "pending"}`);
         evidence.push(...(build.infrastructureIssues || []));
+        evidence.push(...(build.diagnosticErrors || []));
         if (status !== "completed") pending = true;
         else if (result !== "succeeded") failed = true;
         for (const task of build.failedTasks || []) {
@@ -960,14 +980,21 @@ export function ciEvidenceFromSnapshot(snapshot) {
         else if (!["success", "succeeded", "neutral", "skipped", "notapplicable"].includes(state)) unknown = true;
     }
     for (const policy of snapshot?.policyEvaluations || []) {
+        const currentBuild = builds.find((build) => Number(build.id) === Number(policy.buildId));
         if (policy.buildId && policy.blocking && policy.buildIsNotCurrent) {
             pending = true;
             evidence.push(`${policy.name}: build validation is stale for the current PR head.`);
-        } else if (policy.buildId && policy.blocking && policy.status === "rejected") {
+        } else if (policy.buildId && policy.blocking && policy.status === "rejected" &&
+            (snapshot.provider !== "ado" || (currentBuild?.status === "completed" &&
+                ["failed", "canceled", "cancelled", "partiallysucceeded"].includes(String(currentBuild.result || "").toLowerCase())))) {
             failed = true;
             evidence.push(`${policy.name}: current build policy rejected.`);
+        } else if (policy.buildId && policy.blocking && policy.status !== "approved") {
+            pending = true;
+            evidence.push(`${policy.name}: policy validation is ${policy.status || "unknown"}; not a current-head source failure.`);
         }
     }
+    evidence.push(...(snapshot?.diagnosticErrors || []));
     return {
         status: failed ? "failed" : pending ? "pending" : unknown ? "unknown" : "passed",
         headSha: snapshot?.headRefOid || null,
@@ -976,6 +1003,8 @@ export function ciEvidenceFromSnapshot(snapshot) {
 }
 
 export function infrastructureBlockersFromSnapshot(snapshot) {
+    snapshot = scopeAdoSnapshot(snapshot);
+    if (snapshot?.snapshotHeadChanged) return [];
     const builds = (snapshot?.prBuilds || []).filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")));
     if (builds.some((build) => (build.failedTasks || []).length > 0)) return [];
     return builds.flatMap((build) => (build.infrastructureIssues || []).filter((issue) =>
@@ -990,11 +1019,43 @@ function infrastructureHandoff(snapshot, prUrl, iterations) {
     } : null;
 }
 
+export function dependencyBlockersFromSnapshot(snapshot) {
+    snapshot = scopeAdoSnapshot(snapshot);
+    if (snapshot?.snapshotHeadChanged) return [];
+    const tasks = (snapshot?.prBuilds || []).filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")))
+        .flatMap((build) => build.failedTasks || []);
+    const text = tasks.flatMap((task) => [...(task.issues || []), ...(task.excerpt || [])]).join("\n");
+    if (tasks.some((task) => (task.failedTests || []).length > 0) || isDefinitiveCodeOrTestFailure(text)) return [];
+    if (/401|403|unauthorized|forbidden|(?:plugin|artifact|dependency).*(?:could not.*resolv|could not.*find|not found|could not be resolved)/is.test(text) &&
+        /(?:pkgs\.visualstudio\.com|_packaging\/|AuthApp.*maven|maven.*AuthApp)/i.test(text)) {
+        return tasks.flatMap((task) => [...(task.issues || []), ...(task.excerpt || [])].slice(0, 12)).slice(0, 48);
+    }
+    return [];
+}
+
+function environmentHandoff(snapshot, prUrl, iterations) {
+    const infrastructure = infrastructureHandoff(snapshot, prUrl, iterations);
+    if (infrastructure) return infrastructure;
+    const evidence = dependencyBlockersFromSnapshot(snapshot);
+    return evidence.length ? {
+        status: "needs-owner-decision", blockerKind: "ci-dependencies", prUrl, iterations,
+        summary: "Current validation failed during internal feed/plugin resolution before source verification. Investigate feed access, artifact availability and pipeline configuration; no source/test defect is established.",
+        evidence,
+    } : null;
+}
+
+function hasTaskDiagnostics(task) {
+    return [...(task.issues || []), ...(task.excerpt || []),
+        ...(task.failedTests || []).flatMap((test) => [test.errorMessage, test.testName])].some(nonempty);
+}
+
 export function refreshStaleAdoBuildPolicies(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
     if (parsedPr?.provider !== "ado") return [];
     const stale = (snapshot.policyEvaluations || []).filter((policy) =>
         policy.blocking && policy.buildId && policy.buildIsNotCurrent &&
         ["approved", "rejected"].includes(policy.status) &&
+        !(snapshot.prBuilds || []).some((build) => policy.buildDefinitionId && build.definitionId === policy.buildDefinitionId &&
+            ["inprogress", "notstarted", "cancelling", "postponed"].includes(String(build.status || "").toLowerCase())) &&
         /^[a-f0-9-]{36}$/i.test(policy.evaluationId || ""));
     if (!stale.length) return [];
     const base = `${parsedPr.orgUrl}/${encodeURIComponent(parsedPr.project)}/_apis/policy/evaluations`;
@@ -1084,13 +1145,25 @@ export async function runPrObserver(ctx, dependencies = {}) {
         environment.JAVA_HOME = approvedJavaHome;
         const target = parsePullRequestUrl(ctx.args?.prUrl);
         if (target && !resolveTargetJavaHome(target, environment)) throw new Error("Approved observer JDK does not satisfy the target's toolchain requirements.");
+    } else {
+        const target = parsePullRequestUrl(ctx.args?.prUrl);
+        const selected = target && resolveTargetJavaHome(target, environment, { allowConfiguredFallback: true });
+        if (selected) {
+            environment.JAVA_HOME = selected;
+            await recordMilestone(ctx, {
+                id: `observer-toolchain-${createHash("sha256").update(`${ctx.args?.prUrl}:${selected}`).digest("hex")}`,
+                title: "Build toolchain selected",
+                outcome: "completed",
+                summary: `Using installed compatible JDK at ${selected} for this observation run only. Global JAVA_HOME is unchanged; this is toolchain selection, not test/CI success.`,
+            });
+        }
     }
     const fetch = dependencies.fetchPrSnapshot || ((pr) => fetchPullRequestSnapshot(pr, { workspaceRoot, exec: dependencies.exec || defaultExec }));
     const result = await runObserverLoop(ctx, {
         ...dependencies,
         environment,
         onRepairAttempt: () => { repairAttempts++; dependencies.onRepairAttempt?.(); },
-        fetchPrSnapshot: async (pr) => { snapshot = await fetch(pr); return snapshot; },
+        fetchPrSnapshot: async (pr) => { snapshot = scopeAdoSnapshot(await fetch(pr)); return snapshot; },
     });
     if (!snapshot) return result;
     const ci = ciEvidenceFromSnapshot(snapshot);
@@ -1224,7 +1297,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
 
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
             if (!expectedHeadSha || snapshot.headRefOid === expectedHeadSha) {
-                const blocked = infrastructureHandoff(snapshot, parsedPr.prUrl, iteration);
+                const blocked = environmentHandoff(snapshot, parsedPr.prUrl, iteration);
                 if (blocked) return blocked;
             }
             if (parsedPr.provider === "ado") {
@@ -1286,7 +1359,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 };
             }
 
-            const blocked = infrastructureHandoff(snapshot, parsedPr.prUrl, iteration);
+            const blocked = environmentHandoff(snapshot, parsedPr.prUrl, iteration);
             if (blocked) return blocked;
 
             if (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot)) {
@@ -1322,7 +1395,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
 
             const failedTasks = (snapshot?.prBuilds || [])
                 .filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")))
-                .flatMap((build) => build.failedTasks || []);
+                .flatMap((build) => build.failedTasks || []).filter(hasTaskDiagnostics);
             if (failedTasks.length > 0) {
                 observation = {
                     verdict: "repair",
@@ -1335,6 +1408,14 @@ async function runObserverLoop(ctx, dependencies = {}) {
                     ].join("\n")),
                 };
                 break;
+            }
+            if (ciEvidenceFromSnapshot(snapshot).status === "failed") {
+                return {
+                    status: "needs-owner-decision", blockerKind: "ci-diagnostics", prUrl: parsedPr.prUrl,
+                    summary: "Validation reports failure, but no current-head compiler/test/task diagnostic is available. Inspect the referenced build before assigning source repairs.",
+                    evidence: ciEvidenceFromSnapshot(snapshot).evidence,
+                    iterations: iteration,
+                };
             }
             if (ciEvidenceFromSnapshot(snapshot).status === "passed" &&
                 !/dirty|conflict/i.test(String(snapshot.mergeStateStatus || "")) &&

@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync 
 import path from "node:path";
 import test from "node:test";
 import { createWorkflowCompletionDelivery, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
-import { milestoneFromProgress, recordMilestone } from "./milestones.mjs";
+import { humanInputRequestFromProgress, milestoneFromProgress, recordHumanInputRequest, recordMilestone } from "./milestones.mjs";
 
 const pr = "https://github.com/AzureAD/example/pull/42";
 const adoPr = "https://dev.azure.com/IdentityDivision/Engineering/_git/authenticator/pullrequest/43";
@@ -316,6 +316,179 @@ test("milestone producer journals explicit completion once and does not log it a
     await assert.rejects(recordMilestone(context, { ...input, prUrl: "http://github.com/AzureAD/example/pull/42" }), /Invalid workflow milestone/);
 });
 
+test("the workflow producer pushes phase updates without run events, progress reads, or terminal settlement", async (t) => {
+    const { session, install, stateFile } = fixture(t);
+    const delivery = install();
+    await delivery.ready;
+    session.workflow.getRun = async () => { throw new Error("Run RPC must not be required for a live milestone push"); };
+    session.workflow.getRunProgress = async () => { throw new Error("Progress RPC must not be required for a live milestone push"); };
+    const journal = new Map();
+    const records = [];
+    const context = {
+        async step(key, producer) {
+            if (!journal.has(key)) journal.set(key, await producer());
+            return journal.get(key);
+        },
+        log(text) { records.push(text); },
+        onMilestone: (receipt) => delivery.enqueueMilestone("live-run", "code-feature", receipt),
+    };
+    const receipt = { id: "evidence-done", title: "Evidence", outcome: "completed", summary: "Source evidence gathered; implementation and CI remain pending." };
+    await recordMilestone(context, receipt);
+    await delivery.flushMilestones();
+    assert.equal(session.messages.length, 1);
+    assert.match(session.messages[0].prompt, /Evidence — completed/);
+    assert.match(session.messages[0].prompt, /implementation and CI remain pending/);
+    assert.equal(session.calls.filter(([method]) => ["getRun", "getRunProgress", "waitForRun"].includes(method)).length, 0);
+    const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones;
+    assert.equal(state.pending.length, 0);
+    assert.equal(state.delivered.length, 1);
+    const key = state.delivered[0];
+    assert.equal(state.receipts[key].messageId, "message-1");
+    assert.ok(state.receipts[key].admittedAt >= state.receipts[key].enqueuedAt);
+    assert.equal(state.receipts[key].observedAt, undefined, "Admission alone is not proof of transcript delivery");
+    session.emit("user.message", { source: "system", content: session.messages[0].prompt });
+    const observed = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones.receipts[key];
+    assert.ok(observed.observedAt >= observed.enqueuedAt);
+    assert.equal(session.messages.length, 1);
+    assert.equal(records.length, 1);
+});
+
+test("direct producer and concurrent progress catch-up share ordered, deduplicated milestone admission", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install();
+    await delivery.ready;
+    const record = await milestoneProgress("review", "Source review");
+    const receipt = milestoneFromProgress(record);
+    const sending = deferred();
+    const release = deferred();
+    session.sendHook = async () => { sending.resolve(); await release.promise; };
+    delivery.enqueueMilestone("run-1", "code-feature", receipt);
+    await sending.promise;
+    session.progress = [record];
+    session.emit("workflow.run_updated", { runId: "run-1" });
+    delivery.enqueueMilestone("run-1", "code-feature", { id: "publish", title: "PR published", outcome: "completed", summary: "CI pending.", prUrl: adoPr });
+    release.resolve();
+    await delivery.flush();
+    assert.equal(session.messages.length, 2);
+    assert.match(session.messages[0].prompt, /Source review — completed/);
+    assert.deepEqual(prLinkUrls(session.messages[1].prompt), [adoPr]);
+    delivery.enqueueMilestone("run-1", "code-feature", receipt);
+    await delivery.flushMilestones();
+    assert.equal(session.messages.length, 2);
+});
+
+test("a direct enqueue during empty catch-up teardown is admitted before flushing can finish", async (t) => {
+    const { session, install, stateFile } = fixture(t, [[completed({ status: "running" })]]);
+    let queued = false;
+    let admission;
+    let delivery;
+    session.workflow.getRunProgress = async () => {
+        if (!queued) {
+            queued = true;
+            queueMicrotask(() => queueMicrotask(() => {
+                admission = delivery.enqueueMilestone("run-1", "code-feature", {
+                    id: "late-handoff", title: "PR published", outcome: "completed", summary: "CI pending.", prUrl: adoPr,
+                });
+            }));
+        }
+        return { records: [] };
+    };
+    delivery = install();
+    await delivery.ready;
+    await admission;
+    await delivery.flushMilestones();
+    assert.equal(session.messages.length, 1);
+    assert.deepEqual(prLinkUrls(session.messages[0].prompt), [adoPr]);
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 0);
+});
+
+test("live send retry does not wait behind a stalled status RPC or require a lifecycle event", async (t) => {
+    const { session, install } = fixture(t, [], { retryDelayMs: 5 });
+    const delivery = install();
+    await delivery.ready;
+    const blockedRead = deferred();
+    session.set(completed({ status: "running" }));
+    session.workflow.getRun = () => blockedRead.promise;
+    void delivery.track("run-1", "code-feature");
+    let attempts = 0;
+    const admitted = deferred();
+    session.sendHook = () => {
+        if (++attempts === 1) throw new Error("Transient chat outage");
+        admitted.resolve();
+    };
+    delivery.enqueueMilestone("run-1", "code-feature", {
+        id: "build", title: "Initial implementation", outcome: "completed", summary: "Source handoff, not a local test pass.",
+    });
+    const timeout = setTimeout(() => admitted.reject(new Error("Direct send retry was blocked by the status read")), 2000);
+    try { await admitted.promise; }
+    finally { clearTimeout(timeout); blockedRead.resolve(completed({ status: "running" })); }
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.match(session.messages[0].prompt, /Initial implementation/);
+});
+
+test("producer delivery failure preserves durable source progress and surfaces explicit catch-up diagnostics", async () => {
+    const logs = [];
+    const ctx = {
+        step: async (_key, producer) => producer(),
+        log: async (text) => logs.push(text),
+        onMilestone() { throw new Error("Outbox disk unavailable"); },
+    };
+    const receipt = await recordMilestone(ctx, { id: "review", title: "Review", outcome: "completed", summary: "Source review only." });
+    assert.equal(receipt.id, "review");
+    assert.equal(milestoneFromProgress({ kind: "log", text: logs[0] }).id, "review");
+    assert.match(logs[1], /Milestone chat handoff failed.*Outbox disk unavailable/);
+    assert.match(logs[1], /durable progress receipt remains available/);
+});
+
+test("a stage awaits prompt admission before continuing, without waiting for caller model completion", async (t) => {
+    const { session, install } = fixture(t);
+    const delivery = install();
+    await delivery.ready;
+    const release = deferred();
+    const sending = deferred();
+    session.sendHook = async () => { sending.resolve(); await release.promise; };
+    const logs = [];
+    let stageAdvanced = false;
+    const stage = recordMilestone({
+        step: async (_key, producer) => producer(),
+        log: async (text) => logs.push(text),
+        onMilestone: (receipt) => delivery.enqueueMilestone("live-run", "code-feature", receipt),
+    }, { id: "build", title: "Initial implementation", outcome: "completed", summary: "Source handoff only." })
+        .then(() => { stageAdvanced = true; });
+    await sending.promise;
+    assert.equal(stageAdvanced, false, "The next synchronous command must not starve chat admission");
+    release.resolve();
+    await stage;
+    assert.equal(stageAdvanced, true);
+    assert.equal(session.messages.length, 1);
+    assert.equal(logs.length, 1);
+    assert.equal(session.calls.filter(([method]) => method === "getRunProgress").length, 0);
+});
+
+test("an unavailable chat cannot stall source execution indefinitely or falsely acknowledge a milestone", async (t) => {
+    const { session, install, stateFile, errors } = fixture(t, [], { admissionTimeoutMs: 10 });
+    const delivery = install();
+    await delivery.ready;
+    const release = deferred();
+    session.sendHook = () => release.promise;
+    const logs = [];
+    await recordMilestone({
+        step: async (_key, producer) => producer(),
+        log: async (text) => logs.push(text),
+        onMilestone: (receipt) => delivery.enqueueMilestone("live-run", "code-feature", receipt),
+    }, { id: "review", title: "Source review", outcome: "completed", summary: "Execution unverified." });
+    const before = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones;
+    assert.equal(before.delivered.length, 0);
+    assert.equal(before.pending.length, 1);
+    assert.match(logs[1], /chat admission is still pending/);
+    assert.ok(errors.some((error) => /chat admission is still pending/.test(error.message)));
+    release.resolve();
+    await delivery.flushMilestones();
+    assert.equal(session.messages.length, 1, "The still-in-flight admission is not duplicated on timeout");
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones.pending.length, 0);
+});
+
 test("PR link assertions compare complete parsed URLs, not a trusted URL embedded in another URL", () => {
     for (const trustedUrl of [pr, adoPr]) {
         const untrustedUrl = new URL(`https://untrusted.example/?next=${trustedUrl}`).href;
@@ -424,6 +597,36 @@ for (const status of ["paused", "error", "halted", "cancelled"]) {
         if (status === "paused") assert.match(prompt, /Paused checkpoint: choose-jdk/);
     });
 }
+
+test("a paused prerequisite produces an immediate actionable ask_user instruction with its exact recorded question", async (t) => {
+    const records = [];
+    const question = "No compatible JDK is installed. Provide a JDK 21 directory after installation.";
+    await recordHumanInputRequest({ log: async (text) => records.push({ seq: 1, attempt: 1, kind: "log", text }) }, {
+        key: "missing-toolchain", questions: [question], recoveryPath: ".github\\local-context\\code-feature\\run-1.json",
+    });
+    const run = completed({ status: "paused", result: undefined, pauseInfo: { key: "missing-toolchain" } });
+    const { session, install } = fixture(t, [[run]]);
+    session.progress = records;
+    await install().ready;
+    const message = session.messages[0].prompt;
+    assert.match(message, /open an actionable ask_user question now/);
+    assert.match(message, /do not end with only a paused-status report/);
+    assert.ok(message.includes(question));
+    assert.match(message, /Confirm this same run is still paused/);
+    assert.match(message, /preserve any existing input request/);
+    assert.match(message, /Run-scoped recovery path:/);
+    assert.match(message, /resume this same run run-1/);
+    assert.equal(humanInputRequestFromProgress(records, "another-checkpoint"), null);
+});
+
+test("older paused runs without structured input still require a question, not silent parking", () => {
+    const message = formatWorkflowCompletion("code-feature", completed({
+        status: "paused", result: undefined, reason: "Android SDK is missing",
+    }));
+    assert.match(message, /ask_user question now/);
+    assert.match(message, /specific missing decision or prerequisite/);
+    assert.match(message, /do not silently park the caller/);
+});
 
 test("limit failures ask approval to raise only the reached ceiling before same-run resume", async (t) => {
     const run = completed({

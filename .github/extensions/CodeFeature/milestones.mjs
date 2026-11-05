@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 
 const prefix = "[workflow-milestone-v1]";
+const inputPrefix = "[workflow-input-request-v1]";
 const outcomes = new Set(["completed", "deferred", "blocked"]);
 const clean = (value, limit) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 const recordings = new WeakMap();
@@ -37,10 +38,22 @@ export async function recordMilestone(ctx, value) {
     const key = createHash("sha256").update(milestone.id).digest("hex");
     const result = ctx.step(`workflow-milestone-v1-${key}`, async () => {
         await ctx.log(`${prefix}${JSON.stringify(milestone)}`);
-        return milestone;
+        return { ...milestone, recordedAt: Date.now() };
     });
-    active.set(milestone.id, result);
-    try { return await result; }
+    const recorded = Promise.resolve(result).then(async (receipt) => {
+        // Same-process push does not depend on ephemeral run-updated events being echoed
+        // back to the extension that is currently executing the workflow body.
+        if (typeof ctx.onMilestone === "function") {
+            try { await ctx.onMilestone(receipt); }
+            catch (error) {
+                if (ctx.signal?.aborted || ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name)) throw error;
+                await ctx.log(`Milestone chat handoff failed (${milestone.id}): ${error.message}. The durable progress receipt remains available for catch-up.`);
+            }
+        }
+        return receipt;
+    });
+    active.set(milestone.id, recorded);
+    try { return await recorded; }
     catch (error) { active.delete(milestone.id); throw error; }
 }
 
@@ -60,4 +73,30 @@ export function formatWorkflowMilestone(name, runId, milestone, recordedAt) {
         ...(milestone.prUrl ? [`PR: ${milestone.prUrl}`] : []),
         `Run: ${runId}. Recorded at: ${Number.isFinite(recordedAt) ? new Date(recordedAt).toISOString() : "unavailable"}.`,
     ].join("\n");
+}
+
+export async function recordHumanInputRequest(ctx, { key, questions, recoveryPath = null }) {
+    const request = {
+        key,
+        questions: (Array.isArray(questions) ? questions : []).filter((question) => typeof question === "string" && question.trim())
+            .slice(0, 3).map((question) => question.trim().slice(0, 2000)),
+        recoveryPath,
+    };
+    if (!request.questions.length || typeof ctx.log !== "function") return null;
+    await ctx.log(`${inputPrefix}${JSON.stringify(request)}`);
+    return request;
+}
+
+export function humanInputRequestFromProgress(records, checkpointKey = null) {
+    for (const record of [...records].reverse()) {
+        if (typeof record?.text !== "string" || !record.text.startsWith(inputPrefix)) continue;
+        try {
+            const request = JSON.parse(record.text.slice(inputPrefix.length));
+            if (typeof request.key === "string" && (!checkpointKey || request.key === checkpointKey) && Array.isArray(request.questions) &&
+                request.questions.length && request.questions.every((question) => typeof question === "string" && question.trim())) {
+                return request;
+            }
+        } catch { /* An incomplete progress record is not an approval question. */ }
+    }
+    return null;
 }

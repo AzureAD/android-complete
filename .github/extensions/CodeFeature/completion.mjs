@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { formatWorkflowMilestone, milestoneFromProgress } from "./milestones.mjs";
+import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, normalizeMilestone } from "./milestones.mjs";
 
 const workflowNames = new Set(["code-feature", "pr-observer"]);
 const settledStatuses = new Set(["completed", "paused", "error", "halted", "cancelled"]);
@@ -111,7 +111,10 @@ export function formatWorkflowCompletion(name, run, progress = []) {
         const reasons = array(result?.reasons).slice(0, 3).map((reason) => text(reason)).filter(Boolean);
         if (reasons.length) lines.push(`Result notes: ${reasons.join("; ")}`);
         const questions = array(result?.questions).slice(0, 3).map((question) => text(question)).filter(Boolean);
-        if (questions.length) lines.push(`Needs input: ${questions.join("; ")}`);
+        if (questions.length) {
+            lines.push(`Needs input: ${questions.join("; ")}`);
+            lines.push("Open an actual ask_user question for the recorded missing detail, one question at a time; do not silently end with a clarification status. An answer is not authorization to restart a completed run or change the approved task scope.");
+        }
         if (result?.summary && name !== "pr-observer") lines.push(`Summary: ${text(result.summary)}`);
         if (result?.nextAction) lines.push(`Recorded next action: ${text(result.nextAction)}`);
     } else {
@@ -127,6 +130,16 @@ export function formatWorkflowCompletion(name, run, progress = []) {
         }
         lines.push("Verification: incomplete/unconfirmed; preserve the existing checkout and durable run.");
         if (run.status === "paused") {
+            const input = humanInputRequestFromProgress(progress.filter((record) =>
+                run.attempt === undefined || record.attempt === run.attempt), run.pauseInfo?.key);
+            lines.push("Human input is required: open an actionable ask_user question now; do not end with only a paused-status report. Ask one question at a time and preserve any existing input request instead of creating duplicates. If the user already answered this recorded question, apply that answer instead of asking again.");
+            lines.push(`Confirm this same run is still paused before asking. After the answer, perform the documented recovery and resume this run only when the blocker is actually resolved. Do not treat a reply as a global environment change or approval to install software.`);
+            if (input) {
+                lines.push(`Recorded question data: ${JSON.stringify(input.questions)}.`);
+                if (typeof input.recoveryPath === "string") lines.push(`Run-scoped recovery path: ${input.recoveryPath}`);
+            } else {
+                lines.push("Use the recorded blocker to ask for the specific missing decision or prerequisite; do not silently park the caller.");
+            }
             lines.push(`Action: resolve the recorded prerequisite, then resume this same run ${run.runId}; do not start a replacement run.`);
         } else if (failure?.type === "workflow_limit_reached") {
             lines.push(`Action: request approval to raise only the ${text(failure.kind)} ceiling, then resume ${run.runId}.`);
@@ -188,6 +201,8 @@ export function createWorkflowStatusTool(getSession) {
                 })),
                 settledSummary: outcome && settledStatuses.has(outcome.status)
                     ? formatWorkflowCompletion(detail.workflowName, outcome, array(progress.records)) : null,
+                pendingInput: outcome?.status === "paused"
+                    ? humanInputRequestFromProgress(array(progress.records), outcome.pauseInfo?.key) : null,
                 revision: detail.revision,
                 observedAt: detail.observedAt,
                 consumed: detail.consumed ?? null,
@@ -247,12 +262,13 @@ function fileStore(workspaceRoot, sessionId) {
  *
  * SDK contract: on(workflow.run_started/run_updated/run_settled), workflow.listRuns/
  * getRun/getRunDetail/getRunProgress/waitForRun, send({source:"system",mode:"immediate"}),
- * and log. Progress events deliver explicit milestone receipts before settlement;
- * waitForRun provides the SDK's missed-settlement fallback; no shell polling.
+ * and log. Producers push milestone receipts directly; progress events/reconciliation
+ * provide catch-up only. waitForRun supplies missed-settlement fallback; no shell polling.
  * Register after joinSession; call track at body admission to cover a lost start event.
  *
  * A local, ignored, session-keyed outbox is written before send and acknowledged after
- * admission. Event bursts serialize per run. Restart pages durable runs and retries
+ * admission. Recorded/enqueued/admitted/observed times distinguish queue admission from
+ * transcript observation. Event bursts serialize per run. Restart pages durable runs and retries
  * undelivered latest outcomes; send/read failures retry with an unref'ed timer.
  * Delivery is at-least-once, NOT exactly-once: a crash/lost response between admission
  * and acknowledgement can duplicate a notice (the stable marker identifies it).
@@ -270,6 +286,7 @@ export function createWorkflowCompletionDelivery(session, {
     workspaceRoot = process.cwd(),
     store = fileStore(workspaceRoot, session.sessionId),
     retryDelayMs = 30_000,
+    admissionTimeoutMs = 10_000,
     reportError = (error) => {
         const message = `Workflow chat delivery failed: ${error.message}. Delivery will retry; inspect the durable workflow run if the caller remains silent.`;
         console.error(message);
@@ -277,6 +294,7 @@ export function createWorkflowCompletionDelivery(session, {
             console.error(`Cannot log completion delivery failure: ${logError.message}`));
     },
 } = {}) {
+    if (!Number.isFinite(admissionTimeoutMs) || admissionTimeoutMs <= 0) throw new Error("Chat admission timeout must be positive.");
     for (const method of ["listRuns", "getRun", "getRunDetail", "getRunProgress", "waitForRun"]) {
         if (typeof session.workflow?.[method] !== "function") {
             throw new Error(`The installed Copilot SDK lacks session.workflow.${method}; completion delivery requires a compatible SDK`);
@@ -287,6 +305,7 @@ export function createWorkflowCompletionDelivery(session, {
     let retryTimer;
     let reconciliation;
     const workers = new Map();
+    const sends = new Map();
     const watches = new Map();
     const names = new Map(Object.entries(state.runs).map(([id, run]) => [id, run.workflowName]));
 
@@ -303,6 +322,9 @@ export function createWorkflowCompletionDelivery(session, {
         if (!disposed && !retryTimer) {
             retryTimer = setTimeout(() => {
                 retryTimer = undefined;
+                for (const [runId, entry] of Object.entries(state.runs)) {
+                    if (entry.milestones?.pending?.length) void sendPendingMilestones(runId).catch(failed);
+                }
                 void reconcile().catch(failed);
             }, retryDelayMs);
             retryTimer.unref?.();
@@ -339,6 +361,8 @@ export function createWorkflowCompletionDelivery(session, {
                         if (milestones.delivered.includes(key) || milestones.pending.some((item) => item.key === key)) continue;
                         milestones.pending.push({
                             key,
+                            recordedAt: record.recordedAt,
+                            enqueuedAt: Date.now(),
                             prompt: `${formatWorkflowMilestone(names.get(runId), runId, milestone, record.recordedAt)}\n[workflow-milestone:${runId}:${key}]`,
                         });
                     }
@@ -348,13 +372,22 @@ export function createWorkflowCompletionDelivery(session, {
             }
             if (!page.hasMoreNewer) break;
         }
+        await sendPendingMilestones(runId);
+    }
+
+    async function drainMilestones(runId) {
         while (!disposed && state.runs[runId]?.milestones?.pending?.length) {
             const notice = state.runs[runId].milestones.pending[0];
             try {
-                await session.send({ prompt: notice.prompt, source: "system", mode: "immediate" });
+                const messageId = await session.send({ prompt: notice.prompt, source: "system", mode: "immediate" });
                 update(runId, (entry) => {
-                    entry.milestones.delivered.push(notice.key);
-                    entry.milestones.pending.shift();
+                    if (!entry.milestones.delivered.includes(notice.key)) entry.milestones.delivered.push(notice.key);
+                    entry.milestones.pending = entry.milestones.pending.filter((item) => item.key !== notice.key);
+                    const receipt = (entry.milestones.receipts ||= {})[notice.key] ||= {};
+                    Object.assign(receipt, {
+                        recordedAt: notice.recordedAt ?? null, enqueuedAt: notice.enqueuedAt ?? null,
+                        admittedAt: Date.now(), messageId: messageId ?? null,
+                    });
                     delete entry.milestones.lastError;
                 });
             } catch (error) {
@@ -362,6 +395,58 @@ export function createWorkflowCompletionDelivery(session, {
                 throw new Error(`Run ${runId} milestone was not acknowledged: ${error.message}`, { cause: error });
             }
         }
+    }
+
+    function sendPendingMilestones(runId) {
+        if (sends.has(runId)) return sends.get(runId).promise;
+        const worker = {};
+        sends.set(runId, worker);
+        worker.promise = (async () => {
+            try {
+                do {
+                    await drainMilestones(runId);
+                } while (!disposed && state.runs[runId]?.milestones?.pending?.length);
+                // Delete atomically with the final queue check, before resolving joiners.
+                // A later enqueue creates a new worker instead of joining a finished one.
+                sends.delete(runId);
+            } catch (error) {
+                sends.delete(runId);
+                throw error;
+            }
+        })();
+        return worker.promise;
+    }
+
+    function enqueueMilestone(runId, name, input) {
+        if (disposed) throw new Error("Workflow milestone delivery has been disposed.");
+        if (!workflowNames.has(name) || typeof runId !== "string" || !runId) throw new Error("Invalid owning-session workflow identity for milestone delivery.");
+        const milestone = normalizeMilestone(input);
+        if (!milestone) throw new Error("Invalid workflow milestone for chat delivery.");
+        names.set(runId, name);
+        const key = digest(milestone.id);
+        if (array(state.runs[runId]?.milestones?.delivered).includes(key)) return;
+        if (!array(state.runs[runId]?.milestones?.pending).some((item) => item.key === key)) {
+            const recordedAt = Number.isFinite(input.recordedAt) ? input.recordedAt : Date.now();
+            update(runId, (entry) => {
+                const milestones = entry.milestones ||= { cursor: 0, delivered: [], pending: [] };
+                milestones.pending.push({
+                    key, recordedAt, enqueuedAt: Date.now(),
+                    prompt: `${formatWorkflowMilestone(name, runId, milestone, recordedAt)}\n[workflow-milestone:${runId}:${key}]`,
+                });
+            });
+        }
+        const sending = sendPendingMilestones(runId);
+        // Wait only for queue admission before a following synchronous build can occupy
+        // the extension event loop. This does not wait for a caller model response.
+        let timer;
+        const admitted = Promise.race([
+            sending,
+            new Promise((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error(`Run ${runId} chat admission is still pending; the durable milestone remains queued.`)), admissionTimeoutMs);
+            }),
+        ]).finally(() => clearTimeout(timer));
+        void admitted.catch(failed);
+        return admitted;
     }
 
     async function inspect(runId) {
@@ -444,7 +529,9 @@ export function createWorkflowCompletionDelivery(session, {
     }
 
     async function flush() {
-        while (workers.size) await Promise.all([...workers.values()].map((worker) => worker.promise));
+        while (workers.size || sends.size) await Promise.all([
+            ...[...workers.values()].map((worker) => worker.promise), ...[...sends.values()].map((worker) => worker.promise),
+        ]);
     }
 
     function reconcile() {
@@ -472,13 +559,27 @@ export function createWorkflowCompletionDelivery(session, {
         if (event.type === "workflow.run_started") track(event.data.runId, event.data.workflowName);
         else if (event.type === "workflow.run_updated" || event.type === "workflow.run_settled") track(event.data.runId);
         else if (event.type === "session.resume") void reconcile().catch(failed);
+        else if (event.type === "user.message" && event.data?.source === "system") {
+            const match = String(event.data.content || "").match(/\[workflow-milestone:([^:\]]+):([a-f0-9]{64})\]/);
+            if (match && (state.runs[match[1]]?.milestones?.pending?.some((item) => item.key === match[2]) ||
+                state.runs[match[1]]?.milestones?.delivered?.includes(match[2]))) {
+                update(match[1], (entry) => {
+                    const receipt = (entry.milestones.receipts ||= {})[match[2]] ||= {};
+                    receipt.observedAt = Date.now();
+                });
+            }
+        }
     });
     const ready = reconcile().catch(failed);
     return {
         ready,
         track,
+        enqueueMilestone,
         reconcile,
         flush,
+        async flushMilestones() {
+            while (sends.size) await Promise.all([...sends.values()].map((worker) => worker.promise));
+        },
         dispose() {
             disposed = true;
             unsubscribe();
