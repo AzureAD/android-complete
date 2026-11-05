@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync 
 import path from "node:path";
 import test from "node:test";
 import { createWorkflowCompletionDelivery, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
+import { milestoneFromProgress, recordMilestone } from "./milestones.mjs";
 
 const pr = "https://github.com/AzureAD/example/pull/42";
 const adoPr = "https://dev.azure.com/IdentityDivision/Engineering/_git/authenticator/pullrequest/43";
@@ -78,6 +79,14 @@ class FakeSession {
             },
             getRunProgress: async (id, options) => {
                 this.calls.push(["getRunProgress", id, options]);
+                if (options?.afterSeq !== undefined) {
+                    const records = this.progress.filter((record) => record.seq > options.afterSeq).slice(0, options.limit);
+                    return {
+                        records,
+                        newestSeq: records.at(-1)?.seq ?? null,
+                        hasMoreNewer: this.progress.some((record) => record.seq > (records.at(-1)?.seq ?? options.afterSeq)),
+                    };
+                }
                 return { records: this.progress };
             },
             waitForRun: (id, { signal }) => {
@@ -145,6 +154,167 @@ function fixture(t, runs = [], options = {}) {
     }
     return { session, errors, install, stateFile };
 }
+
+async function milestoneProgress(id, title, outcome = "completed", summary = "Source review only; CI is unverified.", link) {
+    let message;
+    await recordMilestone({
+        async step(_key, producer) { return producer(); },
+        log(value) { message = value; },
+    }, { id, title, outcome, summary, ...(link ? { prUrl: link } : {}) });
+    return { seq: 1, attempt: 1, kind: "log", phaseId: "p0", recordedAt: 1000, text: message };
+}
+
+test("completed phases appear in chat while the workflow is running, not just at settlement", async (t) => {
+    const { session, install, stateFile } = fixture(t, [[completed({ status: "running" })]]);
+    session.progress = [{ seq: 1, attempt: 1, kind: "phase", phaseId: "p0", text: "Build initial implementation" }];
+    const delivery = install();
+    await delivery.ready;
+    assert.equal(session.messages.length, 0, "Entering a phase does not prove it completed");
+    session.progress.push({ ...await milestoneProgress("evidence", "Evidence and requirements"), seq: 2 });
+    session.emit("workflow.run_updated", { runId: "run-1", revision: 2 });
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.match(session.messages[0].prompt, /Evidence and requirements — completed/);
+    assert.match(session.messages[0].prompt, /CI is unverified/);
+    assert.match(session.messages[0].prompt, /not a terminal result/);
+    assert.match(session.messages[0].prompt, /\[workflow-milestone:run-1:[a-f0-9]{64}\]/);
+    assert.equal(session.messages[0].source, "system");
+    assert.equal(session.messages[0].mode, "immediate");
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.delivered.length, 1);
+    for (let revision = 3; revision < 10; revision++) session.emit("workflow.run_updated", { runId: "run-1", revision });
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    session.progress.push({ ...await milestoneProgress("published", "Pull request published", "completed",
+        "Publication completed. CI is not yet verified.", adoPr), seq: 3 });
+    session.emit("workflow.run_updated", { runId: "run-1", revision: 10 });
+    await delivery.flush();
+    assert.deepEqual(prLinkUrls(session.messages[1].prompt), [adoPr]);
+    session.set(completed());
+    session.emit("workflow.run_settled", { runId: "run-1" });
+    await delivery.flush();
+    assert.equal(session.messages.length, 3);
+    assert.match(session.messages[2].prompt, /\[workflow-outcome:/);
+});
+
+test("milestone catch-up pages all progress and orders completed phases before the final outcome", async (t) => {
+    const { session, install } = fixture(t, [[completed()]]);
+    const first = await milestoneProgress("evidence", "Evidence");
+    const last = await milestoneProgress("review", "Review");
+    session.progress = Array.from({ length: 205 }, (_, i) => ({
+        seq: i + 1, kind: "log", attempt: 1, text: "Ordinary progress is not a milestone.",
+    }));
+    session.progress[0] = first;
+    session.progress[204] = { ...last, seq: 205 };
+    const delivery = install();
+    await delivery.ready;
+    assert.equal(session.messages.length, 3);
+    assert.match(session.messages[0].prompt, /Evidence — completed/);
+    assert.match(session.messages[1].prompt, /Review — completed/);
+    assert.match(session.messages[2].prompt, /\[workflow-outcome:/);
+    assert.deepEqual(session.calls.filter(([name]) => name === "getRunProgress").map(([, , options]) => options.afterSeq), [0, 100, 200]);
+    delivery.dispose();
+    await install().ready;
+    assert.equal(session.messages.length, 3, "Restart replays neither acknowledged phase nor terminal updates");
+});
+
+test("failed milestone delivery survives restart, retains order, and does not lose later phases", async (t) => {
+    const { session, install, stateFile, errors } = fixture(t, [[completed({ status: "running" })]]);
+    session.progress = [await milestoneProgress("builder", "Initial implementation", "completed"),
+        { ...await milestoneProgress("verification", "Local verification", "deferred", "Local command timed out; tests require CI."), seq: 2 }];
+    let failedPrompt;
+    session.sendHook = (message) => { failedPrompt = message.prompt; throw new Error("Chat temporarily unavailable"); };
+    const first = install();
+    await first.ready;
+    assert.equal(session.messages.length, 0);
+    const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones;
+    assert.equal(state.cursor, 2);
+    assert.equal(state.pending.length, 2);
+    assert.deepEqual(state.delivered, []);
+    assert.ok(errors.some((error) => /milestone was not acknowledged/.test(error.message)));
+    first.dispose();
+    session.sendHook = undefined;
+    await install().ready;
+    assert.equal(session.messages.length, 2);
+    assert.equal(session.messages[0].prompt, failedPrompt);
+    assert.match(session.messages[1].prompt, /Local verification — deferred/);
+    assert.match(session.messages[1].prompt, /tests require CI/);
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 0);
+});
+
+test("replayed and concurrent milestone events announce the same durable identity only once", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install();
+    await delivery.ready;
+    const record = await milestoneProgress("source-review-1", "Independent source review, round 1", "blocked", "One finding needs a correction; no local pass implied.");
+    session.progress.push(record);
+    const sending = deferred();
+    const admitted = deferred();
+    session.sendHook = async () => { sending.resolve(); await admitted.promise; };
+    session.emit("workflow.run_updated", { runId: "run-1" });
+    await sending.promise;
+    session.progress.push({ ...record, seq: 2, attempt: 2 });
+    for (let i = 0; i < 10; i++) session.emit("workflow.run_updated", { runId: "run-1", revision: i });
+    admitted.resolve();
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.match(session.messages[0].prompt, /round 1 — blocked/);
+});
+
+test("ordinary or malformed progress never fabricates completed phases, and missing invalidations catch up", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "running" })]]);
+    session.progress = [
+        { seq: 1, kind: "phase", text: "Prepare and create pull requests" },
+        { seq: 2, kind: "log", text: "BUILD SUCCESSFUL" },
+        { seq: 3, kind: "log", text: '[workflow-milestone-v1]{"id":"fake","title":"Fake","outcome":"passed","summary":"Not a supported receipt"}' },
+        { seq: 4, kind: "log", text: "[workflow-milestone-v1]{invalid" },
+    ];
+    const delivery = install();
+    await delivery.ready;
+    assert.equal(session.messages.length, 0);
+    session.progress.push({ ...await milestoneProgress("publish", "Pull request published", "completed", "Publication only."), seq: 5 });
+    // A session resume reconciles a missed progress invalidation; no workflow is restarted.
+    session.emit("session.resume");
+    await delivery.reconcile();
+    assert.equal(session.messages.length, 1);
+    assert.match(session.messages[0].prompt, /Pull request published — completed/);
+    assert.equal(session.calls.filter(([method]) => ["run", "resume", "pause"].includes(method)).length, 0);
+});
+
+test("a progress-page failure cannot hide a terminal blocker, and later catch-up remains possible", async (t) => {
+    const { session, install, errors } = fixture(t, [[completed({ status: "error", error: "Publication rejected" })]]);
+    const getProgress = session.workflow.getRunProgress;
+    session.workflow.getRunProgress = async () => { throw new Error("Progress store offline"); };
+    const delivery = install();
+    await delivery.ready;
+    assert.ok(session.messages.some((message) => message.prompt.includes("Publication rejected")));
+    assert.ok(errors.some((error) => error.message.includes("Progress store offline")));
+    session.workflow.getRunProgress = getProgress;
+    session.progress = [await milestoneProgress("review", "Source review")];
+    await delivery.reconcile();
+    assert.equal(session.messages.length, 2);
+    assert.match(session.messages[1].prompt, /Source review — completed/);
+});
+
+test("milestone producer journals explicit completion once and does not log it again on replay", async () => {
+    const journal = new Map();
+    const records = [];
+    const createContext = () => ({
+        async step(key, producer) {
+            if (!journal.has(key)) journal.set(key, await producer());
+            return journal.get(key);
+        },
+        log(text) { records.push({ seq: records.length + 1, kind: "log", text }); },
+    });
+    const input = { id: "phase-evidence", title: "Evidence", outcome: "completed", summary: "Requirements resolved; source review is still pending." };
+    const context = createContext();
+    await Promise.all([recordMilestone(context, input), recordMilestone(context, input)]);
+    await recordMilestone(createContext(), input);
+    assert.equal(records.length, 1);
+    assert.equal(milestoneFromProgress(records[0]).title, "Evidence");
+    assert.equal(milestoneFromProgress({ kind: "log", text: `untrusted prefix ${records[0].text}` }), null);
+    await assert.rejects(recordMilestone(context, { ...input, outcome: "passed" }), /Invalid workflow milestone/);
+    await assert.rejects(recordMilestone(context, { ...input, prUrl: "http://github.com/AzureAD/example/pull/42" }), /Invalid workflow milestone/);
+});
 
 test("PR link assertions compare complete parsed URLs, not a trusted URL embedded in another URL", () => {
     for (const trustedUrl of [pr, adoPr]) {

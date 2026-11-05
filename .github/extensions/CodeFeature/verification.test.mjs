@@ -8,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { milestoneFromProgress } from "./milestones.mjs";
 import {
     buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, runCodeFeature, validateImplementation,
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
@@ -164,7 +165,7 @@ test("bounded ADO creation leaves space for final status, current-head CI and ac
 test("same-session recovery hot-loads changed status, verification, workflow, and observer dependencies", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "workflow-hot-recovery-"));
     try {
-        for (const name of ["workflow.mjs", "observer.mjs", "status.mjs", "verification.mjs"]) {
+        for (const name of ["workflow.mjs", "observer.mjs", "status.mjs", "verification.mjs", "milestones.mjs"]) {
             copyFileSync(new URL(name, import.meta.url), path.join(root, name));
         }
         const workflowUrl = pathToFileURL(path.join(root, "workflow.mjs"));
@@ -412,6 +413,8 @@ test("exhausted observer returns final CI failures and never exceeds its two-rep
 
 test("pending CI returns explicit continuation without spending classifier agents", async () => {
     const context = ctx();
+    const logs = [];
+    context.log = (text) => logs.push(text);
     const result = await runPrObserver(context, {
         exec: () => "", fetchPrSnapshot: () => snapshot({ statusCheckRollup: [{ name: "CI", state: "PENDING" }] }),
     });
@@ -419,6 +422,10 @@ test("pending CI returns explicit continuation without spending classifier agent
     assert.equal(result.ci.status, "pending");
     assert.equal(context.calls.length, 0);
     assert.equal(result.continuation.args.prUrl, prUrl);
+    const milestone = logs.map((text) => milestoneFromProgress({ kind: "log", text })).find((item) => item?.title === "PR observation");
+    assert.equal(milestone.title, "PR observation");
+    assert.equal(milestone.outcome, "deferred");
+    assert.match(milestone.summary, /Current-head CI: pending/);
 });
 
 test("observer continuations carry remaining repair budget and an explicit zero never resets it", async () => {

@@ -40,6 +40,7 @@ const {
     snapshotWorktree,
 } = await import(revisionedModuleUrl("./workflow.mjs"));
 const { verificationSummary } = await import(revisionedModuleUrl("./verification.mjs"));
+const { recordMilestone } = await import(revisionedModuleUrl("./milestones.mjs"));
 
 function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
     try {
@@ -1143,6 +1144,15 @@ export async function runPrObserver(ctx, dependencies = {}) {
             ctx.log?.(`PR status publication failed: ${error.message}`);
         }
     }
+    await recordMilestone(ctx, {
+        id: `observer-outcome-${createHash("sha256").update(JSON.stringify([ctx.args.prUrl, result.headSha, result.status, result.ci.status])).digest("hex")}`,
+        title: "PR observation",
+        outcome: result.ci.status === "passed" &&
+            ["ready-for-human-merge", "awaiting-human-review"].includes(result.status) ? "completed" :
+            result.status === "waiting-for-ci" ? "deferred" : "blocked",
+        summary: `Observation ended: ${result.status}${result.blockerKind ? ` (${result.blockerKind})` : ""}. Current-head CI: ${result.ci.status}. ${result.statusPublication?.status === "failed" ? "PR status update failed; its description may be stale." : "Human approval and merge remain separate actions."}`,
+        prUrl: result.prUrl,
+    });
     return result;
 }
 
@@ -1237,6 +1247,13 @@ async function runObserverLoop(ctx, dependencies = {}) {
                     ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot) ||
                     (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))
             ) {
+                await recordMilestone(ctx, {
+                    id: `${prefix}-ci-wait-${createHash("sha256").update(String(expectedHeadSha || snapshot.headRefOid || "unknown")).digest("hex")}`,
+                    title: "PR handed off to CI",
+                    outcome: "deferred",
+                    summary: "Current PR validation is pending. The observer is waiting for remote results; CI success is not established.",
+                    prUrl: parsedPr.prUrl,
+                });
                 totalPollsUsed++;
                 pollSeq++;
                 log(`PR #${parsedPr.prNumber} CI checks are still running with no failures yet; polling again in ${Math.round(ciPollIntervalMs / 1000)}s (${totalPollsUsed}/${maxCiPollAttempts})...`);
@@ -1388,6 +1405,15 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
                 iterations: iteration + 1,
             };
         }
+
+        await recordMilestone(ctx, {
+            id: `${prefix}-observed-${iteration}-${computeSnapshotFingerprint(snapshot)}`,
+            title: `PR checks inspected, round ${iteration + 1}`,
+            outcome: observation.verdict === "ready" ? "completed" :
+                observation.verdict === "waiting-for-ci" ? "deferred" : "blocked",
+            summary: `Inspection result: ${observation.verdict}; current-head CI: ${ciEvidenceFromSnapshot(snapshot).status}. ${observation.verdict === "repair" ? "A tactical repair is needed; readiness is not established." : "This is an observation result, not merge approval."}`,
+            prUrl: parsedPr.prUrl,
+        });
 
         if (observation.verdict === "ready") {
             const hostLabel = parsedPr.provider === "ado" ? "Azure DevOps" : "GitHub/GHE";
@@ -1550,6 +1576,13 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
                 iterations: iteration + 1,
             };
         }
+        await recordMilestone(ctx, {
+            id: `${prefix}-repair-${iteration}-authored`,
+            title: `Tactical repair ${iteration + 1}`,
+            outcome: "completed",
+            summary: "Source/test repair handed off for independent review. It has not yet been pushed or verified by current-head CI.",
+            prUrl: parsedPr.prUrl,
+        });
 
         const revertedProtected = revertUnauthorizedProtectedFiles(repoRoot, {
             allowPipelineEdits: false,
@@ -1594,6 +1627,13 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
             log(`Tactical repair review requested further changes in iteration ${iteration + 1}.`);
             continue;
         }
+        await recordMilestone(ctx, {
+            id: `${prefix}-repair-${iteration}-reviewed`,
+            title: `Tactical repair review ${iteration + 1}`,
+            outcome: "completed",
+            summary: "Independent source review accepted the repair. Remote CI must still verify the pushed head.",
+            prUrl: parsedPr.prUrl,
+        });
 
         if (pushRepairs) {
             const pushed = await step(`push-repair-${iteration}`, async () => {
@@ -1768,6 +1808,13 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                 return { pushedSha };
             });
             if (nonempty(pushed?.pushedSha)) expectedHeadSha = pushed.pushedSha;
+            await recordMilestone(ctx, {
+                id: `${prefix}-repair-${iteration}-pushed`,
+                title: `Tactical repair ${iteration + 1} pushed`,
+                outcome: "completed",
+                summary: `Repair pushed${pushed?.pushedSha ? ` at ${pushed.pushedSha}` : ""}. Awaiting current-head CI; no test/CI pass is implied.`,
+                prUrl: parsedPr.prUrl,
+            });
         }
     }
 

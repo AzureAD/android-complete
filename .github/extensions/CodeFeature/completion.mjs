@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { formatWorkflowMilestone, milestoneFromProgress } from "./milestones.mjs";
 
 const workflowNames = new Set(["code-feature", "pr-observer"]);
 const settledStatuses = new Set(["completed", "paused", "error", "halted", "cancelled"]);
@@ -246,7 +247,8 @@ function fileStore(workspaceRoot, sessionId) {
  *
  * SDK contract: on(workflow.run_started/run_updated/run_settled), workflow.listRuns/
  * getRun/getRunDetail/getRunProgress/waitForRun, send({source:"system",mode:"immediate"}),
- * and log. waitForRun provides the SDK's missed-invalidation fallback; no shell polling.
+ * and log. Progress events deliver explicit milestone receipts before settlement;
+ * waitForRun provides the SDK's missed-settlement fallback; no shell polling.
  * Register after joinSession; call track at body admission to cover a lost start event.
  *
  * A local, ignored, session-keyed outbox is written before send and acknowledged after
@@ -269,7 +271,7 @@ export function createWorkflowCompletionDelivery(session, {
     store = fileStore(workspaceRoot, session.sessionId),
     retryDelayMs = 30_000,
     reportError = (error) => {
-        const message = `Workflow completion delivery failed: ${error.message}. Delivery will retry; inspect the durable workflow run if the caller remains silent.`;
+        const message = `Workflow chat delivery failed: ${error.message}. Delivery will retry; inspect the durable workflow run if the caller remains silent.`;
         console.error(message);
         void session.log(message, { level: "error" }).catch((logError) =>
             console.error(`Cannot log completion delivery failure: ${logError.message}`));
@@ -320,6 +322,48 @@ export function createWorkflowCompletionDelivery(session, {
         });
     }
 
+    async function deliverMilestones(runId) {
+        let cursor = state.runs[runId]?.milestones?.cursor ?? 0;
+        while (!disposed) {
+            const page = await session.workflow.getRunProgress(runId, { afterSeq: cursor, limit: 100 });
+            const records = array(page.records).filter((record) => Number.isSafeInteger(record.seq) && record.seq > cursor)
+                .sort((a, b) => a.seq - b.seq);
+            if (page.hasMoreNewer && !records.length) throw new Error(`Milestone progress cursor did not advance for run ${runId}.`);
+            if (records.length) {
+                update(runId, (entry) => {
+                    const milestones = entry.milestones ||= { cursor: 0, delivered: [], pending: [] };
+                    for (const record of records) {
+                        const milestone = milestoneFromProgress(record);
+                        if (!milestone) continue;
+                        const key = digest(milestone.id);
+                        if (milestones.delivered.includes(key) || milestones.pending.some((item) => item.key === key)) continue;
+                        milestones.pending.push({
+                            key,
+                            prompt: `${formatWorkflowMilestone(names.get(runId), runId, milestone, record.recordedAt)}\n[workflow-milestone:${runId}:${key}]`,
+                        });
+                    }
+                    milestones.cursor = records.at(-1).seq;
+                });
+                cursor = records.at(-1).seq;
+            }
+            if (!page.hasMoreNewer) break;
+        }
+        while (!disposed && state.runs[runId]?.milestones?.pending?.length) {
+            const notice = state.runs[runId].milestones.pending[0];
+            try {
+                await session.send({ prompt: notice.prompt, source: "system", mode: "immediate" });
+                update(runId, (entry) => {
+                    entry.milestones.delivered.push(notice.key);
+                    entry.milestones.pending.shift();
+                    delete entry.milestones.lastError;
+                });
+            } catch (error) {
+                update(runId, (entry) => { entry.milestones.lastError = text(error.message); });
+                throw new Error(`Run ${runId} milestone was not acknowledged: ${error.message}`, { cause: error });
+            }
+        }
+    }
+
     async function inspect(runId) {
         if (!names.has(runId)) {
             const detail = await session.workflow.getRunDetail(runId);
@@ -328,6 +372,14 @@ export function createWorkflowCompletionDelivery(session, {
         }
         if (!workflowNames.has(names.get(runId))) return;
         const run = await session.workflow.getRun(runId);
+        if (disposed) return;
+        try {
+            await deliverMilestones(runId);
+        } catch (error) {
+            if (!settledStatuses.has(run.status)) throw error;
+            // Progress delivery failure must not hide a terminal blocker/result.
+            failed(error);
+        }
         if (disposed) return;
         if (!settledStatuses.has(run.status)) {
             // Persist identity even when no lifecycle event survives a restart.

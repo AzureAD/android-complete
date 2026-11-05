@@ -110,6 +110,30 @@ watcher. It sends a system-sourced, immediate follow-up to the owning session af
 settles, with actual delivery/verification status, PR links, and remaining actions. A
 completed workflow is never described as green solely because its body returned.
 
+### Phase and milestone updates in chat
+
+The same owning-session delivery path now relays explicit durable milestone receipts
+**while the workflow is running**, rather than waiting for its final result:
+
+- Evidence/requirements validated; initial implementation or a revision handed off.
+- Local verification completed, blocked, or deferred (with the actual verification state).
+- Independent source-review rounds completed or returned findings.
+- Each PR published, immediately with its link, even when another target later fails.
+- PR handed to pending CI; tactical repair authored, reviewed, and pushed; observation ended.
+
+Entering a phase, routine tool logs, or `BUILD SUCCESSFUL` text alone never creates a
+completed-phase notice. Source review and publication updates explicitly do not claim
+tests/CI passed. Pending CI is reported once per head, not on every poll.
+
+Milestones are journaled by stable identity, read incrementally from durable progress,
+and delivered in order through the session-scoped outbox. Missed events are caught up
+on the next lifecycle event/session resume; extension restart pages all unseen receipts.
+Failed sends remain queued for retry, and duplicate/replayed events do not repeat already
+acknowledged milestones. The same at-least-once crash-window caveat applies as to final
+outcomes. Progress-storage failure is surfaced but cannot hide a terminal blocker/result.
+Caller instructions require a short visible chat update for each receipt, without starting
+a status-poll loop or restarting the still-running workflow.
+
 The ignored outbox is scoped by `SHA-256(session.sessionId)` under
 `.github/local-context/code-feature/completion/`; it catches up settled runs after extension
 restart and deduplicates lifecycle events. Failed delivery is retained for retry. This is

@@ -12,6 +12,7 @@ const revisionedModuleUrl = (name) => {
 };
 const { deliveryOutcome, pendingVerification, verificationFromGate, verificationSummary } =
     await import(revisionedModuleUrl("./verification.mjs"));
+const { recordMilestone } = await import(revisionedModuleUrl("./milestones.mjs"));
 const {
     currentStatusOwners,
     currentStatuses,
@@ -4412,6 +4413,13 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
         if (postIntakePrereqPacket) return postIntakePrereqPacket;
     }
 
+    await recordMilestone(ctx, {
+        id: `${prefix}-evidence-completed`,
+        title: "Evidence and requirements",
+        outcome: "completed",
+        summary: `Repository evidence and task validation completed for ${task.targets.length} target(s) and ${task.requirements.length} requirement(s). Implementation and execution verification are still pending.`,
+    });
+
     const backupsByTarget = new Map();
     if (applyToWorkspace && manageWorkspace) {
         for (const target of task.targets) {
@@ -4506,6 +4514,12 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
             const diffsByTarget = {};
 
             if (validationErrors.length === 0) {
+                await recordMilestone(ctx, {
+                    id: `${prefix}-implementation-${round}`,
+                    title: round === 0 ? "Initial implementation" : `Implementation revision ${round}`,
+                    outcome: "completed",
+                    summary: `Source/test changes and implementation metadata are ready for independent review. This handoff is not evidence that local tests or CI passed.`,
+                });
                 if (Array.isArray(implementation.blockingUnknowns) && implementation.blockingUnknowns.length > 0) {
                     const envNotes = implementation.blockingUnknowns.filter(isLocalBuildEnvBlocker);
                     if (envNotes.length > 0) {
@@ -4632,6 +4646,13 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 ];
                             }
                         }
+                        await recordMilestone(ctx, {
+                            id: `${prefix}-verification-${round}-${createHash("sha256").update(target.id).digest("hex")}`,
+                            title: `Local verification: ${target.repository}`,
+                            outcome: targetImpl.verification?.local?.status === "passed" ? "completed" :
+                                targetImpl.verification?.local?.status === "failed" ? "blocked" : "deferred",
+                            summary: `${verificationSummary(targetImpl.verification)} ${targetImpl.verification?.local?.status === "failed" ? "Concrete validation errors require correction." : "Remote CI and source review remain separate checks."}`,
+                        });
                         diffsByTarget[target.id] = renderUnifiedDiff(backups, targetImpl.files, {
                             repoRoot: manageWorkspace ? repoRoot : "",
                             exec,
@@ -4732,6 +4753,14 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                     }
 
                     history.push({ round: round + 1, review });
+                    await recordMilestone(ctx, {
+                        id: `${prefix}-review-${round}`,
+                        title: `Independent source review, round ${round + 1}`,
+                        outcome: review.findings.length || review.blockingUnknowns.length ||
+                            review.criteria.some((criterion) => !criterion.pass) ||
+                            review.acceptanceCriteria.some((criterion) => !criterion.passed) ? "blocked" : "completed",
+                        summary: `${review.findings.length} finding(s), ${review.blockingUnknowns.length} open question(s). This is source review only; executed tests and current-head CI are tracked separately.`,
+                    });
 
                     if (JSON.stringify(ctx.args) !== originalRaw) {
                         restoreAll();
@@ -4860,20 +4889,33 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     if (publication.javaHome) environment.JAVA_HOME = publication.javaHome;
     const reviewCount = prepared.reviews.filter((entry) => entry.review).length;
     ctx.phase?.("Prepare and create pull requests");
-    const pullRequests = await ctx.step(`${key}-pull-requests`, () => task.targets.map((target) => {
-        const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
-        const binding = prepared.sourceBindings.find((item) => item.targetId === target.id);
-        if (implementationContentFingerprint(workspaceRoot, target, targetImpl) !== binding.digest) {
-            throw new Error(`Reviewed implementation changed for ${target.id}; publication requires a new source review.`);
-        }
-        return publishTargetPullRequest({
-            target, targetImpl: implementation.targets.find((item) => item.targetId === target.id),
-            traceability: implementation.traceability, reviewRoundCount: reviewCount,
-            parentWorkItemId: task.workItemId, workspaceRoot,
-            createPullRequests: publication.createPullRequests, draftPullRequest: publication.draftPullRequest,
-            runId: ctx.runId || "local", exec,
+    const publicationMilestone = (pr) => recordMilestone(ctx, {
+            id: `${key}-published-${createHash("sha256").update(pr.targetId).digest("hex")}`,
+            title: publication.createPullRequests ? "Pull request published" : "Pull request packet prepared",
+            outcome: "completed",
+            summary: `${pr.repository}: source review and publication preparation completed. ${verificationSummary(implementation.targets.find((item) => item.targetId === pr.targetId)?.verification)} Publication is not CI or merge approval.`,
+            prUrl: pr.url,
         });
-    }));
+    const pullRequests = await ctx.step(`${key}-pull-requests`, async () => {
+        const published = [];
+        for (const target of task.targets) {
+            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+            const binding = prepared.sourceBindings.find((item) => item.targetId === target.id);
+            if (implementationContentFingerprint(workspaceRoot, target, targetImpl) !== binding.digest) {
+                throw new Error(`Reviewed implementation changed for ${target.id}; publication requires a new source review.`);
+            }
+            const pr = publishTargetPullRequest({
+                target, targetImpl, traceability: implementation.traceability, reviewRoundCount: reviewCount,
+                parentWorkItemId: task.workItemId, workspaceRoot,
+                createPullRequests: publication.createPullRequests, draftPullRequest: publication.draftPullRequest,
+                runId: ctx.runId || "local", exec,
+            });
+            published.push(pr);
+            await publicationMilestone(pr);
+        }
+        return published;
+    });
+    for (const pr of pullRequests) await publicationMilestone(pr);
     const observations = [];
     if (publication.observePullRequests) {
         const { runPrObserver } = await import(revisionedModuleUrl("./observer.mjs"));

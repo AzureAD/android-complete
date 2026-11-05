@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { milestoneFromProgress } from "./milestones.mjs";
 import {
     OBSERVER_AGENT,
     computeRepairIdentity,
@@ -336,6 +337,20 @@ test("valid implementation passing first review exits loop immediately and prepa
     assert.match(pr.body, /RetryAfterThrottleCacheTest\.suppressesUntilExpiry/);
 });
 
+test("code-feature records each completed major phase with execution caveats before its final result", async () => {
+    const ctx = context([evidence(), implementation(), review()]);
+    const result = await runCodeFeature(ctx);
+    const milestones = ctx.logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
+    assert.deepEqual(milestones.map((milestone) => milestone.title), [
+        "Evidence and requirements", "Initial implementation", "Local verification: common",
+        "Independent source review, round 1", "Pull request packet prepared",
+    ]);
+    assert.deepEqual(milestones.map((milestone) => milestone.outcome), ["completed", "completed", "deferred", "completed", "completed"]);
+    assert.match(milestones[1].summary, /not evidence.*tests or CI passed/);
+    assert.match(milestones[3].summary, /source review only/);
+    assert.equal(result.deliveryStatus, "prepared-for-review");
+});
+
 test("reviewer feedback loops back to builder up to 2 times and succeeds when 2nd fix passes review", async () => {
     const makeFailedReview = (roundNum) => ({
         ...review(),
@@ -535,6 +550,23 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
         assert.equal(packet.pullRequests[1].url, "https://msft.ghe.com/security/ad-accounts-for-android/pull/999");
         assert.ok(existsSync(path.join(commonDir, "common4j/src/main/kotlin/com/microsoft/identity/common/java/throttling/RetryAfterThrottleCache.kt")));
         assert.ok(execCalls.some((c) => c.cmd === "./gradlew" && c.args.includes(":broker4j:test")));
+
+        const partial = context([evidence(), multiImpl, review(normalizedMulti)], multiTask, {
+            workspaceRoot: tempRoot, createPullRequests: true,
+        });
+        await assert.rejects(runCodeFeature(partial, {
+            exec: (command, args, options) => {
+                if (command === "gh" && args[0] === "pr" && args[1] === "create" &&
+                    args[args.indexOf("--repo") + 1].startsWith("msft.ghe.com/")) {
+                    throw new Error("Second PR publication failed");
+                }
+                return mockExec(command, args, options);
+            },
+        }), /Second PR publication failed/);
+        const published = partial.logs.map((text) => milestoneFromProgress({ kind: "log", text }))
+            .filter((milestone) => milestone?.title === "Pull request published");
+        assert.equal(published.length, 1, "The first published PR must be announced even if another target fails");
+        assert.equal(published[0].prUrl, packet.pullRequests[0].url);
     } finally {
         rmSync(tempRoot, { recursive: true, force: true });
     }
