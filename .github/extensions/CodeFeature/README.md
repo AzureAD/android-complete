@@ -71,6 +71,8 @@ Given an approved coding task or PBI specification:
 - `verification[].ci` records status, observed PR source head, and concrete check/build
   evidence. ADO build evidence is filtered to the current PR merge commit; stale build
   policies, partial success, failed checks, and absent results cannot produce a pass.
+  Stale required ADO build policies are refreshed once per durable observation key;
+  queued validation is then observed without spending a code-repair iteration.
 - PR acceptance checkboxes are not automatically checked, and authored test counts are
   not reported as executed tests. The compact verification marker carries actual states.
 - The observer updates the PR status/verification markers from its final snapshot, guarding

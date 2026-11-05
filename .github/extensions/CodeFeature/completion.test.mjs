@@ -6,10 +6,15 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { createWorkflowCompletionDelivery, createWorkflowStatusTool } from "./completion.mjs";
+import { createWorkflowCompletionDelivery, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
 
 const pr = "https://github.com/AzureAD/example/pull/42";
 const adoPr = "https://dev.azure.com/IdentityDivision/Engineering/_git/authenticator/pullrequest/43";
+
+function prLinkUrls(markdown) {
+    return [...markdown.matchAll(/^PR(?: link in partial snapshot \(publication\/verification not confirmed\))?: (https:\/\/\S+)$/gm)]
+        .map(([, value]) => new URL(value).href);
+}
 
 function deferred() {
     let resolve;
@@ -141,6 +146,33 @@ function fixture(t, runs = [], options = {}) {
     return { session, errors, install, stateFile };
 }
 
+test("PR link assertions compare complete parsed URLs, not a trusted URL embedded in another URL", () => {
+    for (const trustedUrl of [pr, adoPr]) {
+        const untrustedUrl = new URL(`https://untrusted.example/?next=${trustedUrl}`).href;
+        const links = prLinkUrls(`PR: ${untrustedUrl}`);
+        assert.deepEqual(links, [untrustedUrl]);
+        assert.notEqual(links[0], trustedUrl);
+        assert.deepEqual(prLinkUrls(`Result notes: see ${trustedUrl}`), []);
+    }
+});
+
+test("production PR URL parsing rejects invalid protocols, credentials and nested-query PR strings", () => {
+    const invalidUrls = [
+        "http://github.com/AzureAD/example/pull/42",
+        "https://user:password@github.com/AzureAD/example/pull/42",
+        `https://untrusted.example/?next=${pr}`,
+        `https://untrusted.example/?next=${adoPr}`,
+        "https://github.com/AzureAD/example/not-a-pull/42",
+        "javascript:alert(1)",
+        "not-a-url",
+    ];
+    const prompt = formatWorkflowCompletion("code-feature", completed({
+        result: { pullRequests: invalidUrls.map((url) => ({ url })), observations: [] },
+    }));
+    assert.deepEqual(prLinkUrls(prompt), []);
+    assert.match(prompt, /no published URL recorded/);
+});
+
 test("startup catch-up delivers durable completion to the owning session with honest PR/verification details", async (t) => {
     const { session, install, errors, stateFile } = fixture(t, [[completed()]]);
     const delivery = install();
@@ -152,7 +184,7 @@ test("startup catch-up delivers durable completion to the owning session with ho
     assert.equal(message.agentMode, undefined, "Preserve the caller's current mode");
     assert.match(message.prompt, /Workflow code-feature: completed/);
     assert.match(message.prompt, /attempt 1/);
-    assert.ok(message.prompt.includes(pr));
+    assert.deepEqual(prLinkUrls(message.prompt), [pr]);
     assert.match(message.prompt, /observer reports ready-for-human-merge/);
     assert.match(message.prompt, /Human review and merge approval are still required/);
     assert.match(message.prompt, /\[workflow-outcome:run-1:[a-f0-9]{64}\]/);
@@ -170,7 +202,7 @@ test("completed code-feature does not claim CI success or a continuing observer 
     const { session, install } = fixture(t, [[run]]);
     await install().ready;
     const prompt = session.messages[0].prompt;
-    assert.ok(prompt.includes(adoPr));
+    assert.deepEqual(prLinkUrls(prompt), [pr, adoPr]);
     assert.match(prompt, /Observer: waiting-for-ci/);
     assert.match(prompt, /Verification is not confirmed ready for every PR/);
     assert.match(prompt, /No continuing observer or automatic merge is implied/);
@@ -215,7 +247,7 @@ for (const status of ["paused", "error", "halted", "cancelled"]) {
         assert.match(prompt, new RegExp(`Workflow code-feature: ${status}`));
         assert.match(prompt, /Verification: incomplete\/unconfirmed/);
         assert.match(prompt, /publication\/verification not confirmed/);
-        assert.ok(prompt.includes(adoPr));
+        assert.deepEqual(prLinkUrls(prompt), [adoPr]);
         assert.match(prompt, /Requires an approved compatible JDK/);
         assert.doesNotMatch(prompt, /stale result|Stale progress/);
         assert.match(prompt, status === "paused" ? /resume this same run run-1/ : /establish resumability/);
@@ -239,7 +271,7 @@ test("pr-observer completion includes its independent result and PR link", async
     await install().ready;
     assert.match(session.messages[0].prompt, /Workflow pr-observer: completed/);
     assert.match(session.messages[0].prompt, /Observer: needs-owner-decision/);
-    assert.ok(session.messages[0].prompt.includes(adoPr));
+    assert.deepEqual(prLinkUrls(session.messages[0].prompt), [adoPr]);
     assert.match(session.messages[0].prompt, /Review requests a scope decision/);
 });
 

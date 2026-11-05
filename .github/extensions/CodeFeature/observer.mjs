@@ -393,7 +393,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             `$builds = (Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds?branchName=refs/pull/${parsedPr.prNumber}/merge&api-version=7.0") -Headers $headers -Method Get).value`,
             "$currentMerge = $pr.lastMergeCommit.commitId; $builds = @($builds | Where-Object { $currentMerge -and $_.sourceVersion -eq $currentMerge })",
             "$policyArtifact = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$($pr.repository.project.id)/$($pr.pullRequestId)\")",
-            "$policies = @((Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$policyArtifact&api-version=7.1-preview.1\") -Headers $headers -Method Get).value | ForEach-Object { @{ name = $_.configuration.type.displayName; status = $_.status; blocking = $_.configuration.isBlocking; buildIsNotCurrent = $_.context.buildIsNotCurrent; buildId = $_.context.buildId } })",
+            "$policies = @((Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$policyArtifact&api-version=7.1-preview.1\") -Headers $headers -Method Get).value | ForEach-Object { @{ evaluationId = $_.evaluationId; name = $_.configuration.type.displayName; status = $_.status; blocking = $_.configuration.isBlocking; buildIsNotCurrent = $_.context.buildIsNotCurrent; buildId = $_.context.buildId } })",
             "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
             "$maxIter = ($statuses | Where-Object { $_.iterationId } | Measure-Object -Property iterationId -Maximum).Maximum",
             "$latestStatuses = @($statuses | Where-Object { -not $_.iterationId -or -not $maxIter -or $_.iterationId -eq $maxIter } | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
@@ -960,6 +960,25 @@ export function ciEvidenceFromSnapshot(snapshot) {
     };
 }
 
+export function refreshStaleAdoBuildPolicies(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
+    if (parsedPr?.provider !== "ado") return [];
+    const stale = (snapshot.policyEvaluations || []).filter((policy) =>
+        policy.blocking && policy.buildId && policy.buildIsNotCurrent &&
+        ["approved", "rejected"].includes(policy.status) &&
+        /^[a-f0-9-]{36}$/i.test(policy.evaluationId || ""));
+    if (!stale.length) return [];
+    const base = `${parsedPr.orgUrl}/${encodeURIComponent(parsedPr.project)}/_apis/policy/evaluations`;
+    const script = [
+        "$ErrorActionPreference = 'Stop'",
+        "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+        "if ($LASTEXITCODE -ne 0 -or -not $token) { throw 'Azure DevOps authentication failed for stale-build refresh.' }",
+        "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
+        ...stale.map((policy) => `Invoke-RestMethod -Method Patch -Uri '${base}/${policy.evaluationId}?api-version=7.1-preview.1' -Headers $headers -Body '{}' | Out-Null`),
+    ].join("; ");
+    exec("powershell", ["-NoProfile", "-Command", script], { cwd: workspaceRoot });
+    return stale.map((policy) => policy.evaluationId);
+}
+
 export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspaceRoot = process.cwd(), exec = defaultExec, ci = ciEvidenceFromSnapshot(snapshot) } = {}) {
     if (!/^[a-f0-9]{40,64}$/i.test(snapshot?.headRefOid || "")) {
         throw new Error("Cannot publish observer status without a full observed PR commit SHA.");
@@ -1141,9 +1160,24 @@ async function runObserverLoop(ctx, dependencies = {}) {
         let lastWaitingFingerprint = null;
 
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
+            if (parsedPr.provider === "ado") {
+                const staleKey = createHash("sha256").update(JSON.stringify([
+                    snapshot.headRefOid, (snapshot.policyEvaluations || []).filter((policy) =>
+                        policy.blocking && policy.buildId && policy.buildIsNotCurrent).map((policy) => policy.evaluationId),
+                ])).digest("hex").slice(0, 16);
+                const refreshed = await step(`refresh-stale-build-${staleKey}`, () =>
+                    (dependencies.refreshStaleBuilds || refreshStaleAdoBuildPolicies)(parsedPr, snapshot, { workspaceRoot, exec }));
+                if (refreshed.length) {
+                    for (const policy of snapshot.policyEvaluations || []) {
+                        if (refreshed.includes(policy.evaluationId)) policy.status = "queued";
+                    }
+                    log(`Requested fresh current-head build validation for ${refreshed.length} stale required policy/policies.`);
+                }
+            }
             while (
                 totalPollsUsed < maxCiPollAttempts &&
-                ((expectedHeadSha && snapshot.headRefOid !== expectedHeadSha) || isSnapshotWaitingForCiOnly(snapshot) ||
+                ((expectedHeadSha && snapshot.headRefOid !== expectedHeadSha) ||
+                    ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot) ||
                     (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))
             ) {
                 totalPollsUsed++;
@@ -1178,7 +1212,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 };
             }
 
-            if (isSnapshotWaitingForCiOnly(snapshot)) {
+            if (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot)) {
                 const runningBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
                     .filter((b) => ["inprogress", "notstarted", "postponed"].includes(String(b?.status || "").toLowerCase()))
                     .map((b) => `${b.definition || "CI"} (${b.buildNumber || b.id || "running"})`);

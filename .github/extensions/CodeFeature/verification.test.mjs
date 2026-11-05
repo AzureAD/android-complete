@@ -12,7 +12,7 @@ import {
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
-    ciEvidenceFromSnapshot, parsePullRequestUrl, publishObserverStatus, runPrObserver,
+    ciEvidenceFromSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
 import { deliveryOutcome, pendingVerification, verificationFromGate } from "./verification.mjs";
 import { parseMarkerBlock, verificationMarkers, statusMarkers } from "./status.mjs";
@@ -158,6 +158,39 @@ test("human-only policy gates are explicit and cannot trigger code repairs", asy
     assert.equal(result.status, "awaiting-human-review");
     assert.equal(result.ci.status, "passed");
     assert.equal(result.remainingPolicies.length, 1);
+    assert.equal(context.calls.length, 0);
+});
+
+test("stale required ADO build validation is refreshed once per durable observation, without code agents", async () => {
+    const parsed = parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42");
+    const id = "01234567-89ab-cdef-0123-456789abcdef";
+    let patches = 0;
+    const policies = [
+        { evaluationId: id, buildId: 1, blocking: true, buildIsNotCurrent: true, status: "approved" },
+        { evaluationId: "do-not-patch", buildId: 2, blocking: false, buildIsNotCurrent: true, status: "approved" },
+    ];
+    assert.deepEqual(refreshStaleAdoBuildPolicies(parsed, { policyEvaluations: policies }, {
+        exec: (_command, args) => { assert.ok(args.at(-1).includes(`${id}?api-version=`)); patches++; return ""; },
+    }), [id]);
+    assert.equal(patches, 1);
+    const journal = new Map();
+    const context = ctx([], { publishStatus: false });
+    context.args.prUrl = parsed.prUrl;
+    context.step = async (key, producer, options) => {
+        if (options?.volatile) return producer();
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    let refreshes = 0;
+    const dependencies = {
+        exec: () => "",
+        fetchPrSnapshot: () => snapshot({ provider: "ado", policyEvaluations: structuredClone(policies),
+            prBuilds: [{ id: 1, status: "completed", result: "succeeded" }] }),
+        refreshStaleBuilds: () => { refreshes++; return [id]; },
+    };
+    assert.equal((await runPrObserver(context, dependencies)).status, "waiting-for-ci");
+    assert.equal((await runPrObserver(context, dependencies)).ci.status, "pending");
+    assert.equal(refreshes, 1);
     assert.equal(context.calls.length, 0);
 });
 
