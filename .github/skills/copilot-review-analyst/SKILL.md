@@ -237,6 +237,16 @@ If a report doesn't meet these thresholds, re-read the template and identify wha
 
 See [references/report-formatting.md](references/report-formatting.md) for the report structure and Outlook HTML formatting rules.
 
+## Rule attribution: memory-storage/v1
+
+Common and Broker's memory/storage performance guidance uses an explicit standalone comment line, `Review rule: memory-storage/v1`. Count only that exact marker on top-level Copilot inline comments, not keyword matches, human replies, quoted examples, or review summaries. The collector stores `RuleId` and `ReviewId`; final classification retains them and writes `rule_attribution.json` alongside `final_classification.json`, with per-repository/PR tagged-comment counts, outcome buckets, comment IDs, and screen evidence.
+
+Review summaries declare `Review screen: memory-storage/v1` after applying the screen and `Guidance revision: <verified SHA|local-uncommitted|unknown>`. The collector parses the complete summary before truncating its display excerpt. A confirmed screen with zero tagged comments produces a zero-count row; missing markers mean unknown coverage, not a confirmed zero. Legacy datasets without summary metadata still support tagged-comment counts but not a screened-PR denominator.
+
+For reports, add a rule-attribution table using `rule_attribution.json`: repository/PR, tagged comments, helpful, declined, incorrect, unresolved/unknown, screen confirmation, and guidance revisions. Only use `ScreenConfirmed` rows for a screened-PR denominator, and separately disclose tagged rows without screen confirmation. Count each `(Repo, CommentId)` once; distinct comments repeating the same issue across re-reviews are still comments, not proven unique defects. Manually consolidate those before reporting a unique-defect metric. Never fabricate revisions or infer guidance adoption from a merge date or PR head SHA.
+
+These counts measure rule-associated feedback, not causal incremental discoveries. Keep the existing force-push validation and outcome-classification requirements; no reply is not evidence of incorrectness. Do not generate extra findings or summary comments merely to inflate attribution counts.
+
 ## Key Principle: "Unresolved" ≠ "Not Helpful"
 
 The report must present four distinct outcome buckets:
