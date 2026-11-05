@@ -110,6 +110,13 @@ restart and deduplicates lifecycle events. Failed delivery is retained for retry
 at-least-once queue admission, not a guarantee that an unavailable client displayed a reply;
 crash-window duplicates remain possible. No cross-session runs or credentials are stored.
 
+On recovery, fast-forward the workflow source only after the current attempt settles,
+then resume the same run with unchanged approved task inputs. Verify that cached
+evidence/build/review steps are reused rather than starting another implementation.
+An authored workflow with the same name can be shadowed by extension registration;
+verify the selected definition and an explicit fixture marker before treating a synthetic
+run as test evidence. Host-injected terminal inspection is not a manual user wake.
+
 Use the read-only `code_feature_workflow_status` tool for an existing run's current phase,
 recent progress, accounting, or settled result, rather than inferring status from a background
 agent list or parent-session idleness. It exposes SDK `consumed` units without inventing a
