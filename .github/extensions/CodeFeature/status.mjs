@@ -6,6 +6,10 @@ export const currentStatuses = Object.freeze({
     observing: "observing",
     readyForHumanMerge: "ready-for-human-merge",
     needsOwnerDecision: "needs-owner-decision",
+    waitingForCi: "waiting-for-ci",
+    ciFailed: "ci-failed",
+    awaitingHumanReview: "awaiting-human-review",
+    observationExhausted: "max-iterations-reached",
 });
 
 export const currentStatusValues = Object.freeze(Object.values(currentStatuses));
@@ -25,6 +29,22 @@ export const deliveryDecisionMarkers = Object.freeze({
     begin: "<!-- BEGIN code-feature-delivery-decisions",
     end: "END code-feature-delivery-decisions -->",
 });
+
+export const verificationMarkers = Object.freeze({
+    begin: "<!-- BEGIN code-feature-verification",
+    end: "END code-feature-verification -->",
+});
+
+export function renderVerificationBlock(verification) {
+    const receipt = {
+        local: { status: verification?.local?.status || "unverified" },
+        ci: {
+            status: verification?.ci?.status || "not-observed",
+            headSha: verification?.ci?.headSha || null,
+        },
+    };
+    return [verificationMarkers.begin, JSON.stringify(receipt, null, 2), verificationMarkers.end].join("\n");
+}
 
 export function renderDeliveryDecisionBlock({
     rolloutTag = "feature-flag",
@@ -58,7 +78,7 @@ export function renderCurrentStatusBlock({
     runId = "local",
     repository = "",
     prUrl = "<pending>",
-    summary = "Implementation, validation, and independent review completed.",
+    summary = "Implementation and source review completed; execution verification must be checked separately.",
     nextAction = "Run pr-observer for this PR.",
 } = {}) {
     return [

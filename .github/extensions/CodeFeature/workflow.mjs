@@ -7,6 +7,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPrObserver } from "./observer.mjs";
+import { deliveryOutcome, pendingVerification, verificationFromGate, verificationSummary } from "./verification.mjs";
 import {
     currentStatusOwners,
     currentStatuses,
@@ -14,6 +15,7 @@ import {
     parseMarkerBlock,
     renderCurrentStatusBlock,
     renderDeliveryDecisionBlock,
+    renderVerificationBlock,
     statusMarkers,
     upsertMarkerBlock,
 } from "./status.mjs";
@@ -1084,7 +1086,8 @@ export function isBuilderShortCircuitedToCi(rawBuilderOutput) {
     ]
         .filter(nonempty)
         .join("\n");
-    return /short-circuited.*to CI|deferred to CI|pending CI|stopped (?:approaching|near|after) \d+\s*minutes|compilation.*pending CI/i.test(
+    if (isDefinitiveCodeOrTestFailure(combined)) return false;
+    return /short-circuited.*to CI|deferred to CI|pending CI|stopped (?:approaching|near|after) \d+\s*minutes|compilation.*pending CI|(?:gradle|local verification).*(?:timed out|timeout|budget)|(?:HTTP|status code).*401/i.test(
         combined,
     );
 }
@@ -1658,7 +1661,7 @@ export function collectBuildReceiptOnDisk(repoRoot, { minMtimeMs = 0, javaHome =
     }
 
     const worktreeDigest = snapshotWorktree(repoRoot, exec) || "";
-    const verified = testsFailed === 0 && (testsRun > 0 || recentArtifacts.length > 0);
+    const verified = testsFailed === 0 && testsRun > 0;
     return {
         verified,
         testsRun,
@@ -2425,7 +2428,7 @@ export function formatPrBody(
         .map((row) => `| \`${row.requirementId}\` | ${row.filePaths.map((p) => `\`${p}\``).join(", ")} | ${row.testLocations.map((t) => `\`${t}\``).join(", ")} | ${row.verification.trim()} |`)
         .join("\n");
     const criteriaLines = target.acceptanceCriteria
-        .map((criterion) => `- [x] ${criterion}`)
+        .map((criterion) => `- [ ] ${criterion} (implementation reviewed; runtime acceptance is not independently attested)`)
         .join("\n");
     const testLines = targetImpl.testsAddedOrUpdated
         .map((testItem) => `- \`${testItem}\``)
@@ -2436,7 +2439,7 @@ export function formatPrBody(
         rolloutTag: /^(?:none|n\/a|not[\s-]applicable)\b/i.test(rolloutText) ? "not-applicable" : "feature-flag",
         rolloutJustification: rolloutText,
         testCoverageTag: "unit-tests",
-        testCoverageJustification: `${targetImpl.testsAddedOrUpdated.length} unit test target(s) verified.`,
+        testCoverageJustification: `${targetImpl.testsAddedOrUpdated.length} test target(s) authored/updated. ${verificationSummary(targetImpl.verification)}`,
     });
     const statusBlock = renderCurrentStatusBlock({
         status: currentStatuses.publishedForObservation,
@@ -2444,7 +2447,7 @@ export function formatPrBody(
         runId,
         repository: target.repository,
         prUrl,
-        summary: "Implementation, validation, and independent review completed.",
+        summary: `Implementation and independent source review completed. ${verificationSummary(targetImpl.verification)}`,
         nextAction: "Run pr-observer for this PR.",
     });
 
@@ -2487,7 +2490,11 @@ export function formatPrBody(
         traceLines,
         "",
         "## Validation & Testing",
-        targetImpl.pr.testPlan.trim(),
+        verificationSummary(targetImpl.verification),
+        renderVerificationBlock(targetImpl.verification || pendingVerification()),
+        "",
+        "Builder-reported test plan (advisory; not an execution receipt):",
+        targetImpl.pr.testPlan.trim().split(/\r?\n/).map((line) => `> ${line}`).join("\n"),
         "",
         "### Unit Tests Added / Updated",
         testLines,
@@ -2533,7 +2540,11 @@ export function formatPrBody(
         compactFiles,
         "",
         "## Validation & Testing",
-        targetImpl.pr.testPlan.trim().slice(0, 500),
+        verificationSummary(targetImpl.verification),
+        renderVerificationBlock(targetImpl.verification || pendingVerification()),
+        "",
+        "Builder-reported test plan (advisory; not an execution receipt):",
+        `> ${targetImpl.pr.testPlan.trim().slice(0, 500).replace(/\r?\n/g, "\n> ")}`,
         "",
         "### Unit Tests Added / Updated",
         compactTests,
@@ -2786,6 +2797,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
             const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
             const actual = rawImpl.targets.find((t) => t?.targetId === expectedTarget.id) ||
                 (rawImpl.targets.length === 1 ? rawImpl.targets[0] : null);
+            if (record(actual)) actual.verification = pendingVerification("Builder-reported commands have not been independently attested.");
             if (record(actual) && (!Array.isArray(actual.files) || actual.files.length === 0) && nonempty(workspaceRoot)) {
                 const repoRoot = path.resolve(workspaceRoot, expectedTarget.localPath || ".");
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits });
@@ -2825,29 +2837,19 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         const files = discovered.files.length > 0 ? discovered.files : fallbackFiles;
         const testsAddedOrUpdated = discovered.testsAddedOrUpdated.length > 0
             ? discovered.testsAddedOrUpdated
-            : evidenceList.filter((item) => /test/i.test(item));
-        const candidateLines = [
-            ...evidenceList,
-            ...String(rawImpl.testPlan || "").split(/\r?\n/),
-            ...String(rawImpl.summary || "").split(/\r?\n/),
-        ]
-            .map((s) => s.trim())
-            .filter(nonempty);
-        const inferredCommandsRun = candidateLines
-            .filter((item) => /gradlew|gradle\b|tests?\s+passed|pass(?:ed)?\s+local\s+validation|\b\d+\s+(?:focused\s+|JVM\s+|unit\s+|app\s+|ECS\s+|API-\d+\s+|instrumentation\s+)*tests?\b|BUILD SUCCESSFUL/i.test(item))
-            .slice(0, 5);
-
+            : files.filter((file) => /(?:Test|src\/test\/|src\/androidTest\/)/i.test(file.path)).map((file) => file.path);
         return {
             targetId: expectedTarget.id,
             repository: expectedTarget.repository,
             summary: rawImpl.summary || expectedTarget.title,
             files,
-            testsAddedOrUpdated: testsAddedOrUpdated.length > 0 ? testsAddedOrUpdated : ["Verified unit tests in worktree"],
-            verificationCommandsRun: inferredCommandsRun,
+            testsAddedOrUpdated,
+            verificationCommandsRun: [],
+            verification: pendingVerification("Builder prose is advisory; it is not a successful command receipt."),
             pr: {
                 title: nonempty(rawImpl.prTitle) ? rawImpl.prTitle.trim() : expectedTarget.title,
                 summary: nonempty(rawImpl.prSummary) ? rawImpl.prSummary.trim() : (rawImpl.summary || expectedTarget.title),
-                testPlan: nonempty(rawImpl.testPlan) ? rawImpl.testPlan.trim() : (evidenceList.join("\n") || "Unit tests added and verified."),
+                testPlan: nonempty(rawImpl.testPlan) ? rawImpl.testPlan.trim() : (evidenceList.join("\n") || "Tests require execution; no successful verification receipt is available."),
                 breakingChanges: "None — additive/flight-gated change.",
                 rolloutAndFlag: nonempty(rawImpl.rolloutAndFlag) ? rawImpl.rolloutAndFlag.trim() : "Guarded behind default-off flight.",
             },
@@ -2862,7 +2864,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         targetIds: primary ? [primary.targetId] : [],
         filePaths: defaultFiles,
         testLocations: defaultTests,
-        verification: rawImpl.testPlan || rawImpl.summary || "Verified by unit tests.",
+        verification: rawImpl.testPlan || "Implementation traceability only; execution remains unverified.",
     }));
 
     return reconcileImplementationWithTask({
@@ -2878,7 +2880,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
 export function normalizeReviewResponse(rawReview, task) {
     if (!record(rawReview) || !record(task)) return rawReview;
     if (Array.isArray(rawReview.criteria) && Array.isArray(rawReview.acceptanceCriteria)) {
-        return rawReview;
+        return { ...rawReview, assessmentScope: "source-review; execution verification is tracked separately" };
     }
     if (typeof rawReview.verdict !== "string") return rawReview;
 
@@ -2894,7 +2896,7 @@ export function normalizeReviewResponse(rawReview, task) {
         pass: passed || id !== "correctnessAndEdgeCases",
     }));
     const compactCriterionEvidence = passed
-        ? "Verified (see review summary and evidence)."
+        ? "Source reviewed (see review summary and evidence); runtime verification is tracked separately."
         : (rawFindings[0] || rawReview.summary || evidenceText.slice(0, 300));
     const acceptanceCriteria = (task.targets || []).flatMap((target) =>
         (target.acceptanceCriteria || []).map((criterion) => ({
@@ -2918,6 +2920,7 @@ export function normalizeReviewResponse(rawReview, task) {
     return {
         summary: rawReview.summary || "",
         evidence: Array.isArray(rawReview.evidence) ? rawReview.evidence.filter(nonempty) : [],
+        assessmentScope: "source-review; execution verification is tracked separately",
         criteria,
         acceptanceCriteria,
         findings,
@@ -3668,7 +3671,7 @@ export function publishTargetPullRequest({
                 runId,
                 repository: target.repository,
                 prUrl: url,
-                summary: "Implementation, validation, and independent review completed.",
+                summary: `Implementation and independent source review completed. ${verificationSummary(targetImpl.verification)}`,
                 nextAction: "Run pr-observer for this PR.",
             }),
         );
@@ -3866,6 +3869,10 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
     const workflowEnv = { ...(dependencies.environment || process.env) };
+    if (rawOptions.javaHome !== undefined) {
+        if (!nonempty(rawOptions.javaHome)) throw new Error("options.javaHome must be a non-empty approved JDK installation path.");
+        workflowEnv.JAVA_HOME = rawOptions.javaHome;
+    }
     const applyWorkflowAnswers = (answers, targets) => {
         const otherAnswers = answers.filter(({ question }) => !/JDK|JAVA_HOME/i.test(String(question || "")));
         applyPrerequisiteAnswers(otherAnswers, { workspaceRoot, targets, env: process.env });
@@ -3956,6 +3963,10 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         reviews: history,
         pullRequests,
         observations,
+        verification: implementation?.targets?.map((target) => ({
+            targetId: target.targetId,
+            ...(target.verification || pendingVerification()),
+        })) || [],
         rubric: [...rubric],
         nextAction: recommendation === "GO to PR Review"
             ? `Human must review the verified pull request packet and approve/merge in ${getHostingLabel()}.`
@@ -3972,13 +3983,15 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
-    const ask = (label, agentName, promptTask, schema, data, modelOverride) => {
+    const ask = async (label, agentName, promptTask, schema, data, modelOverride) => {
+        const startedAt = Date.now();
+        ctx.log?.(`${new Date().toISOString()} Starting ${label}.`);
         const roleBoundaries = agentName === BUILDER_AGENT
             ? builderBoundaries
             : agentName === REVIEWER_AGENT
                 ? reviewerBoundaries
                 : readerBoundaries;
-        return ctx.agent(
+        const result = await ctx.agent(
             `${roleBoundaries}\n${promptTask}\nDATA:\n${JSON.stringify(data)}`,
             {
                 label,
@@ -3987,6 +4000,8 @@ export async function runCodeFeature(ctx, dependencies = {}) {
                 ...(nonempty(modelOverride) ? { model: modelOverride } : {}),
             },
         );
+        ctx.log?.(`${new Date().toISOString()} ${label} ${result === null ? "returned no valid result" : "returned a structured result"} after ${Math.round((Date.now() - startedAt) / 1000)}s.`);
+        return result;
     };
 
     if (manageWorkspace) {
@@ -4389,6 +4404,7 @@ DATA.inspectedFiles already pre-loads the exact repo-relative file paths and num
 DATA.executionEnvironments provides the pre-validated buildRoot and JAVA_HOME (${primaryJavaHome}) for this host—use that exact JAVA_HOME and buildRoot when running .\\gradlew.bat in PowerShell so your shell environment matches the workflow verification gate.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
+Verify new test helper names and overloads against existing repository declarations, and match mock stubs to actual call arguments (including account/tenant identifiers). Do not invent instrumentation launch helpers. Clearly distinguish authored tests, commands attempted, successful command exits, and deferred/failed checks in testPlan and evidence; a verdict "pass" is a source implementation handoff, not proof of tests passing.
 Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process'); connected emulator tests run in CI.
 Always quote the entire '-Pkotlin.compiler.execution.strategy=in-process' argument alongside --no-daemon --max-workers=2 in PowerShell. Without quotes PowerShell can split it and Gradle reports Task '.compiler.execution.strategy=in-process' not found; this is a command-invocation failure, not a source-code failure.
 Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle build/test command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately call stop_powershell on that shellId, do NOT retry locally, record in pr.testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds immediately to independent code review, PR creation, and remote CI pipeline verification.
@@ -4524,6 +4540,10 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             isBuilderShortCircuitedToCi(latestRawBuilderOutput) &&
                             rawOptions.runLocalVerification !== true;
                         if (builderShortCircuitedToCi) {
+                            targetImpl.verification = {
+                                ...pendingVerification(),
+                                local: { status: "deferred", commands: [], evidence: ["Builder stopped local verification; CI evidence is required."] },
+                            };
                             const scNote = "Local Gradle verification was short-circuited to remote CI pipeline verification after hitting local build/timeout limits.";
                             if (!Array.isArray(implementation.assumptions) || !implementation.assumptions.includes(scNote)) {
                                 implementation.assumptions = [
@@ -4536,8 +4556,6 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             builderShortCircuitedToCi ||
                             (useSlimSchemas &&
                                 latestRawBuilderOutput?.verdict === "pass" &&
-                                Array.isArray(targetImpl?.verificationCommandsRun) &&
-                                targetImpl.verificationCommandsRun.length > 0 &&
                                 hasVerifiedReceipt &&
                                 rawOptions.runLocalVerification !== true);
                         const shouldRunLocalGate =
@@ -4562,6 +4580,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 log,
                                 environment: workflowEnv,
                             });
+                            targetImpl.verification = verificationFromGate(gate);
                             validationErrors.push(...gate.errors);
                             if (
                                 validationErrors.length === 0 &&
@@ -4746,6 +4765,15 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                     environment: workflowEnv,
                                 });
                                 observations.push(obsResult);
+                                const targetImpl = implementation.targets.find((item) => item.targetId === prEntry.targetId);
+                                if (targetImpl) {
+                                    targetImpl.verification ||= pendingVerification();
+                                    targetImpl.verification.ci = obsResult.ci || { status: "unknown", headSha: null, evidence: [] };
+                                }
+                                if (nonempty(obsResult?.statusBlock)) {
+                                    prEntry.body = upsertMarkerBlock(prEntry.body, statusMarkers, obsResult.statusBlock);
+                                    prEntry.statusBlock = parseMarkerBlock(prEntry.body, statusMarkers);
+                                }
                                 if (nonempty(obsResult?.status)) {
                                     prEntry.currentStatus = obsResult.status;
                                 }
@@ -4761,18 +4789,25 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                     summary: `PR published; automated observer handed off to remote CI (${obsMsg}).`,
                                     evidence: [],
                                     iterations: 0,
+                                    ci: { status: "unknown", headSha: prEntry.headSha || null, evidence: [obsMsg] },
+                                    continuation: { workflow: "pr-observer", args: observerCtx.args },
                                 });
                             }
                         }
                     }
-                    const deferredLocalBuild = implementation.targets.some(
-                        (item) => !Array.isArray(item.verificationCommandsRun) || item.verificationCommandsRun.length === 0,
-                    ) || (Array.isArray(implementation.assumptions) && implementation.assumptions.some(isLocalBuildEnvBlocker));
-                    return packet("GO to PR Review", [
-                        deferredLocalBuild
-                            ? `Implementation, authored unit tests, traceability, and independent code review passed in ${history.length} review round(s) (local Gradle execution deferred to CI pipeline verification). Human PR review and merge approval are still required.`
-                            : `Implementation, unit tests, traceability, and independent code review passed in ${history.length} review round(s). Human PR review and merge approval are still required.`,
+                    const outcome = deliveryOutcome(pullRequests, observations, { published: effectiveCreatePrs });
+                    const result = packet(effectiveCreatePrs ? outcome : "GO to PR Review", [
+                        `Implementation and independent source review completed in ${history.length} review round(s).`,
+                        ...implementation.targets.map((item) => `${item.targetId}: ${verificationSummary(item.verification)}`),
+                        `Delivery outcome: ${outcome}. Human review and merge approval remain required.`,
                     ]);
+                    result.deliveryStatus = outcome;
+                    result.nextAction = outcome === "waiting-for-ci" || outcome === "ci-not-observed"
+                        ? "Continue pr-observer using observations[].continuation; CI is not yet verified."
+                        : outcome === "ci-failed" || outcome === "needs-owner-decision"
+                            ? "Inspect observations and resolve the explicit remaining failures; do not merge."
+                            : "Human review and required repository approvals; never merge automatically.";
+                    return result;
                 }
             } else {
                 history.push({ round: round + 1, validationErrors });

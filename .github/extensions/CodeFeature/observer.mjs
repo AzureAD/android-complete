@@ -10,6 +10,11 @@ import {
     currentStatusOwners,
     currentStatuses,
     renderCurrentStatusBlock,
+    parseMarkerBlock,
+    renderDeliveryDecisionBlock,
+    renderVerificationBlock,
+    deliveryDecisionMarkers,
+    verificationMarkers,
     statusMarkers,
     upsertMarkerBlock,
 } from "./status.mjs";
@@ -104,6 +109,7 @@ function defaultExec(command, args, options = {}) {
         env: execEnv,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: options.timeout ?? 120_000,
     }).trim();
 }
 
@@ -381,7 +387,13 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             "$pr = Invoke-RestMethod -Uri ($base + '?api-version=7.0') -Headers $headers -Method Get",
             "$threads = (Invoke-RestMethod -Uri ($base + '/threads?api-version=7.0') -Headers $headers -Method Get).value",
             "$statuses = (Invoke-RestMethod -Uri ($base + '/statuses?api-version=7.0') -Headers $headers -Method Get).value",
+            "$currentIterations = (Invoke-RestMethod -Uri ($base + '/iterations?api-version=7.0') -Headers $headers -Method Get).value",
+            "$currentIterationId = ($currentIterations | Measure-Object -Property id -Maximum).Maximum",
+            "$statuses = @($statuses | Where-Object { -not $_.iterationId -or $_.iterationId -eq $currentIterationId })",
             `$builds = (Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds?branchName=refs/pull/${parsedPr.prNumber}/merge&api-version=7.0") -Headers $headers -Method Get).value`,
+            "$currentMerge = $pr.lastMergeCommit.commitId; $builds = @($builds | Where-Object { $currentMerge -and $_.sourceVersion -eq $currentMerge })",
+            "$policyArtifact = [uri]::EscapeDataString(\"vstfs:///CodeReview/CodeReviewId/$($pr.repository.project.id)/$($pr.pullRequestId)\")",
+            "$policies = @((Invoke-RestMethod -Uri (\"$projectBase/_apis/policy/evaluations?artifactId=$policyArtifact&api-version=7.1-preview.1\") -Headers $headers -Method Get).value | ForEach-Object { @{ name = $_.configuration.type.displayName; status = $_.status; blocking = $_.configuration.isBlocking; buildIsNotCurrent = $_.context.buildIsNotCurrent; buildId = $_.context.buildId } })",
             "$activeThreads = @($threads | Where-Object { -not $_.isDeleted -and ($_.status -eq 'active' -or $_.status -eq 1) } | ForEach-Object { @{ id = $_.id; status = $_.status; filePath = $_.threadContext.filePath; comments = @($_.comments | ForEach-Object { @{ id = $_.id; author = $_.author.displayName; content = $_.content } }) } })",
             "$maxIter = ($statuses | Where-Object { $_.iterationId } | Measure-Object -Property iterationId -Maximum).Maximum",
             "$latestStatuses = @($statuses | Where-Object { -not $_.iterationId -or -not $maxIter -or $_.iterationId -eq $maxIter } | Group-Object { \"$($_.context.genre)/$($_.context.name)\" } | ForEach-Object { $_.Group | Sort-Object id -Descending | Select-Object -First 1 | Select-Object state, description, context })",
@@ -389,7 +401,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             "$runningDefNames = @($latestBuilds | Where-Object { $_.status -in @('inProgress','notStarted') -and $_.failedTasks.Count -eq 0 } | ForEach-Object { $_.definition.ToLowerInvariant() })",
             "foreach ($st in $latestStatuses) { if ($st.state -eq 'failed' -and $st.context.name -eq 'codecoverage' -and ($runningDefNames -contains ([string]$st.context.genre).ToLowerInvariant())) { $st.state = 'pending'; $st.description = 'Coverage status check pending active build completion' } }",
             "$changedFiles = $null; try { $iters = (Invoke-RestMethod -Uri ($base + '/iterations?api-version=7.0') -Headers $headers -Method Get).value; $lastIterId = ($iters | Measure-Object -Property id -Maximum).Maximum; if ($lastIterId) { $iterChanges = (Invoke-RestMethod -Uri ($base + \"/iterations/$lastIterId/changes?api-version=7.0\") -Headers $headers -Method Get).changeEntries; $changedFiles = @($iterChanges | ForEach-Object { ([string]$_.item.path) -replace '^/+','' } | Where-Object { $_ } | Select-Object -Unique -First 50) } } catch { $changedFiles = $null }",
-            `$out = @{ number = $pr.pullRequestId; title = $pr.title; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; activeReviewThreads = $activeThreads; changedFiles = $changedFiles; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
+            `$out = @{ provider = 'ado'; number = $pr.pullRequestId; title = $pr.title; description = $pr.description; state = $pr.status; mergeStateStatus = $pr.mergeStatus; headRefName = ($pr.sourceRefName -replace '^refs/heads/',''); headRefOid = $pr.lastMergeSourceCommit.commitId; baseRefName = ($pr.targetRefName -replace '^refs/heads/',''); statusCheckRollup = $latestStatuses; prBuilds = $latestBuilds; policyEvaluations = $policies; activeReviewThreads = $activeThreads; changedFiles = $changedFiles; url = '${parsedPr.prUrl.replace(/'/g, "''")}' }`,
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
             "[Console]::Out.Write(($out | ConvertTo-Json -Depth 8 -Compress))",
         ].join("; ");
@@ -430,7 +442,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             "--repo",
             repoArg,
             "--json",
-            "number,title,state,mergeStateStatus,headRefName,headRefOid,baseRefName,statusCheckRollup,reviews,comments,files,url",
+            "number,title,body,state,mergeStateStatus,headRefName,headRefOid,baseRefName,statusCheckRollup,reviews,comments,files,url",
         ],
         { cwd: workspaceRoot, env: gitEnv },
     );
@@ -655,6 +667,7 @@ export function isSnapshotWaitingForCiOnly(snapshot) {
         const conclusion = String(check?.conclusion || "").toLowerCase();
         const description = String(check?.description || "");
         const checkName = String(check?.context?.name || check?.name || "").toLowerCase();
+        if (isHumanApprovalCheck(check)) continue;
         if (hasRunningBuild && (checkName === "codecoverage" || /Coverage status check failed/i.test(description))) {
             hasPendingCheck = true;
             continue;
@@ -712,7 +725,7 @@ export function isSnapshotReadyForHumanMerge(snapshot) {
         if (status !== "completed") return false;
         if (
             !isNonBlockingAiReviewer &&
-            (failedTasks.length > 0 || (result !== "succeeded" && result !== "partiallysucceeded"))
+            (failedTasks.length > 0 || result !== "succeeded")
         ) {
             return false;
         }
@@ -899,7 +912,168 @@ export function computeRepairIdentity({ observation, snapshot, worktreeSnap }) {
     return createHash("sha256").update(payload).digest("hex").slice(0, 16);
 }
 
+function isHumanApprovalCheck(check) {
+    return /Missing Approvals/i.test(String(check?.description || "")) ||
+        /minimum.*reviewer|require.*reviewer|merge strategy|proof of presence|comment requirements/i.test(String(check?.name || ""));
+}
+
+export function ciEvidenceFromSnapshot(snapshot) {
+    const evidence = [];
+    const builds = (snapshot?.prBuilds || []).filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")));
+    const checks = (snapshot?.statusCheckRollup || []).filter((check) => !isHumanApprovalCheck(check));
+    let failed = false;
+    let pending = false;
+    let unknown = !snapshot?.headRefOid || (builds.length === 0 && checks.length === 0) ||
+        (snapshot?.provider === "ado" && builds.length === 0);
+    for (const build of builds) {
+        const status = String(build.status || "").toLowerCase();
+        const result = String(build.result || "").toLowerCase();
+        evidence.push(`Build ${build.id || "unknown"} ${build.definition || ""}: ${status}/${result || "pending"}`);
+        if (status !== "completed") pending = true;
+        else if (result !== "succeeded") failed = true;
+        for (const task of build.failedTasks || []) {
+            failed = true;
+            evidence.push(`Failed task: ${task.name}`, ...(task.issues || []), ...(task.excerpt || []));
+            for (const test of task.failedTests || []) evidence.push(`${test.testName}: ${test.errorMessage}`);
+        }
+    }
+    for (const check of checks) {
+        const state = String(check.conclusion || check.state || check.status || "").toLowerCase();
+        evidence.push(`${check.context?.name || check.name || "Check"}: ${state}; ${check.description || ""}`);
+        if (["failure", "failed", "error", "timed_out", "cancelled", "action_required"].includes(state)) failed = true;
+        else if (["pending", "queued", "in_progress", "inprogress", "notstarted"].includes(state)) pending = true;
+        else if (!["success", "succeeded", "neutral", "skipped", "notapplicable"].includes(state)) unknown = true;
+    }
+    for (const policy of snapshot?.policyEvaluations || []) {
+        if (policy.buildId && policy.blocking && policy.buildIsNotCurrent) {
+            pending = true;
+            evidence.push(`${policy.name}: build validation is stale for the current PR head.`);
+        } else if (policy.buildId && policy.blocking && policy.status === "rejected") {
+            failed = true;
+            evidence.push(`${policy.name}: current build policy rejected.`);
+        }
+    }
+    return {
+        status: failed ? "failed" : pending ? "pending" : unknown ? "unknown" : "passed",
+        headSha: snapshot?.headRefOid || null,
+        evidence: evidence.slice(0, 60),
+    };
+}
+
+export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspaceRoot = process.cwd(), exec = defaultExec, ci = ciEvidenceFromSnapshot(snapshot) } = {}) {
+    if (!/^[a-f0-9]{40,64}$/i.test(snapshot?.headRefOid || "")) {
+        throw new Error("Cannot publish observer status without a full observed PR commit SHA.");
+    }
+    const originalBody = snapshot.description ?? snapshot.body;
+    if (typeof originalBody !== "string") throw new Error("Cannot publish observer status without the current PR description.");
+    let body = upsertMarkerBlock(originalBody, statusMarkers, statusBlock);
+    const previousVerification = parseMarkerBlock(originalBody, verificationMarkers) || {
+        local: { status: "unverified", commands: [], evidence: ["No independently attested local result."] },
+    };
+    body = upsertMarkerBlock(body, verificationMarkers, renderVerificationBlock({ ...previousVerification, ci }));
+    const decisions = parseMarkerBlock(originalBody, deliveryDecisionMarkers);
+    if (decisions) {
+        body = upsertMarkerBlock(body, deliveryDecisionMarkers, renderDeliveryDecisionBlock({
+            rolloutTag: decisions.rollout?.tag,
+            rolloutJustification: decisions.rollout?.justification,
+            testCoverageTag: decisions.testCoverage?.tag,
+            testCoverageJustification: `Tests authored/updated; local verification ${previousVerification.local?.status || "unverified"}; current-head CI ${ci.status}. See verification receipt and remaining checks.`,
+        }));
+    }
+    if (parsedPr.provider === "ado") {
+        const base = `${parsedPr.orgUrl}/${encodeURIComponent(parsedPr.project)}/_apis/git/repositories/${encodeURIComponent(parsedPr.repoName)}/pullRequests/${parsedPr.prNumber}?api-version=7.0`;
+        const b64 = (value) => Buffer.from(value, "utf8").toString("base64");
+        const script = [
+            "$ErrorActionPreference = 'Stop'",
+            "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+            "if ($LASTEXITCODE -ne 0 -or -not $token) { throw 'Azure DevOps authentication failed for status update.' }",
+            "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
+            `$uri = '${base}'`,
+            "$live = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get",
+            `$expectedBody = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(originalBody)}'))`,
+            `if ($live.status -ne 'active' -or $live.lastMergeSourceCommit.commitId -ne '${snapshot.headRefOid}' -or $live.description -cne $expectedBody) { throw 'PR changed during observer status publication; refusing overwrite.' }`,
+            `$payload = [Convert]::FromBase64String('${b64(JSON.stringify({ description: body }))}')`,
+            "Invoke-RestMethod -Uri $uri -Headers $headers -Method Patch -Body $payload | Out-Null",
+        ].join("; ");
+        exec("powershell", ["-NoProfile", "-Command", script], { cwd: workspaceRoot });
+    } else {
+        const account = resolveGitHubAccount({ hostname: parsedPr.hostname }, workspaceRoot, exec);
+        const overrides = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined };
+        if (account) {
+            const token = exec("gh", ["auth", "token", "--hostname", parsedPr.hostname, "--user", account], { cwd: workspaceRoot });
+            overrides.GH_TOKEN = token;
+            overrides.GITHUB_TOKEN = token;
+        }
+        const env = buildNormalizedProcessEnv(process.env, overrides);
+        const endpoint = `repos/${parsedPr.slug}/pulls/${parsedPr.prNumber}`;
+        const live = JSON.parse(exec("gh", ["api", "--hostname", parsedPr.hostname, endpoint], { cwd: workspaceRoot, env }));
+        if (live.state !== "open" || live.head?.sha !== snapshot.headRefOid || live.body !== originalBody) {
+            throw new Error("PR changed during observer status publication; refusing overwrite.");
+        }
+        exec("gh", ["api", "--hostname", parsedPr.hostname, "--method", "PATCH", endpoint, "-f", `body=${body}`], { cwd: workspaceRoot, env });
+    }
+    return body;
+}
+
 export async function runPrObserver(ctx, dependencies = {}) {
+    let snapshot = null;
+    const workspaceRoot = ctx.args?.options?.workspaceRoot || process.cwd();
+    const fetch = dependencies.fetchPrSnapshot || ((pr) => fetchPullRequestSnapshot(pr, { workspaceRoot, exec: dependencies.exec || defaultExec }));
+    const result = await runObserverLoop(ctx, {
+        ...dependencies,
+        fetchPrSnapshot: async (pr) => { snapshot = await fetch(pr); return snapshot; },
+    });
+    if (!snapshot) return result;
+    const ci = ciEvidenceFromSnapshot(snapshot);
+    if (result.expectedHeadSha && snapshot.headRefOid !== result.expectedHeadSha) {
+        ci.status = "pending";
+        ci.evidence.push(`Awaiting validation of pushed head ${result.expectedHeadSha}; provider reports ${snapshot.headRefOid}.`);
+    }
+    result.ci = ci;
+    result.headSha = snapshot.headRefOid || null;
+    result.evidence = [...new Set([...(result.evidence || []), ...ci.evidence])];
+    result.remainingChecks = (snapshot.statusCheckRollup || []).filter((check) =>
+        !["success", "succeeded", "neutral", "skipped", "notapplicable"].includes(String(check.conclusion || check.state || "").toLowerCase()));
+    result.remainingPolicies = (snapshot.policyEvaluations || []).filter((policy) => policy.blocking && policy.status !== "approved");
+    if (result.status === currentStatuses.readyForHumanMerge && ci.status !== "passed") {
+        result.status = ci.status === "failed" ? currentStatuses.ciFailed : currentStatuses.waitingForCi;
+        result.summary = `PR observation did not establish current-head CI success (${ci.status}).`;
+    }
+    if (ci.status === "passed" && result.remainingPolicies.length && result.status === currentStatuses.readyForHumanMerge) {
+        result.status = currentStatuses.awaitingHumanReview;
+        result.summary = "Current-head CI passed; required human review/policy actions remain.";
+    }
+    const waiting = [currentStatuses.waitingForCi, currentStatuses.observationExhausted].includes(result.status);
+    result.continuation = waiting ? {
+        workflow: "pr-observer",
+        args: { ...ctx.args, options: { ...(ctx.args.options || {}), workspaceRoot } },
+        reason: result.summary,
+    } : null;
+    result.statusBlock = renderCurrentStatusBlock({
+        status: result.status,
+        owner: waiting ? currentStatusOwners.observer : currentStatusOwners.human,
+        runId: ctx.runId || "local",
+        repository: parsePullRequestUrl(ctx.args?.prUrl)?.repository || "",
+        prUrl: ctx.args.prUrl,
+        summary: result.summary,
+        nextAction: waiting ? "Continue pr-observer; this run has not confirmed readiness." : "Review remaining checks/policies; human approval and merge only.",
+    });
+    const publish = dependencies.publishStatus || publishObserverStatus;
+    if (ctx.args?.options?.publishStatus !== false) {
+        try {
+            await publish(parsePullRequestUrl(ctx.args.prUrl), snapshot, result.statusBlock, { workspaceRoot, exec: dependencies.exec || defaultExec, ci });
+            result.statusPublication = { status: "updated" };
+        } catch (error) {
+            if (ctx.signal?.aborted || ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name)) throw error;
+            result.statusPublication = { status: "failed", error: error.message };
+            result.evidence.push(`PR status publication failed: ${error.message}`);
+            ctx.log?.(`PR status publication failed: ${error.message}`);
+        }
+    }
+    return result;
+}
+
+async function runObserverLoop(ctx, dependencies = {}) {
     const args = record(ctx?.args) ? ctx.args : {};
     const rawOptions = record(args.options) ? args.options : {};
     const parsedPr = parsePullRequestUrl(args.prUrl);
@@ -931,7 +1105,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
         ? rawOptions.pauseOnBlocker === true && typeof ctx?.pause === "function"
         : typeof ctx?.pause === "function";
 
-    const prefix = `pr-observer-v1-${createHash("sha256").update(parsedPr.prUrl).digest("hex").slice(0, 16)}`;
+    const prefix = `pr-observer-v2-${createHash("sha256").update(parsedPr.prUrl).digest("hex").slice(0, 16)}`;
     const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
@@ -950,6 +1124,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
     const builderGuides = resolveRoleSkillGuides("builder", [target]);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", [target]);
     const attemptedRepairIdentities = new Set();
+    let expectedHeadSha = null;
 
     for (let iteration = 0; iteration <= maxIterations; iteration++) {
         phase("Observe");
@@ -968,7 +1143,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
             while (
                 totalPollsUsed < maxCiPollAttempts &&
-                (isSnapshotWaitingForCiOnly(snapshot) ||
+                ((expectedHeadSha && snapshot.headRefOid !== expectedHeadSha) || isSnapshotWaitingForCiOnly(snapshot) ||
                     (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))
             ) {
                 totalPollsUsed++;
@@ -990,6 +1165,17 @@ export async function runPrObserver(ctx, dependencies = {}) {
 
             if (record(snapshot) && nonempty(snapshot.baseRefName)) {
                 target.baseBranch = snapshot.baseRefName;
+            }
+
+            if (expectedHeadSha && snapshot.headRefOid !== expectedHeadSha) {
+                return {
+                    status: "waiting-for-ci",
+                    prUrl: parsedPr.prUrl,
+                    expectedHeadSha,
+                    summary: `Waiting for provider to observe pushed head ${expectedHeadSha}.`,
+                    evidence: [`Provider head: ${snapshot.headRefOid || "unknown"}`],
+                    iterations: iteration,
+                };
             }
 
             if (isSnapshotWaitingForCiOnly(snapshot)) {
@@ -1021,6 +1207,32 @@ export async function runPrObserver(ctx, dependencies = {}) {
                     actionableFindings: [],
                 };
                 break;
+            }
+
+            const failedTasks = (snapshot?.prBuilds || [])
+                .filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")))
+                .flatMap((build) => build.failedTasks || []);
+            if (failedTasks.length > 0) {
+                observation = {
+                    verdict: "repair",
+                    repairKind: "ci-failure",
+                    summary: "Current PR validation reports concrete failed tasks.",
+                    evidence: ciEvidenceFromSnapshot(snapshot).evidence,
+                    actionableFindings: failedTasks.map((task) => [
+                        task.name, ...(task.issues || []), ...(task.excerpt || []),
+                        ...(task.failedTests || []).map((test) => `${test.testName}: ${test.errorMessage}`),
+                    ].join("\n")),
+                };
+                break;
+            }
+            if (ciEvidenceFromSnapshot(snapshot).status === "passed" && !hasActionableReviewOrCommentFeedback(snapshot)) {
+                return {
+                    status: currentStatuses.awaitingHumanReview,
+                    prUrl: parsedPr.prUrl,
+                    summary: "Current-head CI passed; repository review/merge policies require human action.",
+                    evidence: ciEvidenceFromSnapshot(snapshot).evidence,
+                    iterations: iteration,
+                };
             }
 
             const currentFingerprint = computeSnapshotFingerprint(snapshot);
@@ -1128,6 +1340,17 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
                 evidence: observation.evidence || [],
                 actionableFindings: observation.actionableFindings || [],
                 iterations: iteration + 1,
+            };
+        }
+
+        if (iteration >= maxIterations) {
+            return {
+                status: "max-iterations-reached",
+                prUrl: parsedPr.prUrl,
+                summary: `Repair budget exhausted after ${maxIterations} repair(s); remaining failures require a new observation/owner decision.`,
+                evidence: observation.evidence || [],
+                actionableFindings: observation.actionableFindings || [],
+                iterations: maxIterations,
             };
         }
 
@@ -1276,7 +1499,7 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
         }
 
         if (pushRepairs) {
-            await step(`push-repair-${iteration}`, async () => {
+            const pushed = await step(`push-repair-${iteration}`, async () => {
                 const account = resolveGitHubAccount(target, workspaceRoot, exec);
                 const tokenOverrides = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined };
                 if (nonempty(account)) {
@@ -1343,7 +1566,7 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                 let pushedSha = "";
                 if (exec === defaultExec) {
                     try {
-                        pushedSha = exec("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, env: gitEnv });
+                        pushedSha = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
                     } catch {
                         pushedSha = "";
                     }
@@ -1445,8 +1668,9 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                         }
                     }
                 }
-                return true;
+                return { pushedSha };
             });
+            if (nonempty(pushed?.pushedSha)) expectedHeadSha = pushed.pushedSha;
         }
     }
 

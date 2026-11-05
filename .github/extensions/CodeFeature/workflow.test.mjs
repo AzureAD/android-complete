@@ -494,7 +494,7 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
             { workspaceRoot: tempRoot, createPullRequests: true },
         );
         const packet = await runCodeFeature(ctx, { exec: mockExec });
-        assert.equal(packet.recommendation, "GO to PR Review");
+        assert.equal(packet.recommendation, "ci-not-observed");
         assert.equal(packet.pullRequests.length, 2);
         assert.equal(packet.pullRequests[0].status, "created");
         assert.equal(packet.pullRequests[0].url, "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/999");
@@ -1217,7 +1217,9 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
             state: "OPEN",
             mergeStateStatus: "CLEAN",
             headRefName: "shjameel/broker-silent-server-throttling",
+            headRefOid: "current-head",
             baseRefName: "dev",
+            statusCheckRollup: [{ name: "CI", state: "SUCCESS" }],
             inlineReviewComments: inlineThreads,
         }),
         exec: (cmd, args) => {
@@ -2187,6 +2189,22 @@ test("inline prerequisite approval survives a later durable pause without asking
     } finally {
         rmSync(f.root, { recursive: true, force: true });
     }
+});
+
+test("preapproved run-scoped JDK supports unattended runs without changing host JAVA_HOME", async () => {
+    const f = prerequisiteResumeFixture();
+    const original = process.env.JAVA_HOME;
+    try {
+        const context = f.makeContext([evidence(), implementation(), review()]);
+        context.args.options.javaHome = f.javaHome;
+        const result = await runCodeFeature(context, {
+            ...f.dependencies,
+            askUser: async () => { throw new Error("Preapproved JDK must not prompt again"); },
+        });
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+        assert.equal(process.env.JAVA_HOME, original);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("unresolved or invalid prerequisite recovery never advances to agents", async () => {

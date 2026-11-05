@@ -4,6 +4,7 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { createWorkflowCompletionDelivery, createWorkflowStatusTool } from "./completion.mjs";
 import { observerCustomAgent, observerWorkflowDefinition } from "./observer.mjs";
 import { customAgents, workflowDefinition } from "./workflow.mjs";
 
@@ -15,6 +16,7 @@ const workflowUrl = new URL("./workflow.mjs", import.meta.url);
 const observerUrl = new URL("./observer.mjs", import.meta.url);
 
 let activeWorkflow = null;
+let completionDelivery;
 async function runExclusively(name, fn) {
     if (activeWorkflow) {
         throw new Error(`Workflow "${activeWorkflow}" is already running in this session; use a separate session for concurrent jobs.`);
@@ -27,12 +29,14 @@ async function runExclusively(name, fn) {
     }
 }
 
-await joinSession({
+const session = await joinSession({
+    tools: [createWorkflowStatusTool(() => session)],
     customAgents: [...customAgents, observerCustomAgent],
     workflows: [
         defineWorkflow({
             ...workflowDefinition,
             run: async (ctx) => runExclusively("code-feature", async () => {
+                completionDelivery?.track(ctx.runId, "code-feature");
                 const { mtimeMs } = statSync(workflowUrl);
                 const latest = await import(`${workflowUrl.href}?v=${mtimeMs}`);
                 return latest.runCodeFeature(ctx);
@@ -41,6 +45,7 @@ await joinSession({
         defineWorkflow({
             ...observerWorkflowDefinition,
             run: async (ctx) => runExclusively("pr-observer", async () => {
+                completionDelivery?.track(ctx.runId, "pr-observer");
                 const { mtimeMs } = statSync(observerUrl);
                 const latest = await import(`${observerUrl.href}?v=${mtimeMs}`);
                 return latest.runPrObserver(ctx);
@@ -48,3 +53,13 @@ await joinSession({
         }),
     ],
 });
+
+try {
+    completionDelivery = createWorkflowCompletionDelivery(session);
+    await completionDelivery.ready;
+} catch (error) {
+    const message = `Workflow completion delivery could not start: ${error.message}. Inspect durable workflow results manually until the extension is reloaded.`;
+    console.error(message);
+    await session.log(message, { level: "error" }).catch((logError) =>
+        console.error(`Cannot log completion delivery startup failure: ${logError.message}`));
+}

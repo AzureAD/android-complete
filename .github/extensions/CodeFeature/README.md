@@ -29,10 +29,14 @@ Given an approved coding task or PBI specification:
    - If any validation error or review finding exists, the workflow returns to `code-builder`
      with the structured findings (`fix-1`, `fix-2`) until the reviewer reports zero
      findings or the 2-fix ceiling (`maxFixIterations: 2`) is reached.
-5. **Create verified Pull Requests**:
-   - Only after deterministic checks and the independent reviewer pass with zero findings, the
+5. **Publish source-reviewed Pull Requests**:
+   - Only after structural checks and the independent source reviewer pass with zero findings, the
      workflow prepares or opens each target PR with `Fixes AB#<workItemId>` in the title and
-     body, full requirements traceability table, test plan, and compatibility/rollout summary.
+     body, requirements traceability, test plan, and compatibility/rollout summary. A local
+     timeout or environment failure may defer execution to CI; it is not a test pass.
+6. **Observe CI and hand off accurately**: Return explicit `waiting-for-ci`, `ci-failed`,
+   `awaiting-human-review`, `needs-owner-decision`, or `ready-for-human-review` delivery
+   status, with current-head check evidence and an observer continuation when applicable.
 
 ## Input and use
 
@@ -55,6 +59,47 @@ Given an approved coding task or PBI specification:
 - Azure DevOps publication looks up an active PR matching both source and target
   branches before creating one, and checks again after a failed creation response.
   An absent matching PR leaves the publication error visible.
+
+### Verification and delivery receipts
+
+- Builder/reviewer prose is not proof of command execution. Authored tests, source review,
+  local command outcomes, and current-head CI outcomes are recorded separately.
+- `verification[].local` records `unverified`, `deferred`, `failed`, or `passed`.
+  Only successful deterministic verification commands establish a local pass. Compile
+  directories alone never attest successful tests. The builder's local artifacts/prose
+  cannot establish that every requested task passed.
+- `verification[].ci` records status, observed PR source head, and concrete check/build
+  evidence. ADO build evidence is filtered to the current PR merge commit; stale build
+  policies, partial success, failed checks, and absent results cannot produce a pass.
+- PR acceptance checkboxes are not automatically checked, and authored test counts are
+  not reported as executed tests. The compact verification marker carries actual states.
+- The observer updates the PR status/verification markers from its final snapshot, guarding
+  against a concurrently changed head or description. Write failures are explicit.
+- Pure CI waiting and concrete failed tasks are handled deterministically before invoking
+  a classifier. At most two tactical repairs occur; exhaustion retains exact remaining
+  diagnostics and a continuation rather than an empty success-shaped packet.
+- Pending CI is a handoff, not completion of the developer's readiness objective.
+  `observations[].continuation` provides the `pr-observer` invocation to continue without
+  rebuilding or creating another PR. Human-only approvals and merge policies are reported
+  separately and must never be bypassed.
+
+### Owning-session completion delivery
+
+The extension watches `workflow.run_started`, `workflow.run_updated`,
+`workflow.run_settled`, and `session.resume`, and uses the SDK's `waitForRun` settlement
+watcher. It sends a system-sourced, immediate follow-up to the owning session after a run
+settles, with actual delivery/verification status, PR links, and remaining actions. A
+completed workflow is never described as green solely because its body returned.
+
+The ignored outbox is scoped by `SHA-256(session.sessionId)` under
+`.github/local-context/code-feature/completion/`; it catches up settled runs after extension
+restart and deduplicates lifecycle events. Failed delivery is retained for retry. This is
+at-least-once queue admission, not a guarantee that an unavailable client displayed a reply;
+crash-window duplicates remain possible. No cross-session runs or credentials are stored.
+
+Use the read-only `code_feature_workflow_status` tool for an existing run's current phase,
+recent progress, accounting, or settled result, rather than inferring status from a background
+agent list or parent-session idleness. It does not resume/restart the run.
 
 `code-feature` supports **three everyday input modes** (plus pre-structured `task`/`stage0` objects):
 
@@ -111,6 +156,10 @@ Pass a plain-language request (optionally with `repository` and `workItemId`):
 
 ### Options
 
+- `javaHome`: Optional, explicitly approved run-scoped JDK installation path. It is
+  validated against each target's requirements and never changes the host environment.
+  Supply it for unattended execution when the developer has already selected a JDK;
+  otherwise use the prerequisite approval/recovery flow.
 - `maxFixIterations` (default `2`, max `2`): Maximum builder fix iterations after initial build.
 - `createPullRequests` (default `true` in live Copilot sessions, `false` in offline unit tests):
   When `true`, writes verified files to the target repository checkout, creates branch
