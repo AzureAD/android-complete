@@ -42,6 +42,13 @@ function brief(value, maximum = 250) {
 }
 
 export function fitAdoDescription(body, { maximum = 4000, truncateNarrative = false } = {}) {
+    const workItems = new Set();
+    body = body.replace(/^WiClose:[^\r\n]*(?:\r?\n|$)/gm, (line) => {
+        const key = line.trim();
+        if (workItems.has(key)) return "";
+        workItems.add(key);
+        return line;
+    });
     if (body.length <= maximum) return body;
     let narrative = body;
     const blocks = [];

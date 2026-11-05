@@ -39,6 +39,7 @@ const {
     slimReviewSchema,
     snapshotWorktree,
 } = await import(revisionedModuleUrl("./workflow.mjs"));
+const { verificationSummary } = await import(revisionedModuleUrl("./verification.mjs"));
 
 function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
     try {
@@ -1021,6 +1022,10 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
         previousVerification.local.headSha !== snapshot.headRefOid) {
         previousVerification.local.status = "unverified";
     }
+    body = body.replace(
+        /(## Validation & Testing\r?\n)Local verification: [^\r\n]*\./,
+        (_line, heading) => heading + verificationSummary({ ...previousVerification, ci }),
+    );
     body = upsertMarkerBlock(body, verificationMarkers, renderVerificationBlock({ ...previousVerification, ci }));
     const decisions = parseMarkerBlock(originalBody, deliveryDecisionMarkers);
     if (decisions) {

@@ -2515,9 +2515,8 @@ export function formatPrBody(
         statusBlock,
     ].join("\n");
 
-    if (!isAdoTarget || fullBody.length <= 3500) {
-        return fullBody;
-    }
+    if (!isAdoTarget) return fullBody;
+    if (fullBody.length <= 3500) return fitAdoDescription(fullBody, { maximum: 3500, truncateNarrative: true });
 
     const compactFiles = targetImpl.files
         .slice(0, 12)

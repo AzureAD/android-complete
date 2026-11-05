@@ -110,6 +110,27 @@ test("ADO status compaction does not silently discard human-maintained narrative
     assert.equal(fitAdoDescription("Human-maintained details"), "Human-maintained details");
 });
 
+test("ADO metadata deduplicates exact WiClose lines without changing other narrative", () => {
+    const wi = "WiClose: https://identitydivision.visualstudio.com/Engineering/_workitems/edit/123";
+    const result = fitAdoDescription(`Human details\r\n${wi}\r\nOther details\r\n${wi}\r\n`);
+    assert.equal(result.split(/\r?\n/).filter((line) => line === wi).length, 1);
+    assert.equal(result, `Human details\r\n${wi}\r\nOther details\r\n`);
+});
+
+test("final managed narrative and JSON show the same current verification state", () => {
+    const wi = "WiClose: https://identitydivision.visualstudio.com/Engineering/_workitems/edit/123";
+    const description = `## Validation & Testing\nLocal verification: unverified. Current-head CI: not-observed.\nHuman details stay unchanged.\n${wi}\n${wi}\n` +
+        renderVerificationBlock(pendingVerification());
+    const updated = publishObserverStatus(
+        parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42"),
+        snapshot({ description }), "status", { exec: () => "" },
+    );
+    assert.match(updated, /Local verification: unverified\. Current-head CI: passed\./);
+    assert.match(updated, /Human details stay unchanged\./);
+    assert.equal(parseMarkerBlock(updated, verificationMarkers).ci.status, "passed");
+    assert.equal(updated.split(/\r?\n/).filter((line) => line === wi).length, 1);
+});
+
 test("a local pass for a previous source head is not promoted to the repaired current head", () => {
     const url = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
     const oldHead = "b".repeat(40);
