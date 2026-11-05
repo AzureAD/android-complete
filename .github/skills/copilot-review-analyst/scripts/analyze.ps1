@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Collect all Copilot code review comments across 3 Android Auth repos.
+    Collect GitHub Copilot and AuthApp Foundry reviews for one shared report.
     Records whether each comment received a human reply (and the reply text).
     Does NOT classify replies — that is done by the AI agent in Phase 3.
 #>
@@ -8,11 +8,25 @@
 param(
     [string]$OutputDir = "$env:TEMP\copilot-review-analysis",
     [string]$StartDate = (Get-Date).AddDays(-60).ToString("yyyy-MM-dd"),
-    [string]$EndDate = (Get-Date).ToString("yyyy-MM-dd")
+    [string]$EndDate = (Get-Date).ToString("yyyy-MM-dd"),
+    [string]$AuthAppInputFile = "",
+    [switch]$SkipAuthApp
 )
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+
+$authAppResults = @()
+$authAppSummaries = @()
+$authAppCoverage = $null
+if (-not $SkipAuthApp) {
+    & "$PSScriptRoot\analyze-authapp.ps1" -OutputDir $OutputDir -StartDate $StartDate -EndDate $EndDate -InputFile $AuthAppInputFile
+    $authAppResults = @(Get-Content "$OutputDir\authapp_raw_results.json" -Raw | ConvertFrom-Json)
+    $authAppSummaries = @(Get-Content "$OutputDir\authapp_review_summaries.json" -Raw | ConvertFrom-Json)
+    $authAppCoverage = Get-Content "$OutputDir\authapp_coverage.json" -Raw | ConvertFrom-Json
+} else {
+    Write-Warning "AuthApp is explicitly excluded. Label the resulting report GitHub-only, not a combined AI review report."
+}
 
 # ========================================
 # AUTH: common/msal live on github.com; broker lives on msft.ghe.com.
@@ -57,9 +71,10 @@ function Get-PRCommitShas($apiRepo, $prNum) {
     if (-not $prCommitShaCache.ContainsKey($key)) {
         try {
             $shas = gh api "$apiRepo/pulls/$prNum/commits" --paginate --jq '.[].sha' 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "Commit API failed for PR $prNum." }
             $prCommitShaCache[$key] = @($shas | Where-Object { $_ -match '^[0-9a-f]{40}$' })
         } catch {
-            $prCommitShaCache[$key] = @()
+            throw "Cannot validate the reviewed GitHub snapshot for PR $prNum. $_"
         }
     }
     return $prCommitShaCache[$key]
@@ -134,13 +149,14 @@ foreach ($repo in $repos) {
     # Using `--state all` + `created:>=` (the old behaviour) mixed in still-open / abandoned
     # PRs and PRs created-but-not-merged, inflating denominators and letting a comment be
     # judged against code that never shipped. `merged:START..END` is the correct basis.
-    $prsFile = "$env:TEMP\${label}_prs.json"
-    if (-not (Test-Path $prsFile)) {
-        Write-Host "  Fetching MERGED PR list ($StartDate..$EndDate)..."
-        gh pr list --repo $repo.PrRepo --state merged --limit 300 --json number,title,author,createdAt,mergedAt,state --search "merged:$StartDate..$EndDate" 2>&1 | Out-File -FilePath $prsFile -Encoding utf8
-    }
+    $prsFile = "$OutputDir\${label}_prs.json"
+    Write-Host "  Fetching MERGED PR list ($StartDate..$EndDate)..."
+    $prJson = gh pr list --repo $repo.PrRepo --state merged --limit 1000 --json number,title,author,createdAt,mergedAt,state --search "merged:$StartDate..$EndDate"
+    if ($LASTEXITCODE -ne 0) { throw "GitHub PR collection failed for $label; refusing a partial report." }
+    $prJson | Out-File -FilePath $prsFile -Encoding utf8
     
     $allPRs = Get-Content $prsFile | ConvertFrom-Json
+    if (@($allPRs).Count -ge 1000) { throw "$label reached GitHub's search cap. Split the analysis window before reporting." }
     $humanPRs = $allPRs | Where-Object { $_.author.login -notin $BOT_AUTHORS }
     
     Write-Host "  Total PRs: $($allPRs.Count), Human PRs: $($humanPRs.Count)"
@@ -157,10 +173,10 @@ foreach ($repo in $repos) {
         # Get ALL review comments (inline code comments) for this PR
         try {
             $commentsRaw = gh api "$apiRepo/pulls/$prNum/comments" --paginate 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "Comment API failed for $label PR $prNum." }
             $comments = $commentsRaw | ConvertFrom-Json
         } catch {
-            Write-Host "  PR #$prNum - parse error, skipping" -ForegroundColor Yellow
-            continue
+            throw "Cannot collect comments for $label PR $prNum; refusing a partial report. $_"
         }
         
         if ($null -eq $comments -or $comments.Count -eq 0) {
@@ -230,21 +246,24 @@ foreach ($repo in $repos) {
 
                 $repoResults += [PSCustomObject]@{
                     Repo             = $label
+                    ReviewSource     = "GitHub Copilot"
+                    Platform         = "GitHub"
                     PRNumber         = $prNum
                     PRAuthor         = $prAuthor
                     PRTitle          = $prTitle
                     PRState          = $pr.state
                     CommentId        = $commentId
+                    CommentUrl       = $cc.html_url
                     FilePath         = $commentPath
                     Line             = $commentLine
                     CommentBody      = $commentBody
                     CommentExcerpt   = if ($commentBody.Length -gt 250) { $commentBody.Substring(0, 250) + "..." } else { $commentBody }
                     HumanReplyCount  = $replies.Count
-                    HumanReplyText   = if ($humanReplyText.Length -gt 400) { $humanReplyText.Substring(0, 400) + "..." } else { $humanReplyText }
+                    HumanReplyText   = $humanReplyText
                     HasReply         = $hasReply
                     CommentType      = "inline"
                     OriginalCommitId = $origCommit
-                    DiffHunk         = if ($diffHunk -and $diffHunk.Length -gt 2000) { $diffHunk.Substring(0, 2000) + "..." } else { $diffHunk }
+                    DiffHunk         = $diffHunk
                     ReviewedCommitRewritten = $reviewedRewritten
                     ThumbsUp         = $thumbsUp
                     ThumbsDown       = $thumbsDown
@@ -258,6 +277,7 @@ foreach ($repo in $repos) {
         # Also check the review-level summary comments from copilot
         try {
             $reviewsRaw = gh api "$apiRepo/pulls/$prNum/reviews" 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "Review API failed for $label PR $prNum." }
             $reviews = $reviewsRaw | ConvertFrom-Json
             # Coverage: a PR counts as "reviewed by Copilot" if Copilot posted ANY review
             # (even a body-less APPROVED/COMMENTED), not only ones with a summary body.
@@ -271,6 +291,8 @@ foreach ($repo in $repos) {
             foreach ($rev in $copilotReviews) {
                 $reviewSummaries += [PSCustomObject]@{
                     Repo       = $label
+                    ReviewSource = "GitHub Copilot"
+                    Platform   = "GitHub"
                     PRNumber   = $prNum
                     PRAuthor   = $prAuthor
                     PRTitle    = $prTitle
@@ -280,7 +302,7 @@ foreach ($repo in $repos) {
                 }
             }
         } catch {
-            # Skip if review fetch fails
+            throw "Cannot collect review coverage for $label PR $prNum; refusing a partial report. $_"
         }
         
         # Rate limiting
@@ -295,8 +317,10 @@ foreach ($repo in $repos) {
 }
 
 # Save raw results
-$allResults | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\raw_results.json" -Encoding utf8
-$reviewSummaries | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\review_summaries.json" -Encoding utf8
+$allResults += $authAppResults
+$reviewSummaries += $authAppSummaries
+ConvertTo-Json -InputObject @($allResults) -Depth 15 | Out-File "$OutputDir\raw_results.json" -Encoding utf8
+ConvertTo-Json -InputObject @($reviewSummaries) -Depth 8 | Out-File "$OutputDir\review_summaries.json" -Encoding utf8
 
 # ========================================
 # COVERAGE (Tier 2.4): reviewed vs with-feedback vs no-feedback, per repo + overall.
@@ -309,7 +333,7 @@ $reviewSummaries | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\review_summari
 $coverage = @{ perRepo = @(); overall = @{} }
 $ovMerged = 0; $ovReviewed = 0; $ovFeedback = 0
 foreach ($repoLabel in @("common", "msal", "broker")) {
-    $prsFile = "$env:TEMP\${repoLabel}_prs.json"
+    $prsFile = "$OutputDir\${repoLabel}_prs.json"
     $mergedHumanPRs = 0
     if (Test-Path $prsFile) {
         $mergedHumanPRs = @((Get-Content $prsFile | ConvertFrom-Json) | Where-Object { $_.author.login -notin $BOT_AUTHORS }).Count
@@ -318,21 +342,42 @@ foreach ($repoLabel in @("common", "msal", "broker")) {
     $feedbackPRs = @($allResults | Where-Object { $_.Repo -eq $repoLabel } | Select-Object -ExpandProperty PRNumber -Unique).Count
     $coverage.perRepo += [PSCustomObject]@{
         repo = $repoLabel
+        reviewSource = "GitHub Copilot"
+        platform = "GitHub"
         mergedHumanPRs = $mergedHumanPRs
         reviewedByCopilot = $reviewedCount
+        reviewedByAI = $reviewedCount
         withInlineFeedback = $feedbackPRs
         noFeedback = [Math]::Max(0, $reviewedCount - $feedbackPRs)
         reviewCoveragePct = if ($mergedHumanPRs -gt 0) { [math]::Round($reviewedCount / $mergedHumanPRs * 100, 1) } else { 0 }
     }
     $ovMerged += $mergedHumanPRs; $ovReviewed += $reviewedCount; $ovFeedback += $feedbackPRs
 }
+if ($authAppCoverage) {
+    $coverage.perRepo += $authAppCoverage
+    $ovMerged += $authAppCoverage.mergedHumanPRs
+    $ovReviewed += $authAppCoverage.reviewedByAI
+    $ovFeedback += $authAppCoverage.withInlineFeedback
+}
 $coverage.overall = [PSCustomObject]@{
     mergedHumanPRs = $ovMerged
-    reviewedByCopilot = $ovReviewed
+    reviewedByAI = $ovReviewed
     withInlineFeedback = $ovFeedback
     noFeedback = [Math]::Max(0, $ovReviewed - $ovFeedback)
     reviewCoveragePct = if ($ovMerged -gt 0) { [math]::Round($ovReviewed / $ovMerged * 100, 1) } else { 0 }
 }
+$coverage.perSource = @($coverage.perRepo | Group-Object reviewSource | ForEach-Object {
+    $merged = ($_.Group | Measure-Object mergedHumanPRs -Sum).Sum
+    $reviewedCount = ($_.Group | Measure-Object reviewedByAI -Sum).Sum
+    [pscustomobject]@{
+        reviewSource = $_.Name
+        mergedHumanPRs = $merged
+        reviewedByAI = $reviewedCount
+        withInlineFeedback = ($_.Group | Measure-Object withInlineFeedback -Sum).Sum
+        noFeedback = ($_.Group | Measure-Object noFeedback -Sum).Sum
+        reviewCoveragePct = if ($merged -gt 0) { [math]::Round($reviewedCount / $merged * 100, 1) } else { 0 }
+    }
+})
 $coverage | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\coverage.json" -Encoding utf8
 
 # ========================================
@@ -340,28 +385,27 @@ $coverage | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\coverage.json" -Encod
 # ========================================
 Write-Host "`n`n" -NoNewline
 Write-Host "================================================================" -ForegroundColor Yellow
-Write-Host "           COPILOT CODE REVIEW DATA COLLECTION RESULTS" -ForegroundColor Yellow
+Write-Host "           AI CODE REVIEW DATA COLLECTION RESULTS" -ForegroundColor Yellow
 Write-Host "================================================================" -ForegroundColor Yellow
-$endDate = (Get-Date).ToString("MMM d, yyyy")
+$endDateFormatted = [datetime]::Parse($EndDate).ToString("MMM d, yyyy")
 $startDateFormatted = [datetime]::Parse($StartDate).ToString("MMM d, yyyy")
-Write-Host "Date Range: $startDateFormatted - $endDate" -ForegroundColor White
+Write-Host "Date Range: $startDateFormatted - $endDateFormatted" -ForegroundColor White
 Write-Host "================================================================`n" -ForegroundColor Yellow
 
 $totalComments = $allResults.Count
-Write-Host "TOTAL COPILOT INLINE REVIEW COMMENTS: $totalComments" -ForegroundColor White
-Write-Host "TOTAL COPILOT REVIEW SUMMARIES: $($reviewSummaries.Count)`n" -ForegroundColor White
+Write-Host "TOTAL AI INLINE REVIEW COMMENTS: $totalComments" -ForegroundColor White
+Write-Host "TOTAL AI REVIEW SUMMARIES: $($reviewSummaries.Count)`n" -ForegroundColor White
 
 # Unique PRs with copilot reviews
 $uniquePRs = $allResults | Select-Object -Property Repo,PRNumber -Unique
-Write-Host "PRs WITH COPILOT INLINE COMMENTS: $($uniquePRs.Count)`n" -ForegroundColor White
+Write-Host "PRs WITH AI INLINE COMMENTS: $($uniquePRs.Count)`n" -ForegroundColor White
 
 # Per-repo breakdown
 Write-Host "--- PER REPO BREAKDOWN ---" -ForegroundColor Cyan
-foreach ($repoLabel in @("common", "msal", "broker")) {
+foreach ($repoLabel in @($coverage.perRepo.repo)) {
     $repoComments = $allResults | Where-Object { $_.Repo -eq $repoLabel }
     $repoPRs = ($repoComments | Select-Object -Property PRNumber -Unique).Count
-    $prsFile = "$env:TEMP\${repoLabel}_prs.json"
-    $totalHumanPRs = ((Get-Content $prsFile | ConvertFrom-Json) | Where-Object { $_.author.login -notin $BOT_AUTHORS }).Count
+    $totalHumanPRs = ($coverage.perRepo | Where-Object { $_.repo -eq $repoLabel }).mergedHumanPRs
     Write-Host "  $($repoLabel.ToUpper()): $($repoComments.Count) comments across $repoPRs PRs (out of $totalHumanPRs human PRs)"
 }
 
@@ -369,8 +413,8 @@ foreach ($repoLabel in @("common", "msal", "broker")) {
 $replied = ($allResults | Where-Object { $_.HasReply -eq $true }).Count
 $noReply = ($allResults | Where-Object { $_.HasReply -eq $false }).Count
 Write-Host "`n--- REPLY BREAKDOWN ---" -ForegroundColor Cyan
-Write-Host "  Replied:    $replied ($([math]::Round($replied/$totalComments*100,1))%)" -ForegroundColor Green
-Write-Host "  No reply:   $noReply ($([math]::Round($noReply/$totalComments*100,1))%)" -ForegroundColor DarkGray
+Write-Host "  Replied:    $replied ($([math]::Round($replied/[Math]::Max(1,$totalComments)*100,1))%)" -ForegroundColor Green
+Write-Host "  No reply:   $noReply ($([math]::Round($noReply/[Math]::Max(1,$totalComments)*100,1))%)" -ForegroundColor DarkGray
 
 # Force-push / stale-snapshot fingerprint (reviewed commit rewritten away)
 $rewritten = ($allResults | Where-Object { $_.ReviewedCommitRewritten -eq $true }).Count

@@ -35,7 +35,9 @@ param(
     [string]$OutputDir = "$env:TEMP\copilot-review-analysis",
     [string]$StartDate = (Get-Date).AddDays(-60).ToString("yyyy-MM-dd"),
     [string]$EndDate = (Get-Date).ToString("yyyy-MM-dd"),
-    [int]$SampleSize = 8
+    [int]$SampleSize = 8,
+    [string]$AuthAppInputFile = "",
+    [switch]$SkipAuthApp
 )
 
 $ErrorActionPreference = "Continue"
@@ -69,13 +71,41 @@ $repos = @(
 
 Write-Host ""
 Write-Host "================================================================"
-Write-Host " PHASE 0 PREFLIGHT  (account: $emuAccount)"
+Write-Host " PHASE 0 PREFLIGHT  (GitHub Copilot + Foundry)"
 Write-Host " Window: $StartDate .. $EndDate   Sample: $SampleSize PRs/repo"
 Write-Host "================================================================"
 
 $audit = @()
 $hardFail = $false
 $silentZeroRisk = $false
+
+if (-not $SkipAuthApp) {
+    $authAppProbeDir = Join-Path $OutputDir "authapp-preflight"
+    try {
+        # A known Foundry-reviewed PR proves access even when the requested window is quiet.
+        & "$PSScriptRoot\analyze-authapp.ps1" -OutputDir $authAppProbeDir -StartDate "2000-01-01" `
+            -EndDate (Get-Date -Format "yyyy-MM-dd") -InputFile $AuthAppInputFile -PRNumbers @(17507268)
+        $authAppProbe = Get-Content "$authAppProbeDir\authapp_coverage.json" -Raw | ConvertFrom-Json
+        if ($authAppProbe.reviewedByAI -eq 0) { $silentZeroRisk = $true }
+        $audit += [pscustomobject]@{
+            repo = "authapp"; reviewSource = "Foundry"; platform = "Azure DevOps"
+            status = if ($authAppProbe.reviewedByAI -gt 0) { "OK" } else { "SILENT-ZERO-RISK" }
+            repoReadable = $true; prListable = $true
+            probe = "Known reviewer PR or supplied MCP export; not an in-window coverage estimate"
+            sampledPRs = $authAppProbe.mergedHumanPRs
+            sampledWithAIReview = $authAppProbe.reviewedByAI
+        }
+    } catch {
+        $hardFail = $true
+        $audit += [pscustomobject]@{
+            repo = "authapp"; reviewSource = "Foundry"; platform = "Azure DevOps"
+            status = "FAIL"; repoReadable = $false; notes = @("$_")
+        }
+        Write-Host "AuthApp preflight failed: $_" -ForegroundColor Red
+    }
+} else {
+    Write-Warning "AuthApp preflight explicitly excluded; this is a GitHub-only run."
+}
 
 foreach ($r in $repos) {
     $label = $r.Label; $slug = $r.Slug; $apiRepo = $r.ApiRepo
@@ -140,6 +170,8 @@ foreach ($r in $repos) {
 
     $audit += [PSCustomObject]@{
         repo                 = $label
+        reviewSource         = "GitHub Copilot"
+        platform             = "GitHub"
         slug                 = $slug
         status               = $status
         repoReadable         = $repoReadable
@@ -183,5 +215,5 @@ if ($silentZeroRisk) {
     Write-Host " can see its reviews there before trusting any aggregate number. Exiting non-zero." -ForegroundColor Red
     exit 3
 }
-Write-Host " PREFLIGHT PASSED: all repos readable and surfacing Copilot reviews. Safe to run Phase 1." -ForegroundColor Green
+Write-Host " PREFLIGHT PASSED: requested repos readable and surfacing attributed AI reviews. Safe to run Phase 1." -ForegroundColor Green
 exit 0
