@@ -2,20 +2,21 @@
 // Licensed under the MIT License.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import {
-    collectBuildReceiptOnDisk, formatPrBody, normalizeImplementationResponse, runCodeFeature,
+    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, runCodeFeature,
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
     ciEvidenceFromSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
 import { deliveryOutcome, pendingVerification, verificationFromGate } from "./verification.mjs";
-import { parseMarkerBlock, verificationMarkers, statusMarkers } from "./status.mjs";
+import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
 
 const task = {
     title: "Test a verified delivery", revision: "v1", workItemId: 123,
@@ -76,6 +77,136 @@ test("builder timeout, failure, and planned commands never become successful ver
         assert.match(body, /runtime acceptance is not independently attested/);
         assert.equal(parseMarkerBlock(body, verificationMarkers).local.status, "unverified");
     }
+});
+
+test("ADO creation respects the exact UTF-16 description limit and preserves required metadata", () => {
+    assert.doesNotThrow(() => buildAdoPullRequestPublicationScript("https://fixture.invalid", { description: "x".repeat(4000) }));
+    assert.throws(() => buildAdoPullRequestPublicationScript("https://fixture.invalid", { description: "x".repeat(4001) }), /4000-character limit/);
+    const target = { ...task.targets[0], repository: "authenticator" };
+    for (const summary of ["Details ".repeat(800), "\uD83D\uDD12".repeat(3000)]) {
+        const impl = implementation().targets[0];
+        impl.pr.summary = summary;
+        impl.pr.testPlan = "Execution deferred to remote CI. ".repeat(100);
+        impl.pr.rolloutAndFlag = "Default-off flight with compatibility details. ".repeat(100);
+        impl.files = Array.from({ length: 20 }, (_, i) => ({
+            path: `${"long_file_name_".repeat(15)}${i}Test.kt`, action: "create", summary: "Authored source",
+        }));
+        impl.testsAddedOrUpdated = impl.files.map((file) => file.path);
+        impl.verification = pendingVerification();
+        const body = formatPrBody(target, impl, [], 1, 123);
+        assert.ok(body.length <= 3500, `Actual UTF-16 length: ${body.length}`);
+        assert.match(body, /WiClose:/);
+        assert.match(body, /BEGIN pr-telemetry/);
+        assert.match(body, /Additional narrative omitted/);
+        assert.equal(parseMarkerBlock(body, statusMarkers).status, "published-for-observation");
+        assert.equal(parseMarkerBlock(body, verificationMarkers).local.status, "unverified");
+        assert.ok(parseMarkerBlock(body, deliveryDecisionMarkers).rollout.justification.includes("truncated"));
+    }
+});
+
+test("ADO status compaction does not silently discard human-maintained narrative", () => {
+    const humanBody = "Human-maintained details ".repeat(200);
+    assert.throws(() => fitAdoDescription(humanBody), /refusing to discard human-maintained/);
+    assert.equal(fitAdoDescription("Human-maintained details"), "Human-maintained details");
+});
+
+test("bounded ADO creation leaves space for final status, current-head CI and actual PR URL", () => {
+    const target = { ...task.targets[0], repository: "authenticator" };
+    const impl = implementation().targets[0];
+    impl.pr.summary = "Implementation details ".repeat(100);
+    impl.pr.testPlan = "Builder plan, no receipt. ".repeat(100);
+    const body = formatPrBody(target, impl, [], 1, 123);
+    const url = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/17820436";
+    const block = renderCurrentStatusBlock({
+        status: "needs-owner-decision", runId: "12345678-1234-1234-1234-123456789abc", repository: "authenticator",
+        prUrl: url, summary: "Concrete diagnostic ".repeat(80), nextAction: "Detailed next action ".repeat(30),
+    });
+    const updated = publishObserverStatus(parsePullRequestUrl(url), snapshot({
+        description: body, provider: "ado", prBuilds: [{ id: 1, status: "completed", result: "succeeded" }],
+    }), block, { exec: () => "" });
+    assert.ok(updated.length <= 4000, `Final status length: ${updated.length}`);
+    assert.equal(parseMarkerBlock(updated, verificationMarkers).ci.status, "passed");
+    assert.equal(parseMarkerBlock(updated, statusMarkers).prUrl, url);
+});
+
+test("same-session recovery hot-loads changed status, verification, workflow, and observer dependencies", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-hot-recovery-"));
+    try {
+        for (const name of ["workflow.mjs", "observer.mjs", "status.mjs", "verification.mjs"]) {
+            copyFileSync(new URL(name, import.meta.url), path.join(root, name));
+        }
+        const workflowUrl = pathToFileURL(path.join(root, "workflow.mjs"));
+        const observerUrl = pathToFileURL(path.join(root, "observer.mjs"));
+        await import(workflowUrl.href);
+        await import(observerUrl.href);
+        const replaceSource = (name, transform) => {
+            const file = path.join(root, name);
+            writeFileSync(file, transform(readFileSync(file, "utf8")));
+            const timestamp = new Date(Date.now() + 2000);
+            utimesSync(file, timestamp, timestamp);
+            return timestamp.getTime();
+        };
+        replaceSource("status.mjs", (source) => `${source}\nexport const newRecoveryExport = "fresh-status";\n`);
+        replaceSource("verification.mjs", (source) => source.replace("No successful verification receipt is available.", "fresh-verification"));
+        const workflowVersion = replaceSource("workflow.mjs", (source) =>
+            source.replace("    fitAdoDescription,", "    fitAdoDescription, newRecoveryExport,") +
+            '\nexport const recoveryProbe = { status: newRecoveryExport, verification: pendingVerification().local.evidence[0] };\n');
+        const observerVersion = replaceSource("observer.mjs", (source) =>
+            source.replace("    BUILDER_AGENT,", "    BUILDER_AGENT, recoveryProbe,") +
+            "\nexport const observerRecoveryProbe = recoveryProbe;\n");
+        const freshWorkflow = await import(`${workflowUrl.href}?v=${workflowVersion}`);
+        const freshObserver = await import(`${observerUrl.href}?v=${observerVersion}`);
+        assert.deepEqual(freshWorkflow.recoveryProbe, { status: "fresh-status", verification: "fresh-verification" });
+        assert.deepEqual(freshObserver.observerRecoveryProbe, freshWorkflow.recoveryProbe);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the actual corrected-Detekt remote-CI handoff is recognized without claiming a local pass", () => {
+    const raw = {
+        verdict: "pass",
+        summary: "Source implementation handoff, not tests passed.",
+        testPlan: "Actual result: exit 1; BUILD FAILED in 9m 49s. Analysis failed with 1 weighted issues. Corrected the source expression; no local Gradle retry was performed. Local verification was short-circuited to remote CI after that correction. Targeted compilation/tests/corrected Detekt remain unverified.",
+        evidence: [],
+    };
+    assert.equal(isBuilderShortCircuitedToCi(raw), true);
+    assert.equal(isBuilderShortCircuitedToCi({
+        ...raw, testPlan: "Analysis failed with 1 weighted issues. Unresolved reference: Foo. Deferred to remote CI.",
+    }), false);
+});
+
+test("explicit builder handoff to remote CI does not cause a duplicate deterministic local attempt", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "no-duplicate-gradle-"));
+    try {
+        const repo = path.join(root, "common");
+        mkdirSync(path.join(repo, ".git"), { recursive: true });
+        for (const [file, content] of [["Foo.kt", "class Foo\n"], ["FooTest.kt", "class FooTest\n"], ["gradlew.bat", "@echo off\n"]]) {
+            writeFileSync(path.join(repo, file), content);
+        }
+        const scopedTask = structuredClone(task);
+        scopedTask.targets[0].verificationCommands = ["./gradlew :common4j:test"];
+        const results = [
+            { approvalVerification: { verified: true, revision: "v1", reference: "approval", rationale: "Approved" },
+                references: [{ id: "E1", repository: "common", revision: "commit", path: "Foo.kt", locator: "Foo" }],
+                facts: [{ statement: "Exists", referenceIds: ["E1"] }], conflicts: [], assumptions: [], unknowns: [], blockingUnknowns: [] },
+            { verdict: "pass", summary: "Authored source and tests; local verification was short-circuited to remote CI.",
+                evidence: ["Foo.kt", "FooTest.kt"], testPlan: "Single Gradle attempt failed. Corrected source; no local retry. Verification deferred to remote CI.",
+                prTitle: "Fix Foo", prSummary: "Source fix", rolloutAndFlag: "Default-off" },
+            passedReview,
+        ];
+        const context = ctx(results);
+        context.args = { task: scopedTask, options: { workspaceRoot: root, applyToWorkspace: true, slimSchemas: true } };
+        let gradleCalls = 0;
+        const result = await runCodeFeature(context, {
+            exec: (command, args) => {
+                if (/gradlew/i.test(command)) gradleCalls++;
+                if (args.includes("--porcelain")) return " M Foo.kt\n?? FooTest.kt";
+                return "";
+            },
+        });
+        assert.equal(gradleCalls, 0);
+        assert.equal(result.verification[0].local.status, "deferred");
+        assert.ok(!result.reasons.some((reason) => /unit tests.*passed/i.test(reason)));
+    } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("compile directories alone do not attest successful tests", () => {

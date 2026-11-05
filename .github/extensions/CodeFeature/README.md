@@ -77,6 +77,14 @@ Given an approved coding task or PBI specification:
   not reported as executed tests. The compact verification marker carries actual states.
 - The observer updates the PR status/verification markers from its final snapshot, guarding
   against a concurrently changed head or description. Write failures are explicit.
+- ADO creation descriptions are budgeted to 3,500 UTF-16 characters, preserving required
+  work-item/telemetry and JSON status markers and reserving room for final status updates.
+  Oversized generated narrative is explicitly summarized with a receipt reference. Observer
+  updates compact owned JSON but refuse to discard human-maintained narrative above the
+  hard 4,000-character API limit.
+- Same-run recovery refreshes the workflow's status/verification/observer dependencies by
+  source revision, not just its entry module. Deferred-to-remote-CI builder handoffs do not
+  trigger another local Gradle attempt or imply a local pass.
 - Pure CI waiting and concrete failed tasks are handled deterministically before invoking
   a classifier. At most two tactical repairs occur; exhaustion retains exact remaining
   diagnostics and a continuation rather than an empty success-shaped packet.

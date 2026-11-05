@@ -3,10 +3,14 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
+const revisionedModuleUrl = (name) => {
+    const url = new URL(name, import.meta.url);
+    return `${url.href}?v=${statSync(url).mtimeMs}`;
+};
+const {
     currentStatusOwners,
     currentStatuses,
     renderCurrentStatusBlock,
@@ -14,11 +18,12 @@ import {
     renderDeliveryDecisionBlock,
     renderVerificationBlock,
     deliveryDecisionMarkers,
+    fitAdoDescription,
     verificationMarkers,
     statusMarkers,
     upsertMarkerBlock,
-} from "./status.mjs";
-import {
+} = await import(revisionedModuleUrl("./status.mjs"));
+const {
     BUILDER_AGENT,
     REVIEWER_AGENT,
     buildNormalizedProcessEnv,
@@ -32,7 +37,7 @@ import {
     slimResultSchema,
     slimReviewSchema,
     snapshotWorktree,
-} from "./workflow.mjs";
+} = await import(revisionedModuleUrl("./workflow.mjs"));
 
 function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
     try {
@@ -1009,6 +1014,7 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
         }));
     }
     if (parsedPr.provider === "ado") {
+        body = fitAdoDescription(body);
         const base = `${parsedPr.orgUrl}/${encodeURIComponent(parsedPr.project)}/_apis/git/repositories/${encodeURIComponent(parsedPr.repoName)}/pullRequests/${parsedPr.prNumber}?api-version=7.0`;
         const b64 = (value) => Buffer.from(value, "utf8").toString("base64");
         const script = [

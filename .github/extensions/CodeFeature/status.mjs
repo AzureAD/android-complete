@@ -35,6 +35,48 @@ export const verificationMarkers = Object.freeze({
     end: "END code-feature-verification -->",
 });
 
+function brief(value, maximum = 250) {
+    const text = String(value ?? "");
+    if (text.length <= maximum) return text;
+    return `${text.slice(0, maximum - 40)} [truncated; see workflow receipt]`;
+}
+
+export function fitAdoDescription(body, { maximum = 4000, truncateNarrative = false } = {}) {
+    if (body.length <= maximum) return body;
+    let narrative = body;
+    const blocks = [];
+    for (const markers of [
+        deliveryDecisionMarkers, verificationMarkers, statusMarkers,
+        { begin: "<!-- BEGIN pr-telemetry -->", end: "<!-- END pr-telemetry -->" },
+    ]) {
+        const start = narrative.lastIndexOf(markers.begin);
+        const end = narrative.indexOf(markers.end, start);
+        if (start < 0 || end < start) continue;
+        const block = narrative.slice(start, end + markers.end.length);
+        const value = block.slice(markers.begin.length, block.length - markers.end.length).trim();
+        let compact = block;
+        if (markers.begin !== "<!-- BEGIN pr-telemetry -->") {
+            compact = `${markers.begin}\n${JSON.stringify(JSON.parse(value))}\n${markers.end}`;
+        }
+        blocks.push(compact);
+        narrative = `${narrative.slice(0, start)}${narrative.slice(end + markers.end.length)}`;
+    }
+    const compact = [narrative.trim(), ...blocks].join("\n\n");
+    if (compact.length <= maximum) return compact;
+    if (!truncateNarrative) throw new Error("ADO PR description exceeds 4000 characters; refusing to discard human-maintained text.");
+    const firstLine = narrative.split(/\r?\n/)[0];
+    narrative = narrative.slice(firstLine.length).trim();
+    const workItemLines = [...narrative.matchAll(/^WiClose:.*$/gm)].map((match) => match[0]);
+    narrative = narrative.replace(/^WiClose:.*$/gm, "").trim();
+    const notice = "_Additional narrative omitted for ADO's description limit; see the full workflow receipt._";
+    const suffix = [notice, ...workItemLines, ...blocks].join("\n\n");
+    const room = maximum - firstLine.length - suffix.length - 4;
+    if (room < 0) throw new Error("Required PR metadata exceeds the ADO description limit.");
+    let excerpt = narrative.slice(0, room);
+    if (/[\uD800-\uDBFF]$/.test(excerpt)) excerpt = excerpt.slice(0, -1);
+    return [firstLine, excerpt, suffix].join("\n\n");
+}
+
 export function renderVerificationBlock(verification) {
     const receipt = {
         local: { status: verification?.local?.status || "unverified" },
@@ -58,11 +100,11 @@ export function renderDeliveryDecisionBlock({
             {
                 rollout: {
                     tag: rolloutTag,
-                    justification: rolloutJustification,
+                    justification: brief(rolloutJustification),
                 },
                 testCoverage: {
                     tag: testCoverageTag,
-                    justification: testCoverageJustification,
+                    justification: brief(testCoverageJustification),
                 },
             },
             null,
@@ -90,8 +132,8 @@ export function renderCurrentStatusBlock({
                 runId,
                 repository,
                 prUrl,
-                summary,
-                nextAction,
+                summary: brief(summary, 500),
+                nextAction: brief(nextAction),
             },
             null,
             2,

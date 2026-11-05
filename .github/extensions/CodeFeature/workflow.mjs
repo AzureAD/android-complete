@@ -6,19 +6,24 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runPrObserver } from "./observer.mjs";
-import { deliveryOutcome, pendingVerification, verificationFromGate, verificationSummary } from "./verification.mjs";
-import {
+const revisionedModuleUrl = (name) => {
+    const url = new URL(name, import.meta.url);
+    return `${url.href}?v=${statSync(url).mtimeMs}`;
+};
+const { deliveryOutcome, pendingVerification, verificationFromGate, verificationSummary } =
+    await import(revisionedModuleUrl("./verification.mjs"));
+const {
     currentStatusOwners,
     currentStatuses,
     deliveryDecisionMarkers,
+    fitAdoDescription,
     parseMarkerBlock,
     renderCurrentStatusBlock,
     renderDeliveryDecisionBlock,
     renderVerificationBlock,
     statusMarkers,
     upsertMarkerBlock,
-} from "./status.mjs";
+} = await import(revisionedModuleUrl("./status.mjs"));
 
 const text = { type: "string" };
 const texts = { type: "array", items: text };
@@ -1086,8 +1091,9 @@ export function isBuilderShortCircuitedToCi(rawBuilderOutput) {
     ]
         .filter(nonempty)
         .join("\n");
-    if (isDefinitiveCodeOrTestFailure(combined)) return false;
-    return /short-circuited.*to CI|deferred to CI|pending CI|stopped (?:approaching|near|after) \d+\s*minutes|compilation.*pending CI|(?:gradle|local verification).*(?:timed out|timeout|budget)|(?:HTTP|status code).*401/i.test(
+    const correctionReported = /(?:corrected|fixed|resolved).*(?:source|test|finding|expression)|(?:source|test|finding|expression).*(?:corrected|fixed|resolved)/i.test(combined);
+    if (isDefinitiveCodeOrTestFailure(combined) && !correctionReported) return false;
+    return /short-circuited.*to (?:remote )?CI|deferred to (?:remote )?CI|pending CI|stopped (?:approaching|near|after) \d+\s*minutes|compilation.*pending CI|(?:gradle|local verification).*(?:timed out|timeout|budget)|(?:HTTP|status code).*401/i.test(
         combined,
     );
 }
@@ -2511,7 +2517,7 @@ export function formatPrBody(
         statusBlock,
     ].join("\n");
 
-    if (!isAdoTarget || fullBody.length <= 3900) {
+    if (!isAdoTarget || fullBody.length <= 3500) {
         return fullBody;
     }
 
@@ -2530,7 +2536,7 @@ export function formatPrBody(
         )
         .join("\n");
 
-    return [
+    const compactBody = [
         abLinks.join(" · "),
         "",
         "## Summary",
@@ -2560,6 +2566,7 @@ export function formatPrBody(
         "",
         statusBlock,
     ].join("\n");
+    return fitAdoDescription(compactBody, { maximum: 3500, truncateNarrative: true });
 }
 
 export function discoverChangedFilesFromGit(
@@ -3376,6 +3383,9 @@ export function buildBranchName(target, branchPrefix = "") {
 }
 
 export function buildAdoPullRequestPublicationScript(apiBase, payload) {
+    if (typeof payload?.description === "string" && payload.description.length > 4000) {
+        throw new Error("ADO PR description exceeds the 4000-character limit before publication.");
+    }
     const input = Buffer.from(JSON.stringify({ apiBase, payload }), "utf8").toString("base64");
     return [
         "$ErrorActionPreference = 'Stop'",
@@ -4531,10 +4541,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                         const hasOnDiskEdits = manageWorkspace &&
                             (existsSync(path.join(repoRoot, "gradlew.bat")) || existsSync(path.join(repoRoot, "PhoneFactor", "gradlew.bat"))) &&
                             targetImpl.files.some((f) => !nonempty(f.content) && existsSync(path.resolve(repoRoot, f.path)));
-                        const hasVerifiedReceipt =
-                            exec !== defaultExec ||
-                            (!existsSync(path.join(repoRoot, "gradlew.bat")) && !existsSync(path.join(repoRoot, "PhoneFactor", "gradlew.bat"))) ||
-                            hasVerifiedBuildReceiptOnDisk(repoRoot, latestBuildStartedAtMs);
+                        const hasVerifiedReceipt = hasVerifiedBuildReceiptOnDisk(repoRoot, latestBuildStartedAtMs);
                         const builderShortCircuitedToCi =
                             useSlimSchemas &&
                             isBuilderShortCircuitedToCi(latestRawBuilderOutput) &&
@@ -4742,6 +4749,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                             ? rawOptions.observePullRequests === true
                             : (effectiveCreatePrs && isInteractiveSession);
                     if (shouldObservePrs) {
+                        const { runPrObserver } = await import(revisionedModuleUrl("./observer.mjs"));
                         phase("Observe PR and repair CI/review findings");
                         for (const prEntry of pullRequests) {
                             if (!nonempty(prEntry?.url)) continue;
