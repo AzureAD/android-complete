@@ -101,7 +101,10 @@ crash-window duplicates remain possible. No cross-session runs or credentials ar
 
 Use the read-only `code_feature_workflow_status` tool for an existing run's current phase,
 recent progress, accounting, or settled result, rather than inferring status from a background
-agent list or parent-session idleness. It does not resume/restart the run.
+agent list or parent-session idleness. It exposes SDK `consumed` units without inventing a
+credit conversion, direct agent counts, and a separately labeled `lastObservedPhase` when
+only durable progress is available. That fallback is not a live-phase assertion. The tool
+does not resume/restart the run.
 
 `code-feature` supports **three everyday input modes** (plus pre-structured `task`/`stage0` objects):
 

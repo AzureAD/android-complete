@@ -144,7 +144,7 @@ export function formatWorkflowCompletion(name, run, progress = []) {
 export function createWorkflowStatusTool(getSession) {
     return {
         name: "code_feature_workflow_status",
-        description: "Read a code-feature or pr-observer run's current phase, direct agents, resumability, latest durable progress and settled deliveryStatus (including awaiting-human-review or ci-failed). Use for a status request, not a polling loop. Does not start, resume, pause or cancel work.",
+        description: "Read a code-feature or pr-observer run's current or last-observed phase, raw consumption, direct-agent counts, resumability, latest durable progress and settled deliveryStatus (including awaiting-human-review or ci-failed). Use for a status request, not a polling loop. Does not start, resume, pause or cancel work.",
         parameters: {
             type: "object",
             properties: {
@@ -165,6 +165,12 @@ export function createWorkflowStatusTool(getSession) {
             const progress = await session.workflow.getRunProgress(args.runId, { limit });
             const outcome = settledStatuses.has(detail.status) ? await session.workflow.getRun(args.runId) : null;
             const result = outcome?.status === "completed" ? outcome.result : null;
+            const recentRecords = [...array(progress.records)].reverse();
+            const lastPhaseRecord = recentRecords.find((record) =>
+                typeof record?.phaseId === "string" && record.phaseId.trim());
+            const observedPhase = array(detail.phases).find((phase) => phase.id === lastPhaseRecord?.phaseId);
+            const phaseMarker = recentRecords.find((record) =>
+                record.kind === "phase" && record.phaseId === lastPhaseRecord?.phaseId);
             return JSON.stringify({
                 runId: detail.runId,
                 workflowName: detail.workflowName,
@@ -183,12 +189,24 @@ export function createWorkflowStatusTool(getSession) {
                     ? formatWorkflowCompletion(detail.workflowName, outcome, array(progress.records)) : null,
                 revision: detail.revision,
                 observedAt: detail.observedAt,
-                currentPhase: detail.currentPhase,
+                consumed: detail.consumed ?? null,
+                liveAgentCount: detail.liveAgentCount ?? null,
+                totalSpawnedAgentCount: detail.totalSpawnedAgentCount ?? null,
+                currentPhase: detail.currentPhase ?? null,
+                lastObservedPhase: detail.currentPhase == null && lastPhaseRecord ? {
+                    id: lastPhaseRecord.phaseId,
+                    title: observedPhase?.title ?? (phaseMarker ? text(phaseMarker.text) : null),
+                    source: "durable-progress",
+                    isLive: false,
+                    seq: lastPhaseRecord.seq,
+                    attempt: lastPhaseRecord.attempt,
+                    recordedAt: lastPhaseRecord.recordedAt,
+                } : null,
                 canResume: detail.canResume,
                 agents: array(detail.agents).slice(0, 20),
                 omittedAgents: Math.max(0, array(detail.agents).length - 20),
                 progress,
-                note: "Read-only snapshot. Running is not completed; completed is not proof of verification success. Phase, progress and outcome reads are not an atomic snapshot.",
+                note: "Read-only snapshot. Running is not completed; completed is not proof of verification success. Phase, progress and outcome reads are not an atomic snapshot. consumed uses raw SDK units: activeMs in milliseconds, subagents as a count, nanoAiu in nano-AIU (not converted credits). liveAgentCount and totalSpawnedAgentCount describe direct workflow agents. lastObservedPhase is historical within the returned progress window, not a live/current phase.",
             });
         },
     };

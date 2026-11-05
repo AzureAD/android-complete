@@ -600,8 +600,110 @@ test("read-only status tool exposes current phase and latest progress while a wo
     assert.equal(result.progress.records[0].text, "Starting implementation.");
     assert.equal(result.agents[0].label, "Implementation");
     assert.equal(result.canResume, false);
+    assert.equal(result.lastObservedPhase, null, "A reported current phase must not be replaced by historical progress");
+    assert.equal(result.consumed, null, "Missing accounting must not be fabricated as zero usage");
+    assert.equal(result.liveAgentCount, null);
+    assert.equal(result.totalSpawnedAgentCount, null);
     assert.match(result.note, /not an atomic snapshot/);
     assert.deepEqual(calls, [["detail", "run-active"], ["progress", "run-active", { limit: 5 }]]);
+    assert.equal(session.messages.length, 0);
+});
+
+test("SDK-shaped running detail exposes raw usage/direct counts and a historical phase fallback from bounded progress", async () => {
+    const session = new FakeSession();
+    const calls = [];
+    const progress = {
+        records: [
+            { seq: 10, attempt: 1, phaseId: "p0", recordedAt: 1000, kind: "phase", text: "Gather evidence" },
+            { seq: 11, attempt: 1, phaseId: "p0", recordedAt: 1100, kind: "log", text: "Starting code-evidence." },
+            { seq: 12, attempt: 1, phaseId: null, recordedAt: 1200, kind: "log", text: "Status snapshot persisted." },
+        ],
+        oldestSeq: 10,
+        newestSeq: 12,
+        hasMoreOlder: true,
+        hasMoreNewer: false,
+        revision: 24,
+    };
+    const detail = {
+        runId: "run-active",
+        workflowName: "code-feature",
+        description: "Implementation workflow",
+        status: "running",
+        revision: 23,
+        createdAt: 100,
+        startedAt: 200,
+        updatedAt: 1200,
+        completedAt: null,
+        currentPhase: null,
+        declaredPhaseCount: 3,
+        liveAgentCount: 1,
+        totalSpawnedAgentCount: 4,
+        consumed: { activeMs: 98000, subagents: 7, nanoAiu: 123456789 },
+        declaredLimits: {},
+        approved: null,
+        observedAt: 1300,
+        activeSegmentStartedAt: 200,
+        terminal: null,
+        canResume: false,
+        phases: [],
+        agents: [{
+            agentId: "evidence-1",
+            toolCallId: "tool-1",
+            runId: "run-active",
+            phaseId: "p0",
+            label: "Evidence",
+            agentType: "code-evidence",
+            status: "running",
+            activeMs: 1000,
+        }],
+        progress,
+    };
+    session.workflow.getRunDetail = async (id) => { calls.push(["detail", id]); return detail; };
+    session.workflow.getRunProgress = async (id, options) => { calls.push(["progress", id, options]); return progress; };
+    session.workflow.getRun = async () => { throw new Error("Running envelopes have no accounting and must not be read for this status"); };
+    const result = JSON.parse(await createWorkflowStatusTool(() => session).handler({ runId: "run-active", progressLimit: 3 }));
+    assert.equal(result.status, "running");
+    assert.equal(result.currentPhase, null);
+    assert.deepEqual(result.consumed, detail.consumed);
+    assert.equal(result.liveAgentCount, 1);
+    assert.equal(result.totalSpawnedAgentCount, 4);
+    assert.deepEqual(result.lastObservedPhase, {
+        id: "p0",
+        title: "Gather evidence",
+        source: "durable-progress",
+        isLive: false,
+        seq: 11,
+        attempt: 1,
+        recordedAt: 1100,
+    });
+    assert.equal(result.deliveryStatus, null);
+    assert.equal(result.settledSummary, null);
+    assert.match(result.note, /nano-AIU \(not converted credits\)/);
+    assert.match(result.note, /historical within the returned progress window, not a live\/current phase/);
+    assert.deepEqual(calls, [["detail", "run-active"], ["progress", "run-active", { limit: 3 }]]);
+    assert.equal(session.messages.length, 0);
+});
+
+test("historical phase fallback uses phase metadata without guessing from ordinary log prose and stays null without phase evidence", async () => {
+    const session = new FakeSession();
+    const detail = {
+        runId: "run-active", workflowName: "code-feature", status: "running", currentPhase: null,
+        phases: [{ id: "p0", title: "Gather evidence" }],
+    };
+    let records = [{ seq: 11, attempt: 1, phaseId: "p0", recordedAt: 1100, kind: "log", text: "Some ordinary log text" }];
+    session.workflow.getRunDetail = async () => detail;
+    session.workflow.getRunProgress = async () => ({ records });
+    const tool = createWorkflowStatusTool(() => session);
+    let result = JSON.parse(await tool.handler({ runId: "run-active" }));
+    assert.equal(result.lastObservedPhase.title, "Gather evidence");
+    detail.phases = [];
+    result = JSON.parse(await tool.handler({ runId: "run-active" }));
+    assert.equal(result.lastObservedPhase.id, "p0");
+    assert.equal(result.lastObservedPhase.title, null, "Ordinary log prose is not a phase title");
+    records = [{ seq: 12, attempt: 1, phaseId: null, recordedAt: 1200, kind: "log", text: "No phase recorded." }];
+    result = JSON.parse(await tool.handler({ runId: "run-active" }));
+    assert.equal(result.lastObservedPhase, null);
+    assert.equal(result.currentPhase, null);
     assert.equal(session.messages.length, 0);
 });
 
