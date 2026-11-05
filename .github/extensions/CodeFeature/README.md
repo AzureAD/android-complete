@@ -190,6 +190,9 @@ admission from actual transcript delivery. The same at-least-once crash-window c
 outcomes. Progress-storage failure is surfaced but cannot hide a terminal blocker/result.
 Caller instructions require a short visible chat update for each receipt, without starting
 a status-poll loop or restarting the still-running workflow.
+The registered-extension integration test runs the real `code-feature` handler with
+synthetic model outputs and no progress invalidation events, verifying that all phase
+notices are admitted before settlement and that a compatible installed JDK needs no prompt.
 
 The ignored outbox is scoped by `SHA-256(session.sessionId)` under
 `.github/local-context/code-feature/completion/`; it catches up settled runs after extension
