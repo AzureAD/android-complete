@@ -4,6 +4,7 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { withWorkflowActivity } from "./activity.mjs";
 import { createWorkflowCompletionDelivery, createWorkflowStatusTool } from "./completion.mjs";
 import { observerCustomAgent, observerWorkflowDefinition } from "./observer.mjs";
 import { customAgents, workflowDefinition } from "./workflow.mjs";
@@ -41,11 +42,13 @@ const session = await joinSession({
             ...workflowDefinition,
             run: async (ctx) => runExclusively("code-feature", async () => {
                 completionDelivery?.track(ctx.runId, "code-feature");
-                const { mtimeMs } = statSync(workflowUrl);
-                const latest = await import(`${workflowUrl.href}?v=${mtimeMs}`);
-                return latest.runCodeFeature({
-                    ...ctx,
-                    onMilestone: (receipt) => milestoneHandoff(ctx.runId, "code-feature", receipt),
+                return withWorkflowActivity(session, "code-feature", ctx, async () => {
+                    const { mtimeMs } = statSync(workflowUrl);
+                    const latest = await import(`${workflowUrl.href}?v=${mtimeMs}`);
+                    return latest.runCodeFeature({
+                        ...ctx,
+                        onMilestone: (receipt) => milestoneHandoff(ctx.runId, "code-feature", receipt),
+                    });
                 });
             }),
         }),
@@ -53,11 +56,13 @@ const session = await joinSession({
             ...observerWorkflowDefinition,
             run: async (ctx) => runExclusively("pr-observer", async () => {
                 completionDelivery?.track(ctx.runId, "pr-observer");
-                const { mtimeMs } = statSync(observerUrl);
-                const latest = await import(`${observerUrl.href}?v=${mtimeMs}`);
-                return latest.runPrObserver({
-                    ...ctx,
-                    onMilestone: (receipt) => milestoneHandoff(ctx.runId, "pr-observer", receipt),
+                return withWorkflowActivity(session, "pr-observer", ctx, async () => {
+                    const { mtimeMs } = statSync(observerUrl);
+                    const latest = await import(`${observerUrl.href}?v=${mtimeMs}`);
+                    return latest.runPrObserver({
+                        ...ctx,
+                        onMilestone: (receipt) => milestoneHandoff(ctx.runId, "pr-observer", receipt),
+                    });
                 });
             }),
         }),

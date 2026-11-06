@@ -159,6 +159,35 @@ watcher. It sends a system-sourced, immediate follow-up to the owning session af
 settles, with actual delivery/verification status, PR links, and remaining actions. A
 completed workflow is never described as green solely because its body returned.
 
+### Runtime activity while chat is idle
+
+Each registered `code-feature` or `pr-observer` invocation registers its real executing
+body through the SDK's public `session.rpc.tasks.register` client-task API before doing
+work. The task remains `running` through child-agent work, local commands, and agent-free
+CI waits. This is background-work accounting, not a model agent, chat heartbeat, shell
+keepalive, app setting change, or workflow budget increase. The caller can finish its
+chat turn while this work remains visible to the runtime.
+
+`activity.mjs` scopes the registration to that invocation. Return, error, or cooperative
+pause/cancellation sends a terminal `session.rpc.tasks.update`. Task completion means
+only that the execution scope ended; the workflow's actual delivery/CI/human-review
+status remains authoritative. Cancel through the workflow controls, not the non-cancellable
+activity mirror. A resumed workflow registers a new invocation task; it never reopens an
+old completed/orphaned task or resets its workflow's repair allowance.
+
+If these SDK methods are unavailable or registration fails, the workflow fails explicitly
+before entering its body rather than silently using an untracked CI wait. A failed terminal
+update is reported without masking an existing pause/cancellation exception. Owner disconnects
+are represented by the runtime as orphaned tasks; this does not survive app exit or make
+disconnected work appear active. The workflow's durable result is still the recovery authority.
+
+The observed failure on desktop app 1.1.34 was `idle_cli_reap_check` unloading both
+CI-observing sessions roughly ten minutes after their final chat turns. Explicit background
+task accounting addresses that idle classification in the extension we own. It does not
+patch the app's workflow panel or guarantee against other process/host failures. Already-loaded
+extensions need a fresh session/reload before using this code; do not change or restart an
+active run to retrofit it.
+
 ### Phase and milestone updates in chat
 
 The same owning-session delivery path now relays explicit durable milestone receipts
@@ -391,5 +420,5 @@ Run from the repository root (Node.js 18 or newer):
 ```powershell
 node --check .github\extensions\CodeFeature\extension.mjs
 node --check .github\extensions\CodeFeature\workflow.mjs
-node --test .github\extensions\CodeFeature\workflow.test.mjs
+node --test .github\extensions\CodeFeature\*.test.mjs
 ```

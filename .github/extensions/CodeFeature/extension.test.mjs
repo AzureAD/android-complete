@@ -45,12 +45,27 @@ const logs = [];
 const messages = [];
 let returned = false;
 let uiQuestions = 0;
+let activityStatus = null;
+const activityCalls = [];
 const session = {
     sessionId: "extension-registration-fixture",
+    rpc: {tasks: {
+        register: async args => {
+            activityCalls.push(["register", args]);
+            activityStatus = "running";
+            return {task:{id:"native-activity",sequence:0,status:"running"}};
+        },
+        update: async args => {
+            activityCalls.push(["update", args]);
+            activityStatus = args.update.kind;
+            return {task:{id:"native-activity",sequence:args.sequence,status:activityStatus}};
+        },
+    }},
     ui: {elicitation: async () => {uiQuestions++; throw new Error("Compatible installed JDK must not prompt");}},
     on: () => () => {}, // The extension receives NO ephemeral workflow progress events.
     send: async (message) => {
         assert.equal(returned, false, "Phase updates must be admitted before workflow settlement");
+        assert.equal(activityStatus, "running", "Live milestones must stay inside the tracked execution scope");
         messages.push(message);
         return "message-" + messages.length;
     },
@@ -107,6 +122,7 @@ const ctx = {
         return journal.get(key);
     },
     agent:async()=>{
+        assert.equal(activityStatus,"running");
         assert.ok(results.length,"Unexpected model callback");
         return results.shift();
     },
@@ -123,6 +139,12 @@ assert.ok(messages[0].prompt.includes(jdk));
 assert.ok(messages.at(-1).prompt.includes("Pull request packet prepared"));
 assert.ok(messages.some(message=>message.prompt.includes("Local verification: common")&&message.prompt.includes("deferred")));
 assert.equal(results.length,0);
+assert.equal(activityStatus,"completed");
+assert.deepEqual(activityCalls.map(([name])=>name),["register","update"]);
+const observer = globalThis.fixtureConfig.workflows.find(item => item.meta.name === "pr-observer");
+await observer.run({runId:"observer-fixture",args:{prUrl:"invalid"},log:()=>{}});
+assert.deepEqual(activityCalls.map(([name])=>name),["register","update","register","update"]);
+assert.equal(activityStatus,"completed");
 console.log(JSON.stringify({milestones:messages.length,jdkQuestions:uiQuestions,globalJavaHomeUnchanged:true,deliveryStatus:result.deliveryStatus}));
 `;
         const file = path.join(root, "registration.mjs");

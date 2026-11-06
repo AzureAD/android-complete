@@ -71,6 +71,10 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
 - After launch, end the caller turn without `Start-Sleep` or inspect-run polling loops.
   In Autopilot, use the normal task handoff tool to leave the caller idle; a launch
   acknowledgment is not a claim that implementation or validation completed.
+  The extension registers actual workflow execution as a client-owned background task,
+  including CI waits, so a quiet chat is not the same as an idle workflow. Do not add
+  chat pings, dummy shell jobs, or extra agents to keep it alive. If activity registration
+  is unsupported, report the explicit compatibility failure instead of bypassing it.
 - Relay each new `[workflow-milestone:...]` receipt as a concise visible chat update,
   including blocked/deferred verification and any PR link. Do not wait until terminal
   settlement, restart the workflow, or repeat an already-reported marker.
@@ -79,6 +83,9 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
   local/CI receipts, PR links, remaining failures/policies, and the next responsible owner.
   `completed` is not proof of tests passing or merge readiness. Never infer success from
   authored test counts, builder/reviewer verdicts, or a `GO` label.
+  A completed background-activity mirror only means that attempt's execution scope ended.
+  Use "in progress", "not started yet", or a named blocker where known rather than an
+  ambiguous "pending"; do not infer that the next phase has started from a completion receipt.
 - If paused for a prerequisite or owner decision, open an actual `ask_user` question
   immediately; do not end with only a paused-status report or silently wait for the user
   to discover the blocker. Use the recorded `pendingInput`/question data, ask one question
