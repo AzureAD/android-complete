@@ -458,12 +458,19 @@ export function createWorkflowCompletionDelivery(session, {
         if (!workflowNames.has(names.get(runId))) return;
         const run = await session.workflow.getRun(runId);
         if (disposed) return;
+        let milestoneTimer;
         try {
-            await deliverMilestones(runId);
+            await Promise.race([
+                deliverMilestones(runId),
+                new Promise((_resolve, reject) => {
+                    milestoneTimer = setTimeout(() => reject(new Error(`Run ${runId} milestone delivery is still pending; its durable receipts and in-flight send are retained. Outcome observation and terminal delivery will continue independently.`)), admissionTimeoutMs);
+                }),
+            ]);
         } catch (error) {
-            if (!settledStatuses.has(run.status)) throw error;
-            // Progress delivery failure must not hide a terminal blocker/result.
+            // A stuck milestone send must not strand observation of later settlement.
             failed(error);
+        } finally {
+            clearTimeout(milestoneTimer);
         }
         if (disposed) return;
         if (!settledStatuses.has(run.status)) {
@@ -520,11 +527,18 @@ export function createWorkflowCompletionDelivery(session, {
         const worker = { dirty: true };
         workers.set(runId, worker);
         worker.promise = (async () => {
-            do {
-                worker.dirty = false;
-                await inspect(runId);
-            } while (worker.dirty && !disposed);
-        })().catch(failed).finally(() => workers.delete(runId));
+            try {
+                do {
+                    worker.dirty = false;
+                    await inspect(runId);
+                } while (worker.dirty && !disposed);
+                // Remove with the final dirty check, before resolving any joiners.
+                workers.delete(runId);
+            } catch (error) {
+                workers.delete(runId);
+                failed(error);
+            }
+        })();
         return worker.promise;
     }
 

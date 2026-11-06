@@ -150,6 +150,9 @@ Given an approved coding task or PBI specification:
 - Continuations carry the remaining repair allowance, including an explicit zero; they
   never silently restart two repair slots. An observer error with unknown allowance
   hands off observation-only work until its budget is verified.
+- Mixed Gradle commands retain separate deferred receipts for lint and connected-device
+  tasks removed from local execution. Successful compilation of the remaining tasks is
+  partial verification (`deferred`), not a local pass for the original request.
 
 ### Owning-session completion delivery
 
@@ -219,11 +222,18 @@ acknowledged milestones. Per-message recorded/enqueued/admitted timestamps, retu
 message ID, and independently observed system-message timestamp distinguish queue
 admission from actual transcript delivery. The same at-least-once crash-window caveat applies as to final
 outcomes. Progress-storage failure is surfaced but cannot hide a terminal blocker/result.
+Milestone catch-up has a bounded admission wait so an unresolved send cannot prevent
+observing settlement or persisting/sending a separate terminal outcome. The original
+in-flight milestone send remains singular and its pending receipt is retained; a terminal
+notice can therefore arrive before that delayed milestone. Worker retirement is atomic
+with its final pending/dirty check so a racing settlement cannot join a finished worker.
 Caller instructions require a short visible chat update for each receipt, without starting
 a status-poll loop or restarting the still-running workflow.
 The registered-extension integration test runs the real `code-feature` handler with
 synthetic model outputs and no progress invalidation events, verifying that all phase
 notices are admitted before settlement and that a compatible installed JDK needs no prompt.
+The same integration path verifies that attached supervision receives direct milestones
+even when completion-delivery initialization fails because the outbox cannot be read.
 
 The ignored outbox is scoped by `SHA-256(session.sessionId)` under
 `.github/local-context/code-feature/completion/`; it catches up settled runs after extension

@@ -971,8 +971,7 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
     const args = [];
     const filteredArgs = [];
     let taskCount = 0;
-    let connectedTaskCount = 0;
-    let deferredLintTaskCount = 0;
+    const deferredTasks = [];
     for (let i = 0; i < rest.length; i++) {
         const arg = rest[i];
         if (!nonempty(arg)) return null;
@@ -1013,12 +1012,12 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
             return null;
         }
         if (CONNECTED_DEVICE_GRADLE_TASK_PATTERN.test(arg)) {
-            connectedTaskCount++;
+            deferredTasks.push({ task: arg, reason: "Connected Android device/emulator tests run in CI pipelines rather than locally." });
             args.push(arg);
             continue;
         }
         if (HEAVY_CI_LINT_GRADLE_TASK_PATTERN.test(arg)) {
-            deferredLintTaskCount++;
+            deferredTasks.push({ task: arg, reason: "Full Android Lint variant tasks run in dedicated CI jobs rather than blocking local gate timeouts." });
             args.push(arg);
             continue;
         }
@@ -1030,20 +1029,13 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
         taskCount++;
     }
 
-    if ((connectedTaskCount > 0 || deferredLintTaskCount > 0) && taskCount === 0) {
-        const reasons = [];
-        if (connectedTaskCount > 0) {
-            reasons.push("Connected Android device/emulator tests run in CI pipelines rather than locally.");
-        }
-        if (deferredLintTaskCount > 0) {
-            reasons.push("Full Android Lint variant tasks run in dedicated CI jobs rather than blocking local gate timeouts.");
-        }
+    if (deferredTasks.length > 0 && taskCount === 0) {
         return {
             command: [executable, ...args].join(" "),
             executable,
             args,
             deferredToCi: true,
-            deferralReason: reasons.join(" "),
+            deferralReason: [...new Set(deferredTasks.map((entry) => entry.reason))].join(" "),
         };
     }
 
@@ -1052,6 +1044,7 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
         command: [executable, ...filteredArgs].join(" "),
         executable,
         args: filteredArgs,
+        ...(deferredTasks.length ? { deferredTasks } : {}),
     };
 }
 
@@ -1739,6 +1732,11 @@ export function runLocalVerificationGate({
             deferredNotes.push(deferNote);
             outcomes.deferred.push({ command: parsed.command, reason: parsed.deferralReason });
             continue;
+        }
+        for (const deferred of parsed.deferredTasks || []) {
+            const command = `${parsed.executable} ${deferred.task}`;
+            deferredNotes.push(`Local task deferred to CI (${command}): ${deferred.reason}`);
+            outcomes.deferred.push({ command, reason: deferred.reason });
         }
         const strippedExec = parsed.executable.replace(/^PhoneFactor[\\/]/i, "");
         const execCwd =

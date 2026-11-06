@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { milestoneFromProgress } from "./milestones.mjs";
 import {
-    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, runCodeFeature, validateImplementation,
+    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, parseAllowedGradleVerificationCommand, runCodeFeature, runLocalVerificationGate, validateImplementation,
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
@@ -368,6 +368,31 @@ test("deterministic gate outcomes distinguish success, partial execution, failed
     assert.equal(verificationFromGate({ ...base, outcomes: { passed: [{ command: "test" }] } }).local.status, "passed");
     assert.equal(verificationFromGate({ ...base, outcomes: { passed: [{ command: "compile" }], deferred: [{ command: "test" }] } }).local.status, "deferred");
     assert.equal(verificationFromGate({ ...base, outcomes: { failed: [{ command: "test" }] } }).local.status, "failed");
+});
+
+test("mixed local compile and deferred lint/device tasks cannot produce a passed verification receipt", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "mixed-verification-"));
+    try {
+        writeFileSync(path.join(root, "gradlew.bat"), "");
+        for (const tasks of [
+            [":app:lintProductionDebug"],
+            [":app:connectedProductionDebugAndroidTest"],
+            [":app:lintProductionDebug", ":app:connectedCheck"],
+        ]) {
+            const command = [".\\gradlew.bat", ":app:compileProductionDebugKotlin", ...tasks, "--no-daemon", "-x", "lint"].join(" ");
+            const calls = [];
+            const gate = runLocalVerificationGate({
+                repoRoot: root, target: { id: "fixture", verificationCommands: [command] },
+                exec: (executable, args) => { if (/gradlew/i.test(executable)) calls.push(args); return ""; },
+            });
+            assert.deepEqual(calls, [[":app:compileProductionDebugKotlin", "--no-daemon", "-x", "lint"]]);
+            assert.equal(gate.outcomes.passed.length, 1);
+            assert.equal(gate.outcomes.deferred.length, tasks.length);
+            for (const task of tasks) assert.ok(gate.outcomes.deferred.some((entry) => entry.command.includes(task)));
+            assert.equal(verificationFromGate(gate).local.status, "deferred");
+            assert.deepEqual(parseAllowedGradleVerificationCommand(command).args, calls[0]);
+        }
+    } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("delivery status never promotes pending, failed, unknown, exhausted, or unpublished CI to GO", () => {

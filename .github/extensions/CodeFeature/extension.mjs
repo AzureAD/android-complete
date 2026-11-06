@@ -20,8 +20,8 @@ let activeWorkflow = null;
 let completionDelivery;
 const supervision = createWorkflowSupervision(() => session);
 async function milestoneHandoff(runId, workflowName, receipt) {
-    if (!completionDelivery) throw new Error("Owning-session chat delivery has not initialized.");
     try {
+        if (!completionDelivery) throw new Error("Owning-session chat delivery has not initialized.");
         return await completionDelivery.enqueueMilestone(runId, workflowName, receipt);
     } finally {
         supervision.notifyMilestone(runId, receipt);

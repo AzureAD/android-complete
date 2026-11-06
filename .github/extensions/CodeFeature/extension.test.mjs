@@ -9,7 +9,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-test("registered extension directly relays real workflow milestones without progress invalidation events or a JDK prompt", () => {
+for (const unavailableOutbox of [false, true]) {
+test(`registered extension relays milestones to supervision with ${unavailableOutbox ? "unavailable" : "available"} chat delivery and no progress events`, () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "extension-live-milestones-"));
     try {
         const sdk = String.raw`
@@ -26,8 +27,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 const root = process.argv[2];
 const source = process.argv[3];
+const unavailableOutbox = process.argv[4] === "unavailable";
 process.env.COPILOT_SDK_PATH = root;
 process.env.JAVA_HOME = path.join(root, "inherited-invalid-jdk");
 const originalJavaHome = process.env.JAVA_HOME;
@@ -66,6 +69,11 @@ const session = {
     },
 };
 globalThis.fixtureSession = session;
+if(unavailableOutbox){
+    const directory=path.join(process.cwd(),".github","local-context","code-feature","completion");
+    fs.mkdirSync(directory,{recursive:true});
+    fs.writeFileSync(path.join(directory,createHash("sha256").update(session.sessionId).digest("hex")+".json"),"invalid persisted outbox");
+}
 await import(pathToFileURL(source).href);
 const workflow = globalThis.fixtureConfig.workflows.find(item => item.meta.name === "code-feature");
 assert.ok(workflow);
@@ -125,12 +133,16 @@ returned = true;
 assert.equal(result.deliveryStatus,"prepared-for-review");
 assert.equal(uiQuestions,0);
 assert.equal(process.env.JAVA_HOME,originalJavaHome);
-assert.equal(messages.length,6);
+assert.equal(messages.length,unavailableOutbox ? 0 : 6);
 assert.ok(messages.every(message=>message.source==="system"&&message.mode==="immediate"&&message.prompt.includes("[workflow-milestone:")));
+if(!unavailableOutbox){
 assert.ok(messages[0].prompt.includes("Build toolchain selected"));
 assert.ok(messages[0].prompt.includes(jdk));
 assert.ok(messages.at(-1).prompt.includes("Pull request packet prepared"));
 assert.ok(messages.some(message=>message.prompt.includes("Local verification: common")&&message.prompt.includes("deferred")));
+}else{
+assert.ok(logs.some(message=>message.includes("completion delivery could not start")));
+}
 assert.equal(results.length,0);
 session.workflow.getRunDetail = async runId => ({runId,workflowName:"code-feature",status:"completed"});
 session.workflow.getRun = async runId => ({runId,status:"completed",result});
@@ -142,9 +154,10 @@ console.log(JSON.stringify({milestones:messages.length,jdkQuestions:uiQuestions,
         const file = path.join(root, "registration.mjs");
         writeFileSync(file, fixture);
         const output = execFileSync(process.execPath, [
-            file, root, fileURLToPath(new URL("./extension.mjs", import.meta.url)),
+            file, root, fileURLToPath(new URL("./extension.mjs", import.meta.url)), unavailableOutbox ? "unavailable" : "available",
         ], { cwd: root, encoding: "utf8", stdio: "pipe", timeout: 30_000 });
         const result = JSON.parse(output.trim());
-        assert.deepEqual(result, { milestones: 6, jdkQuestions: 0, globalJavaHomeUnchanged: true, deliveryStatus: "prepared-for-review" });
+        assert.deepEqual(result, { milestones: unavailableOutbox ? 0 : 6, jdkQuestions: 0, globalJavaHomeUnchanged: true, deliveryStatus: "prepared-for-review" });
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
+}

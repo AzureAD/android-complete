@@ -489,6 +489,80 @@ test("an unavailable chat cannot stall source execution indefinitely or falsely 
     assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones.pending.length, 0);
 });
 
+for (const initiallyRunning of [false, true]) {
+test(`a hung milestone cannot block terminal delivery (${initiallyRunning ? "settlement during stalled reconciliation" : "already settled"}) or duplicate in-flight sends`, async (t) => {
+    const { session, install, stateFile, errors } = fixture(t, [], { admissionTimeoutMs: 10, retryDelayMs: 5 });
+    const delivery = install();
+    await delivery.ready;
+    session.set(completed({ status: initiallyRunning ? "running" : "completed" }));
+    const release = deferred();
+    const terminal = deferred();
+    let milestoneAttempts = 0;
+    session.sendHook = (message) => {
+        if (message.prompt.includes("[workflow-milestone:")) { milestoneAttempts++; return release.promise; }
+        terminal.resolve();
+    };
+    const timeout = setTimeout(() => terminal.reject(new Error("Terminal delivery is blocked by a hung milestone send")), 2000);
+    try {
+        await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", {
+            id: "hung", title: "PR published", outcome: "completed", summary: "CI unverified.", prUrl: adoPr,
+        }), /chat admission is still pending/);
+        const inspection = delivery.track("run-1", "code-feature");
+        if (initiallyRunning) {
+            await inspection;
+            assert.ok(session.waits.has("run-1"), "A blocked milestone cannot prevent installing the SDK settlement watcher");
+            session.set(completed());
+            session.waits.get("run-1").resolve(completed());
+        }
+        await terminal.promise;
+        const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"];
+        assert.equal(state.milestones.pending.length, 1);
+        assert.equal(state.milestones.delivered.length, 0);
+        assert.ok(state.pending || state.delivered.length, "Terminal receipt is durable independently of the stalled milestone");
+        assert.equal(milestoneAttempts, 1);
+        assert.ok(errors.length);
+    } finally {
+        clearTimeout(timeout);
+        release.resolve();
+        await delivery.flush();
+    }
+    assert.equal(milestoneAttempts, 1);
+    assert.equal(session.messages.filter((message) => message.prompt.includes("[workflow-outcome:")).length, 1);
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 0);
+});
+}
+
+for (const fallback of [false, true]) {
+    test(`settlement at reconciliation-worker teardown is not lost (${fallback ? "SDK wait fallback" : "event"})`, async (t) => {
+        // Sweep scheduling boundaries to cover the final dirty-check/promise-cleanup gap.
+        for (let depth = 1; depth <= 16; depth++) {
+            const { session, install } = fixture(t, [[completed({ status: "running" })]]);
+            const delivery = install();
+            await delivery.ready;
+            let queued = false;
+            session.workflow.getRunProgress = async () => {
+                if (!queued) {
+                    queued = true;
+                    let remaining = depth;
+                    const advance = () => {
+                        if (--remaining > 0) { queueMicrotask(advance); return; }
+                        session.set(completed());
+                        if (fallback) session.waits.get("run-1").resolve(completed());
+                        else session.emit("workflow.run_settled", { runId: "run-1" });
+                    };
+                    queueMicrotask(advance);
+                }
+                return { records: [] };
+            };
+            await delivery.track("run-1", "code-feature");
+            await new Promise((resolve) => setImmediate(resolve));
+            await delivery.flush();
+            assert.equal(session.messages.filter((message) => message.prompt.includes("[workflow-outcome:")).length, 1, `Lost settlement at microtask boundary ${depth}`);
+            delivery.dispose();
+        }
+    });
+}
+
 test("PR link assertions compare complete parsed URLs, not a trusted URL embedded in another URL", () => {
     for (const trustedUrl of [pr, adoPr]) {
         const untrustedUrl = new URL(`https://untrusted.example/?next=${trustedUrl}`).href;
