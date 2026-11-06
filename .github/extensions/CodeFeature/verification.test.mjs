@@ -354,6 +354,101 @@ test("publication-error replay after a source-changing fix reuses the final revi
 test("publication replay refuses changed reviewed content without overwriting human edits", () => assertCommittedPublicationReplay({ tamper: true }));
 test("publication replay after a source-changing fix does not repeat either successful gate", () => assertCommittedPublicationReplay({ fixRound: true, verifyLocally: true }));
 
+async function assertReviewedSourcePresence({ action = "modify", mutate = () => {}, changed = true } = {}) {
+    const root = mkdtempSync(path.join(os.tmpdir(), "reviewed-source-presence-"));
+    const repo = path.join(root, "common");
+    try {
+        mkdirSync(repo);
+        const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: "pipe" }).trim();
+        git("init", "--quiet");
+        git("config", "user.name", "Workflow Fixture");
+        git("config", "user.email", "fixture@example.invalid");
+        writeFileSync(path.join(repo, "Foo.kt"), "// Copyright Microsoft\nclass Foo\n");
+        git("add", "Foo.kt");
+        git("commit", "--quiet", "-m", "baseline");
+        git("update-ref", "refs/remotes/origin/dev", "HEAD");
+        git("remote", "add", "origin", "https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git");
+        const baseline = git("rev-parse", "HEAD");
+        const build = implementation();
+        build.targets[0].files.unshift({
+            path: "Foo.kt", action,
+            content: action === "delete" ? "" : "// Copyright Microsoft\nclass Foo { val reviewed = true }\n",
+            summary: "Reviewed source change",
+        });
+        const evidence = {
+            approvalVerification: { verified: true, revision: "v1", reference: "approval", rationale: "Approved" },
+            references: [{ id: "E1", repository: "common", revision: baseline, path: "Foo.kt", locator: "Foo" }],
+            facts: [{ statement: "Exists", referenceIds: ["E1"] }], conflicts: [], assumptions: [], unknowns: [], blockingUnknowns: [],
+        };
+        const review = {
+            criteria: rubric.map((id) => ({ id, pass: true })),
+            acceptanceCriteria: [{ targetId: "common", criterion: "Tests pass", passed: true, evidence: "Source reviewed only" }],
+            findings: [], blockingUnknowns: [],
+        };
+        const publicationCalls = [];
+        const exec = (command, args, options) => {
+            if (command === "gh") {
+                publicationCalls.push([command, args]);
+                if (args[0] === "auth" && args[1] === "status") return "Logged in to github.com account fixture (keyring)";
+                if (args[0] === "auth" && args[1] === "token") return "fixture-token";
+                if (args[0] === "pr" && args[1] === "create") return prUrl;
+                return "";
+            }
+            if (command === "git" && args.includes("fetch")) return "";
+            if (command === "git" && (args.includes("add") || args.includes("commit") || args.includes("push"))) {
+                publicationCalls.push([command, args]);
+                if (args.includes("push")) return "";
+            }
+            return execFileSync(command, args, { ...options, encoding: "utf8", stdio: "pipe" }).trim();
+        };
+        const journal = new Map();
+        let interrupt = true;
+        const make = (results) => {
+            const context = ctx(results);
+            context.args = { task, options: { workspaceRoot: root, createPullRequests: true, verifyPrerequisites: false } };
+            context.runId = "reviewed-source-presence";
+            context.step = async (key, producer, options) => {
+                if (options?.volatile) return producer();
+                if (!journal.has(key)) journal.set(key, JSON.parse(JSON.stringify(await producer())));
+                if (interrupt && key.endsWith("-reviewed-source")) throw new DOMException("Paused after reviewed source was saved", "AbortError");
+                return JSON.parse(JSON.stringify(journal.get(key)));
+            };
+            return context;
+        };
+        const first = make([evidence, build, review]);
+        await assert.rejects(runCodeFeature(first, { exec }), { name: "AbortError" });
+        assert.equal(first.calls.length, 3);
+        assert.equal(publicationCalls.length, 0, "Interruption must occur before staging or publication");
+        assert.equal(git("rev-parse", "HEAD"), baseline);
+        const prepared = [...journal.entries()].find(([key]) => key.endsWith("-reviewed-source"))[1];
+        assert.equal(prepared.recommendation, "publication-ready");
+        assert.equal(prepared.implementation.targets[0].files.find((file) => file.path === "Foo.kt").action, action);
+        mutate(path.join(repo, "Foo.kt"));
+        const beforeReplay = git("status", "--porcelain");
+        interrupt = false;
+        const replay = make([]);
+        if (changed) {
+            await assert.rejects(runCodeFeature(replay, { exec }), /Reviewed implementation changed/);
+            assert.equal(publicationCalls.length, 0, "Changed source cannot reach staging, commit, push or PR creation");
+            assert.equal(git("rev-parse", "HEAD"), baseline);
+            assert.equal(git("status", "--porcelain"), beforeReplay, "Recovery must not restore or overwrite external changes");
+        } else {
+            const result = await runCodeFeature(replay, { exec });
+            assert.equal(result.pullRequests[0].url, prUrl);
+            assert.ok(publicationCalls.some(([command, args]) => command === "git" && args.includes("commit")));
+            assert.equal(git("ls-files", "Foo.kt"), "", "The reviewed intentional deletion must still publish");
+        }
+        assert.equal(replay.calls.length, 0, "A source-binding rejection must not silently launch another builder or reviewer");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test("publication rejects a tracked modify file removed after the reviewed-source checkpoint", () =>
+    assertReviewedSourcePresence({ mutate: (file) => rmSync(file) }));
+test("publication rejects an intentionally deleted file recreated empty after review", () =>
+    assertReviewedSourcePresence({ action: "delete", mutate: (file) => writeFileSync(file, "") }));
+test("an unchanged intentional deletion can resume from the reviewed-source checkpoint", () =>
+    assertReviewedSourcePresence({ action: "delete", changed: false }));
+
 test("compile directories alone do not attest successful tests", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "verification-receipt-"));
     try {

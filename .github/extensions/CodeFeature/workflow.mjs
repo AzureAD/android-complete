@@ -3896,7 +3896,9 @@ function implementationContentFingerprint(workspaceRoot, target, targetImpl) {
     for (const file of [...targetImpl.files].sort((a, b) => a.path.localeCompare(b.path))) {
         digest.update(`${file.path}\0${file.action}\0`);
         const fullPath = path.resolve(root, file.path);
-        digest.update(file.action !== "delete" && existsSync(fullPath) ? readFileSync(fullPath) : String(file.content || ""));
+        const present = existsSync(fullPath);
+        digest.update(present ? "present\0" : "missing\0");
+        digest.update(present ? readFileSync(fullPath) : String(file.content || ""));
     }
     return digest.digest("hex");
 }

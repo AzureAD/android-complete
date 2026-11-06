@@ -247,7 +247,12 @@ evidence/build/review steps are reused rather than starting another implementati
 The final publication-ready implementation, review history, verification and source-content
 bindings are journaled before publication. An unchanged publication retry bypasses all
 earlier source rounds, including a successful source-changing fix; changed reviewed content
-requires a new review and is not overwritten. Normalized metadata and a committed
+requires a new review and is not overwritten. Source bindings include present/missing
+state and the bytes on disk, including files marked for deletion. Removing a reviewed
+file or recreating a reviewed deletion cannot reuse the old approval, even when the
+cached content or recreated file is empty. Older bindings without presence markers
+fail closed under this guard; they are not silently upgraded or re-reviewed on replay.
+Normalized metadata and a committed
 source-branch diff preserve slim file/test lists. Local gate/review receipts are content-bound,
 not dirty-status-bound. Existing task commits are preserved and empty commits are skipped.
 An authored workflow with the same name can be shadowed by extension registration;
