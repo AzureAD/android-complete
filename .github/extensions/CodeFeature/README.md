@@ -98,6 +98,13 @@ Given an approved coding task or PBI specification:
 - Azure DevOps publication looks up an active PR matching both source and target
   branches before creating one, and checks again after a failed creation response.
   An absent matching PR leaves the publication error visible.
+- Publication review binds the original HEAD, complete index tree, pinned comparison
+  base, and final tree that staging the implementation will publish. A temporary index
+  computes that tree without changing the caller's index. The reviewer receives the
+  entire PR diff, including staged-only changes outside the builder's file list.
+  Publication checks the binding before staging, before committing, and before pushing
+  an explicit commit SHA. A retry may reuse the single commit made from that exact
+  reviewed tree; unrelated commits or index changes require a new source review.
 
 ### Verification and delivery receipts
 
@@ -114,6 +121,9 @@ Given an approved coding task or PBI specification:
   Rejected/canceling validation for an older source cannot fail the new source, even if a
   provider's `buildIsNotCurrent` flag is false. A head/merge change during collection
   requires a fresh snapshot; stale policies, partial success and absent results cannot pass.
+  Required build policies are identified by their policy type even before a build ID is
+  assigned. Missing required build results remain pending with an observer continuation,
+  even when another current-head build has succeeded; human approval policies stay separate.
   Stale required ADO build policies are refreshed once per durable observation key;
   queued validation is then observed without spending a code-repair iteration. Already
   running current-head validation is not requeued merely because an older policy lags.
@@ -132,6 +142,10 @@ Given an approved coding task or PBI specification:
 - Pure CI waiting and concrete failed tasks are handled deterministically before invoking
   a classifier. At most two tactical repairs occur; exhaustion retains exact remaining
   diagnostics and a continuation rather than an empty success-shaped packet.
+- Pending checks never bypass merge-conflict or actionable-review classification,
+  including when feedback first appears during a CI poll. GitHub/GHE snapshots collect
+  inline threads and Azure build diagnostics through the supplied executor, whether
+  observing standalone or from `code-feature`; unavailable diagnostic reads stay explicit.
 - Hosted-image brownouts and provider-unavailable cancellations retain timeline evidence
   and return `infrastructure-blocked` without spending source/test-repair agents or
   modifying pipeline YAML, even if an external coverage status is pending. Retry requires
@@ -266,8 +280,9 @@ earlier source rounds, including a successful source-changing fix; changed revie
 requires a new review and is not overwritten. Source bindings include present/missing
 state and the bytes on disk, including files marked for deletion. Removing a reviewed
 file or recreating a reviewed deletion cannot reuse the old approval, even when the
-cached content or recreated file is empty. Older bindings without presence markers
-fail closed under this guard; they are not silently upgraded or re-reviewed on replay.
+cached content or recreated file is empty. Publishing also requires the complete Git
+tree/index binding described above. Older bindings missing either guard fail closed;
+they are not silently upgraded or re-reviewed on replay.
 Normalized metadata and a committed
 source-branch diff preserve slim file/test lists. Local gate/review receipts are content-bound,
 not dirty-status-bound. Existing task commits are preserved and empty commits are skipped.

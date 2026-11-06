@@ -531,7 +531,7 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
                     : "Logged in to github.com account shahzaibj (keyring)";
             }
             if (cmd === "gh" && args[0] === "auth" && args[1] === "token") return "mock-token";
-            if (cmd === "git" && args[0] === "rev-parse") return "deadbeef1234";
+            if (cmd === "git" && ["rev-parse", "write-tree", "merge-base"].includes(args[0])) return "d".repeat(40);
             if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
                 const repoArg = args[args.indexOf("--repo") + 1];
                 return `https://${repoArg.startsWith("msft.ghe.com/") ? repoArg : `github.com/${repoArg}`}/pull/999`;

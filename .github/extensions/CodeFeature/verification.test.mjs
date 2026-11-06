@@ -14,7 +14,7 @@ import {
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
-    ciEvidenceFromSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
+    ciEvidenceFromSnapshot, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
 import { deliveryOutcome, pendingVerification, verificationFromGate } from "./verification.mjs";
 import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, renderVerificationBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
@@ -242,7 +242,7 @@ test("explicit builder handoff to remote CI does not cause a duplicate determini
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-async function assertCommittedPublicationReplay({ fixRound = false, tamper = false, verifyLocally = false } = {}) {
+async function assertCommittedPublicationReplay({ fixRound = false, tamper = false, verifyLocally = false, extraCommit = false, commitInjection = false, indexReset = false } = {}) {
     const root = mkdtempSync(path.join(os.tmpdir(), "committed-publication-replay-"));
     const repo = path.join(root, "common");
     try {
@@ -267,6 +267,7 @@ async function assertCommittedPublicationReplay({ fixRound = false, tamper = fal
             prTitle: "Fix Foo", prSummary: "Source fix", rolloutAndFlag: "Default-off",
         };
         let publicationFails = true;
+        let pushes = 0;
         let gradleCalls = 0;
         const expectedGateCalls = verifyLocally ? (fixRound ? 2 : 1) : 0;
         const exec = (command, args, options) => {
@@ -284,8 +285,16 @@ async function assertCommittedPublicationReplay({ fixRound = false, tamper = fal
                 if (!verifyLocally) throw new Error("Unexpected duplicate local verification");
                 return "BUILD SUCCESSFUL";
             }
-            if (command === "git" && (args.includes("fetch") || args.includes("push"))) return "";
-            return execFileSync(command, args, { ...options, encoding: "utf8", stdio: "pipe" }).trim();
+            if (command === "git" && args.includes("push")) { pushes++; return ""; }
+            if (command === "git" && args.includes("fetch")) return "";
+            if (commitInjection && command === "git" && args[0] === "commit") {
+                writeFileSync(path.join(repo, "HookChange.kt"), "class UnreviewedHookChange\n");
+                git("add", "HookChange.kt");
+            }
+            const output = execFileSync(command, args, { ...options, encoding: "utf8", stdio: "pipe" }).trim();
+            if (indexReset && command === "git" && args[0] === "add" && args.at(-1) === "FooTest.kt" &&
+                !options?.env?.GIT_INDEX_FILE) git("read-tree", "HEAD");
+            return output;
         };
         const before = normalizeImplementationResponse(rawBuild, fixtureTask, { workspaceRoot: root, exec });
         const journal = new Map();
@@ -319,7 +328,14 @@ async function assertCommittedPublicationReplay({ fixRound = false, tamper = fal
         const results = fixRound
             ? [evidence, rawBuild, { ...passedReview, verdict: "repair", findings: ["Foo.kt: fix behavior"] }, rawBuild, passedReview]
             : [evidence, rawBuild, passedReview];
-        await assert.rejects(runCodeFeature(make(results), { exec }), /Fixture publication unavailable/);
+        await assert.rejects(runCodeFeature(make(results), { exec }),
+            commitInjection || indexReset ? /Reviewed implementation changed/ : /Fixture publication unavailable/);
+        if (commitInjection || indexReset) {
+            assert.equal(pushes, 0, "A commit-time index mutation must be caught before any push");
+            if (commitInjection) assert.match(git("show", "HEAD:HookChange.kt"), /UnreviewedHookChange/);
+            else assert.equal(git("show", "HEAD:README"), "baseline");
+            return;
+        }
         const codeStatus = () => git("status", "--porcelain").split(/\r?\n/).filter((line) => line && line !== "?? local.properties").join("\n");
         assert.equal(codeStatus(), "");
         const committedHead = git("rev-parse", "HEAD");
@@ -331,6 +347,18 @@ async function assertCommittedPublicationReplay({ fixRound = false, tamper = fal
         assert.deepEqual(validateImplementation(after, fixtureTask, { workspaceRoot: root }), []);
         publicationFails = false;
         const replay = make([]);
+        if (extraCommit) {
+            writeFileSync(path.join(repo, "Unreviewed.kt"), "class Unreviewed\n");
+            git("add", "Unreviewed.kt");
+            git("commit", "--quiet", "-m", "Unrelated external commit");
+            const externalHead = git("rev-parse", "HEAD");
+            const pushesBefore = pushes;
+            await assert.rejects(runCodeFeature(replay, { exec }), /Reviewed implementation changed/);
+            assert.equal(pushes, pushesBefore, "Cached source review must not push an extra commit outside the old file list");
+            assert.equal(git("rev-parse", "HEAD"), externalHead);
+            assert.equal(replay.calls.length, 0);
+            return;
+        }
         if (tamper) {
             writeFileSync(path.join(repo, "Foo.kt"), "// Human edit after source review\nclass Foo\n");
             await assert.rejects(runCodeFeature(replay, { exec }), /Reviewed implementation changed/);
@@ -353,8 +381,14 @@ test("committed slim metadata survives publication-error replay without agents o
 test("publication-error replay after a source-changing fix reuses the final reviewed checkpoint", () => assertCommittedPublicationReplay({ fixRound: true }));
 test("publication replay refuses changed reviewed content without overwriting human edits", () => assertCommittedPublicationReplay({ tamper: true }));
 test("publication replay after a source-changing fix does not repeat either successful gate", () => assertCommittedPublicationReplay({ fixRound: true, verifyLocally: true }));
+test("publication-error replay rejects an unrelated committed file outside the reviewed implementation list", () =>
+    assertCommittedPublicationReplay({ extraCommit: true }));
+test("publication verifies the actual committed tree before pushing commit-time index mutations", () =>
+    assertCommittedPublicationReplay({ commitInjection: true }));
+test("publication cannot push the baseline if the live index loses reviewed staging", () =>
+    assertCommittedPublicationReplay({ indexReset: true }));
 
-async function assertReviewedSourcePresence({ action = "modify", mutate = () => {}, changed = true } = {}) {
+async function assertReviewedSourcePresence({ action = "modify", mutate = () => {}, changed = true, reviewedIndex = false } = {}) {
     const root = mkdtempSync(path.join(os.tmpdir(), "reviewed-source-presence-"));
     const repo = path.join(root, "common");
     try {
@@ -369,6 +403,12 @@ async function assertReviewedSourcePresence({ action = "modify", mutate = () => 
         git("update-ref", "refs/remotes/origin/dev", "HEAD");
         git("remote", "add", "origin", "https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git");
         const baseline = git("rev-parse", "HEAD");
+        if (reviewedIndex) {
+            writeFileSync(path.join(repo, "StagedOnly.kt"), "class ReviewedIndexContent\n");
+            git("add", "StagedOnly.kt");
+            rmSync(path.join(repo, "StagedOnly.kt"));
+        }
+        const originalIndex = git("write-tree");
         const build = implementation();
         build.targets[0].files.unshift({
             path: "Foo.kt", action,
@@ -395,7 +435,8 @@ async function assertReviewedSourcePresence({ action = "modify", mutate = () => 
                 return "";
             }
             if (command === "git" && args.includes("fetch")) return "";
-            if (command === "git" && (args.includes("add") || args.includes("commit") || args.includes("push"))) {
+            if (command === "git" && !options?.env?.GIT_INDEX_FILE &&
+                (args.includes("add") || args.includes("commit") || args.includes("push"))) {
                 publicationCalls.push([command, args]);
                 if (args.includes("push")) return "";
             }
@@ -416,27 +457,40 @@ async function assertReviewedSourcePresence({ action = "modify", mutate = () => 
             return context;
         };
         const first = make([evidence, build, review]);
+        const agent = first.agent;
+        first.agent = (prompt, options) => {
+            if (options.agent === REVIEWER_AGENT && reviewedIndex) {
+                const data = JSON.parse(prompt.slice(prompt.lastIndexOf("DATA:\n") + 6));
+                assert.match(data.diffsByTarget.common, /StagedOnly.kt/);
+                assert.match(data.diffsByTarget.common, /ReviewedIndexContent/);
+                assert.equal(data.implementation.targets[0].files.some((file) => file.path === "StagedOnly.kt"), false);
+            }
+            return agent.call(first, prompt, options);
+        };
         await assert.rejects(runCodeFeature(first, { exec }), { name: "AbortError" });
         assert.equal(first.calls.length, 3);
         assert.equal(publicationCalls.length, 0, "Interruption must occur before staging or publication");
         assert.equal(git("rev-parse", "HEAD"), baseline);
+        assert.equal(git("write-tree"), originalIndex, "Computing the full reviewed tree must not mutate the caller's index");
         const prepared = [...journal.entries()].find(([key]) => key.endsWith("-reviewed-source"))[1];
         assert.equal(prepared.recommendation, "publication-ready");
         assert.equal(prepared.implementation.targets[0].files.find((file) => file.path === "Foo.kt").action, action);
-        mutate(path.join(repo, "Foo.kt"));
+        mutate(path.join(repo, "Foo.kt"), git, repo);
         const beforeReplay = git("status", "--porcelain");
+        const replayHead = git("rev-parse", "HEAD");
         interrupt = false;
         const replay = make([]);
         if (changed) {
             await assert.rejects(runCodeFeature(replay, { exec }), /Reviewed implementation changed/);
             assert.equal(publicationCalls.length, 0, "Changed source cannot reach staging, commit, push or PR creation");
-            assert.equal(git("rev-parse", "HEAD"), baseline);
+            assert.equal(git("rev-parse", "HEAD"), replayHead);
             assert.equal(git("status", "--porcelain"), beforeReplay, "Recovery must not restore or overwrite external changes");
         } else {
             const result = await runCodeFeature(replay, { exec });
             assert.equal(result.pullRequests[0].url, prUrl);
             assert.ok(publicationCalls.some(([command, args]) => command === "git" && args.includes("commit")));
             assert.equal(git("ls-files", "Foo.kt"), "", "The reviewed intentional deletion must still publish");
+            if (reviewedIndex) assert.match(git("show", "HEAD:StagedOnly.kt"), /ReviewedIndexContent/);
         }
         assert.equal(replay.calls.length, 0, "A source-binding rejection must not silently launch another builder or reviewer");
     } finally { rmSync(root, { recursive: true, force: true }); }
@@ -448,6 +502,20 @@ test("publication rejects an intentionally deleted file recreated empty after re
     assertReviewedSourcePresence({ action: "delete", mutate: (file) => writeFileSync(file, "") }));
 test("an unchanged intentional deletion can resume from the reviewed-source checkpoint", () =>
     assertReviewedSourcePresence({ action: "delete", changed: false }));
+test("publication rejects an unrelated staged file added after the reviewed-source checkpoint", () =>
+    assertReviewedSourcePresence({ mutate: (_file, git, repo) => {
+        writeFileSync(path.join(repo, "Unreviewed.kt"), "class Unreviewed\n");
+        git("add", "Unreviewed.kt");
+    } }));
+test("publication binds index-only content even when the working file is restored", () =>
+    assertReviewedSourcePresence({ mutate: (_file, git, repo) => {
+        const file = path.join(repo, "IndexOnly.kt");
+        writeFileSync(file, "class UnreviewedIndex\n");
+        git("add", "IndexOnly.kt");
+        rmSync(file);
+    } }));
+test("the source reviewer sees the complete publication diff including staged-only files outside the builder list", () =>
+    assertReviewedSourcePresence({ action: "delete", changed: false, reviewedIndex: true }));
 
 test("compile directories alone do not attest successful tests", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "verification-receipt-"));
@@ -546,6 +614,109 @@ test("pending CI returns explicit continuation without spending classifier agent
     assert.equal(milestone.title, "PR observation");
     assert.equal(milestone.outcome, "deferred");
     assert.match(milestone.summary, /Current-head CI: pending/);
+});
+
+test("pending CI never bypasses merge conflicts or actionable review feedback before or after a poll", async () => {
+    for (const feedback of [
+        { mergeStateStatus: "DIRTY" },
+        { inlineReviewComments: [{ body: "Fix Foo.kt: missing cancellation handling", path: "Foo.kt", line: 12 }] },
+    ]) {
+        for (const afterPoll of [false, true]) {
+            const context = ctx([{ verdict: "needs-owner-decision", repairKind: "none", summary: "Review the actionable blocker", evidence: [], actionableFindings: [] }],
+                { maxCiPollAttempts: 2, ciPollIntervalMs: 0 });
+            let reads = 0, sleeps = 0;
+            const result = await runPrObserver(context, {
+                exec: () => "", sleep: async () => { sleeps++; },
+                fetchPrSnapshot: () => snapshot({
+                    statusCheckRollup: [{ name: "CI", state: "PENDING" }],
+                    ...(++reads > 1 || !afterPoll ? feedback : {}),
+                }),
+            });
+            assert.equal(context.calls.length, 1, "The conflict/review classifier must run even though CI is pending");
+            assert.equal(sleeps, afterPoll ? 1 : 0, "A repairable blocker must not consume the CI-only polling budget");
+            assert.equal(result.status, "needs-owner-decision");
+        }
+    }
+});
+
+test("GitHub and GHE observers enrich readable Azure build diagnostics through the supplied executor", async () => {
+    for (const url of [prUrl, "https://msft.ghe.com/security/ad-accounts-for-android/pull/42"]) {
+        const parsed = parsePullRequestUrl(url);
+        const calls = [];
+        const exec = (command, args) => {
+            calls.push([command, args]);
+            if (command === "gh" && args[0] === "auth") return args[1] === "status" ? "Logged in to github.com account fixture (keyring)" : "fixture-token";
+            if (command === "gh" && args[0] === "pr") return JSON.stringify(snapshot({
+                statusCheckRollup: [{ name: "Android validation", conclusion: "FAILURE",
+                    detailsUrl: "https://dev.azure.com/fixture/Engineering/_build/results?buildId=123" }],
+            }));
+            if (command === "gh" && args.includes("graphql")) return JSON.stringify({
+                data: { repository: { pullRequest: { reviewThreads: { nodes: [{
+                    id: "fixture-thread", isResolved: false, path: "Foo.kt", line: 12,
+                    comments: { nodes: [{ databaseId: 7, body: "Fix Foo", author: { login: "reviewer" } }] },
+                }] } } } },
+            });
+            if (command === "powershell") return JSON.stringify([{
+                id: 123, definition: "Android validation", status: "completed", result: "failed",
+                failedTasks: [{ name: "Compile", excerpt: ["Foo.kt:12: Unresolved reference: launchForResult"] }],
+            }]);
+            return "";
+        };
+        const observed = fetchPullRequestSnapshot(parsed, { exec });
+        assert.equal(observed.inlineReviewComments?.[0]?.threadId, "fixture-thread");
+        assert.match(observed.prBuilds?.[0]?.failedTasks?.[0]?.excerpt?.[0] || "", /Unresolved reference/);
+        const context = ctx();
+        context.args.prUrl = url;
+        context.args.maxIterations = 0;
+        const result = await runPrObserver(context, { exec });
+        assert.equal(result.status, "max-iterations-reached", "Readable current failure diagnostics must reach the repair path");
+        assert.notEqual(result.blockerKind, "ci-diagnostics");
+        assert.ok(result.actionableFindings.some((finding) => finding.includes("Unresolved reference")));
+        assert.ok(calls.some(([command]) => command === "powershell"));
+    }
+});
+
+test("GitHub check enrichment executes its production PowerShell and retains unreadable diagnostics", {
+    skip: process.platform !== "win32",
+}, () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "github-ado-check-"));
+    try {
+        for (const failure of ["none", "timeline", "log"]) {
+            const exec = (command, args) => {
+                if (command === "gh" && args[0] === "auth") return "fixture-token";
+                if (command === "gh" && args[0] === "pr") return JSON.stringify(snapshot({
+                    statusCheckRollup: [{ name: "Android validation", conclusion: "FAILURE",
+                        detailsUrl: "https://dev.azure.com/fixture/Engineering/_build/results?buildId=123" }],
+                }));
+                if (command === "gh" && args.includes("graphql")) return "{}";
+                assert.equal(command, "powershell");
+                const script = [
+                    "$global:LASTEXITCODE = 0",
+                    "function az { 'fixture-token' }",
+                    "function Invoke-RestMethod { param($Uri,$Headers,$Method)",
+                    `if ('${failure}' -eq 'timeline') { throw 'Fixture timeline denied' }`,
+                    "if ($Uri -match '/timeline\\?') { return @{ records=@(@{type='Task';result='failed';name='Compile';issues=@();log=@{url='https://dev.azure.com/fixture/Engineering/_apis/build/builds/123/logs/1'}}) } }",
+                    `if ('${failure}' -eq 'log') { throw 'Fixture log denied' }`,
+                    "if ($Uri -match '/logs/1\\?') { return 'Foo.kt:12: Unresolved reference: launchForResult' }",
+                    "throw 'Unexpected diagnostic request'",
+                    "}",
+                    args[args.indexOf("-Command") + 1],
+                ].join("\n");
+                const file = path.join(root, "fixture.ps1");
+                writeFileSync(file, script);
+                return execFileSync("powershell", ["-NoProfile", "-File", file], { encoding: "utf8", stdio: "pipe", timeout: 30_000 });
+            };
+            const observed = fetchPullRequestSnapshot(parsePullRequestUrl(prUrl), { exec });
+            const build = observed.prBuilds?.[0];
+            assert.ok(build, "The supplied executor must run Azure check enrichment");
+            if (failure === "none") {
+                assert.match(build.failedTasks[0].excerpt[0], /Unresolved reference/);
+                assert.deepEqual(build.diagnosticErrors, []);
+            } else {
+                assert.match(build.diagnosticErrors[0], new RegExp(`Fixture ${failure} denied`));
+            }
+        }
+    } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("observer continuations carry remaining repair budget and an explicit zero never resets it", async () => {
@@ -796,7 +967,7 @@ test("production code-feature packet propagates observer CI failure instead of r
         const result = await runCodeFeature(context, {
             exec: (command, args) => {
                 if (command === "gh" && args[0] === "pr" && args[1] === "create") return prUrl;
-                if (command === "git" && args[0] === "rev-parse") return "a".repeat(40);
+                if (command === "git" && ["rev-parse", "write-tree", "merge-base"].includes(args[0])) return "a".repeat(40);
                 return "";
             },
             fetchPrSnapshot: () => snapshot({ statusCheckRollup: [{ name: "CI", state: "PENDING" }] }),

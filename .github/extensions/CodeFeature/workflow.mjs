@@ -3,7 +3,8 @@
 
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 const revisionedModuleUrl = (name) => {
@@ -3514,6 +3515,7 @@ export function publishTargetPullRequest({
     branchPrefix = "",
     runId = "local",
     exec = defaultExec,
+    sourceBinding = null,
 }) {
     const account = createPullRequests ? resolveGitHubAccount(target, workspaceRoot, exec) : (target.account || "");
     let branch = buildBranchName(target, branchPrefix || account);
@@ -3617,6 +3619,7 @@ export function publishTargetPullRequest({
             exec("git", ["add", "--", file.path], { cwd: repoRoot, env: gitEnv });
         }
     }
+    if (sourceBinding) verifyPublicationSource(repoRoot, targetImpl, sourceBinding, exec, { staged: true });
     let shouldCommit = true;
     if (existsSync(path.join(repoRoot, ".git"))) {
         const stagedNames = exec("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot, env: gitEnv });
@@ -3635,7 +3638,10 @@ export function publishTargetPullRequest({
             { cwd: repoRoot, env: gitEnv },
         );
     }
-    const headSha = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
+    const headSha = sourceBinding
+        ? verifyPublicationSource(repoRoot, targetImpl, sourceBinding, exec, { staged: true, committed: true })
+        : exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
+    const pushRef = `${headSha}:refs/heads/${branch}`;
     const pushArgs = nonempty(token)
         ? [
             "-c",
@@ -3645,9 +3651,9 @@ export function publishTargetPullRequest({
             "push",
             "-u",
             "origin",
-            branch,
+            pushRef,
         ]
-        : ["push", "-u", "origin", branch];
+        : ["push", "-u", "origin", pushRef];
     exec("git", pushArgs, { cwd: repoRoot, env: gitEnv });
 
     const isAdoTarget = target.repository === "authenticator" ||
@@ -3963,6 +3969,51 @@ function implementationContentFingerprint(workspaceRoot, target, targetImpl) {
         digest.update(present ? readFileSync(fullPath) : String(file.content || ""));
     }
     return digest.digest("hex");
+}
+
+function publicationTree(repoRoot, targetImpl, exec, indexTree) {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "code-feature-index-"));
+    const env = buildNormalizedProcessEnv(process.env, { GIT_INDEX_FILE: path.join(directory, "index") });
+    try {
+        exec("git", ["read-tree", indexTree], { cwd: repoRoot, env });
+        for (const file of targetImpl.files) {
+            exec("git", file.action === "delete"
+                ? ["update-index", "--force-remove", "--", file.path]
+                : ["add", "--", file.path], { cwd: repoRoot, env });
+        }
+        return exec("git", ["write-tree"], { cwd: repoRoot, env });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
+function capturePublicationSource(repoRoot, target, targetImpl, exec) {
+    const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
+    const indexTree = exec("git", ["write-tree"], { cwd: repoRoot });
+    const base = exec("git", ["merge-base", head, `origin/${target.baseBranch}`], { cwd: repoRoot });
+    const tree = publicationTree(repoRoot, targetImpl, exec, indexTree);
+    if (![head, indexTree, base, tree].every((oid) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid))) {
+        throw new Error(`Cannot bind the complete Git publication tree for ${target.id}.`);
+    }
+    return { head, indexTree, base, tree };
+}
+
+function verifyPublicationSource(repoRoot, targetImpl, binding, exec, { staged = false, committed = false } = {}) {
+    const changed = () => { throw new Error(`Reviewed implementation changed for ${targetImpl.targetId}; publication requires a new source review.`); };
+    if (!binding?.head || !binding.indexTree || !binding.base || !binding.tree) changed();
+    const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
+    const indexTree = exec("git", ["write-tree"], { cwd: repoRoot });
+    if (indexTree !== binding.indexTree && indexTree !== binding.tree) changed();
+    if (staged && indexTree !== binding.tree) changed();
+    if (committed || head !== binding.head) {
+        const headTree = exec("git", ["rev-parse", `${head}^{tree}`], { cwd: repoRoot });
+        if (headTree !== binding.tree) changed();
+    }
+    if (head !== binding.head) {
+        const parents = exec("git", ["rev-list", "--parents", "-n", "1", head], { cwd: repoRoot }).split(/\s+/);
+        // A publication retry may observe the one commit made from the reviewed tree.
+        if (parents.length !== 2 || parents[1] !== binding.head) changed();
+    }
+    if (publicationTree(repoRoot, targetImpl, exec, indexTree) !== binding.tree) changed();
+    return head;
 }
 
 async function prepareCodeFeature(ctx, dependencies = {}) {
@@ -4769,6 +4820,18 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
 
                 if (validationErrors.length === 0) {
                     log(`Independent code review (round ${round + 1})`);
+                    const sourceBindings = task.targets.map((target) => {
+                        const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+                        const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+                        const publicationSource = effectiveCreatePrs
+                            ? capturePublicationSource(repoRoot, target, targetImpl, exec) : null;
+                        if (publicationSource) {
+                            diffsByTarget[target.id] = exec("git", [
+                                "--no-pager", "diff", "--binary", publicationSource.base, publicationSource.tree,
+                            ], { cwd: repoRoot });
+                        }
+                        return { targetId: target.id, digest: targetContentFingerprint(target, targetImpl), publicationSource };
+                    });
                     const beforeReviewSnaps = captureTargetSnapshots();
                     const slimPriorReviews = useSlimSchemas
                         ? history.map((entry) => ({
@@ -4782,10 +4845,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 : {}),
                         }))
                         : history;
-                    const reviewFingerprint = createHash("sha256").update(implementation.targets.map((item) => {
-                        const target = task.targets.find((candidate) => candidate.id === item.targetId);
-                        return targetContentFingerprint(target, item);
-                    }).join(":")).digest("hex");
+                    const reviewFingerprint = createHash("sha256").update(JSON.stringify(sourceBindings)).digest("hex");
                     const rawReview = await step(`independent-review-v2-${round}-${reviewFingerprint}`, () => ask(
                         `Independent code reviewer (round ${round + 1})`,
                         REVIEWER_AGENT,
@@ -4887,10 +4947,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                             observePullRequests: shouldObservePrs,
                             javaHome: executionEnvironments[0]?.javaHome || null,
                         },
-                        sourceBindings: task.targets.map((target) => ({
-                            targetId: target.id,
-                            digest: targetContentFingerprint(target, implementation.targets.find((item) => item.targetId === target.id)),
-                        })),
+                        sourceBindings,
                     };
                 }
             } else {
@@ -4993,14 +5050,17 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         for (const target of task.targets) {
             const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
             const binding = prepared.sourceBindings.find((item) => item.targetId === target.id);
-            if (implementationContentFingerprint(workspaceRoot, target, targetImpl) !== binding.digest) {
+            if (implementationContentFingerprint(workspaceRoot, target, targetImpl) !== binding?.digest) {
                 throw new Error(`Reviewed implementation changed for ${target.id}; publication requires a new source review.`);
+            }
+            if (publication.createPullRequests) {
+                verifyPublicationSource(path.resolve(workspaceRoot, target.localPath || "."), targetImpl, binding.publicationSource, exec);
             }
             const pr = publishTargetPullRequest({
                 target, targetImpl, traceability: implementation.traceability, reviewRoundCount: reviewCount,
                 parentWorkItemId: task.workItemId, workspaceRoot,
                 createPullRequests: publication.createPullRequests, draftPullRequest: publication.draftPullRequest,
-                runId: ctx.runId || "local", exec,
+                runId: ctx.runId || "local", exec, sourceBinding: binding.publicationSource,
             });
             published.push(pr);
             await publicationMilestone(pr);

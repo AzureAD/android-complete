@@ -24,7 +24,7 @@ const build = (id, head, status = "inProgress", result = null) => ({
 });
 const policy = (id, status = "running") => ({
     evaluationId: "01234567-89ab-cdef-0123-456789abcdef", status,
-    configuration: { type: { displayName: "Build" }, isBlocking: true },
+    configuration: { type: { id: "0609b952-1397-4640-95ec-e00a01b2c241", displayName: "Build" }, isBlocking: true },
     context: { buildId: id, buildIsNotCurrent: false },
 });
 function fixture(overrides = {}) {
@@ -76,6 +76,30 @@ function executeSnapshot(data) {
     } finally { rmSync(root, { recursive: true, force: true }); }
 }
 const windowsOnly = { skip: process.platform !== "win32" && "Production PowerShell snapshot fixture" };
+
+test("required build policies without a queued build ID remain pending despite a different successful build", windowsOnly, async () => {
+    for (const status of ["queued", "running", "rejected", "approved"]) {
+        const queuedPolicy = policy(null, status);
+        queuedPolicy.configuration.type.displayName = "Localized validation";
+        const snapshot = executeSnapshot(fixture({
+            builds: [build(1, current, "completed", "succeeded")], policies: [queuedPolicy],
+        }));
+        assert.equal(ciEvidenceFromSnapshot(snapshot).status, "pending");
+        const result = await runPrObserver({
+            args: { prUrl, maxIterations: 0, options: { maxCiPollAttempts: 0, publishStatus: false } },
+            step: async (_key, producer) => producer(),
+            agent: async () => { throw new Error("Missing required build results must not trigger source agents"); },
+        }, { exec: () => "", fetchPrSnapshot: () => snapshot });
+        assert.equal(result.status, "waiting-for-ci");
+        assert.equal(result.continuation.args.maxIterations, 0);
+        assert.equal(result.ci.status, "pending");
+    }
+    const human = policy(null, "queued");
+    human.configuration.type = { id: "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd", displayName: "Minimum number of reviewers" };
+    assert.equal(ciEvidenceFromSnapshot(executeSnapshot(fixture({
+        builds: [build(1, current, "completed", "succeeded")], policies: [human],
+    }))).status, "passed", "Human approvals remain separate from executable build validation");
+});
 
 test("the actual stale canceled-build/advanced-head scenario stays pending instead of failing the new source", windowsOnly, async () => {
     const snapshot = executeSnapshot(fixture({

@@ -447,7 +447,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             .slice(0, 50);
     }
 
-    if (exec === defaultExec && record(parsedSnapshot)) {
+    if (record(parsedSnapshot)) {
         try {
             const [owner, repoName] = String(parsedPr.slug || "").split("/");
             if (nonempty(owner) && nonempty(repoName)) {
@@ -493,7 +493,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
                 }
             }
         } catch {
-            // Optional inline review thread enrichment.
+            (parsedSnapshot.diagnosticErrors ||= []).push("GitHub inline review thread diagnostics unavailable.");
         }
 
         const checks = Array.isArray(parsedSnapshot.statusCheckRollup) ? parsedSnapshot.statusCheckRollup : [];
@@ -517,11 +517,13 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             const psCheckLogs = [
                 "$ErrorActionPreference = 'Stop'",
                 "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+                "if ($LASTEXITCODE -ne 0 -or -not $token) { throw 'Azure DevOps authentication failed for check diagnostics.' }",
                 "$headers = @{ Authorization = \"Bearer $token\" }",
                 `$entries = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${entriesB64}')) | ConvertFrom-Json`,
                 "$outBuilds = @()",
                 "foreach ($e in $entries) {",
                 "  $failedTasks = @()",
+                "  $readErrors = @()",
                 "  try {",
                 "    $tl = Invoke-RestMethod -Uri \"$($e.projectBase)/_apis/build/builds/$($e.buildId)/timeline?api-version=7.0\" -Headers $headers -Method Get",
                 "    foreach ($rec in @($tl.records | Where-Object { $_.type -eq 'Task' -and $_.result -eq 'failed' })) {",
@@ -531,12 +533,12 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
                 "        try {",
                 "          $logText = Invoke-RestMethod -Uri ($rec.log.url + '?api-version=7.0') -Headers $headers -Method Get",
                 "          $excerpt = @($logText -split \"`r?`n\" | Where-Object { $_ -notmatch '\\tat org\\.gradle\\.|\\tat java\\.base/' } | Select-Object -Last 30)",
-                "        } catch {}",
+                "        } catch { $readErrors += \"Task $($rec.name) log unavailable: $($_.Exception.Message)\" }",
                 "      }",
                 "      $failedTasks += @{ name = $rec.name; issues = $issues; excerpt = $excerpt }",
                 "    }",
-                "  } catch {}",
-                "  $outBuilds += @{ id = $e.buildId; definition = $e.checkName; status = 'completed'; result = 'failed'; failedTasks = $failedTasks }",
+                "  } catch { $readErrors += \"Build $($e.buildId) timeline unavailable: $($_.Exception.Message)\" }",
+                "  $outBuilds += @{ id = $e.buildId; definition = $e.checkName; status = 'completed'; result = 'failed'; failedTasks = $failedTasks; diagnosticErrors = $readErrors }",
                 "}",
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
                 "[Console]::Out.Write(($outBuilds | ConvertTo-Json -Depth 6 -Compress))",
@@ -546,7 +548,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
                 const parsedBuilds = JSON.parse(rawBuilds);
                 parsedSnapshot.prBuilds = Array.isArray(parsedBuilds) ? parsedBuilds : [parsedBuilds];
             } catch {
-                // Optional Azure Pipelines check log enrichment.
+                (parsedSnapshot.diagnosticErrors ||= []).push("Azure Pipelines check log diagnostics unavailable.");
             }
         }
     }
@@ -916,6 +918,18 @@ function isHumanApprovalCheck(check) {
         /minimum.*reviewer|require.*reviewer|merge strategy|proof of presence|comment requirements/i.test(String(check?.name || ""));
 }
 
+function isBuildValidationPolicy(policy) {
+    return Boolean(policy.buildId) ||
+        String(policy.typeId || "").toLowerCase() === "0609b952-1397-4640-95ec-e00a01b2c241" ||
+        /^(?:build|build validation)$/i.test(String(policy.name || "").trim());
+}
+
+function hasPendingRepairFeedback(snapshot) {
+    return !snapshot?.snapshotHeadChanged &&
+        (/dirty|conflict/i.test(String(snapshot?.mergeStateStatus || "")) ||
+            hasActionableReviewOrCommentFeedback(snapshot));
+}
+
 export function scopeAdoSnapshot(snapshot) {
     if (snapshot?.provider !== "ado") return snapshot;
     const sameHead = (head) => nonempty(head) && nonempty(snapshot.headRefOid) && head.toLowerCase() === snapshot.headRefOid.toLowerCase();
@@ -934,7 +948,8 @@ export function scopeAdoSnapshot(snapshot) {
             !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")));
         const activeValidation = currentValidation.some((build) =>
             ["inprogress", "notstarted", "cancelling", "postponed"].includes(String(build.status || "").toLowerCase()));
-        const unboundRequiredValidation = policies.some((policy) => policy.buildId && policy.blocking && policy.buildIsNotCurrent);
+        const unboundRequiredValidation = policies.some((policy) =>
+            isBuildValidationPolicy(policy) && policy.blocking && (!policy.buildId || policy.buildIsNotCurrent));
         if (String(check.context?.name || check.name || "").toLowerCase() === "codecoverage" &&
             ["failed", "failure", "error"].includes(String(check.state || check.conclusion || "").toLowerCase()) &&
             (activeValidation || unboundRequiredValidation) && !currentValidation.some((build) => (build.failedTasks || []).length)) {
@@ -981,7 +996,10 @@ export function ciEvidenceFromSnapshot(snapshot) {
     }
     for (const policy of snapshot?.policyEvaluations || []) {
         const currentBuild = builds.find((build) => Number(build.id) === Number(policy.buildId));
-        if (policy.buildId && policy.blocking && policy.buildIsNotCurrent) {
+        if (policy.blocking && isBuildValidationPolicy(policy) && !policy.buildId) {
+            pending = true;
+            evidence.push(`${policy.name}: required build validation has no build result for the current PR head.`);
+        } else if (policy.buildId && policy.blocking && policy.buildIsNotCurrent) {
             pending = true;
             evidence.push(`${policy.name}: build validation is stale for the current PR head.`);
         } else if (policy.buildId && policy.blocking && policy.status === "rejected" &&
@@ -1319,8 +1337,9 @@ async function runObserverLoop(ctx, dependencies = {}) {
             while (
                 totalPollsUsed < maxCiPollAttempts &&
                 ((expectedHeadSha && snapshot.headRefOid !== expectedHeadSha) ||
-                    ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot) ||
-                    (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))
+                    (!hasPendingRepairFeedback(snapshot) &&
+                        (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot) ||
+                            (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))))
             ) {
                 await recordMilestone(ctx, {
                     id: `${prefix}-ci-wait-${createHash("sha256").update(String(expectedHeadSha || snapshot.headRefOid || "unknown")).digest("hex")}`,
@@ -1364,7 +1383,8 @@ async function runObserverLoop(ctx, dependencies = {}) {
             const blocked = environmentHandoff(snapshot, parsedPr.prUrl, iteration);
             if (blocked) return blocked;
 
-            if (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot)) {
+            if (!hasPendingRepairFeedback(snapshot) &&
+                (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot))) {
                 const runningBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
                     .filter((b) => ["inprogress", "notstarted", "postponed"].includes(String(b?.status || "").toLowerCase()))
                     .map((b) => `${b.definition || "CI"} (${b.buildNumber || b.id || "running"})`);

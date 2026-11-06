@@ -57,7 +57,7 @@ function Get-LogText($Url) {
 $policies = @($policyRows | ForEach-Object {
     $build = $buildsById[[string]$_.context.buildId]
     @{
-        evaluationId = $_.evaluationId; name = $_.configuration.type.displayName
+        evaluationId = $_.evaluationId; name = $_.configuration.type.displayName; typeId = $_.configuration.type.id
         status = $_.status; blocking = $_.configuration.isBlocking
         buildIsNotCurrent = $_.context.buildIsNotCurrent; buildId = $_.context.buildId
         buildSourceHeadSha = if ($build) { Get-BuildSourceHead $build } else { '' }
