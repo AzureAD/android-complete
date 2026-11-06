@@ -45,6 +45,7 @@ class FakeSession {
     waits = new Map();
     messages = [];
     errors = [];
+    logs = [];
     calls = [];
     progress = [];
     readHook;
@@ -118,8 +119,9 @@ class FakeSession {
         return `message-${this.messages.length}`;
     }
 
-    async log(message) {
-        this.errors.push(message);
+    async log(message, options = {}) {
+        this.logs.push({ message, ...options });
+        if (options.level === "error") this.errors.push(message);
     }
 }
 
@@ -481,13 +483,128 @@ test("an unavailable chat cannot stall source execution indefinitely or falsely 
     const before = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones;
     assert.equal(before.delivered.length, 0);
     assert.equal(before.pending.length, 1);
-    assert.match(logs[1], /chat admission is still pending/);
-    assert.ok(errors.some((error) => /chat admission is still pending/.test(error.message)));
+    assert.equal(logs.length, 1, "A delayed admission is not a failed producer handoff");
+    assert.deepEqual(errors, []);
+    assert.ok(session.logs.some((entry) => entry.level === "info" && /delayed during chat admission/.test(entry.message)));
     release.resolve();
     await delivery.flushMilestones();
     assert.equal(session.messages.length, 1, "The still-in-flight admission is not duplicated on timeout");
     assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones.pending.length, 0);
 });
+
+test("slow catch-up uses non-error diagnostics and shares one in-flight progress read across timeouts", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "running" })]], { admissionTimeoutMs: 5 });
+    const progress = deferred();
+    let reads = 0;
+    session.workflow.getRunProgress = () => { reads++; return progress.promise; };
+    const delivery = install({ reportError: undefined });
+    try {
+        await delivery.ready;
+        assert.deepEqual(session.errors, [], "An observation-window timeout must not become a session.error notification");
+        assert.equal(session.logs.length, 1);
+        assert.equal(session.logs[0].level, "info");
+        assert.equal(session.logs[0].ephemeral, true);
+        assert.match(session.logs[0].message, /delayed/i);
+        for (let attempt = 0; attempt < 3; attempt++) await delivery.track("run-1", "code-feature");
+        assert.equal(reads, 1, "Timeouts must not duplicate the unfinished catch-up RPC");
+        assert.equal(session.logs.length, 1, "The same delayed operation is reported once");
+        assert.ok(session.waits.has("run-1"), "Settlement observation must remain installed");
+    } finally {
+        progress.resolve({ records: [] });
+        await delivery.flush();
+    }
+});
+
+test("slow producer admission is a bounded delayed result, not a failed handoff or session error", async (t) => {
+    const { session, install, stateFile } = fixture(t, [], { admissionTimeoutMs: 5 });
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    const release = deferred();
+    let attempts = 0;
+    session.sendHook = () => { attempts++; return release.promise; };
+    const logs = [];
+    let handoff;
+    try {
+        await recordMilestone({
+            step: async (_key, producer) => producer(),
+            log: async (message) => logs.push(message),
+            onMilestone: async (receipt) => { handoff = await delivery.enqueueMilestone("run-1", "code-feature", receipt); },
+        }, { id: "toolchain", title: "Build toolchain selected", outcome: "completed", summary: "JDK selected; no verification claim." });
+        assert.deepEqual(session.errors, []);
+        assert.equal(handoff.status, "delayed");
+        assert.equal(logs.length, 1, "A timeout must not write a failed milestone handoff into durable workflow progress");
+        assert.equal(session.logs[0].level, "info");
+        const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"];
+        assert.equal(state.milestones.pending.length, 1);
+        assert.equal(state.milestones.delivered.length, 0);
+        assert.equal(state.milestones.lastError, undefined);
+        assert.equal(attempts, 1);
+    } finally {
+        release.resolve();
+        await delivery.flushMilestones();
+    }
+    assert.equal(session.messages.length, 1);
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 0);
+});
+
+test("startup catch-up can time out before a directly delivered milestone without creating an error or duplicate notice", async (t) => {
+    const { session, install, stateFile } = fixture(t, [[completed({ status: "running" })]], { admissionTimeoutMs: 5 });
+    const progress = deferred();
+    session.workflow.getRunProgress = () => progress.promise;
+    const delivery = install({ reportError: undefined });
+    try {
+        await delivery.ready;
+        const record = await milestoneProgress("toolchain", "Build toolchain selected");
+        await delivery.enqueueMilestone("run-1", "code-feature", milestoneFromProgress(record));
+        assert.deepEqual(session.errors, []);
+        assert.equal(session.messages.length, 1, "The stalled progress read does not block the direct producer");
+        progress.resolve({ records: [record], hasMoreNewer: false });
+        await delivery.track("run-1", "code-feature");
+        await delivery.flush();
+        const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"];
+        assert.equal(state.milestones.cursor, 1);
+        assert.equal(state.milestones.delivered.length, 1);
+        assert.equal(state.milestones.pending.length, 0);
+        assert.equal(state.lastError, undefined);
+        assert.equal(state.milestones.lastError, undefined);
+        assert.equal(session.messages.length, 1, "Late catch-up cannot duplicate the admitted direct receipt");
+    } finally {
+        progress.resolve({ records: [] });
+        await delivery.flush();
+    }
+});
+
+for (const stage of ["catch-up", "admission"]) {
+    test(`a real ${stage} failure after the delay boundary is still reported as an error`, async (t) => {
+        const { session, install } = fixture(t, stage === "catch-up" ? [[completed({ status: "running" })]] : [],
+            { admissionTimeoutMs: 5 });
+        const blocked = deferred();
+        const failure = deferred();
+        t.mock.method(console, "error", () => {});
+        const log = session.log.bind(session);
+        session.log = async (message, options) => {
+            await log(message, options);
+            if (options?.level === "error") failure.resolve();
+        };
+        if (stage === "catch-up") session.workflow.getRunProgress = () => blocked.promise;
+        else session.sendHook = () => blocked.promise;
+        const delivery = install({ reportError: undefined });
+        try {
+            await delivery.ready;
+            if (stage === "admission") await delivery.enqueueMilestone("run-1", "code-feature", {
+                id: "toolchain", title: "Build toolchain selected", outcome: "completed", summary: "Execution unverified.",
+            });
+            assert.equal(session.errors.length, 0, "A slow operation is not a failed operation");
+            blocked.reject(new Error("Actual transport failure after timeout"));
+            await failure.promise;
+            assert.ok(session.errors.some((message) => /Actual transport failure after timeout/.test(message)));
+        } finally {
+            blocked.resolve({ records: [] });
+            delivery.dispose();
+            await delivery.flush();
+        }
+    });
+}
 
 for (const initiallyRunning of [false, true]) {
 test(`a hung milestone cannot block terminal delivery (${initiallyRunning ? "settlement during stalled reconciliation" : "already settled"}) or duplicate in-flight sends`, async (t) => {
@@ -504,9 +621,10 @@ test(`a hung milestone cannot block terminal delivery (${initiallyRunning ? "set
     };
     const timeout = setTimeout(() => terminal.reject(new Error("Terminal delivery is blocked by a hung milestone send")), 2000);
     try {
-        await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", {
+        const admission = await delivery.enqueueMilestone("run-1", "code-feature", {
             id: "hung", title: "PR published", outcome: "completed", summary: "CI unverified.", prUrl: adoPr,
-        }), /chat admission is still pending/);
+        });
+        assert.equal(admission.status, "delayed");
         const inspection = delivery.track("run-1", "code-feature");
         if (initiallyRunning) {
             await inspection;
@@ -520,7 +638,7 @@ test(`a hung milestone cannot block terminal delivery (${initiallyRunning ? "set
         assert.equal(state.milestones.delivered.length, 0);
         assert.ok(state.pending || state.delivered.length, "Terminal receipt is durable independently of the stalled milestone");
         assert.equal(milestoneAttempts, 1);
-        assert.ok(errors.length);
+        assert.deepEqual(errors, [], "A hung operation has not reported an actual failure");
     } finally {
         clearTimeout(timeout);
         release.resolve();

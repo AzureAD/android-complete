@@ -227,6 +227,13 @@ observing settlement or persisting/sending a separate terminal outcome. The orig
 in-flight milestone send remains singular and its pending receipt is retained; a terminal
 notice can therefore arrive before that delayed milestone. Worker retirement is atomic
 with its final pending/dirty check so a racing settlement cannot join a finished worker.
+The observation/admission window expiring is a **delay**, not a failed send or a workflow
+error. It returns an explicit delayed status and emits one informational, ephemeral
+diagnostic per in-flight operation; it never uses error-level session logging, writes a
+failed handoff into workflow progress, or falsely acknowledges the receipt. Reconciliation
+shares a single unfinished progress read across retries. A genuine read/send/storage rejection,
+including one arriving after the bounded wait, still follows the error-reporting and retry
+path. Pending receipts remain durable and are acknowledged only after actual admission.
 Caller instructions require a short visible chat update for each receipt, without starting
 a status-poll loop or restarting the still-running workflow.
 The registered-extension integration test runs the real `code-feature` handler with

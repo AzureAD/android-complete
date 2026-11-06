@@ -293,6 +293,10 @@ export function createWorkflowCompletionDelivery(session, {
         void session.log(message, { level: "error" }).catch((logError) =>
             console.error(`Cannot log completion delivery failure: ${logError.message}`));
     },
+    reportDelay = (message) => {
+        void session.log(message, { level: "info", ephemeral: true }).catch((logError) =>
+            console.error(`Cannot log workflow delivery delay: ${logError.message}`));
+    },
 } = {}) {
     if (!Number.isFinite(admissionTimeoutMs) || admissionTimeoutMs <= 0) throw new Error("Chat admission timeout must be positive.");
     for (const method of ["listRuns", "getRun", "getRunDetail", "getRunProgress", "waitForRun"]) {
@@ -306,7 +310,10 @@ export function createWorkflowCompletionDelivery(session, {
     let reconciliation;
     const workers = new Map();
     const sends = new Map();
+    const catchups = new Map();
     const watches = new Map();
+    const delayedOperations = new WeakSet();
+    const reportedFailures = new WeakSet();
     const names = new Map(Object.entries(state.runs).map(([id, run]) => [id, run.workflowName]));
 
     function update(runId, change) {
@@ -317,8 +324,7 @@ export function createWorkflowCompletionDelivery(session, {
         state = next;
     }
 
-    function failed(error) {
-        reportError(error);
+    function scheduleRetry() {
         if (!disposed && !retryTimer) {
             retryTimer = setTimeout(() => {
                 retryTimer = undefined;
@@ -328,6 +334,38 @@ export function createWorkflowCompletionDelivery(session, {
                 void reconcile().catch(failed);
             }, retryDelayMs);
             retryTimer.unref?.();
+        }
+    }
+
+    function failed(error) {
+        if (!error || typeof error !== "object" || !reportedFailures.has(error)) {
+            if (error && typeof error === "object") reportedFailures.add(error);
+            reportError(error);
+        }
+        scheduleRetry();
+    }
+
+    async function waitForAdmission(runId, operation, stage) {
+        let timer;
+        try {
+            const result = await Promise.race([
+                operation.then(() => ({ status: "admitted" })),
+                new Promise((resolve) => {
+                    timer = setTimeout(() => resolve({ status: "delayed" }), admissionTimeoutMs);
+                }),
+            ]);
+            if (result.status === "delayed" && !disposed) {
+                if (!delayedOperations.has(operation)) {
+                    delayedOperations.add(operation);
+                    reportDelay(`Run ${runId}: workflow notification updates are delayed during ${stage}. The notification operation has not settled; this does not establish a workflow failure. Observation continues, any queued receipts are retained, and the in-flight operation is not duplicated.`);
+                    // A later rejection is a real failure even after the bounded wait returned.
+                    void operation.catch(failed);
+                }
+                scheduleRetry();
+            }
+            return result;
+        } finally {
+            clearTimeout(timer);
         }
     }
 
@@ -344,7 +382,7 @@ export function createWorkflowCompletionDelivery(session, {
         });
     }
 
-    async function deliverMilestones(runId) {
+    async function catchUpMilestones(runId) {
         let cursor = state.runs[runId]?.milestones?.cursor ?? 0;
         while (!disposed) {
             const page = await session.workflow.getRunProgress(runId, { afterSeq: cursor, limit: 100 });
@@ -373,6 +411,17 @@ export function createWorkflowCompletionDelivery(session, {
             if (!page.hasMoreNewer) break;
         }
         await sendPendingMilestones(runId);
+    }
+
+    function deliverMilestones(runId) {
+        if (catchups.has(runId)) return catchups.get(runId).promise;
+        const worker = {};
+        catchups.set(runId, worker);
+        worker.promise = (async () => {
+            try { await catchUpMilestones(runId); }
+            finally { catchups.delete(runId); }
+        })();
+        return worker.promise;
     }
 
     async function drainMilestones(runId) {
@@ -438,13 +487,7 @@ export function createWorkflowCompletionDelivery(session, {
         const sending = sendPendingMilestones(runId);
         // Wait only for queue admission before a following synchronous build can occupy
         // the extension event loop. This does not wait for a caller model response.
-        let timer;
-        const admitted = Promise.race([
-            sending,
-            new Promise((_resolve, reject) => {
-                timer = setTimeout(() => reject(new Error(`Run ${runId} chat admission is still pending; the durable milestone remains queued.`)), admissionTimeoutMs);
-            }),
-        ]).finally(() => clearTimeout(timer));
+        const admitted = waitForAdmission(runId, sending, "chat admission");
         void admitted.catch(failed);
         return admitted;
     }
@@ -458,19 +501,11 @@ export function createWorkflowCompletionDelivery(session, {
         if (!workflowNames.has(names.get(runId))) return;
         const run = await session.workflow.getRun(runId);
         if (disposed) return;
-        let milestoneTimer;
         try {
-            await Promise.race([
-                deliverMilestones(runId),
-                new Promise((_resolve, reject) => {
-                    milestoneTimer = setTimeout(() => reject(new Error(`Run ${runId} milestone delivery is still pending; its durable receipts and in-flight send are retained. Outcome observation and terminal delivery will continue independently.`)), admissionTimeoutMs);
-                }),
-            ]);
+            await waitForAdmission(runId, deliverMilestones(runId), "milestone catch-up");
         } catch (error) {
             // A stuck milestone send must not strand observation of later settlement.
             failed(error);
-        } finally {
-            clearTimeout(milestoneTimer);
         }
         if (disposed) return;
         if (!settledStatuses.has(run.status)) {
