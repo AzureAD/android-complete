@@ -341,18 +341,116 @@ test("valid implementation passing first review exits loop immediately and prepa
     assert.match(pr.body, /RetryAfterThrottleCacheTest\.suppressesUntilExpiry/);
 });
 
-test("code-feature records each completed major phase with execution caveats before its final result", async () => {
+test("code-feature emits concise progress without ambiguous pending or repeated verification disclaimers", async () => {
     const ctx = context([evidence(), implementation(), review()]);
     const result = await runCodeFeature(ctx);
     const milestones = ctx.logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
     assert.deepEqual(milestones.map((milestone) => milestone.title), [
-        "Evidence and requirements", "Initial implementation", "Local verification: common",
+        "Evidence and requirements", "Implementation started", "Initial implementation", "Local verification: common",
         "Independent source review, round 1", "Pull request packet prepared",
     ]);
-    assert.deepEqual(milestones.map((milestone) => milestone.outcome), ["completed", "completed", "deferred", "completed", "completed"]);
-    assert.match(milestones[1].summary, /not evidence.*tests or CI passed/);
-    assert.match(milestones[3].summary, /source review only/);
+    assert.deepEqual(milestones.map((milestone) => milestone.outcome), ["completed", "completed", "completed", "deferred", "completed", "completed"]);
+    assert.equal(milestones[0].summary, "Evidence complete; implementation is next.");
+    assert.equal(milestones[1].summary, "Implementation in progress.");
+    assert.match(milestones[3].summary, /Local verification has not been confirmed/);
+    assert.match(milestones[4].summary, /Independent source review passed; PR preparation is next/);
+    assert.match(milestones[5].summary, /no PR was published/);
+    for (const milestone of milestones) {
+        assert.doesNotMatch(milestone.summary, /pending|not evidence|not CI|separate checks|not.*approval|does not establish/i);
+    }
     assert.equal(result.deliveryStatus, "prepared-for-review");
+});
+
+test("a deferred local environment limitation does not generate a false developer-input review blocker", async () => {
+    const sourceReview = review();
+    sourceReview.blockingUnknowns = ["Local build environment JAVA_HOME is unavailable; deferred to CI."];
+    const ctx = context([evidence(), implementation(), sourceReview]);
+    const result = await runCodeFeature(ctx);
+    const milestone = ctx.logs.map((text) => milestoneFromProgress({ kind: "log", text }))
+        .find((item) => item?.title === "Independent source review, round 1");
+    assert.equal(result.deliveryStatus, "prepared-for-review");
+    assert.equal(milestone.outcome, "completed");
+    assert.equal(milestone.summary, "Independent source review passed; PR preparation is next.");
+});
+
+test("implementation-in-progress is recorded after dispatch, before builder completion, and never during cached replay", async () => {
+    const journal = new Map();
+    const ctx = context([evidence(), implementation(), review()]);
+    ctx.step = async (key, producer) => {
+        // Re-enter preparation on recovery, while retaining the individual durable steps.
+        if (key.endsWith("-reviewed-source")) return producer();
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    const agent = ctx.agent;
+    let finishBuilder;
+    let startRecorded;
+    const started = new Promise((resolve) => { startRecorded = resolve; });
+    const builderDone = new Promise((resolve) => { finishBuilder = resolve; });
+    let dispatched = false;
+    ctx.agent = async (prompt, options) => {
+        if (options.agent === BUILDER_AGENT) {
+            dispatched = true;
+            await builderDone;
+        }
+        return agent(prompt, options);
+    };
+    const log = ctx.log;
+    ctx.log = (text) => {
+        log(text);
+        const milestone = milestoneFromProgress({ kind: "log", text });
+        if (milestone?.title === "Evidence and requirements") assert.equal(dispatched, false);
+        if (milestone?.title === "Implementation started") {
+            assert.equal(dispatched, true);
+            assert.equal(ctx.calls.length, 1, "The builder has not returned yet");
+            startRecorded();
+        }
+    };
+    const running = runCodeFeature(ctx);
+    await started;
+    assert.equal(ctx.logs.some((text) => milestoneFromProgress({ kind: "log", text })?.title === "Initial implementation"), false);
+    finishBuilder();
+    await running;
+    const startCount = () => ctx.logs.filter((text) => milestoneFromProgress({ kind: "log", text })?.title === "Implementation started").length;
+    assert.equal(startCount(), 1);
+    await runCodeFeature(ctx);
+    assert.equal(startCount(), 1, "Cached builder execution must not emit a new start");
+    assert.equal(ctx.calls.length, 3, "Replay must not create agents");
+});
+
+test("cancellation before builder dispatch propagates without an implementation-start notice", async () => {
+    const ctx = context([evidence()]);
+    const controller = new AbortController();
+    ctx.signal = controller.signal;
+    ctx.phase = (title) => { if (title === "Build initial implementation") controller.abort(); };
+    await assert.rejects(runCodeFeature(ctx), { name: "AbortError" });
+    assert.equal(ctx.calls.length, 1);
+    assert.equal(ctx.logs.some((text) => milestoneFromProgress({ kind: "log", text })?.title === "Implementation started"), false);
+});
+
+test("a synchronous builder admission failure never fabricates an implementation start", async () => {
+    const ctx = context([evidence()]);
+    const agent = ctx.agent;
+    ctx.agent = (prompt, options) => {
+        if (options.agent === BUILDER_AGENT) throw new Error("Agent admission rejected");
+        return agent(prompt, options);
+    };
+    await assert.rejects(runCodeFeature(ctx), /Agent admission rejected/);
+    assert.equal(ctx.logs.some((text) => milestoneFromProgress({ kind: "log", text })?.title === "Implementation started"), false);
+});
+
+test("cancellation after builder dispatch preserves the recorded start without claiming implementation completion", async () => {
+    const ctx = context([evidence()]);
+    const controller = new AbortController();
+    ctx.signal = controller.signal;
+    const agent = ctx.agent;
+    ctx.agent = (prompt, options) => options.agent !== BUILDER_AGENT ? agent(prompt, options) :
+        new Promise((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true }));
+    ctx.onMilestone = (milestone) => { if (milestone.title === "Implementation started") controller.abort(); };
+    await assert.rejects(runCodeFeature(ctx), { name: "AbortError" });
+    const titles = ctx.logs.map((text) => milestoneFromProgress({ kind: "log", text })?.title);
+    assert.ok(titles.includes("Implementation started"));
+    assert.equal(titles.includes("Initial implementation"), false);
 });
 
 test("reviewer feedback loops back to builder up to 2 times and succeeds when 2nd fix passes review", async () => {
@@ -1309,6 +1407,11 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
     assert.ok(resolvedThreadArgs.includes("threadId=PRRT_addressed_1"));
     assert.ok(!resolvedThreadArgs.includes("threadId=PRRT_unrelated_same_file"));
     assert.ok(!resolvedThreadArgs.includes("threadId=PRRT_unrelated_other_file"));
+    const milestones = ctx.logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
+    assert.equal(milestones.filter((item) => item.title === "Tactical repair started").length, 1);
+    assert.match(milestones.find((item) => item.title === "Tactical repair started").summary, /in progress/);
+    assert.match(milestones.find((item) => item.title === "Tactical repair review 1").summary, /push and current-head CI are next/);
+    assert.match(milestones.find((item) => item.title === "Tactical repair 1 pushed").summary, /waiting for CI results for that commit/);
 });
 
 test("question deduplication, pre-coding spec challenge, resume worktree inspection, PR status blocks, and observer anti-loop", async () => {

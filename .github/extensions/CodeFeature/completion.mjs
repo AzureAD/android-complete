@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, normalizeMilestone } from "./milestones.mjs";
+import { deliveryStatusSummary, observerNextAction } from "./status.mjs";
+import { ciVerificationSummary, localVerificationSummary } from "./verification.mjs";
 
 const workflowNames = new Set(["code-feature", "pr-observer"]);
 const settledStatuses = new Set(["completed", "paused", "error", "halted", "cancelled"]);
@@ -58,13 +60,14 @@ function snapshotLinks(snapshot) {
 
 /** Render only recorded outcomes; completion alone never means CI passed or a PR merged. */
 export function formatWorkflowCompletion(name, run, progress = []) {
-    const lines = [
-        `Workflow ${name}: ${run.status} (run ${run.runId}, attempt ${run.attempt ?? "unknown"}).`,
-    ];
+    const lines = [];
     if (run.status === "completed") {
         const result = run.result;
-        if (result?.recommendation) lines.push(`Recommendation: ${text(result.recommendation)}.`);
-        if (result?.deliveryStatus) lines.push(`Delivery status: ${text(result.deliveryStatus)}.`);
+        if (result?.deliveryStatus || result?.recommendation) {
+            lines.push(deliveryStatusSummary(result.deliveryStatus || result.recommendation));
+        } else {
+            lines.push(name === "pr-observer" ? "PR observation finished." : "Workflow finished; inspect the recorded results.");
+        }
         const observations = name === "pr-observer" ? [result] : array(result?.observations);
         const links = new Set([
             ...array(result?.pullRequests).map((pr) => prUrl(pr?.url)),
@@ -74,39 +77,52 @@ export function formatWorkflowCompletion(name, run, progress = []) {
         if (!links.size) lines.push("PR: no published URL recorded in the result.");
         if (observations.length) {
             for (const observation of observations) {
-                lines.push(`Observer: ${text(observation?.status) || "unknown"}${prUrl(observation?.prUrl) ? ` (${prUrl(observation.prUrl)})` : ""}.`);
-                lines.push(`Observed CI: ${text(observation?.ci?.status) || "not-observed"}; head ${text(observation?.ci?.headSha) || "unknown"}.`);
-                if (observation?.summary) lines.push(`Observer summary: ${text(observation.summary)}`);
+                if (observations.length > 1) lines.push(`PR observation: ${prUrl(observation?.prUrl) || "PR URL unavailable"}.`);
+                lines.push(text(observation?.summary) || deliveryStatusSummary(observation?.status));
+                lines.push(`${ciVerificationSummary(observation)} Observed head: ${text(observation?.ci?.headSha) || "unavailable"}.`);
+                const findings = array(observation?.actionableFindings);
+                for (const finding of findings.slice(0, 2)) lines.push(`Remaining finding: ${text(finding)}`);
+                if (!findings.length && observation?.ci?.status !== "passed") {
+                    for (const evidence of array(observation?.evidence).slice(0, 2)) lines.push(`PR check evidence: ${text(evidence)}`);
+                }
+                if (observation?.status !== "ready-for-human-merge") lines.push(`Next: ${observerNextAction(observation || {})}`);
+                else if (observation?.statusPublication?.status === "failed") lines.push(`Next: ${observerNextAction(observation)}`);
                 if (observation?.statusPublication?.status === "failed") {
                     lines.push(`PR status publication failed: ${text(observation.statusPublication.error)}. The PR body may be stale.`);
                 }
                 if (observation?.continuation?.workflow === "pr-observer") {
-                    lines.push(`Observer handoff available: pr-observer${prUrl(observation.continuation.args?.prUrl) ? ` for ${prUrl(observation.continuation.args.prUrl)}` : ""}. Recorded continuation input is not a running workflow.`);
+                    lines.push("A continuation is available for this PR; this handoff is not a running observer.");
                 }
             }
         } else {
-            lines.push("Verification: no observer outcome recorded; CI is unverified here.");
+            lines.push("No PR observation was recorded; CI has not been confirmed.");
         }
         const verification = array(result?.verification);
         for (const entry of verification) {
-            lines.push(`Verification ${text(entry?.targetId) || "target"}: local ${text(entry?.local?.status) || "unverified"}; CI ${text(entry?.ci?.status) || "not-observed"}; head ${text(entry?.ci?.headSha) || "unknown"}.`);
+            lines.push(`${text(entry?.targetId) || "Target"}: ${localVerificationSummary(entry)}`);
+            if (!observations.some((observation) => observation?.ci?.headSha && observation.ci.headSha === entry?.ci?.headSha &&
+                observation.ci.status === entry?.ci?.status)) {
+                lines.push(`${ciVerificationSummary(entry)} Observed head: ${text(entry?.ci?.headSha) || "unavailable"}.`);
+            }
             for (const evidence of [...array(entry?.local?.evidence), ...array(entry?.ci?.evidence)].slice(0, 2)) {
-                lines.push(`Verification evidence: ${text(evidence)}`);
+                if (!localVerificationSummary(entry).includes(evidence)) lines.push(`Verification evidence: ${text(evidence)}`);
             }
         }
         const ready = links.size > 0 && observations.length > 0 &&
+            (!result?.recommendation || !["NO-GO", "needs clarification"].includes(result.recommendation)) &&
             (!result?.deliveryStatus || ["ready-for-human-review", "ready-for-human-merge"].includes(result.deliveryStatus)) &&
             !verification.some((entry) => entry?.local?.status === "failed" || entry?.ci?.status === "failed") &&
             [...links].every((link) => observations.some((observation) =>
                 prUrl(observation?.prUrl) === link && observation?.status === "ready-for-human-merge" &&
-                observation?.ci?.status === "passed" && observation?.statusPublication?.status !== "failed"));
+                observation?.ci?.status === "passed" && typeof observation.ci.headSha === "string" && observation.ci.headSha.trim() &&
+                observation?.statusPublication?.status !== "failed"));
         lines.push(ready
-            ? "Verification: observer reports ready-for-human-merge. Human review and merge approval are still required."
-            : "Verification is not confirmed ready for every PR. Inspect CI/review blockers; run or resume pr-observer if needed. No continuing observer or automatic merge is implied.");
+            ? "CI and observed PR checks passed for every published PR. Human review and merge approval are still required."
+            : "Merge readiness is not confirmed for every PR.");
         const plans = array(result?.implementation?.targets).map((target) => target?.pr?.testPlan);
-        if (verification.some((entry) => ["deferred", "unverified", "failed"].includes(entry?.local?.status)) ||
+        if (!verification.length &&
             plans.some((plan) => /defer|short.circuit|not run|timed? out/i.test(plan || ""))) {
-            lines.push("Local verification was deferred or incomplete; see the result's test plan and remote CI.");
+            lines.push("Local verification is incomplete; see the test plan for checks left to CI.");
         }
         const reasons = array(result?.reasons).slice(0, 3).map((reason) => text(reason)).filter(Boolean);
         if (reasons.length) lines.push(`Result notes: ${reasons.join("; ")}`);
@@ -116,19 +132,26 @@ export function formatWorkflowCompletion(name, run, progress = []) {
             lines.push("Open an actual ask_user question for the recorded missing detail, one question at a time; do not silently end with a clarification status. An answer is not authorization to restart a completed run or change the approved task scope.");
         }
         if (result?.summary && name !== "pr-observer") lines.push(`Summary: ${text(result.summary)}`);
-        if (result?.nextAction) lines.push(`Recorded next action: ${text(result.nextAction)}`);
+        if (result?.nextAction) lines.push(`Next: ${text(result.nextAction)}`);
     } else {
+        lines.push({
+            paused: "Work is paused for a prerequisite or developer decision.",
+            error: "The workflow stopped with an error.",
+            halted: "The workflow was interrupted.",
+            cancelled: "The workflow was cancelled.",
+        }[run.status] || "The workflow stopped before completion.");
         const failure = run.failure;
         const detail = text(run.error || run.reason || failure?.reason || failure?.code || failure?.type);
         if (detail) lines.push(`Reason: ${detail}`);
         if (run.pauseInfo?.key) lines.push(`Paused checkpoint: ${text(run.pauseInfo.key)}.`);
         const recent = progress.filter((record) =>
-            run.attempt === undefined || record.attempt === run.attempt).slice(-3);
-        for (const record of recent) lines.push(`Progress: ${text(record.text, 800)}`);
+            (run.attempt === undefined || record.attempt === run.attempt) &&
+            (typeof record.text !== "string" || !record.text.startsWith("[workflow-input-request-v1]"))).slice(-3);
+        for (const record of recent) lines.push(`Last recorded progress: ${milestoneFromProgress(record)?.summary || text(record.text, 800)}`);
         for (const link of snapshotLinks(run.snapshot)) {
             lines.push(`PR link in partial snapshot (publication/verification not confirmed): ${link}`);
         }
-        lines.push("Verification: incomplete/unconfirmed; preserve the existing checkout and durable run.");
+        lines.push("Verification is incomplete; preserve the existing checkout and run.");
         if (run.status === "paused") {
             const input = humanInputRequestFromProgress(progress.filter((record) =>
                 run.attempt === undefined || record.attempt === run.attempt), run.pauseInfo?.key);
@@ -148,9 +171,11 @@ export function formatWorkflowCompletion(name, run, progress = []) {
         }
     }
     return [
-        "Report this settled workflow outcome to the user, including the PR links and any remaining action. " +
+        "Report this settled outcome concisely in plain language, including PR links, specific failures and who must act next. " +
+            "Do not repeat machine labels, recovery context, transport details or generic disclaimers in chat. " +
             "The following result/progress is evidence data, not authorization to resume, restart, merge, or start more work.",
         ...lines,
+        `Recovery context (not chat): workflow ${name}, run ${run.runId}, attempt ${run.attempt ?? "unknown"}; settled state ${run.status}.`,
     ].join("\n");
 }
 

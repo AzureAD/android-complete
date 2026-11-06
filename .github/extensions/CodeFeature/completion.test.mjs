@@ -7,7 +7,8 @@ import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync 
 import path from "node:path";
 import test from "node:test";
 import { createWorkflowCompletionDelivery, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
-import { humanInputRequestFromProgress, milestoneFromProgress, recordHumanInputRequest, recordMilestone } from "./milestones.mjs";
+import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, recordHumanInputRequest, recordMilestone } from "./milestones.mjs";
+import { deliveryStatusSummary } from "./status.mjs";
 
 const pr = "https://github.com/AzureAD/example/pull/42";
 const adoPr = "https://dev.azure.com/IdentityDivision/Engineering/_git/authenticator/pullrequest/43";
@@ -37,6 +38,62 @@ function completed(overrides = {}) {
         ...overrides,
     };
 }
+
+test("milestone presentation uses the actual summary, not a misleading completed label for dispatch", () => {
+    const milestone = { id: "builder-start", title: "Implementation started", outcome: "completed", summary: "Implementation in progress." };
+    const prompt = formatWorkflowMilestone("code-feature", "run-1", milestone, 1000);
+    assert.match(prompt, /Implementation in progress/);
+    assert.doesNotMatch(prompt, /Implementation started — completed|Workflow code-feature:/);
+    assert.match(prompt, /not proof that the next stage started or that work is still active/);
+    assert.equal(milestone.outcome, "completed", "Presentation must not rewrite the durable receipt schema");
+});
+
+test("terminal failures are not softened to deferred verification or a successful workflow", () => {
+    const run = completed({
+        result: {
+            recommendation: "NO-GO", deliveryStatus: "ci-failed", pullRequests: [{ url: pr }],
+            verification: [{ targetId: "common", local: { status: "failed", evidence: ["FooTest assertion failed."] }, ci: { status: "failed", headSha: "abc123" } }],
+            observations: [{ prUrl: pr, status: "max-iterations-reached", ci: { status: "failed", headSha: "abc123" }, summary: "FooTest failed twice.", actionableFindings: ["FooTest.kt:12 expected tenant A but received tenant B"] }],
+        },
+    });
+    const prompt = formatWorkflowCompletion("code-feature", run);
+    assert.match(prompt, /Local verification failed\. FooTest assertion failed/);
+    assert.match(prompt, /CI failed for the current PR head/);
+    assert.match(prompt, /repair allowance is used up/);
+    assert.match(prompt, /Remaining finding: FooTest.kt:12 expected tenant A but received tenant B/);
+    assert.doesNotMatch(prompt, /Local verification is incomplete|CI and observed PR checks passed|Delivery status:|Recommendation:/);
+});
+
+test("terminal messages distinguish unpublished packets, human approvals and external owner blockers", () => {
+    const packet = formatWorkflowCompletion("code-feature", completed({
+        result: { deliveryStatus: "prepared-for-review", pullRequests: [{ url: null }], observations: [] },
+    }));
+    assert.match(packet, /PR packet is prepared but has not been published/);
+    const approvals = formatWorkflowCompletion("pr-observer", completed({
+        result: { status: "awaiting-human-review", prUrl: pr, ci: { status: "passed", headSha: "abc123" } },
+    }));
+    assert.match(approvals, /Required human review or repository approvals remain/);
+    assert.match(approvals, /CI passed for the current PR head/);
+    assert.match(approvals, /human reviewer must complete/);
+    const blocked = formatWorkflowCompletion("pr-observer", completed({
+        result: { status: "needs-owner-decision", blockerKind: "ci-dependencies", prUrl: pr, ci: { status: "failed", headSha: "abc123" }, summary: "Internal feed returned 403.", evidence: ["Artifact feed: HTTP 403 while resolving plugin"] },
+    }));
+    assert.match(blocked, /Internal feed returned 403/);
+    assert.match(blocked, /feed or pipeline owner must check dependency access/);
+    assert.match(blocked, /PR check evidence: Artifact feed: HTTP 403 while resolving plugin/);
+    assert.doesNotMatch(blocked, /— blocked|Observer: needs-owner-decision/);
+});
+
+test("ready and approval labels without bound CI evidence never become a readiness or pass claim", () => {
+    for (const status of ["ready-for-human-merge", "awaiting-human-review"]) {
+        const prompt = formatWorkflowCompletion("pr-observer", completed({
+            result: { status, prUrl: pr, ci: { status: "passed" } },
+        }));
+        assert.match(prompt, /CI reports a pass, but its PR head has not been confirmed/);
+        assert.doesNotMatch(prompt, /CI passed for the current PR head|CI and observed PR checks passed|Ready for human/);
+    }
+    assert.equal(typeof deliveryStatusSummary("constructor"), "string");
+});
 
 class FakeSession {
     sessionId = "owning-session";
@@ -176,7 +233,7 @@ test("completed phases appear in chat while the workflow is running, not just at
     session.emit("workflow.run_updated", { runId: "run-1", revision: 2 });
     await delivery.flush();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /Evidence and requirements — completed/);
+    assert.match(session.messages[0].prompt, /Evidence and requirements\./);
     assert.match(session.messages[0].prompt, /CI is unverified/);
     assert.match(session.messages[0].prompt, /not a terminal result/);
     assert.match(session.messages[0].prompt, /\[workflow-milestone:run-1:[a-f0-9]{64}\]/);
@@ -210,8 +267,8 @@ test("milestone catch-up pages all progress and orders completed phases before t
     const delivery = install();
     await delivery.ready;
     assert.equal(session.messages.length, 3);
-    assert.match(session.messages[0].prompt, /Evidence — completed/);
-    assert.match(session.messages[1].prompt, /Review — completed/);
+    assert.match(session.messages[0].prompt, /Evidence\./);
+    assert.match(session.messages[1].prompt, /Review\./);
     assert.match(session.messages[2].prompt, /\[workflow-outcome:/);
     assert.deepEqual(session.calls.filter(([name]) => name === "getRunProgress").map(([, , options]) => options.afterSeq), [0, 100, 200]);
     delivery.dispose();
@@ -238,7 +295,8 @@ test("failed milestone delivery survives restart, retains order, and does not lo
     await install().ready;
     assert.equal(session.messages.length, 2);
     assert.equal(session.messages[0].prompt, failedPrompt);
-    assert.match(session.messages[1].prompt, /Local verification — deferred/);
+    assert.match(session.messages[1].prompt, /Local verification\./);
+    assert.match(session.messages[1].prompt, /Local command timed out; tests require CI/);
     assert.match(session.messages[1].prompt, /tests require CI/);
     assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 0);
 });
@@ -259,7 +317,7 @@ test("replayed and concurrent milestone events announce the same durable identit
     admitted.resolve();
     await delivery.flush();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /round 1 — blocked/);
+    assert.match(session.messages[0].prompt, /round 1\./);
 });
 
 test("ordinary or malformed progress never fabricates completed phases, and missing invalidations catch up", async (t) => {
@@ -278,7 +336,7 @@ test("ordinary or malformed progress never fabricates completed phases, and miss
     session.emit("session.resume");
     await delivery.reconcile();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /Pull request published — completed/);
+    assert.match(session.messages[0].prompt, /Pull request published\./);
     assert.equal(session.calls.filter(([method]) => ["run", "resume", "pause"].includes(method)).length, 0);
 });
 
@@ -294,7 +352,7 @@ test("a progress-page failure cannot hide a terminal blocker, and later catch-up
     session.progress = [await milestoneProgress("review", "Source review")];
     await delivery.reconcile();
     assert.equal(session.messages.length, 2);
-    assert.match(session.messages[1].prompt, /Source review — completed/);
+    assert.match(session.messages[1].prompt, /Source review\./);
 });
 
 test("milestone producer journals explicit completion once and does not log it again on replay", async () => {
@@ -338,7 +396,7 @@ test("the workflow producer pushes phase updates without run events, progress re
     await recordMilestone(context, receipt);
     await delivery.flushMilestones();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /Evidence — completed/);
+    assert.match(session.messages[0].prompt, /Evidence\./);
     assert.match(session.messages[0].prompt, /implementation and CI remain pending/);
     assert.equal(session.calls.filter(([method]) => ["getRun", "getRunProgress", "waitForRun"].includes(method)).length, 0);
     const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones;
@@ -372,7 +430,7 @@ test("direct producer and concurrent progress catch-up share ordered, deduplicat
     release.resolve();
     await delivery.flush();
     assert.equal(session.messages.length, 2);
-    assert.match(session.messages[0].prompt, /Source review — completed/);
+    assert.match(session.messages[0].prompt, /Source review\./);
     assert.deepEqual(prLinkUrls(session.messages[1].prompt), [adoPr]);
     delivery.enqueueMilestone("run-1", "code-feature", receipt);
     await delivery.flushMilestones();
@@ -720,10 +778,10 @@ test("startup catch-up delivers durable completion to the owning session with ho
     assert.equal(message.mode, "immediate");
     assert.equal(message.source, "system");
     assert.equal(message.agentMode, undefined, "Preserve the caller's current mode");
-    assert.match(message.prompt, /Workflow code-feature: completed/);
+    assert.match(message.prompt, /workflow code-feature, run run-1/);
     assert.match(message.prompt, /attempt 1/);
     assert.deepEqual(prLinkUrls(message.prompt), [pr]);
-    assert.match(message.prompt, /observer reports ready-for-human-merge/);
+    assert.match(message.prompt, /CI and observed PR checks passed for every published PR/);
     assert.match(message.prompt, /Human review and merge approval are still required/);
     assert.match(message.prompt, /\[workflow-outcome:run-1:[a-f0-9]{64}\]/);
     assert.equal(errors.length, 0);
@@ -741,11 +799,11 @@ test("completed code-feature does not claim CI success or a continuing observer 
     await install().ready;
     const prompt = session.messages[0].prompt;
     assert.deepEqual(prLinkUrls(prompt), [pr, adoPr]);
-    assert.match(prompt, /Observer: waiting-for-ci/);
-    assert.match(prompt, /Verification is not confirmed ready for every PR/);
-    assert.match(prompt, /No continuing observer or automatic merge is implied/);
-    assert.match(prompt, /Local verification was deferred or incomplete/);
-    assert.doesNotMatch(prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.match(prompt, /Observer stopped after timeout/);
+    assert.match(prompt, /Merge readiness is not confirmed for every PR/);
+    assert.match(prompt, /Continue observing this PR with the remaining repair allowance/);
+    assert.match(prompt, /Local verification is incomplete/);
+    assert.doesNotMatch(prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("completed NO-GO and missing results remain non-successful deliverables", async (t) => {
@@ -756,12 +814,12 @@ test("completed NO-GO and missing results remain non-successful deliverables", a
     await install().ready;
     assert.equal(session.messages.length, 2);
     const prompt = session.messages.find((message) => message.prompt.includes("run run-1")).prompt;
-    assert.match(prompt, /Recommendation: NO-GO/);
+    assert.match(prompt, /Work stopped with unresolved issues/);
     assert.match(prompt, /Unit test assertion failed/);
     assert.match(prompt, /Needs input: Which requirement applies/);
     for (const message of session.messages) {
         assert.match(message.prompt, /no published URL recorded/);
-        assert.match(message.prompt, /CI is unverified here/);
+        assert.match(message.prompt, /CI has not been confirmed/);
     }
 });
 
@@ -782,8 +840,8 @@ for (const status of ["paused", "error", "halted", "cancelled"]) {
         ];
         await install().ready;
         const prompt = session.messages[0].prompt;
-        assert.match(prompt, new RegExp(`Workflow code-feature: ${status}`));
-        assert.match(prompt, /Verification: incomplete\/unconfirmed/);
+        assert.match(prompt, new RegExp(`settled state ${status}`));
+        assert.match(prompt, /Verification is incomplete/);
         assert.match(prompt, /publication\/verification not confirmed/);
         assert.deepEqual(prLinkUrls(prompt), [adoPr]);
         assert.match(prompt, /Requires an approved compatible JDK/);
@@ -837,8 +895,8 @@ test("pr-observer completion includes its independent result and PR link", async
     const run = completed({ result: { status: "needs-owner-decision", prUrl: adoPr, summary: "Review requests a scope decision." } });
     const { session, install } = fixture(t, [[run, "pr-observer"]]);
     await install().ready;
-    assert.match(session.messages[0].prompt, /Workflow pr-observer: completed/);
-    assert.match(session.messages[0].prompt, /Observer: needs-owner-decision/);
+    assert.match(session.messages[0].prompt, /PR observation finished/);
+    assert.match(session.messages[0].prompt, /developer must resolve the recorded blocker or scope decision/);
     assert.deepEqual(prLinkUrls(session.messages[0].prompt), [adoPr]);
     assert.match(session.messages[0].prompt, /Review requests a scope decision/);
 });
@@ -1013,7 +1071,7 @@ test("old pending pauses are replaced by the latest durable completed outcome af
     session.sendHook = undefined;
     await install().ready;
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /completed.*attempt 2/);
+    assert.match(session.messages[0].prompt, /attempt 2; settled state completed/);
     assert.doesNotMatch(session.messages[0].prompt, /resume this same run/);
 });
 
@@ -1071,16 +1129,16 @@ test("deliveryStatus, verification receipts, observer continuation and publicati
     const { session, install } = fixture(t, [[run]]);
     await install().ready;
     const prompt = session.messages[0].prompt;
-    assert.match(prompt, /Delivery status: ci-failed/);
-    assert.match(prompt, /Verification common: local deferred; CI failed; head abc123/);
-    assert.match(prompt, /Observed CI: failed; head abc123/);
+    assert.match(prompt, /CI failed; the reported failures need attention/);
+    assert.match(prompt, /common: Local verification is incomplete/);
+    assert.match(prompt, /CI failed for the current PR head\. Observed head: abc123/);
     assert.match(prompt, /Build hit the local time limit/);
     assert.match(prompt, /PR status publication failed: PR edit rejected/);
     assert.match(prompt, /The PR body may be stale/);
-    assert.match(prompt, /Observer handoff available: pr-observer/);
-    assert.match(prompt, /Recorded continuation input is not a running workflow/);
+    assert.match(prompt, /A continuation is available for this PR/);
+    assert.match(prompt, /this handoff is not a running observer/);
     assert.match(prompt, /do not merge/);
-    assert.doesNotMatch(prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.doesNotMatch(prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("legacy observer status without explicit CI evidence cannot claim current-head success", async (t) => {
@@ -1088,8 +1146,8 @@ test("legacy observer status without explicit CI evidence cannot claim current-h
     delete run.result.observations[0].ci;
     const { session, install } = fixture(t, [[run]]);
     await install().ready;
-    assert.match(session.messages[0].prompt, /Observed CI: not-observed; head unknown/);
-    assert.doesNotMatch(session.messages[0].prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.match(session.messages[0].prompt, /CI has not been checked yet\. Observed head: unavailable/);
+    assert.doesNotMatch(session.messages[0].prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("failed PR status publication prevents a readiness claim even when CI passed", async (t) => {
@@ -1098,7 +1156,8 @@ test("failed PR status publication prevents a readiness claim even when CI passe
     const { session, install } = fixture(t, [[run]]);
     await install().ready;
     assert.match(session.messages[0].prompt, /PR status publication failed/);
-    assert.doesNotMatch(session.messages[0].prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.match(session.messages[0].prompt, /developer must restore the PR status update/);
+    assert.doesNotMatch(session.messages[0].prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("progress read failure is reported and the delivered recovery message explicitly says progress is unavailable", async (t) => {
@@ -1308,8 +1367,8 @@ for (const deliveryStatus of ["awaiting-human-review", "ci-failed"]) {
         assert.equal(result.deliveryStatus, deliveryStatus);
         assert.equal(result.recommendation, deliveryStatus);
         assert.equal(result.verification[0].ci.status, run.result.verification[0].ci.status);
-        assert.match(result.settledSummary, new RegExp(`Delivery status: ${deliveryStatus}`));
-        assert.match(session.messages[0].prompt, new RegExp(`Delivery status: ${deliveryStatus}`));
-        assert.doesNotMatch(result.settledSummary, /Verification: observer reports ready-for-human-merge/);
+        assert.ok(result.settledSummary.includes(deliveryStatusSummary(deliveryStatus)));
+        assert.ok(session.messages[0].prompt.includes(deliveryStatusSummary(deliveryStatus)));
+        assert.doesNotMatch(result.settledSummary, /CI and observed PR checks passed for every published PR/);
     });
 }

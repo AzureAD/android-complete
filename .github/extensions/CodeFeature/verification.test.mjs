@@ -14,9 +14,9 @@ import {
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
-    ciEvidenceFromSnapshot, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
+    ciEvidenceFromSnapshot, ciWaitingSummary, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
-import { deliveryOutcome, pendingVerification, verificationFromGate } from "./verification.mjs";
+import { ciVerificationSummary, deliveryOutcome, localVerificationSummary, pendingVerification, verificationFromGate, verificationSummary } from "./verification.mjs";
 import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, renderVerificationBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
 
 const task = {
@@ -61,6 +61,41 @@ const implementation = () => ({
     }],
     traceability: [{ requirementId: "R1", targetIds: ["common"], filePaths: ["FooTest.kt"], testLocations: ["FooTest"], verification: "Source reviewed only" }],
     assumptions: [], openDecisions: [], blockingUnknowns: [],
+});
+
+test("verification wording separates failed, deferred, unconfirmed and executed checks without raw labels", () => {
+    const cases = [
+        ["passed", "Local verification passed."],
+        ["failed", "Local verification failed."],
+        ["deferred", "Local verification is incomplete; remaining checks need CI."],
+        ["unverified", "Local verification has not been confirmed."],
+    ];
+    for (const [status, expected] of cases) {
+        const verification = { local: { status, evidence: ["Successful command: compile", "Specific task diagnostic."] }, ci: { status: "not-observed" } };
+        assert.ok(localVerificationSummary(verification).startsWith(expected));
+        if (["failed", "deferred"].includes(status)) assert.match(localVerificationSummary(verification), /Specific task diagnostic/);
+        else assert.doesNotMatch(localVerificationSummary(verification), /Specific task diagnostic/);
+        assert.match(verificationSummary(verification), /CI has not been checked yet/);
+    }
+    assert.equal(ciVerificationSummary({ ci: { status: "pending" } }), "Waiting for CI results for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "failed", headSha: "abc123" } }), "CI failed for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "unknown" } }), "CI results for the current PR head could not be confirmed.");
+    assert.equal(ciVerificationSummary({ ci: { status: "passed", headSha: "abc123" } }), "CI passed for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "passed" } }), "CI reports a pass, but its PR head has not been confirmed.");
+    assert.equal(ciVerificationSummary({ ci: { status: "failed" } }), "CI reports a failure, but its PR head has not been confirmed.");
+});
+
+test("CI waiting wording claims running or queued only from the actual current-head snapshot", () => {
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "queued" }] })), "CI checks are queued.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "in_progress" }] })), "CI checks are running.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "queued" }, { status: "in_progress" }] })), "CI has running and queued checks.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ state: "pending" }] })), "Waiting for CI results for the current PR head.");
+    assert.equal(ciWaitingSummary(snapshot({ snapshotHeadChanged: true })), "The PR head changed; waiting for fresh CI results.");
+    assert.match(ciWaitingSummary(snapshot(), "b".repeat(40)), /Waiting for the CI provider to recognize pushed commit b+/);
+    assert.equal(ciWaitingSummary(snapshot({
+        provider: "ado", statusCheckRollup: [],
+        prBuilds: [{ status: "inProgress", sourceHeadSha: "b".repeat(40) }],
+    })), "Waiting for CI results for the current PR head.", "An old build cannot establish current activity");
 });
 
 test("builder timeout, failure, and planned commands never become successful verification receipts", () => {
@@ -126,10 +161,18 @@ test("final managed narrative and JSON show the same current verification state"
         parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42"),
         snapshot({ description }), "status", { exec: () => "" },
     );
-    assert.match(updated, /Local verification: unverified\. Current-head CI: passed\./);
+    assert.match(updated, /Local verification has not been confirmed\. CI passed for the current PR head\./);
     assert.match(updated, /Human details stay unchanged\./);
     assert.equal(parseMarkerBlock(updated, verificationMarkers).ci.status, "passed");
     assert.equal(updated.split(/\r?\n/).filter((line) => line === wi).length, 1);
+    const failed = publishObserverStatus(
+        parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42"),
+        snapshot({ description: updated }), "status", { exec: () => "", ci: { status: "failed", headSha: "a".repeat(40) } },
+    );
+    assert.match(failed, /CI failed for the current PR head\./);
+    assert.doesNotMatch(failed, /CI passed for the current PR head/);
+    assert.match(failed, /Human details stay unchanged\./);
+    assert.equal(parseMarkerBlock(failed, verificationMarkers).ci.status, "failed");
 });
 
 test("a local pass for a previous source head is not promoted to the repaired current head", () => {
@@ -613,7 +656,44 @@ test("pending CI returns explicit continuation without spending classifier agent
     const milestone = logs.map((text) => milestoneFromProgress({ kind: "log", text })).find((item) => item?.title === "PR observation");
     assert.equal(milestone.title, "PR observation");
     assert.equal(milestone.outcome, "deferred");
-    assert.match(milestone.summary, /Current-head CI: pending/);
+    assert.match(milestone.summary, /Waiting for CI results for the current PR head/);
+    assert.match(milestone.summary, /Continue observing this PR with the remaining repair allowance/);
+    assert.doesNotMatch(milestone.summary, /pending|not merge approval|success is not established/);
+});
+
+test("live CI handoff messages preserve queued versus running without spending agents or repeating each poll", async () => {
+    for (const [state, expected] of [["QUEUED", "CI checks are queued."], ["IN_PROGRESS", "CI checks are running."], ["PENDING", "Waiting for CI results for the current PR head."]]) {
+        const context = ctx([], { maxCiPollAttempts: 2, ciPollIntervalMs: 0 });
+        const logs = [];
+        context.log = (text) => logs.push(text);
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => {},
+            fetchPrSnapshot: () => snapshot({ statusCheckRollup: [{ name: "CI", status: state }] }),
+        });
+        const waits = logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter((item) => item?.title === "Waiting for CI");
+        assert.equal(waits.length, 1, "One durable wait update per head, not one per poll");
+        assert.ok(waits[0].summary.startsWith(expected));
+        assert.equal(result.summary, expected);
+        assert.equal(result.ci.status, "pending");
+        assert.equal(result.status, "waiting-for-ci");
+        assert.equal(context.calls.length, 0);
+    }
+});
+
+test("external blocker milestones name who can act and keep the actual CI diagnostic", async () => {
+    const context = ctx();
+    const logs = [];
+    context.log = (text) => logs.push(text);
+    const diagnostic = "Hosted image unavailable: provider unable to process this request during brownout.";
+    const result = await runPrObserver(context, {
+        exec: () => "",
+        fetchPrSnapshot: () => snapshot({ prBuilds: [{ id: 7, status: "completed", result: "canceled", infrastructureIssues: [diagnostic] }] }),
+    });
+    const milestone = logs.map((text) => milestoneFromProgress({ kind: "log", text })).find((item) => item?.title === "PR observation");
+    assert.match(milestone.summary, /CI provider or pipeline owner must resolve/);
+    assert.equal(milestone.outcome, "blocked");
+    assert.ok(result.evidence.includes(diagnostic));
+    assert.equal(context.calls.length, 0);
 });
 
 test("pending CI never bypasses merge conflicts or actionable review feedback before or after a poll", async () => {

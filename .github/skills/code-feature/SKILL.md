@@ -91,6 +91,14 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
   authored test counts, builder/reviewer verdicts, or a `GO` label.
   Use "in progress", "not started yet", or a named blocker where known rather than
   an ambiguous "pending"; a completed milestone does not prove the next phase started.
+  Evidence completion says "Evidence complete; implementation is next." Only a
+  recorded builder-dispatch receipt supports "Implementation in progress." A delayed
+  receipt describes progress at its recorded time, not necessarily current activity.
+  Prefer the generated summary and next action over raw outcome labels. Do not echo
+  workflow IDs, protocol markers, admission diagnostics, or repetitive "not CI/merge
+  approval" disclaimers. Keep the actual local verification state/reason, exact-head
+  CI evidence, publication errors, and who must act. Distinguish queued CI, running
+  checks, and missing results; a continuation is available work, not a running observer.
 - If paused for a prerequisite or owner decision, open an actual `ask_user` question
   immediately; do not end with only a paused-status report or silently wait for the user
   to discover the blocker. Use the recorded `pendingInput`/question data, ask one question

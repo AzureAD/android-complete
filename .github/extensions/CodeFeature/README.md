@@ -213,6 +213,7 @@ The same owning-session delivery path now relays explicit durable milestone rece
 **while the workflow is running**, rather than waiting for its final result:
 
 - Evidence/requirements validated; initial implementation or a revision handed off.
+- Builder dispatched; implementation or a tactical repair in progress.
 - Local verification completed, blocked, or deferred (with the actual verification state).
 - Independent source-review rounds completed or returned findings.
 - Each PR published, immediately with its link, even when another target later fails.
@@ -221,6 +222,33 @@ The same owning-session delivery path now relays explicit durable milestone rece
 Entering a phase, routine tool logs, or `BUILD SUCCESSFUL` text alone never creates a
 completed-phase notice. Source review and publication updates explicitly do not claim
 tests/CI passed. Pending CI is reported once per head, not on every poll.
+
+Chat uses concise, plain-language summaries, not raw outcome labels or workflow
+transport diagnostics. Each update states the recorded fact and the relevant next
+step; specific failures, deferred checks and required human actions remain explicit.
+Local verification, source review, publication, exact-head CI and merge approval
+are separate facts, but do not require a repeated disclaimer at every milestone.
+
+| Recorded event | Example chat wording |
+| --- | --- |
+| Evidence validated | Evidence complete; implementation is next. |
+| Builder dispatched | Implementation in progress. |
+| Source authored | Source and test changes authored; verification results and independent source review follow. |
+| Local command deferred | Local verification is incomplete; remaining checks need CI. Local build hit its time limit. |
+| Source review passed | Independent source review passed; PR preparation is next. |
+| Published with observation enabled | PR published. CI observation is next. |
+| CI state observed | CI checks are queued. / CI checks are running. / Waiting for CI results for the current PR head. |
+| External blocker | CI provider is unavailable; the provider or pipeline owner must resolve it before retrying. |
+| Verified handoff | CI and observed PR checks passed; human review and merge approval are still required. |
+
+Builder-start receipts are emitted only inside the existing journaled agent-call
+producer, after invoking the builder. Replaying a cached builder step does not
+announce a new start or launch another agent. Their unchanged `completed` outcome
+records the dispatch event, not completion of implementation; chat uses the summary.
+The same durable identity/outbox and cancellation rules apply to these receipts.
+Delayed/replayed receipts are historical evidence, not proof work is still active.
+Final handoffs name the next responsible owner and preserve diagnostics; continuation
+arguments alone never claim an observer is running.
 
 Milestones are journaled by stable identity and pushed directly from the executing
 workflow to its owning-session outbox. They do not wait for an ephemeral run-updated

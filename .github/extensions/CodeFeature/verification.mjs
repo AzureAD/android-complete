@@ -28,10 +28,39 @@ export function verificationFromGate(gate) {
     };
 }
 
-export function verificationSummary(verification) {
+export function localVerificationSummary(verification) {
     const local = verification?.local?.status || "unverified";
+    const summaries = {
+        passed: "Local verification passed.",
+        failed: "Local verification failed.",
+        deferred: "Local verification is incomplete; remaining checks need CI.",
+        unverified: "Local verification has not been confirmed.",
+    };
+    const summary = Object.hasOwn(summaries, local) ? summaries[local] : "Local verification status could not be confirmed.";
+    const evidence = Array.isArray(verification?.local?.evidence) ? verification.local.evidence : [];
+    const reason = evidence.find((entry) => typeof entry === "string" && entry.trim() &&
+        !entry.startsWith("Successful command:"));
+    return ["failed", "deferred"].includes(local) && reason ? `${summary} ${reason.replace(/\s+/g, " ").trim()}` : summary;
+}
+
+export function ciVerificationSummary(verification) {
     const ci = verification?.ci?.status || "not-observed";
-    return `Local verification: ${local}. Current-head CI: ${ci}.`;
+    const head = verification?.ci?.headSha;
+    if (["passed", "failed"].includes(ci) && (typeof head !== "string" || !head.trim())) {
+        return `CI reports a ${ci === "passed" ? "pass" : "failure"}, but its PR head has not been confirmed.`;
+    }
+    const summary = {
+        passed: "CI passed for the current PR head.",
+        failed: "CI failed for the current PR head.",
+        pending: "Waiting for CI results for the current PR head.",
+        "not-observed": "CI has not been checked yet.",
+        unknown: "CI results for the current PR head could not be confirmed.",
+    }[ci];
+    return typeof summary === "string" ? summary : "CI results for the current PR head could not be confirmed.";
+}
+
+export function verificationSummary(verification) {
+    return `${localVerificationSummary(verification)} ${ciVerificationSummary(verification)}`;
 }
 
 export function deliveryOutcome(pullRequests, observations, { published = true } = {}) {
