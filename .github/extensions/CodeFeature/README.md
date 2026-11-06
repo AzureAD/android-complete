@@ -228,12 +228,21 @@ in-flight milestone send remains singular and its pending receipt is retained; a
 notice can therefore arrive before that delayed milestone. Worker retirement is atomic
 with its final pending/dirty check so a racing settlement cannot join a finished worker.
 The observation/admission window expiring is a **delay**, not a failed send or a workflow
-error. It returns an explicit delayed status and emits one informational, ephemeral
-diagnostic per in-flight operation; it never uses error-level session logging, writes a
-failed handoff into workflow progress, or falsely acknowledges the receipt. Reconciliation
+error. Its internal delayed result is not a user-facing workflow status. Historical
+window/elapsed timing is kept once per in-flight operation in the ignored local outbox's
+`notificationDiagnostics`, with no chat message or session log at any severity. It never
+writes a failed handoff into workflow progress or falsely acknowledges the receipt. Reconciliation
 shares a single unfinished progress read across retries. A genuine read/send/storage rejection,
 including one arriving after the bounded wait, still follows the error-reporting and retry
 path. Pending receipts remain durable and are acknowledged only after actual admission.
+The registered workflow also runs Git/Azure CLI/GitHub CLI prerequisite probes
+asynchronously. Previously these synchronous subprocess waits blocked the same extension
+loop that receives SDK replies and wakes attached supervision, so a quickly admitted
+milestone could not be processed until credential checks finished. The async and sync
+entrypoints share the same validation rules and account selection. Async probes preserve
+the run-scoped environment, have bounded subprocess execution, and propagate cancellation;
+they do not spawn model agents or install anything. This removes that owned startup
+blocker, not every possible host/chat queue delay or all synchronous work elsewhere.
 Caller instructions require a short visible chat update for each receipt, without starting
 a status-poll loop or restarting the still-running workflow.
 The registered-extension integration test runs the real `code-feature` handler with

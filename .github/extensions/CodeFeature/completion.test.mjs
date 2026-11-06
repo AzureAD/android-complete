@@ -485,15 +485,16 @@ test("an unavailable chat cannot stall source execution indefinitely or falsely 
     assert.equal(before.pending.length, 1);
     assert.equal(logs.length, 1, "A delayed admission is not a failed producer handoff");
     assert.deepEqual(errors, []);
-    assert.ok(session.logs.some((entry) => entry.level === "info" && /delayed during chat admission/.test(entry.message)));
+    assert.deepEqual(session.logs, [], "Ordinary wait timing is not surfaced to the session");
+    assert.ok(JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].notificationDiagnostics["chat admission"]);
     release.resolve();
     await delivery.flushMilestones();
     assert.equal(session.messages.length, 1, "The still-in-flight admission is not duplicated on timeout");
     assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones.pending.length, 0);
 });
 
-test("slow catch-up uses non-error diagnostics and shares one in-flight progress read across timeouts", async (t) => {
-    const { session, install } = fixture(t, [[completed({ status: "running" })]], { admissionTimeoutMs: 5 });
+test("slow catch-up keeps timing diagnostics private and shares one in-flight progress read across timeouts", async (t) => {
+    const { session, install, stateFile } = fixture(t, [[completed({ status: "running" })]], { admissionTimeoutMs: 5 });
     const progress = deferred();
     let reads = 0;
     session.workflow.getRunProgress = () => { reads++; return progress.promise; };
@@ -501,13 +502,15 @@ test("slow catch-up uses non-error diagnostics and shares one in-flight progress
     try {
         await delivery.ready;
         assert.deepEqual(session.errors, [], "An observation-window timeout must not become a session.error notification");
-        assert.equal(session.logs.length, 1);
-        assert.equal(session.logs[0].level, "info");
-        assert.equal(session.logs[0].ephemeral, true);
-        assert.match(session.logs[0].message, /delayed/i);
+        assert.deepEqual(session.logs, []);
+        const diagnostics = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].notificationDiagnostics;
+        assert.equal(diagnostics["milestone catch-up"].windowMs, 5);
+        assert.ok(diagnostics["milestone catch-up"].elapsedMs >= 5);
         for (let attempt = 0; attempt < 3; attempt++) await delivery.track("run-1", "code-feature");
         assert.equal(reads, 1, "Timeouts must not duplicate the unfinished catch-up RPC");
-        assert.equal(session.logs.length, 1, "The same delayed operation is reported once");
+        assert.deepEqual(session.logs, [], "No session notification is emitted for ordinary wait timing");
+        assert.deepEqual(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].notificationDiagnostics, diagnostics,
+            "The same unfinished operation does not repeatedly write diagnostics");
         assert.ok(session.waits.has("run-1"), "Settlement observation must remain installed");
     } finally {
         progress.resolve({ records: [] });
@@ -533,7 +536,7 @@ test("slow producer admission is a bounded delayed result, not a failed handoff 
         assert.deepEqual(session.errors, []);
         assert.equal(handoff.status, "delayed");
         assert.equal(logs.length, 1, "A timeout must not write a failed milestone handoff into durable workflow progress");
-        assert.equal(session.logs[0].level, "info");
+        assert.deepEqual(session.logs, [], "No user-facing delay message is emitted");
         const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"];
         assert.equal(state.milestones.pending.length, 1);
         assert.equal(state.milestones.delivered.length, 0);

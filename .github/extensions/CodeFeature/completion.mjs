@@ -293,10 +293,6 @@ export function createWorkflowCompletionDelivery(session, {
         void session.log(message, { level: "error" }).catch((logError) =>
             console.error(`Cannot log completion delivery failure: ${logError.message}`));
     },
-    reportDelay = (message) => {
-        void session.log(message, { level: "info", ephemeral: true }).catch((logError) =>
-            console.error(`Cannot log workflow delivery delay: ${logError.message}`));
-    },
 } = {}) {
     if (!Number.isFinite(admissionTimeoutMs) || admissionTimeoutMs <= 0) throw new Error("Chat admission timeout must be positive.");
     for (const method of ["listRuns", "getRun", "getRunDetail", "getRunProgress", "waitForRun"]) {
@@ -346,6 +342,7 @@ export function createWorkflowCompletionDelivery(session, {
     }
 
     async function waitForAdmission(runId, operation, stage) {
+        const startedAt = Date.now();
         let timer;
         try {
             const result = await Promise.race([
@@ -357,7 +354,13 @@ export function createWorkflowCompletionDelivery(session, {
             if (result.status === "delayed" && !disposed) {
                 if (!delayedOperations.has(operation)) {
                     delayedOperations.add(operation);
-                    reportDelay(`Run ${runId}: workflow notification updates are delayed during ${stage}. The notification operation has not settled; this does not establish a workflow failure. Observation continues, any queued receipts are retained, and the in-flight operation is not duplicated.`);
+                    update(runId, (entry) => {
+                        (entry.notificationDiagnostics ||= {})[stage] = {
+                            lastWindowExceededAt: Date.now(),
+                            elapsedMs: Date.now() - startedAt,
+                            windowMs: admissionTimeoutMs,
+                        };
+                    });
                     // A later rejection is a real failure even after the bounded wait returned.
                     void operation.catch(failed);
                 }

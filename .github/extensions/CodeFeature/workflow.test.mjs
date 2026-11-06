@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { humanInputRequestFromProgress, milestoneFromProgress } from "./milestones.mjs";
+import { createWorkflowSupervision } from "./supervision.mjs";
 import {
     OBSERVER_AGENT,
     computeRepairIdentity,
@@ -43,6 +44,7 @@ import {
     customAgents,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
+    executePrerequisiteProbe,
     extractRunnableVerificationCommand,
     extractWorkItemIdsFromText,
     formatPrBody,
@@ -81,6 +83,7 @@ import {
     validateReview,
     validateTask,
     verifyWorkflowPrerequisites,
+    verifyWorkflowPrerequisitesAsync,
     workflowDefinition,
 } from "./workflow.mjs";
 
@@ -2201,6 +2204,110 @@ function prerequisiteResumeFixture() {
     };
     return { root, javaHome, env, journal, checkpoints, contexts, makeContext, dependencies, gateEnvs, writeRecovery };
 }
+
+test("async prerequisite validation uses the same policy and account selection as the synchronous helper", async () => {
+    const f = prerequisiteResumeFixture();
+    try {
+        const common = { repository: "common", localPath: "common", hostname: "github.com" };
+        const authapp = { repository: "authenticator", localPath: "common", hostname: "msazure.visualstudio.com" };
+        const env = { ...f.env, JAVA_HOME: f.javaHome };
+        for (const [targets, failure, javaHome] of [
+            [[common], null, f.javaHome],
+            [[authapp], null, f.javaHome],
+            [[common, authapp], "az", f.javaHome],
+            [[common], "gh", f.javaHome],
+            [[common], null, "missing-jdk"],
+        ]) {
+            const calls = [];
+            const exec = (command, args) => {
+                calls.push([command, args]);
+                if (command === failure) throw new Error("Fixture CLI authentication unavailable");
+                return args.includes("status") ? "Logged in to github.com account fixture (keyring)" : "fixture-output";
+            };
+            const options = { workspaceRoot: f.root, targets, createPullRequests: true, env: { ...env, JAVA_HOME: javaHome } };
+            const expected = verifyWorkflowPrerequisites({ ...options, exec });
+            const expectedCalls = calls.splice(0);
+            assert.deepEqual(await verifyWorkflowPrerequisitesAsync({ ...options, exec: async (...args) => exec(...args) }), expected);
+            assert.deepEqual(calls, expectedCalls);
+        }
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the native asynchronous probe executor leaves the event loop responsive and preserves argument/environment boundaries", async () => {
+    let completed = false;
+    const output = executePrerequisiteProbe(process.execPath, [
+        "-e", "setTimeout(() => process.stdout.write(JSON.stringify({arg:process.argv[1],env:process.env.WORKFLOW_PROBE})), 80)",
+        "argument with spaces",
+    ], { env: { ...process.env, WORKFLOW_PROBE: "run-scoped-fixture" } }).then((result) => { completed = true; return result; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(completed, false, "The extension can process SDK messages while the actual child process is running");
+    assert.deepEqual(JSON.parse(await output), { arg: "argument with spaces", env: "run-scoped-fixture" });
+    assert.equal(process.env.WORKFLOW_PROBE, undefined);
+});
+
+test("native asynchronous probes propagate nonzero exits and cancellation rather than reporting prerequisite success", async () => {
+    await assert.rejects(executePrerequisiteProbe(process.execPath, ["-e", "process.exit(7)"]), (error) => error.code === 7);
+    const controller = new AbortController();
+    const execution = executePrerequisiteProbe(process.execPath, ["-e", "setTimeout(()=>{},1000)"], { signal: controller.signal });
+    controller.abort();
+    await assert.rejects(execution, { name: "AbortError" });
+});
+
+test("Windows async Azure CLI probes preserve argument boundaries and propagate the native exit status", { skip: process.platform !== "win32" }, async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "async-az-probe-"));
+    try {
+        const script = path.join(root, "fixture.cjs");
+        writeFileSync(script, "if(process.argv[2]==='fixture-fail')process.exit(7);console.log(JSON.stringify(process.argv.slice(2)));");
+        writeFileSync(path.join(root, "az.cmd"), `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+        const env = buildNormalizedProcessEnv(process.env, {}, { prependPathDirs: [root] });
+        const args = ["fixture", "value with spaces", "plain-value"];
+        assert.deepEqual(JSON.parse(await executePrerequisiteProbe("az", args, { cwd: root, env })), args);
+        await assert.rejects(executePrerequisiteProbe("az", ["fixture-fail"], { cwd: root, env }), (error) => error.code === 7);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a toolchain milestone reaches attached supervision while prerequisite CLI probes are still running", async () => {
+    const f = prerequisiteResumeFixture();
+    const controller = new AbortController();
+    let release, entered;
+    const blocked = new Promise((resolve) => { release = resolve; });
+    const started = new Promise((resolve) => { entered = resolve; });
+    let probeFinished = false;
+    const ctx = f.makeContext([]);
+    ctx.args.options.javaHome = f.javaHome;
+    ctx.signal = controller.signal;
+    const session = { workflow: {
+        getRunDetail: () => new Promise((resolve) => setImmediate(() =>
+            resolve({ workflowName: "code-feature", status: "running" }))),
+        waitForRun: (_id, { signal }) => new Promise((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true })),
+    }};
+    const supervision = createWorkflowSupervision(() => session);
+    ctx.onMilestone = (receipt) => supervision.notifyMilestone(ctx.runId, receipt);
+    const waiting = supervision.tool.handler({ runId: ctx.runId });
+    const execution = runCodeFeature(ctx, {
+        ...f.dependencies,
+        execAsync: async () => {
+            entered();
+            await blocked;
+            probeFinished = true;
+            return "fixture-output";
+        },
+    });
+    try {
+        await started;
+        const notice = await waiting;
+        assert.equal(notice.kind, "milestone");
+        assert.equal(notice.milestone.title, "Build toolchain selected");
+        assert.equal(probeFinished, false, "Notification processing must not wait for credential probes to finish");
+        assert.equal(ctx.calls.length, 0);
+    } finally {
+        controller.abort();
+        release();
+        await assert.rejects(execution, { name: "AbortError" });
+        rmSync(f.root, { recursive: true, force: true });
+    }
+});
 
 test("paused prerequisites recheck approved run-scoped recovery on a fresh attempt and replay without duplicate agents", async () => {
     const f = prerequisiteResumeFixture();

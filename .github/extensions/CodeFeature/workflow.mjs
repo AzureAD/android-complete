@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -1385,11 +1385,48 @@ export function runTargetEnvironmentPreflight(workspaceRoot, target, env = proce
     };
 }
 
-export function verifyWorkflowPrerequisites({
+function runProbeSequence(sequence, exec) {
+    let next = sequence.next();
+    while (!next.done) {
+        let output;
+        try { output = exec(...next.value); }
+        catch (error) { next = sequence.throw(error); continue; }
+        next = sequence.next(output);
+    }
+    return next.value;
+}
+
+async function runProbeSequenceAsync(sequence, exec, signal) {
+    signal?.throwIfAborted();
+    let next = sequence.next();
+    while (!next.done) {
+        let output;
+        try {
+            const [command, args, options] = next.value;
+            output = await exec(command, args, { ...options, ...(signal ? { signal } : {}) });
+        } catch (error) {
+            if (signal?.aborted || error?.name === "AbortError") throw error;
+            next = sequence.throw(error);
+            continue;
+        }
+        signal?.throwIfAborted();
+        next = sequence.next(output);
+    }
+    return next.value;
+}
+
+export function verifyWorkflowPrerequisites({ exec = defaultExec, ...options } = {}) {
+    return runProbeSequence(prerequisiteProbes(options), exec);
+}
+
+export async function verifyWorkflowPrerequisitesAsync({ exec = executePrerequisiteProbe, signal, ...options } = {}) {
+    return runProbeSequenceAsync(prerequisiteProbes(options), exec, signal);
+}
+
+function* prerequisiteProbes({
     workspaceRoot = process.cwd(),
     targets = [],
     createPullRequests = false,
-    exec = defaultExec,
     env = process.env,
     seedLocalProperties = env === process.env,
 } = {}) {
@@ -1399,7 +1436,7 @@ export function verifyWorkflowPrerequisites({
     const environments = [];
 
     try {
-        exec("git", ["--version"], { cwd: workspaceRoot, env: normalizedEnv });
+        yield ["git", ["--version"], { cwd: workspaceRoot, env: normalizedEnv }];
     } catch {
         const msg = "Prerequisite failed: 'git' executable could not be started in the workflow host environment.";
         issues.push(msg);
@@ -1466,7 +1503,7 @@ export function verifyWorkflowPrerequisites({
         const isAdoRepo = isAuthApp || /visualstudio\.com|dev\.azure\.com/i.test(String(target.hostname || ""));
         if (isAdoRepo || createPullRequests) {
             try {
-                const azToken = exec(
+                const azToken = yield [
                     "az",
                     [
                         "account",
@@ -1479,7 +1516,7 @@ export function verifyWorkflowPrerequisites({
                         "tsv",
                     ],
                     { cwd: workspaceRoot, env: normalizedEnv },
-                );
+                ];
                 if (!nonempty(azToken)) {
                     throw new Error("Empty Azure DevOps access token.");
                 }
@@ -1494,13 +1531,13 @@ export function verifyWorkflowPrerequisites({
         }
 
         if (createPullRequests && !isAdoRepo && nonempty(target.hostname)) {
-            const account = resolveGitHubAccount(target, workspaceRoot, exec);
+            const account = yield* gitHubAccountProbes(target, workspaceRoot);
             let ghAuthenticated = false;
             try {
                 const ghArgs = nonempty(account)
                     ? ["auth", "token", "--hostname", target.hostname, "--user", account]
                     : ["auth", "token", "--hostname", target.hostname];
-                const ghToken = exec("gh", ghArgs, { cwd: workspaceRoot, env: normalizedEnv });
+                const ghToken = yield ["gh", ghArgs, { cwd: workspaceRoot, env: normalizedEnv }];
                 ghAuthenticated = nonempty(ghToken);
             } catch {
                 ghAuthenticated = false;
@@ -3343,7 +3380,32 @@ function defaultExec(command, args, options = {}) {
     }).trim();
 }
 
+export function executePrerequisiteProbe(command, args, options = {}) {
+    const env = options.env
+        ? (options.env.__completeEnv ? options.env : buildNormalizedProcessEnv(process.env, options.env))
+        : buildNormalizedProcessEnv(process.env);
+    const azureCli = process.platform === "win32" && command === "az";
+    const executable = azureCli ? "powershell" : command;
+    const commandArgs = azureCli
+        ? ["-NoProfile", "-Command", `& az ${(args || []).map((arg) => `'${String(arg).replace(/'/g, "''")}'`).join(" ")}; exit $LASTEXITCODE`]
+        : args;
+    return new Promise((resolve, reject) => {
+        execFile(executable, commandArgs, {
+            cwd: options.cwd, env, encoding: "utf8", windowsHide: true,
+            timeout: options.timeout ?? 120_000,
+            ...(options.signal ? { signal: options.signal } : {}),
+        }, (error, stdout) => {
+            if (error) reject(error);
+            else resolve(stdout.trim());
+        });
+    });
+}
+
 export function resolveGitHubAccount(target, workspaceRoot, exec = defaultExec) {
+    return runProbeSequence(gitHubAccountProbes(target, workspaceRoot), exec);
+}
+
+function* gitHubAccountProbes(target, workspaceRoot) {
     if (nonempty(target.account)) return target.account.trim();
     const localConfigPath = path.join(workspaceRoot, ".github", "developer-local.json");
     if (existsSync(localConfigPath)) {
@@ -3360,7 +3422,7 @@ export function resolveGitHubAccount(target, workspaceRoot, exec = defaultExec) 
         }
     }
     try {
-        const statusOutput = exec("gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot });
+        const statusOutput = yield ["gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot }];
         const match = statusOutput.match(/Logged in to [^\s]+ account ([^\s(]+)/i);
         if (match && nonempty(match[1])) return match[1].trim();
     } catch {
@@ -3955,11 +4017,12 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
             slug: "One/_git/AD-MFA-phonefactor-phoneApp-android",
             baseBranch: "working",
         };
-        const authPrereq = verifyWorkflowPrerequisites({
+        const authPrereq = await verifyWorkflowPrerequisitesAsync({
             workspaceRoot,
             targets: [adoProbeTarget],
             createPullRequests: true,
-            exec,
+            exec: dependencies.execAsync || (exec === defaultExec ? executePrerequisiteProbe : exec),
+            signal: ctx.signal,
             env: workflowEnv,
             seedLocalProperties: exec === defaultExec,
         });
@@ -4085,15 +4148,16 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
                     summary: `Using installed JDK ${selectedJava.javaMajorVersion} at ${selectedJava.javaHome} for this workflow run only. Global JAVA_HOME is unchanged. No installation or additional approval was required.`,
                 });
             }
-            const verify = () => verifyWorkflowPrerequisites({
+            const verify = () => verifyWorkflowPrerequisitesAsync({
                 workspaceRoot,
                 targets: targetsToVerify,
                 createPullRequests: effectiveCreatePrs,
-                exec,
+                exec: dependencies.execAsync || (exec === defaultExec ? executePrerequisiteProbe : exec),
+                signal: ctx.signal,
                 env: workflowEnv,
                 seedLocalProperties: exec === defaultExec,
             });
-            const prereqCheck = verify();
+            const prereqCheck = await verify();
             const prereqStepKey = `${stepPrefix}-answers-v2-${prereqRound}`;
             const prereqAnswers = await step(
                 prereqStepKey,
@@ -4106,7 +4170,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
             }
             // External recovery is authoritative over previously journaled answers.
             applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
-            const recheck = verify();
+            const recheck = await verify();
             if (recheck.ok) return null;
             if (Array.isArray(prereqAnswers) && prereqAnswers.length > 0 && prereqRound + 1 < 2) continue;
             if (pauseOnBlocker) {
@@ -4118,7 +4182,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
                     recoveryPath,
                 });
                 applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
-                const afterResume = verify();
+                const afterResume = await verify();
                 if (afterResume.ok) return null;
                 if (prereqRound + 1 < 2) continue;
                 return packet("needs clarification", afterResume.issues, afterResume.questions);

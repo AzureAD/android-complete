@@ -81,6 +81,9 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
 - Relay each new `[workflow-milestone:...]` receipt as a concise visible chat update,
   including blocked/deferred verification and any PR link. Do not wait until terminal
   settlement, restart the workflow, or repeat an already-reported marker.
+  Ordinary notification observation/admission windows are internal timing diagnostics,
+  not user-facing "delayed" statuses. Do not announce them or infer a blocked/failed
+  workflow from them. Actual delivery errors or decisions needing intervention remain visible.
 - Inspect terminal outcomes, not parent-session idleness. Use the read-only
   `code_feature_workflow_status` tool for an existing run when needed. Report actual
   local/CI receipts, PR links, remaining failures/policies, and the next responsible owner.
