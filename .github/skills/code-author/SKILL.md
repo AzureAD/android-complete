@@ -1,7 +1,9 @@
 ---
 name: code-author
-description: Author production-ready Android Auth implementations, regression telemetry, unit tests, and pull requests across Common, Broker, MSAL, ADAL, and Authenticator. Use this skill when implementing features, bug fixes, or PBIs—either directly in chat or inside the `code-feature` dynamic workflow. Enforces strict default-off flight isolation, OTel sampler synchronization, central cross-layer placement, Java/Kotlin ABI compatibility, and PR hygiene.
+description: Author production-ready Android Auth implementations, regression telemetry, unit tests, and pull requests across Common, Broker, MSAL, ADAL, and Authenticator. Use for ordinary coding requests and for workers inside an already-running workflow. Provides coding standards, not an automatic dynamic-workflow launch. The experimental code-feature skill is a separate, explicit per-request opt-in.
 ---
+
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 
 # Code Author
 
@@ -9,13 +11,23 @@ Author production-ready code, tests, telemetry, and pull requests across the And
 repositories (`common`, `broker`, `msal`, `adal`, and `authenticator`) without avoidable
 review or CI round-trips.
 
-## Default Workflow Execution (`code-feature`)
+## Normal coding is the default
 
-When a user asks in a top-level session to implement a feature, PBI, or design document and `run_dynamic_workflow` is available:
-- **Your VERY FIRST action must be to call `run_dynamic_workflow({ name: "code-feature", args: { prompt: "<user prompt verbatim>" } })` immediately.**
-- **Do NOT pre-read `references/implementation-standards.md`, `AGENTS.md`, PBI details, or target repository files in the outer session before starting `code-feature`**—Stage 1 (`code-evidence`), Stage 2 (`code-builder`), Stage 3 (`code-reviewer`), Stage 4 (PR publication), and Stage 5 (`pr-observer`) inside `code-feature` automatically fetch the PBI/design doc, prepare the target checkout (`authenticator/`, `broker/`, `common/`, `msal/`, `adal/`), and execute the full implementation and CI verification loop.
-- **Omit `options` completely** when calling `run_dynamic_workflow` (`code-feature` automatically publishes the pull request and runs `pr-observer` to green CI). Never pass `createPullRequests: false` or `observePullRequests: false`.
-- Only read [implementation standards](references/implementation-standards.md) directly when you are executing *inside* a `code-builder` / `code-reviewer` subagent (where `run_dynamic_workflow` is not used).
+- Implement ordinary requests directly using this skill's standards. Requests such as
+  "implement PBI 3804404", "fix this bug", or "code and open a PR" do not authorize a
+  dynamic workflow, even when its tools are available. Invoking `/code-author` also
+  selects coding standards, not orchestration.
+- Do not automatically launch or offer the experimental workflow for each coding request.
+  Keep the workflow installed and available without making it the default.
+- For an explicit current request to use the coding/dynamic/coding-and-PR workflow, or
+  `/code-feature`, use the [code-feature launcher](../code-feature/SKILL.md). Its invocation
+  boundary includes the supported phrases and negative examples. Opt-in is per request,
+  not sticky for unrelated later tasks.
+- Do not launch a new workflow from a builder, reviewer, evidence worker, or other
+  delegated agent already implementing an assigned task. Follow that assignment and
+  its workflow's existing handoff instead.
+- Read [implementation standards](references/implementation-standards.md) for direct
+  coding and for code-builder/code-reviewer work. The core rules below apply in both.
 
 ## Core Implementation Rules
 

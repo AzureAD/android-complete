@@ -2,10 +2,13 @@
 // Licensed under the MIT License.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { humanInputRequestFromProgress, milestoneFromProgress } from "./milestones.mjs";
+import { createWorkflowSupervision } from "./supervision.mjs";
 import {
     OBSERVER_AGENT,
     computeRepairIdentity,
@@ -31,26 +34,45 @@ import {
     EVIDENCE_AGENT,
     MAX_FIX_ITERATIONS,
     REVIEWER_AGENT,
+    applyPrerequisiteAnswers,
+    applyTargetFiles,
+    buildAdoPullRequestPublicationScript,
     buildInspectedFilesContext,
+    buildNormalizedProcessEnv,
+    capturePreBuilderBaselineBackups,
+    collectBuildReceiptOnDisk,
     customAgents,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
+    executePrerequisiteProbe,
     extractRunnableVerificationCommand,
     extractWorkItemIdsFromText,
     formatPrBody,
     formatPrTitle,
+    isBuilderShortCircuitedToCi,
+    isDefinitiveCodeOrTestFailure,
+    isInfrastructureGateFailure,
     isPipelineModificationAuthorized,
     isProtectedPipelineOrQualityPath,
     isSafeRelativeFilePath,
+    normalizeEvidenceResponse,
+    normalizeReviewResponse,
     normalizeTask,
     parseAdoDesignDocUrl,
     parseAllowedGradleVerificationCommand,
+    prerequisiteRecoveryPath,
+    renderUnifiedDiff,
     resolveInputSources,
     resolveRoleSkillGuides,
+    resolveTargetJavaHome,
+    selectWorkflowJavaHome,
+    resolveWindowsCmdExecutable,
+    restoreTargetFiles,
     revertUnauthorizedProtectedFiles,
     rubric,
     runCodeFeature,
     runLocalVerificationGate,
+    runTargetEnvironmentPreflight,
     runWindowsBatchFileSafely,
     slimIntakeSchema,
     slimResultSchema,
@@ -60,6 +82,8 @@ import {
     validateImplementation,
     validateReview,
     validateTask,
+    verifyWorkflowPrerequisites,
+    verifyWorkflowPrerequisitesAsync,
     workflowDefinition,
 } from "./workflow.mjs";
 
@@ -242,6 +266,39 @@ test("missing, stale, or incomplete task approval requires clarification without
     }
 });
 
+function assertWorkflowJson(value, location = "$") {
+    assert.notEqual(value, undefined, `Workflow result contains nested undefined at ${location}`);
+    if (typeof value === "number") assert.ok(Number.isFinite(value), `Nonfinite number at ${location}`);
+    if (value === null || typeof value !== "object") {
+        assert.ok(["string", "number", "boolean"].includes(typeof value) || value === null, `Non-JSON value at ${location}`);
+        return;
+    }
+    for (const [key, nested] of Object.entries(value)) assertWorkflowJson(nested, `${location}.${key}`);
+}
+
+test("invalid inputs return strict SDK-serializable clarification packets, not nested-undefined runtime errors", async () => {
+    for (const args of [{ task: {} }, { stage0: {} }, {}, { task: { title: "Incomplete", revision: "v1" } }]) {
+        const ctx = context([]);
+        ctx.args = args;
+        const result = await runCodeFeature(ctx);
+        assert.equal(result.recommendation, "needs clarification");
+        assertWorkflowJson(result);
+        assert.equal(ctx.calls.length, 0);
+    }
+});
+
+test("journaled producers and successful packets satisfy the SDK JSON boundary", async () => {
+    const ctx = context([evidence(), implementation(), review()]);
+    ctx.step = async (_key, producer) => {
+        const result = await producer();
+        assertWorkflowJson(result);
+        return result;
+    };
+    const result = await runCodeFeature(ctx);
+    assertWorkflowJson(result);
+    assert.equal(result.deliveryStatus, "prepared-for-review");
+});
+
 test("single-repository shorthand task normalizes defaults for Android Auth repos", () => {
     const normalized = normalizeTask({
         task: {
@@ -282,6 +339,20 @@ test("valid implementation passing first review exits loop immediately and prepa
     assert.match(pr.body, /Fixes AB#3802484 · Related to AB#3802483/);
     assert.match(pr.body, /## Requirements Traceability/);
     assert.match(pr.body, /RetryAfterThrottleCacheTest\.suppressesUntilExpiry/);
+});
+
+test("code-feature records each completed major phase with execution caveats before its final result", async () => {
+    const ctx = context([evidence(), implementation(), review()]);
+    const result = await runCodeFeature(ctx);
+    const milestones = ctx.logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
+    assert.deepEqual(milestones.map((milestone) => milestone.title), [
+        "Evidence and requirements", "Initial implementation", "Local verification: common",
+        "Independent source review, round 1", "Pull request packet prepared",
+    ]);
+    assert.deepEqual(milestones.map((milestone) => milestone.outcome), ["completed", "completed", "deferred", "completed", "completed"]);
+    assert.match(milestones[1].summary, /not evidence.*tests or CI passed/);
+    assert.match(milestones[3].summary, /source review only/);
+    assert.equal(result.deliveryStatus, "prepared-for-review");
 });
 
 test("reviewer feedback loops back to builder up to 2 times and succeeds when 2nd fix passes review", async () => {
@@ -460,7 +531,7 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
                     : "Logged in to github.com account shahzaibj (keyring)";
             }
             if (cmd === "gh" && args[0] === "auth" && args[1] === "token") return "mock-token";
-            if (cmd === "git" && args[0] === "rev-parse") return "deadbeef1234";
+            if (cmd === "git" && ["rev-parse", "write-tree", "merge-base"].includes(args[0])) return "d".repeat(40);
             if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
                 const repoArg = args[args.indexOf("--repo") + 1];
                 return `https://${repoArg.startsWith("msft.ghe.com/") ? repoArg : `github.com/${repoArg}`}/pull/999`;
@@ -475,7 +546,7 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
             { workspaceRoot: tempRoot, createPullRequests: true },
         );
         const packet = await runCodeFeature(ctx, { exec: mockExec });
-        assert.equal(packet.recommendation, "GO to PR Review");
+        assert.equal(packet.recommendation, "ci-not-observed");
         assert.equal(packet.pullRequests.length, 2);
         assert.equal(packet.pullRequests[0].status, "created");
         assert.equal(packet.pullRequests[0].url, "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/999");
@@ -483,6 +554,23 @@ test("live createPullRequests option writes files, commits, pushes, and invokes 
         assert.equal(packet.pullRequests[1].url, "https://msft.ghe.com/security/ad-accounts-for-android/pull/999");
         assert.ok(existsSync(path.join(commonDir, "common4j/src/main/kotlin/com/microsoft/identity/common/java/throttling/RetryAfterThrottleCache.kt")));
         assert.ok(execCalls.some((c) => c.cmd === "./gradlew" && c.args.includes(":broker4j:test")));
+
+        const partial = context([evidence(), multiImpl, review(normalizedMulti)], multiTask, {
+            workspaceRoot: tempRoot, createPullRequests: true,
+        });
+        await assert.rejects(runCodeFeature(partial, {
+            exec: (command, args, options) => {
+                if (command === "gh" && args[0] === "pr" && args[1] === "create" &&
+                    args[args.indexOf("--repo") + 1].startsWith("msft.ghe.com/")) {
+                    throw new Error("Second PR publication failed");
+                }
+                return mockExec(command, args, options);
+            },
+        }), /Second PR publication failed/);
+        const published = partial.logs.map((text) => milestoneFromProgress({ kind: "log", text }))
+            .filter((milestone) => milestone?.title === "Pull request published");
+        assert.equal(published.length, 1, "The first published PR must be announced even if another target fails");
+        assert.equal(published[0].prUrl, packet.pullRequests[0].url);
     } finally {
         rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -1198,7 +1286,9 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
             state: "OPEN",
             mergeStateStatus: "CLEAN",
             headRefName: "shjameel/broker-silent-server-throttling",
+            headRefOid: "current-head",
             baseRefName: "dev",
+            statusCheckRollup: [{ name: "CI", state: "SUCCESS" }],
             inlineReviewComments: inlineThreads,
         }),
         exec: (cmd, args) => {
@@ -1671,4 +1761,848 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
         ["PhoneFactor/app/Foo.kt"],
     );
     assert.equal(listPrChangedFiles("", { baseRefName: "dev" }), null);
+
+    // 11. Windows Path/PATH normalization, cmd.exe resolution, lint deferral, and on-disk git diff rendering
+    const mixedCaseEnv = buildNormalizedProcessEnv(
+        {
+            SystemRoot: "C:\\Windows",
+            Path: "C:\\Program Files\\Git\\cmd;C:\\Windows\\System32",
+            GH_TOKEN: "secret-gh-token",
+            ENV_VSTS_MVN_CRED_ACCESSTOKEN: "secret-vsts-token",
+        },
+        { JAVA_HOME: "C:\\Program Files\\Android\\Android Studio\\jbr" },
+        {
+            stripKeys: ["GH_TOKEN", "ENV_VSTS_MVN_CRED_ACCESSTOKEN"],
+            prependPathDirs: ["C:\\Program Files\\Android\\Android Studio\\jbr\\bin"],
+            includeStandardWindowsToolDirs: false,
+        },
+    );
+    assert.equal(mixedCaseEnv.Path, undefined);
+    assert.equal(mixedCaseEnv.GH_TOKEN, undefined);
+    assert.equal(mixedCaseEnv.ENV_VSTS_MVN_CRED_ACCESSTOKEN, undefined);
+    assert.ok(mixedCaseEnv.PATH.includes("C:\\Program Files\\Android\\Android Studio\\jbr\\bin"));
+    assert.ok(mixedCaseEnv.PATH.includes("C:\\Program Files\\Git\\cmd"));
+    assert.ok(resolveWindowsCmdExecutable({ SystemRoot: "..\\relative" }).toLowerCase().endsWith("cmd.exe"));
+
+    const lintCombined = parseAllowedGradleVerificationCommand(
+        ".\\gradlew.bat :app:detektCheck :app:lintProductionDebug -x lint",
+    );
+    assert.deepEqual(lintCombined?.args, [":app:detektCheck", "-x", "lint"]);
+    const lintOnly = parseAllowedGradleVerificationCommand(".\\gradlew.bat :app:lintProductionDebug");
+    assert.equal(lintOnly?.deferredToCi, true);
+
+    const normalizedEv = normalizeEvidenceResponse(
+        {
+            verdict: "ready",
+            summary: "Ready",
+            repository: "authenticator",
+            baseBranch: "working",
+            workItemId: 3804404,
+            requirements: ["R1: Add marker"],
+            verificationCommands: [
+                "From the isolated authenticator checkout: git rev-parse HEAD; git status --short",
+                "From authenticator/PhoneFactor: .\\gradlew.bat :app:compileProductionDebugKotlin",
+            ],
+            questions: [],
+            evidence: ["GuidedRestoreActivity.kt:L1-L20"],
+        },
+        managerTask,
+    );
+    assert.equal(normalizedEv.extractedSpec.targets[0].verificationCommands.length, 1);
+    assert.ok(normalizedEv.extractedSpec.targets[0].verificationCommands[0].includes("compileProductionDebugKotlin"));
+
+    const slimRev = normalizeReviewResponse(
+        {
+            verdict: "pass",
+            summary: "All good",
+            evidence: ["A".repeat(2000), "B".repeat(2000)],
+            findings: [],
+        },
+        managerTask,
+    );
+    assert.ok(slimRev.acceptanceCriteria[0].evidence.length < 100);
+
+    const tempDiffRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-diff-"));
+    try {
+        mkdirSync(path.join(tempDiffRoot, ".git"), { recursive: true });
+        writeFileSync(path.join(tempDiffRoot, "Foo.kt"), "package test\r\nclass Foo\r\n", "utf8");
+        const backups = new Map();
+        const files = [{ path: "Foo.kt", action: "modify", content: "", summary: "Updated Foo" }];
+        applyTargetFiles(tempDiffRoot, files, backups);
+        assert.equal(files[0].content, "");
+        assert.equal(readFileSync(path.join(tempDiffRoot, "Foo.kt"), "utf8"), "package test\nclass Foo\n");
+        const rendered = renderUnifiedDiff(backups, files, {
+            repoRoot: tempDiffRoot,
+            exec: (cmd, args) => {
+                if (cmd === "git" && args.includes("diff")) return "diff --git a/Foo.kt b/Foo.kt\n+class Foo";
+                return "";
+            },
+        });
+        assert.equal(rendered, "diff --git a/Foo.kt b/Foo.kt\n+class Foo");
+        const restoreCalls = [];
+        restoreTargetFiles(tempDiffRoot, backups, {
+            exec: (cmd, args) => {
+                restoreCalls.push({ cmd, args });
+                return "";
+            },
+        });
+        assert.equal(restoreCalls.length, 1);
+        assert.deepEqual(restoreCalls[0].args, ["checkout", "HEAD", "--", "Foo.kt"]);
+
+        // Pre-builder dirty file baseline preserves human edits on rollback instead of resetting to HEAD
+        writeFileSync(path.join(tempDiffRoot, "Dirty.kt"), "package test\n// human edit\n", "utf8");
+        const dirtyBackups = new Map();
+        capturePreBuilderBaselineBackups(tempDiffRoot, dirtyBackups, {
+            exec: () => " M Dirty.kt",
+        });
+        writeFileSync(path.join(tempDiffRoot, "Dirty.kt"), "package test\n// builder overwrite\n", "utf8");
+        applyTargetFiles(
+            tempDiffRoot,
+            [{ path: "Dirty.kt", action: "modify", content: "", summary: "Builder modified Dirty.kt" }],
+            dirtyBackups,
+        );
+        restoreTargetFiles(tempDiffRoot, dirtyBackups, {
+            exec: () => {
+                throw new Error("Should restore from captured bytes, not git checkout HEAD");
+            },
+        });
+        assert.equal(readFileSync(path.join(tempDiffRoot, "Dirty.kt"), "utf8"), "package test\n// human edit\n");
+    } finally {
+        rmSync(tempDiffRoot, { recursive: true, force: true });
+    }
+
+    // 12. Stage 0 prerequisite check + interactive human recovery + XML build receipts + in-process Kotlin flag
+    const inProcessCmd = parseAllowedGradleVerificationCommand(
+        ".\\gradlew.bat :app:compileProductionDebugKotlin -Pkotlin.compiler.execution.strategy=in-process --no-daemon",
+    );
+    assert.deepEqual(inProcessCmd?.args, [
+        ":app:compileProductionDebugKotlin",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--no-daemon",
+    ]);
+    assert.equal(
+        isDefinitiveCodeOrTestFailure(
+            "> Task :app:compileProductionDebugKotlin FAILED\nCaused by: java.net.UnknownHostException: msazure.pkgs.visualstudio.com",
+        ),
+        false,
+    );
+    assert.equal(
+        isDefinitiveCodeOrTestFailure(
+            "> Task :app:compileProductionDebugKotlin FAILED\nUnresolved reference: FooBar\n> Task :other:compile FAILED\nCaused by: java.net.UnknownHostException: msazure.pkgs.visualstudio.com",
+        ),
+        true,
+    );
+    assert.equal(
+        isInfrastructureGateFailure(
+            "FAILURE: Build failed with an exception. > A problem occurred starting process 'command 'git''",
+        ),
+        true,
+    );
+    assert.equal(isInfrastructureGateFailure("Unresolved reference: FooBar"), false);
+
+    const tempPrereqRoot = mkdtempSync(path.join(os.tmpdir(), "code-feature-prereq-"));
+    try {
+        const pfDir = path.join(tempPrereqRoot, "authenticator", "PhoneFactor");
+        const fakeJdk21 = path.join(tempPrereqRoot, "jdk-21");
+        const fakeJdk21Bin = path.join(fakeJdk21, "bin");
+        const fakeSdk = path.join(tempPrereqRoot, "android-sdk");
+        const xmlDir = path.join(pfDir, "app", "build", "test-results", "testProductionDebugUnitTest");
+        mkdirSync(pfDir, { recursive: true });
+        mkdirSync(fakeJdk21Bin, { recursive: true });
+        mkdirSync(fakeSdk, { recursive: true });
+        mkdirSync(xmlDir, { recursive: true });
+        writeFileSync(path.join(pfDir, "gradlew.bat"), "@echo off\r\n", "utf8");
+        writeFileSync(path.join(pfDir, "local.properties"), "ndk.dir=/opt/android-ndk\nsdk.dir=/nonexistent/stale/sdk\n", "utf8");
+        writeFileSync(path.join(fakeJdk21, "release"), 'JAVA_VERSION="21.0.4"\n', "utf8");
+        writeFileSync(path.join(fakeJdk21Bin, process.platform === "win32" ? "java.exe" : "java"), "", "utf8");
+        writeFileSync(path.join(fakeJdk21Bin, process.platform === "win32" ? "javac.exe" : "javac"), "", "utf8");
+        writeFileSync(
+            path.join(xmlDir, "TEST-EntraRestoreEntryPointCoordinatorTest.xml"),
+            '<testsuite name="EntraRestoreEntryPointCoordinatorTest" tests="13" failures="0" errors="0"/>',
+            "utf8",
+        );
+
+        const receipt = collectBuildReceiptOnDisk(path.join(tempPrereqRoot, "authenticator"), {
+            javaHome: fakeJdk21,
+            exec: () => "clean",
+        });
+        assert.equal(receipt.verified, true);
+        assert.equal(receipt.testsRun, 13);
+        assert.equal(receipt.testsFailed, 0);
+
+        const testEnv = { JAVA_HOME: "", PATH: fakeJdk21Bin, ANDROID_HOME: "/nonexistent/android/home", ANDROID_SDK_ROOT: "" };
+        let azLoggedIn = false;
+        const prereqFail = verifyWorkflowPrerequisites({
+            workspaceRoot: tempPrereqRoot,
+            targets: managerTask.targets,
+            createPullRequests: true,
+            env: testEnv,
+            exec: (cmd) => {
+                if (cmd === "git") return "git version 2.47.0";
+                if (cmd === "az") {
+                    if (!azLoggedIn) throw new Error("Please run 'az login'");
+                    return "valid-ado-token";
+                }
+                return "";
+            },
+        });
+        assert.equal(prereqFail.ok, false);
+        assert.ok(!prereqFail.questions.some((q) => q.includes("JDK 21")));
+        assert.ok(prereqFail.questions.some((q) => q.includes("Android SDK")));
+        assert.ok(prereqFail.questions.some((q) => q.includes("az login")));
+
+        applyPrerequisiteAnswers(
+            [
+                { question: prereqFail.questions.find((q) => q.includes("Android SDK")), answer: fakeSdk },
+                { question: prereqFail.questions.find((q) => q.includes("az login")), answer: "ready" },
+            ],
+            { workspaceRoot: tempPrereqRoot, targets: managerTask.targets, env: testEnv },
+        );
+        azLoggedIn = true;
+        const updatedLocalProps = readFileSync(path.join(pfDir, "local.properties"), "utf8");
+        assert.ok(updatedLocalProps.includes("ndk.dir=/opt/android-ndk"));
+
+        const prereqPass = verifyWorkflowPrerequisites({
+            workspaceRoot: tempPrereqRoot,
+            targets: managerTask.targets,
+            createPullRequests: true,
+            env: testEnv,
+            exec: (cmd) => {
+                if (cmd === "git") return "git version 2.47.0";
+                if (cmd === "az") return "valid-ado-token";
+                return "";
+            },
+        });
+        assert.equal(prereqPass.ok, true);
+        const preflightAfter = runTargetEnvironmentPreflight(tempPrereqRoot, managerTask.targets[0], testEnv);
+        assert.equal(preflightAfter.sdkConfigured, true);
+        assert.equal(preflightAfter.javaMajorVersion, 21);
+
+        // 13. Fail-forward / short-circuit-to-CI when local Gradle times out or hits non-code errors
+        assert.equal(isDefinitiveCodeOrTestFailure("> Task :app:compileProductionDebugKotlin FAILED\nUnresolved reference: foo"), true);
+        assert.equal(isDefinitiveCodeOrTestFailure("Command failed: spawnSync cmd.exe ETIMEDOUT"), false);
+        assert.equal(
+            isBuilderShortCircuitedToCi({
+                verdict: "repair",
+                summary: "The bounded retry was stopped approaching 12 minutes; compilation pending CI.",
+                testPlan: "Local Gradle verification was short-circuited to CI.",
+                evidence: [],
+            }),
+            true,
+        );
+
+        let timeoutGateCalls = 0;
+        const scImpl = implementation();
+        const scGate = runLocalVerificationGate({
+            repoRoot: path.join(tempPrereqRoot, "authenticator"),
+            target: {
+                id: "pbi-3804404",
+                repository: "authenticator",
+                verificationCommands: [
+                    ".\\gradlew.bat :app:compileProductionDebugKotlin",
+                    ".\\gradlew.bat :app:testProductionDebugUnitTest --tests *CoordinatorTest",
+                ],
+            },
+            targetImpl: scImpl.targets[0],
+            implementation: scImpl,
+            exec: () => {
+                timeoutGateCalls++;
+                throw new Error("Command failed: spawnSync cmd.exe ETIMEDOUT");
+            },
+        });
+        assert.equal(timeoutGateCalls, 1);
+        assert.deepEqual(scGate.errors, []);
+        assert.equal(scGate.deferredNotes.length, 1);
+        assert.ok(scGate.deferredNotes[0].includes("short-circuited to CI"));
+    } finally {
+        rmSync(tempPrereqRoot, { recursive: true, force: true });
+    }
+});
+
+test("Detekt weighted-issues summaries remain blocking, including mixed infrastructure failures", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-detekt-"));
+    try {
+        for (const diagnostic of [
+            "Analysis failed with 1 weighted issues.",
+            "Analysis failed with 12 weighted issues.\nCaused by: java.net.UnknownHostException: feed.invalid",
+        ]) {
+            const gate = runLocalVerificationGate({
+                repoRoot: root,
+                target: { id: "common", verificationCommands: ["./gradlew :common4j:detekt"] },
+                exec: () => { throw new Error(diagnostic); },
+            });
+            assert.equal(gate.errors.length, 1);
+            assert.equal(gate.outcomes.failed.length, 1);
+            assert.deepEqual(gate.deferredNotes, []);
+        }
+        assert.equal(isDefinitiveCodeOrTestFailure("Analysis completed with 0 weighted issues."), false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("JDK prerequisites reject invalid explicit homes and accept supported PATH installations", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-jdk-"));
+    try {
+        const home = path.join(root, "jdk");
+        const bin = path.join(home, "bin");
+        mkdirSync(bin, { recursive: true });
+        const target = { id: "auth", repository: "authenticator", localPath: "." };
+        const env = { JAVA_HOME: home, PATH: "", ANDROID_HOME: "", ANDROID_SDK_ROOT: "" };
+        const check = () => verifyWorkflowPrerequisites({
+            workspaceRoot: root, targets: [target], env,
+            exec: () => "fixture-result",
+        });
+        assert.equal(resolveTargetJavaHome(target, env), "");
+        assert.ok(check().questions.some((q) => q.includes("requires JDK 21")));
+        writeFileSync(path.join(home, "release"), 'JAVA_VERSION="21.0.4"\n');
+        assert.equal(resolveTargetJavaHome(target, env), "");
+        for (const tool of ["java", "javac"]) {
+            writeFileSync(path.join(bin, process.platform === "win32" ? `${tool}.exe` : tool), "");
+        }
+        assert.equal(resolveTargetJavaHome(target, env), home);
+        assert.ok(!check().questions.some((q) => q.includes("requires JDK 21")));
+        assert.equal(resolveTargetJavaHome(target, { ...env, JAVA_HOME: "", PATH: bin }), home);
+        for (const version of ["17.0.1", "25.0.1", "invalid"]) {
+            writeFileSync(path.join(home, "release"), `JAVA_VERSION="${version}"\n`);
+            assert.equal(resolveTargetJavaHome(target, env), "");
+            assert.ok(check().questions.some((q) => q.includes("requires JDK 21")));
+        }
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("JDK recovery reports the configured home and uses the approved alternative for the run", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-jdk-recovery-"));
+    try {
+        const oldJdk = path.join(root, "jdk8");
+        const newJdk = path.join(root, "jdk21");
+        const sdk = path.join(root, "sdk");
+        const repo = path.join(root, "common");
+        for (const [home, version] of [[oldJdk, "1.8.0"], [newJdk, "21.0.4"]]) {
+            mkdirSync(path.join(home, "bin"), { recursive: true });
+            writeFileSync(path.join(home, "release"), `JAVA_VERSION="${version}"\n`);
+            for (const tool of ["java", "javac"]) {
+                writeFileSync(path.join(home, "bin", process.platform === "win32" ? `${tool}.exe` : tool), "");
+            }
+        }
+        mkdirSync(sdk);
+        mkdirSync(repo);
+        writeFileSync(path.join(repo, "gradlew.bat"), "");
+        const env = { ...process.env, JAVA_HOME: oldJdk, PATH: path.join(newJdk, "bin"), ANDROID_HOME: sdk };
+        const target = { repository: "common", localPath: "common", verificationCommands: ["./gradlew :common4j:test"] };
+        const exec = () => "ok";
+        const failed = verifyWorkflowPrerequisites({ workspaceRoot: root, targets: [target], env, exec });
+        const question = failed.questions.find((item) => item.includes("JDK"));
+        assert.ok(question.includes(oldJdk));
+        assert.match(question, /JDK 8/);
+        assert.ok(question.includes(newJdk));
+        assert.ok(!question.includes("JAVA_HOME: unset"));
+
+        const unchanged = { ...env };
+        applyPrerequisiteAnswers([{ question, answer: path.join(root, "missing") }], {
+            workspaceRoot: root, targets: [target], env: unchanged,
+        });
+        assert.equal(unchanged.JAVA_HOME, oldJdk);
+        assert.equal(verifyWorkflowPrerequisites({ workspaceRoot: root, targets: [target], env: unchanged, exec }).ok, false);
+        applyPrerequisiteAnswers([{ question: "Repository 'common' requires JDK 17 or 21.", answer: "yes" }], {
+            workspaceRoot: root, targets: [target], env: unchanged,
+        });
+        assert.equal(unchanged.JAVA_HOME, oldJdk);
+
+        const originalHostHome = process.env.JAVA_HOME;
+        const runTask = task();
+        runTask.targets[0].verificationCommands = target.verificationCommands;
+        const ctx = context([evidence(), implementation(), review()], runTask, {
+            workspaceRoot: root, verifyPrerequisites: true, runLocalVerification: true, javaHome: oldJdk,
+        });
+        let capturedGateEnv;
+        const result = await runCodeFeature(ctx, {
+            environment: env,
+            askUser: async (prompt) => {
+                assert.ok(prompt.includes(newJdk));
+                return "yes";
+            },
+            exec: (command, _args, options) => {
+                if (/gradlew/i.test(command)) capturedGateEnv = options.env;
+                return "ok";
+            },
+        });
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.ok(ctx.calls.find((call) => call.options.agent === BUILDER_AGENT).prompt.includes(newJdk));
+        assert.equal(capturedGateEnv.JAVA_HOME, newJdk);
+        assert.equal(env.JAVA_HOME, oldJdk);
+        assert.equal(process.env.JAVA_HOME, originalHostHome);
+
+        const manual = { ...env };
+        applyPrerequisiteAnswers([{ question, answer: newJdk }], {
+            workspaceRoot: root, targets: [target], env: manual,
+        });
+        assert.equal(manual.JAVA_HOME, newJdk);
+        rmSync(path.join(newJdk, "bin", process.platform === "win32" ? "javac.exe" : "javac"));
+        const disappeared = { ...env };
+        applyPrerequisiteAnswers([{ question, answer: "yes" }], {
+            workspaceRoot: root, targets: [target], env: disappeared,
+        });
+        assert.equal(disappeared.JAVA_HOME, oldJdk);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+function prerequisiteResumeFixture() {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-resume-"));
+    const javaHome = path.join(root, "jdk21");
+    const sdk = path.join(root, "sdk");
+    mkdirSync(path.join(javaHome, "bin"), { recursive: true });
+    writeFileSync(path.join(javaHome, "release"), 'JAVA_VERSION="21.0.4"\n');
+    for (const tool of ["java", "javac"]) {
+        writeFileSync(path.join(javaHome, "bin", process.platform === "win32" ? `${tool}.exe` : tool), "");
+    }
+    mkdirSync(sdk);
+    mkdirSync(path.join(root, "common"));
+    writeFileSync(path.join(root, "common", "gradlew.bat"), "");
+    const env = { ...process.env, JAVA_HOME: path.join(root, "missing-jdk"), ANDROID_HOME: sdk };
+    const journal = new Map();
+    const checkpoints = new Set();
+    const resumedTask = task();
+    resumedTask.targets[0].verificationCommands = ["./gradlew :common4j:test"];
+    const contexts = [];
+    const makeContext = (results) => {
+        const ctx = context(results, resumedTask, {
+            workspaceRoot: root, verifyPrerequisites: true, runLocalVerification: true,
+            createPullRequests: false, allowLocalOnly: true, javaHome: env.JAVA_HOME,
+        });
+        ctx.runId = "fixture-resume";
+        ctx.session = { ui: { elicitation: async () => ({ action: "cancel" }) } };
+        ctx.step = async (key, producer, options) => {
+            if (options?.volatile) return producer();
+            if (!journal.has(key)) journal.set(key, await producer());
+            return journal.get(key);
+        };
+        ctx.pause = async (key) => {
+            if (checkpoints.has(key)) return;
+            checkpoints.add(key);
+            throw Object.assign(new Error("Fixture durable checkpoint"), { name: "AbortError" });
+        };
+        contexts.push(ctx);
+        return ctx;
+    };
+    const gateEnvs = [];
+    const dependencies = {
+        environment: env,
+        exec: (command, _args, options) => {
+            if (/gradlew/i.test(command)) gateEnvs.push(options.env);
+            return "ok";
+        },
+    };
+    const writeRecovery = (value = { runId: "fixture-resume", javaHome }) => {
+        const file = prerequisiteRecoveryPath(root, "fixture-resume");
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, JSON.stringify(value));
+    };
+    return { root, javaHome, env, journal, checkpoints, contexts, makeContext, dependencies, gateEnvs, writeRecovery };
+}
+
+test("async prerequisite validation uses the same policy and account selection as the synchronous helper", async () => {
+    const f = prerequisiteResumeFixture();
+    try {
+        const common = { repository: "common", localPath: "common", hostname: "github.com" };
+        const authapp = { repository: "authenticator", localPath: "common", hostname: "msazure.visualstudio.com" };
+        const env = { ...f.env, JAVA_HOME: f.javaHome };
+        for (const [targets, failure, javaHome] of [
+            [[common], null, f.javaHome],
+            [[authapp], null, f.javaHome],
+            [[common, authapp], "az", f.javaHome],
+            [[common], "gh", f.javaHome],
+            [[common], null, "missing-jdk"],
+        ]) {
+            const calls = [];
+            const exec = (command, args) => {
+                calls.push([command, args]);
+                if (command === failure) throw new Error("Fixture CLI authentication unavailable");
+                return args.includes("status") ? "Logged in to github.com account fixture (keyring)" : "fixture-output";
+            };
+            const options = { workspaceRoot: f.root, targets, createPullRequests: true, env: { ...env, JAVA_HOME: javaHome } };
+            const expected = verifyWorkflowPrerequisites({ ...options, exec });
+            const expectedCalls = calls.splice(0);
+            assert.deepEqual(await verifyWorkflowPrerequisitesAsync({ ...options, exec: async (...args) => exec(...args) }), expected);
+            assert.deepEqual(calls, expectedCalls);
+        }
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the native asynchronous probe executor leaves the event loop responsive and preserves argument/environment boundaries", async () => {
+    let completed = false;
+    const output = executePrerequisiteProbe(process.execPath, [
+        "-e", "setTimeout(() => process.stdout.write(JSON.stringify({arg:process.argv[1],env:process.env.WORKFLOW_PROBE})), 80)",
+        "argument with spaces",
+    ], { env: { ...process.env, WORKFLOW_PROBE: "run-scoped-fixture" } }).then((result) => { completed = true; return result; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(completed, false, "The extension can process SDK messages while the actual child process is running");
+    assert.deepEqual(JSON.parse(await output), { arg: "argument with spaces", env: "run-scoped-fixture" });
+    assert.equal(process.env.WORKFLOW_PROBE, undefined);
+});
+
+test("native asynchronous probes propagate nonzero exits and cancellation rather than reporting prerequisite success", async () => {
+    await assert.rejects(executePrerequisiteProbe(process.execPath, ["-e", "process.exit(7)"]), (error) => error.code === 7);
+    const controller = new AbortController();
+    const execution = executePrerequisiteProbe(process.execPath, ["-e", "setTimeout(()=>{},1000)"], { signal: controller.signal });
+    controller.abort();
+    await assert.rejects(execution, { name: "AbortError" });
+});
+
+test("Windows async Azure CLI probes preserve argument boundaries and propagate the native exit status", { skip: process.platform !== "win32" }, async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "async-az-probe-"));
+    try {
+        const script = path.join(root, "fixture.cjs");
+        writeFileSync(script, "if(process.argv[2]==='fixture-fail')process.exit(7);console.log(JSON.stringify(process.argv.slice(2)));");
+        writeFileSync(path.join(root, "az.cmd"), `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+        const env = buildNormalizedProcessEnv(process.env, {}, { prependPathDirs: [root] });
+        const args = ["fixture", "value with spaces", "plain-value"];
+        assert.deepEqual(JSON.parse(await executePrerequisiteProbe("az", args, { cwd: root, env })), args);
+        await assert.rejects(executePrerequisiteProbe("az", ["fixture-fail"], { cwd: root, env }), (error) => error.code === 7);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a toolchain milestone reaches attached supervision while prerequisite CLI probes are still running", async () => {
+    const f = prerequisiteResumeFixture();
+    const controller = new AbortController();
+    let release, entered;
+    const blocked = new Promise((resolve) => { release = resolve; });
+    const started = new Promise((resolve) => { entered = resolve; });
+    let probeFinished = false;
+    const ctx = f.makeContext([]);
+    ctx.args.options.javaHome = f.javaHome;
+    ctx.signal = controller.signal;
+    const session = { workflow: {
+        getRunDetail: () => new Promise((resolve) => setImmediate(() =>
+            resolve({ workflowName: "code-feature", status: "running" }))),
+        waitForRun: (_id, { signal }) => new Promise((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true })),
+    }};
+    const supervision = createWorkflowSupervision(() => session);
+    ctx.onMilestone = (receipt) => supervision.notifyMilestone(ctx.runId, receipt);
+    const waiting = supervision.tool.handler({ runId: ctx.runId });
+    const execution = runCodeFeature(ctx, {
+        ...f.dependencies,
+        execAsync: async () => {
+            entered();
+            await blocked;
+            probeFinished = true;
+            return "fixture-output";
+        },
+    });
+    try {
+        await started;
+        const notice = await waiting;
+        assert.equal(notice.kind, "milestone");
+        assert.equal(notice.milestone.title, "Build toolchain selected");
+        assert.equal(probeFinished, false, "Notification processing must not wait for credential probes to finish");
+        assert.equal(ctx.calls.length, 0);
+    } finally {
+        controller.abort();
+        release();
+        await assert.rejects(execution, { name: "AbortError" });
+        rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test("paused prerequisites recheck approved run-scoped recovery on a fresh attempt and replay without duplicate agents", async () => {
+    const f = prerequisiteResumeFixture();
+    const hostJavaHome = process.env.JAVA_HOME;
+    try {
+        const first = f.makeContext([]);
+        first.session = { ui: { elicitation: async () => ({ action: "cancel" }) } };
+        first.args.options.allowLocalOnly = true;
+        await assert.rejects(runCodeFeature(first, f.dependencies), { name: "AbortError" });
+        assert.equal(first.calls.length, 0);
+        assert.equal(f.checkpoints.size, 1);
+        assert.ok(first.logs.some((line) => line.includes(prerequisiteRecoveryPath(f.root, first.runId))));
+        const input = humanInputRequestFromProgress(first.logs.map((text) => ({ kind: "log", text })));
+        assert.ok(input.questions.some((question) => question.includes("JDK")));
+        assert.equal(input.recoveryPath, prerequisiteRecoveryPath(f.root, first.runId));
+        assert.equal(input.key, [...f.checkpoints][0]);
+
+        f.writeRecovery();
+        const resumed = f.makeContext([evidence(), implementation(), review()]);
+        const result = await runCodeFeature(resumed, f.dependencies);
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.equal(resumed.calls.length, 3);
+        assert.ok(resumed.calls.find((call) => call.options.agent === BUILDER_AGENT).prompt.includes(f.javaHome));
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+        assert.equal(f.env.JAVA_HOME.endsWith("missing-jdk"), true);
+        assert.equal(process.env.JAVA_HOME, hostJavaHome);
+
+        const replay = f.makeContext([]);
+        assert.equal((await runCodeFeature(replay, f.dependencies)).recommendation, "GO to PR Review");
+        assert.equal(replay.calls.length, 0);
+    } finally {
+        rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test("inline prerequisite approval survives a later durable pause without asking again", async () => {
+    const f = prerequisiteResumeFixture();
+    let questions = 0;
+    try {
+        const first = f.makeContext([evidence()]);
+        const step = first.step;
+        first.step = async (key, producer, options) => {
+            if (key.endsWith("-build-0")) await first.pause("fixture-after-evidence");
+            return step(key, producer, options);
+        };
+        const dependencies = {
+            ...f.dependencies,
+            askUser: async () => { questions++; return f.javaHome; },
+        };
+        await assert.rejects(runCodeFeature(first, dependencies), { name: "AbortError" });
+        const resumed = f.makeContext([implementation(), review()]);
+        assert.equal((await runCodeFeature(resumed, dependencies)).recommendation, "GO to PR Review");
+        assert.equal(questions, 1);
+        assert.equal(resumed.calls.length, 2);
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+    } finally {
+        rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test("preapproved run-scoped JDK supports unattended runs without changing host JAVA_HOME", async () => {
+    const f = prerequisiteResumeFixture();
+    const original = process.env.JAVA_HOME;
+    try {
+        const context = f.makeContext([evidence(), implementation(), review()]);
+        context.args.options.javaHome = f.javaHome;
+        const result = await runCodeFeature(context, {
+            ...f.dependencies,
+            askUser: async () => { throw new Error("Preapproved JDK must not prompt again"); },
+        });
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+        assert.equal(process.env.JAVA_HOME, original);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an inherited incompatible JAVA_HOME automatically selects the installed PATH JDK without asking", async () => {
+    const f = prerequisiteResumeFixture();
+    const original = process.env.JAVA_HOME;
+    try {
+        const context = f.makeContext([evidence(), implementation(), review()]);
+        delete context.args.options.javaHome;
+        const result = await runCodeFeature(context, {
+            ...f.dependencies,
+            environment: { ...f.env, PATH: path.join(f.javaHome, "bin") },
+            askUser: async () => { throw new Error("An installed compatible JDK must not require human approval"); },
+        });
+        assert.equal(result.recommendation, "GO to PR Review");
+        assert.equal(f.checkpoints.size, 0);
+        assert.equal(f.gateEnvs.at(-1).JAVA_HOME, f.javaHome);
+        assert.ok(context.logs.some((log) => log.includes("Build toolchain selected") && log.includes("Global JAVA_HOME is unchanged")));
+        assert.equal(f.env.JAVA_HOME.endsWith("missing-jdk"), true);
+        assert.equal(process.env.JAVA_HOME, original);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("automatic toolchain choice satisfies all repositories but never overrides an explicit incompatible choice", () => {
+    const f = prerequisiteResumeFixture();
+    const original = process.env.JAVA_HOME;
+    try {
+        const env = { ...f.env, PATH: path.join(f.javaHome, "bin") };
+        const selected = selectWorkflowJavaHome([{ repository: "common" }, { repository: "authenticator" }], env);
+        assert.equal(selected.javaHome, f.javaHome);
+        assert.equal(selected.javaMajorVersion, 21);
+        assert.equal(env.JAVA_HOME, f.javaHome);
+        const explicit = { ...f.env, PATH: path.join(f.javaHome, "bin") };
+        assert.equal(selectWorkflowJavaHome([{ repository: "authenticator" }], explicit, { explicit: true }), null);
+        assert.equal(explicit.JAVA_HOME, f.env.JAVA_HOME);
+        assert.equal(process.env.JAVA_HOME, original);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("unresolved or invalid prerequisite recovery never advances to agents", async () => {
+    for (const recovery of [
+        null,
+        { runId: "another-run", javaHome: "unused" },
+        { runId: "fixture-resume", javaHome: "missing" },
+        { runId: "fixture-resume", javaHome: "unused", token: "not-an-accepted-field" },
+    ]) {
+        const f = prerequisiteResumeFixture();
+        try {
+            await assert.rejects(runCodeFeature(f.makeContext([]), f.dependencies), { name: "AbortError" });
+            if (recovery) {
+                f.writeRecovery(recovery);
+                await assert.rejects(runCodeFeature(f.makeContext([]), f.dependencies), /Invalid .*recovery file/);
+            } else {
+                await assert.rejects(runCodeFeature(f.makeContext([]), f.dependencies), { name: "AbortError" });
+                assert.equal((await runCodeFeature(f.makeContext([]), f.dependencies)).recommendation, "needs clarification");
+                assert.equal(f.checkpoints.size, 2);
+            }
+            assert.equal(f.contexts.flatMap((ctx) => ctx.calls).length, 0);
+        } finally {
+            rmSync(f.root, { recursive: true, force: true });
+        }
+    }
+    assert.throws(() => prerequisiteRecoveryPath(os.tmpdir(), "..\\escape"), /Invalid workflow run ID/);
+});
+
+test("clarification cancellation and runtime failures propagate without becoming a prerequisite pause", async () => {
+    for (const name of ["AbortError", "ConnectionError", "ResponseError"]) {
+        const f = prerequisiteResumeFixture();
+        try {
+            const ctx = f.makeContext([]);
+            ctx.args.options.allowLocalOnly = true;
+            ctx.session = { ui: { elicitation: async () => { throw Object.assign(new Error("Fixture runtime failure"), { name }); } } };
+            await assert.rejects(runCodeFeature(ctx, f.dependencies), { name });
+            assert.equal(f.checkpoints.size, 0);
+            assert.equal(ctx.calls.length, 0);
+        } finally {
+            rmSync(f.root, { recursive: true, force: true });
+        }
+    }
+});
+
+test("interrupted review preserves builder edits instead of treating cancellation as a failed review", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-interrupted-review-"));
+    try {
+        mkdirSync(path.join(root, "common"));
+        const ctx = context([evidence(), implementation()], task(), {
+            workspaceRoot: root, applyToWorkspace: true,
+        });
+        const agent = ctx.agent;
+        ctx.agent = async (prompt, options) => {
+            if (options.agent === REVIEWER_AGENT) {
+                throw Object.assign(new Error("Fixture review interrupted"), { name: "AbortError" });
+            }
+            return agent(prompt, options);
+        };
+        await assert.rejects(runCodeFeature(ctx, { exec: () => "" }), { name: "AbortError" });
+        const editedFile = path.join(root, "common", implementation().targets[0].files[0].path);
+        assert.equal(readFileSync(editedFile, "utf8"), implementation().targets[0].files[0].content);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("PowerShell builder example passes the compiler property as one native argument", {
+    skip: process.platform !== "win32" && "Windows PowerShell argument fixture",
+}, () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-powershell-args-"));
+    try {
+        writeFileSync(path.join(root, "dump-args.cjs"), "console.log(JSON.stringify(process.argv.slice(2)));\n");
+        writeFileSync(path.join(root, "gradlew.bat"), `@echo off\r\n"${process.execPath}" "%~dp0dump-args.cjs" %*\r\n`);
+        const builder = customAgents.find((item) => item.name === BUILDER_AGENT);
+        assert.ok(builder.prompt.includes("'-Pkotlin.compiler.execution.strategy=in-process'"));
+        const output = execFileSync("powershell", [
+            "-NoProfile", "-Command", ".\\gradlew.bat '-Pkotlin.compiler.execution.strategy=in-process'",
+        ], { cwd: root, encoding: "utf8" });
+        assert.deepEqual(JSON.parse(output.trim()), ["-Pkotlin.compiler.execution.strategy=in-process"]);
+        const unquoted = execFileSync("powershell", [
+            "-NoProfile", "-Command", ".\\gradlew.bat -Pkotlin.compiler.execution.strategy=in-process",
+        ], { cwd: root, encoding: "utf8" });
+        assert.notDeepEqual(JSON.parse(unquoted.trim()), ["-Pkotlin.compiler.execution.strategy=in-process"]);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("slim normalized reviews retain successful citations once in the final review packet", () => {
+    const citations = ["Foo.kt:L10-L20 verified the null guard", "FooTest.kt:L25-L40 covers missing input"];
+    const normalized = normalizeReviewResponse({
+        verdict: "pass", summary: "Reviewed the null-input fix.", evidence: citations, findings: [],
+    }, task());
+    assert.equal(normalized.summary, "Reviewed the null-input fix.");
+    assert.deepEqual(normalized.evidence, citations);
+    assert.ok(validateReview(normalized, task()));
+    for (const citation of citations) {
+        assert.equal(JSON.stringify(normalized).split(citation).length - 1, 1);
+    }
+});
+
+test("baseline rollback skips nested submodule directories and restores remaining dirty files", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "code-feature-submodule-"));
+    try {
+        mkdirSync(path.join(root, ".git"));
+        mkdirSync(path.join(root, "common"));
+        writeFileSync(path.join(root, "common", "keep.txt"), "nested work");
+        writeFileSync(path.join(root, "Foo.kt"), "human edit");
+        const backups = new Map();
+        capturePreBuilderBaselineBackups(root, backups, {
+            exec: () => " M common\n M Foo.kt\n D Deleted.kt",
+        });
+        assert.equal(backups.has("common"), false);
+        assert.equal(backups.has("Foo.kt"), true);
+        assert.equal(backups.get("Deleted.kt").exists, false);
+        writeFileSync(path.join(root, "Foo.kt"), "builder edit");
+        writeFileSync(path.join(root, "Deleted.kt"), "builder recreated");
+        restoreTargetFiles(root, backups);
+        assert.equal(readFileSync(path.join(root, "Foo.kt"), "utf8"), "human edit");
+        assert.equal(readFileSync(path.join(root, "common", "keep.txt"), "utf8"), "nested work");
+        assert.equal(existsSync(path.join(root, "Deleted.kt")), false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("ADO publication script reuses an exact active PR on retry and recovers a lost create response", {
+    skip: process.platform !== "win32" && "Windows PowerShell production-runner fixture",
+}, () => {
+    const payload = {
+        sourceRefName: "refs/heads/users/test/feature",
+        targetRefName: "refs/heads/working",
+        title: "Fixture PR",
+        description: "Fixture only",
+        isDraft: true,
+        labels: [],
+    };
+    const script = buildAdoPullRequestPublicationScript("https://ado.invalid/project/_apis/git/repositories/repo/pullRequests", payload);
+    for (const loseResponse of [false, true]) {
+        const fixture = `
+function az { $global:LASTEXITCODE = 0; 'fixture-token' }
+$script:posts = 0
+$script:gets = 0
+$script:created = $null
+function Invoke-RestMethod {
+    param($Uri, $Headers, $Method, $Body)
+    if ($Method -eq 'Get') {
+        $script:gets++
+        if ($Uri -notmatch 'searchCriteria.sourceRefName=refs%2Fheads%2Fusers%2Ftest%2Ffeature' -or $Uri -notmatch 'searchCriteria.targetRefName=refs%2Fheads%2Fworking') { throw 'Missing exact branch filters' }
+        $others = @(
+            [pscustomobject]@{ pullRequestId=7; status='abandoned'; sourceRefName='refs/heads/users/test/feature'; targetRefName='refs/heads/working' },
+            [pscustomobject]@{ pullRequestId=8; status='active'; sourceRefName='refs/heads/users/test/feature'; targetRefName='refs/heads/other' }
+        )
+        if ($script:created) { $others += $script:created }
+        return @{ value=$others }
+    }
+    if ($Method -ne 'Post') { throw 'Unexpected mutation' }
+    $script:posts++
+    $script:created = [System.Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json
+    $script:created | Add-Member -NotePropertyName pullRequestId -NotePropertyValue 123
+    $script:created | Add-Member -NotePropertyName status -NotePropertyValue active
+    ${loseResponse ? "throw 'Lost POST response'" : "return $script:created"}
+}
+$first = & { ${script} }
+$second = & { ${script} }
+@{ first=$first; second=$second; posts=$script:posts; gets=$script:gets } | ConvertTo-Json -Compress
+`;
+        const result = JSON.parse(execFileSync("powershell", [
+            "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(fixture, "utf16le").toString("base64"),
+        ], { encoding: "utf8", timeout: 30_000 }));
+        assert.equal(result.first, 123);
+        assert.equal(result.second, 123);
+        assert.equal(result.posts, 1);
+        assert.equal(result.gets, loseResponse ? 3 : 2);
+    }
+    const failureFixture = `
+function az { $global:LASTEXITCODE = 0; 'fixture-token' }
+function Invoke-RestMethod {
+    param($Uri, $Headers, $Method, $Body)
+    if ($Method -eq 'Get') { return @{ value=@() } }
+    throw 'Creation failed without a matching PR'
+}
+${script}
+`;
+    assert.throws(() => execFileSync("powershell", [
+        "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(failureFixture, "utf16le").toString("base64"),
+    ], { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] }), /Creation failed/);
 });

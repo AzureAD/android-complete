@@ -1,22 +1,32 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runPrObserver } from "./observer.mjs";
-import {
+const revisionedModuleUrl = (name) => {
+    const url = new URL(name, import.meta.url);
+    return `${url.href}?v=${statSync(url).mtimeMs}`;
+};
+const { deliveryOutcome, pendingVerification, verificationFromGate, verificationSummary } =
+    await import(revisionedModuleUrl("./verification.mjs"));
+const { recordMilestone, recordHumanInputRequest } = await import(revisionedModuleUrl("./milestones.mjs"));
+const {
     currentStatusOwners,
     currentStatuses,
     deliveryDecisionMarkers,
+    fitAdoDescription,
     parseMarkerBlock,
     renderCurrentStatusBlock,
     renderDeliveryDecisionBlock,
+    renderVerificationBlock,
+    verificationMarkers,
     statusMarkers,
     upsertMarkerBlock,
-} from "./status.mjs";
+} = await import(revisionedModuleUrl("./status.mjs"));
 
 const text = { type: "string" };
 const texts = { type: "array", items: text };
@@ -262,6 +272,11 @@ Android Auth source layout reference (avoid guessing nonexistent paths):
 - standalone common: common/common4j/src/{main,test}/..., common/common/src/{main,test}/java/...
 ${commonBoundaries}`;
 
+const reviewerBoundaries = `You are Stage 3 (read-only independent code reviewer) of a multi-stage coding workflow.
+Inspect the supplied diffs, changed files, test plans, and repository sources using read-only tools and return structured JSON matching the review schema.
+Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy during this stage.
+${commonBoundaries}`;
+
 const builderBoundaries = `You are the Android Auth implementation builder. Follow repository and code-author conventions strictly:
 - Write new files and new code in Kotlin; maintain Java style when editing existing Java files. Use LF (\\n) line endings on new files so git diff --check stays clean.
 - Include the full repository license/copyright header at the top of every new file (full MIT header in common/common4j/msal/adal; Microsoft copyright header in broker).
@@ -274,10 +289,10 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
   * AADAuthenticator: broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
   * nested common in broker: broker/common/common4j/src/main/com/... and broker/common/common/src/main/java/...
   * authenticator: authenticator/PhoneFactor/... (Gradle working directory is authenticator/PhoneFactor)
-- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2, and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
-  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon
-- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon) so Gradle only runs once per round.
-- Never let a Gradle command hang indefinitely: if a background Gradle command produces no new task output for more than 10 minutes (or exceeds 25 minutes total), stop that shell with stop_powershell and retry once with --no-daemon --max-workers=2 (or defer to CI if composite build locks persist).
+- When running Gradle in PowerShell, always set JAVA_HOME and VSTS credentials in the same command, pass --no-daemon --max-workers=2 and the quoted property '-Pkotlin.compiler.execution.strategy=in-process' to select in-process Kotlin compilation, and scope Android unit tests with --tests (never run unfiltered :AADAuthenticator:testLocalDebugUnitTest):
+  $jbr = "C:\\Program Files\\Android\\Android Studio\\jbr"; if (Test-Path $jbr) { $env:JAVA_HOME = $jbr; $env:PATH = "$jbr\\bin;$env:PATH" }; $env:ENV_VSTS_MVN_CRED_USERNAME = "vsts"; $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = (az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv); .\\gradlew.bat :broker4j:test --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process'
+- Do not run a cold baseline Gradle build before editing files—write all production and unit-test edits first, then run ONE combined targeted Gradle verification command (for example compile*Kotlin + test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process') so Gradle only runs once per round.
+- Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately stop that shell with stop_powershell, do NOT retry locally, record in testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds to independent code review, PR creation, and remote CI pipeline verification.
 - Never run git push, gh pr create, or merge commands; branch/commit/PR creation is handled by a deterministic workflow step after independent review passes.
 ${commonBoundaries}`;
 
@@ -733,31 +748,28 @@ export function ensureIsolatedTargetWorktree(workspaceRoot, target, exec = defau
                     for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
                         try {
                             const candidateSha = exec("git", ["rev-parse", "--verify", candidate], { cwd: targetDir });
-                            let headSha = "";
                             let currentAbbrev = "";
                             try {
-                                headSha = exec("git", ["rev-parse", "HEAD"], { cwd: targetDir });
                                 currentAbbrev = exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: targetDir });
                             } catch {
-                                headSha = "";
                                 currentAbbrev = "";
                             }
                             if (
                                 nonempty(candidateSha) &&
-                                headSha === candidateSha &&
                                 nonempty(currentAbbrev) &&
                                 currentAbbrev !== "HEAD" &&
-                                currentAbbrev.startsWith(featureBranch)
+                                (currentAbbrev.startsWith(featureBranch) ||
+                                    (positiveInt(Number(target.workItemId)) && currentAbbrev.includes(`/ab-${Number(target.workItemId)}-`)))
                             ) {
                                 break;
                             }
                             try {
-                                exec("git", ["-c", "core.longpaths=true", "checkout", "-B", featureBranch, candidate], { cwd: targetDir });
+                                exec("git", ["-c", "core.longpaths=true", "checkout", "-b", featureBranch, candidate], { cwd: targetDir });
                             } catch {
                                 try {
                                     exec(
                                         "git",
-                                        ["-c", "core.longpaths=true", "checkout", "-B", `${featureBranch}-${randomUUID().slice(0, 6)}`, candidate],
+                                        ["-c", "core.longpaths=true", "checkout", "-b", `${featureBranch}-${randomUUID().slice(0, 6)}`, candidate],
                                         { cwd: targetDir },
                                     );
                                 } catch {
@@ -914,6 +926,7 @@ export function extractRunnableVerificationCommand(rawCommand) {
 const SAFE_GRADLE_EXECUTABLE_PATTERN = /^(?:(?:\.\\|\.\.\/|\.\/|PhoneFactor[\\/])?gradlew(?:\.bat)?)$/i;
 const SAFE_GRADLE_TASK_PATTERN = /^(?::[A-Za-z0-9_-]+)*:?(?:test[A-Za-z0-9_-]*|compile[A-Za-z0-9_-]*(?:Kotlin|Java)|assemble[A-Za-z0-9_-]*|detekt[A-Za-z0-9_-]*|check(?:style[A-Za-z0-9_-]*)?|lint[A-Za-z0-9_-]*|jacoco[A-Za-z0-9_-]*|spotbugs[A-Za-z0-9_-]*|pmd[A-Za-z0-9_-]*|verify[A-Za-z0-9_-]*)$/;
 const CONNECTED_DEVICE_GRADLE_TASK_PATTERN = /^(?::[A-Za-z0-9_-]+)*:?(?:connected[A-Za-z0-9_]*AndroidTest|connectedCheck|deviceCheck|managedDevice[A-Za-z0-9_]*)$/i;
+const HEAVY_CI_LINT_GRADLE_TASK_PATTERN = /^(?::[A-Za-z0-9_-]+)*:?lint(?:[A-Z][A-Za-z0-9_-]*|Report)?$/;
 const SAFE_GRADLE_STANDALONE_FLAGS = new Set([
     "--no-daemon",
     "--stacktrace",
@@ -931,9 +944,10 @@ const SAFE_GRADLE_STANDALONE_FLAGS = new Set([
     "--console=plain",
 ]);
 const SAFE_GRADLE_PROJECT_PROP_PATTERN = /^-P[A-Za-z0-9_.-]+(?:=[A-Za-z0-9_.,*$#:-]+)?$/;
+const SAFE_GRADLE_SYSTEM_PROP_PATTERN = /^-D[A-Za-z0-9_.-]+(?:=[A-Za-z0-9_.,*$#:-]+)?$/;
 const SAFE_GRADLE_TEST_FILTER_PATTERN = /^[A-Za-z0-9_.*$#-]+$/;
 const SAFE_GRADLE_EXCLUDED_TASK_PATTERN = /^:?[A-Za-z0-9_:-]+$/;
-const DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS = 25 * 60 * 1000;
+const DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS = 12 * 60 * 1000;
 
 export function parseAllowedGradleVerificationCommand(rawCommand) {
     const candidate = extractRunnableVerificationCommand(rawCommand);
@@ -956,23 +970,27 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
     if (!SAFE_GRADLE_EXECUTABLE_PATTERN.test(executable)) return null;
 
     const args = [];
+    const filteredArgs = [];
     let taskCount = 0;
-    let connectedTaskCount = 0;
+    const deferredTasks = [];
     for (let i = 0; i < rest.length; i++) {
         const arg = rest[i];
         if (!nonempty(arg)) return null;
         if (
             SAFE_GRADLE_STANDALONE_FLAGS.has(arg) ||
             /^--max-workers=[1-8]$/.test(arg) ||
-            SAFE_GRADLE_PROJECT_PROP_PATTERN.test(arg)
+            SAFE_GRADLE_PROJECT_PROP_PATTERN.test(arg) ||
+            SAFE_GRADLE_SYSTEM_PROP_PATTERN.test(arg)
         ) {
             args.push(arg);
+            filteredArgs.push(arg);
             continue;
         }
         if (arg === "--tests") {
             const filter = rest[i + 1];
             if (!nonempty(filter) || !SAFE_GRADLE_TEST_FILTER_PATTERN.test(filter)) return null;
             args.push("--tests", filter);
+            filteredArgs.push("--tests", filter);
             i++;
             continue;
         }
@@ -980,12 +998,14 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
             const filter = arg.slice("--tests=".length);
             if (!nonempty(filter) || !SAFE_GRADLE_TEST_FILTER_PATTERN.test(filter)) return null;
             args.push(arg);
+            filteredArgs.push(arg);
             continue;
         }
         if (arg === "-x" || arg === "--exclude-task") {
             const excluded = rest[i + 1];
             if (!nonempty(excluded) || !SAFE_GRADLE_EXCLUDED_TASK_PATTERN.test(excluded)) return null;
             args.push(arg, excluded);
+            filteredArgs.push(arg, excluded);
             i++;
             continue;
         }
@@ -993,7 +1013,12 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
             return null;
         }
         if (CONNECTED_DEVICE_GRADLE_TASK_PATTERN.test(arg)) {
-            connectedTaskCount++;
+            deferredTasks.push({ task: arg, reason: "Connected Android device/emulator tests run in CI pipelines rather than locally." });
+            args.push(arg);
+            continue;
+        }
+        if (HEAVY_CI_LINT_GRADLE_TASK_PATTERN.test(arg)) {
+            deferredTasks.push({ task: arg, reason: "Full Android Lint variant tasks run in dedicated CI jobs rather than blocking local gate timeouts." });
             args.push(arg);
             continue;
         }
@@ -1001,34 +1026,701 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
             return null;
         }
         args.push(arg);
+        filteredArgs.push(arg);
         taskCount++;
     }
 
-    if (connectedTaskCount > 0 && taskCount === 0) {
+    if (deferredTasks.length > 0 && taskCount === 0) {
         return {
             command: [executable, ...args].join(" "),
             executable,
             args,
             deferredToCi: true,
-            deferralReason: "Connected Android device/emulator tests run in CI pipelines rather than locally.",
+            deferralReason: [...new Set(deferredTasks.map((entry) => entry.reason))].join(" "),
         };
     }
 
     if (taskCount === 0) return null;
-    const filteredArgs = connectedTaskCount > 0
-        ? args.filter((a) => !CONNECTED_DEVICE_GRADLE_TASK_PATTERN.test(a))
-        : args;
     return {
         command: [executable, ...filteredArgs].join(" "),
         executable,
         args: filteredArgs,
+        ...(deferredTasks.length ? { deferredTasks } : {}),
     };
 }
 
 export function isLocalBuildEnvError(textValue) {
-    return /settings\.gradle|ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|DaemonDisappearedException|daemon has disappeared|Unable to make field .* accessible|No tests found for given includes|local.*build.*environment|Bluebird|MCP-SETUP/i.test(
+    return /ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible|local.*build.*environment|short-circuited to CI|deferred to CI|Bluebird|MCP-SETUP/i.test(
         String(textValue || ""),
     );
+}
+
+export function isDefinitiveCodeOrTestFailure(textValue) {
+    const msg = String(textValue || "");
+    return /Unresolved reference:|Type mismatch:|Conflicting overloads:|Overload resolution ambiguity|Suspend function .* should be called only from a coroutine|e:\s+file:\/\/\/.*\.(?:kt|java):\d+|\b[A-Za-z0-9_/-]+\.(?:kt|java):\d+:\s*error:|Compilation error|There were failing tests|Gradle test failed|FAILED\s*\r?\n\s*(?:org\.junit|java\.lang\.AssertionError|kotlin\.AssertionError)|weighted issues were found|Analysis failed with\s+[1-9]\d*\s+weighted issues?\b|MaxIssuesReached|Checkstyle rule violations|PMD rule violations|SpotBugs rule violations/i.test(
+        msg,
+    );
+}
+
+export function isInfrastructureGateFailure(textValue) {
+    const msg = String(textValue || "");
+    if (isDefinitiveCodeOrTestFailure(msg)) {
+        return false;
+    }
+    return (
+        isLocalBuildEnvError(msg) ||
+        /ETIMEDOUT|Timed out|timeout|spawnSync\s+\S+\s+(?:ENOENT|EINVAL|ETIMEDOUT)|A problem occurred (?:starting process|evaluating settings|configuring project)|'git' is not recognized|'cmd(?:\.exe)?' is not recognized|Cannot run program "git"|Could not GET 'https?:\/\/|UnknownHostException|Connection reset by peer|ECONNRESET|DaemonDisappearedException|daemon has disappeared|LockOwner|Timeout waiting to lock|Could not resolve all (?:files|artifacts|dependencies)|short-circuited|pending CI/i.test(
+            msg,
+        )
+    );
+}
+
+export function isBuilderShortCircuitedToCi(rawBuilderOutput) {
+    if (!record(rawBuilderOutput)) return false;
+    const combined = [
+        rawBuilderOutput.summary,
+        rawBuilderOutput.testPlan,
+        ...(Array.isArray(rawBuilderOutput.evidence) ? rawBuilderOutput.evidence : []),
+    ]
+        .filter(nonempty)
+        .join("\n");
+    const correctionReported = /(?:corrected|fixed|resolved).*(?:source|test|finding|expression)|(?:source|test|finding|expression).*(?:corrected|fixed|resolved)/i.test(combined);
+    if (isDefinitiveCodeOrTestFailure(combined) && !correctionReported) return false;
+    return /short-circuited.*to (?:remote )?CI|deferred to (?:remote )?CI|pending CI|stopped (?:approaching|near|after) \d+\s*minutes|compilation.*pending CI|(?:gradle|local verification).*(?:timed out|timeout|budget)|(?:HTTP|status code).*401/i.test(
+        combined,
+    );
+}
+
+const CREDENTIAL_ENV_KEYS_TO_STRIP = Object.freeze([
+    "ENV_VSTS_MVN_CRED_ACCESSTOKEN",
+    "ENV_VSTS_MVN_CRED_USERNAME",
+    "VSTS_MAVEN_ACCESS_TOKEN",
+    "SYSTEM_ACCESSTOKEN",
+    "AZURE_ACCESS_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+]);
+
+export function buildNormalizedProcessEnv(
+    baseEnv = process.env,
+    overrides = {},
+    { stripKeys = [], prependPathDirs = [], appendPathDirs = [], includeStandardWindowsToolDirs = true } = {},
+) {
+    const source = record(baseEnv) ? baseEnv : {};
+    const extra = record(overrides) ? overrides : {};
+    const isWin = process.platform === "win32";
+    const hasWinStyleInput =
+        isWin ||
+        Object.keys(source).some((k) => k === "Path" || k === "SystemRoot" || k === "SYSTEMROOT") ||
+        Object.keys(extra).some((k) => k === "Path" || k === "SystemRoot" || k === "SYSTEMROOT");
+    const sep = hasWinStyleInput ? ";" : path.delimiter;
+    const stripSet = new Set(stripKeys.map((k) => String(k).toUpperCase()));
+
+    const out = {};
+    const pathSegments = [];
+    const addPathParts = (rawVal) => {
+        if (!nonempty(rawVal)) return;
+        for (const part of String(rawVal).split(sep)) {
+            const trimmed = part.trim();
+            if (nonempty(trimmed)) pathSegments.push(trimmed);
+        }
+    };
+
+    for (const [key, val] of Object.entries(source)) {
+        const normKey = key.toUpperCase();
+        if (stripSet.has(normKey)) continue;
+        if (normKey === "PATH") {
+            addPathParts(val);
+            continue;
+        }
+        if (val !== undefined) {
+            out[key] = val;
+        }
+    }
+
+    const overridePathSegments = [];
+    for (const [key, val] of Object.entries(extra)) {
+        const normKey = key.toUpperCase();
+        if (stripSet.has(normKey)) continue;
+        if (normKey === "PATH") {
+            if (val === undefined || val === null) continue;
+            for (const part of String(val).split(sep)) {
+                const trimmed = part.trim();
+                if (nonempty(trimmed)) overridePathSegments.push(trimmed);
+            }
+            continue;
+        }
+        if (val === undefined) {
+            for (const existingKey of Object.keys(out)) {
+                if (existingKey.toUpperCase() === normKey) {
+                    delete out[existingKey];
+                }
+            }
+        } else {
+            for (const existingKey of Object.keys(out)) {
+                if (existingKey !== key && existingKey.toUpperCase() === normKey) {
+                    delete out[existingKey];
+                }
+            }
+            out[key] = val;
+        }
+    }
+
+    const finalPathList = [];
+    const seenPath = new Set();
+    const pushUniqueDir = (dir) => {
+        if (!nonempty(dir)) return;
+        const cleaned = String(dir).trim();
+        const key = hasWinStyleInput ? cleaned.replace(/\//g, "\\").toLowerCase() : cleaned;
+        if (seenPath.has(key)) return;
+        seenPath.add(key);
+        finalPathList.push(cleaned);
+    };
+
+    for (const dir of prependPathDirs) pushUniqueDir(dir);
+    for (const dir of overridePathSegments) pushUniqueDir(dir);
+    for (const dir of pathSegments) pushUniqueDir(dir);
+    for (const dir of appendPathDirs) pushUniqueDir(dir);
+
+    if (isWin && includeStandardWindowsToolDirs) {
+        const sysRoot = nonempty(out.SystemRoot || out.SYSTEMROOT) && path.win32.isAbsolute(String(out.SystemRoot || out.SYSTEMROOT))
+            ? String(out.SystemRoot || out.SYSTEMROOT).trim()
+            : "C:\\Windows";
+        const localAppData = out.LOCALAPPDATA || process.env.LOCALAPPDATA || "";
+        const standardDirs = [
+            path.win32.join(sysRoot, "System32"),
+            sysRoot,
+            path.win32.join(sysRoot, "System32", "Wbem"),
+            path.win32.join(sysRoot, "System32", "WindowsPowerShell", "v1.0"),
+            "C:\\Program Files\\Git\\cmd",
+            "C:\\Program Files\\Git\\bin",
+            ...(nonempty(localAppData) ? [path.win32.join(localAppData, "Programs", "Git", "cmd")] : []),
+            "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin",
+            "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin",
+            "C:\\Program Files\\GitHub CLI",
+        ];
+        for (const candidateDir of standardDirs) {
+            if (existsSync(candidateDir)) {
+                pushUniqueDir(candidateDir);
+            }
+        }
+    }
+
+    out.PATH = finalPathList.join(sep);
+    Object.defineProperty(out, "__completeEnv", { value: true, enumerable: false });
+    return out;
+}
+
+export function resolveWindowsCmdExecutable(env = process.env) {
+    const rawSysRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT || "";
+    if (nonempty(rawSysRoot) && path.win32.isAbsolute(String(rawSysRoot).trim())) {
+        const sysCmd = path.win32.join(String(rawSysRoot).trim(), "System32", "cmd.exe");
+        if (existsSync(sysCmd)) return sysCmd;
+    }
+    const fallbackSysCmd = "C:\\Windows\\System32\\cmd.exe";
+    if (existsSync(fallbackSysCmd)) return fallbackSysCmd;
+    return "cmd.exe";
+}
+
+function readJavaMajorVersion(javaHomeDir) {
+    if (!nonempty(javaHomeDir)) return null;
+    const releaseFile = path.join(javaHomeDir, "release");
+    if (!existsSync(releaseFile)) return null;
+    try {
+        const textContent = readFileSync(releaseFile, "utf8");
+        const match = textContent.match(/JAVA_VERSION="(\d+)(?:\.(\d+))?/);
+        if (!match) return null;
+        const first = Number(match[1]);
+        return first === 1 && match[2] ? Number(match[2]) : first;
+    } catch {
+        return null;
+    }
+}
+
+function isSupportedJavaHome(target, javaHome) {
+    if (!nonempty(javaHome)) return false;
+    const supportedMajors = normalizeRepositoryKey(target?.repository) === "authenticator" ? [21] : [21, 17];
+    if (!supportedMajors.includes(readJavaMajorVersion(javaHome))) return false;
+    const extension = process.platform === "win32" ? ".exe" : "";
+    return ["java", "javac"].every((tool) => {
+        const executable = path.join(javaHome, "bin", `${tool}${extension}`);
+        return existsSync(executable) && statSync(executable).isFile();
+    });
+}
+
+export function resolveTargetJavaHome(target, env = process.env, { ignoreConfigured = false, allowConfiguredFallback = false } = {}) {
+    const repoKey = normalizeRepositoryKey(target?.repository);
+    const preferredMajors = repoKey === "authenticator" ? [21] : [21, 17];
+    const currentJavaHome = env?.JAVA_HOME !== undefined ? env.JAVA_HOME : (process.env.JAVA_HOME || "");
+
+    if (!ignoreConfigured && nonempty(currentJavaHome)) {
+        if (isSupportedJavaHome(target, currentJavaHome)) return currentJavaHome;
+        if (!allowConfiguredFallback) return "";
+    }
+
+    const candidates = [];
+    const rawPathVal = env?.PATH ?? env?.Path ?? process.env.PATH ?? process.env.Path ?? "";
+    if (nonempty(rawPathVal)) {
+        const hasWinStyle = process.platform === "win32" || rawPathVal.includes(";");
+        const sep = hasWinStyle ? ";" : path.delimiter;
+        for (const rawDir of String(rawPathVal).split(sep)) {
+            const dir = rawDir.trim();
+            if (!nonempty(dir)) continue;
+            const javaBinWin = path.join(dir, "java.exe");
+            const javaBinPosix = path.join(dir, "java");
+            if (existsSync(javaBinWin) || existsSync(javaBinPosix)) {
+                let resolvedJavaBin = existsSync(javaBinWin) ? javaBinWin : javaBinPosix;
+                try {
+                    resolvedJavaBin = realpathSync(resolvedJavaBin);
+                } catch {
+                    // Keep original path if realpath fails.
+                }
+                const binDir = path.dirname(resolvedJavaBin);
+                const candidateHome = path.basename(binDir).toLowerCase() === "bin" ? path.dirname(binDir) : binDir;
+                if (existsSync(candidateHome)) {
+                    candidates.push(candidateHome);
+                }
+            }
+        }
+    }
+    candidates.push("C:\\Program Files\\Android\\Android Studio\\jbr");
+    if (process.platform === "win32") {
+        const userProfile = env?.USERPROFILE || process.env.USERPROFILE || "";
+        const localAppData = env?.LOCALAPPDATA || process.env.LOCALAPPDATA || "";
+        const searchRoots = [
+            "C:\\Program Files\\Eclipse Adoptium",
+            "C:\\Program Files\\Microsoft",
+            "C:\\Program Files\\Java",
+            "C:\\Program Files\\Amazon Corretto",
+            "C:\\Program Files\\Zulu",
+            ...(nonempty(userProfile) ? [path.join(userProfile, ".jdks"), path.join(userProfile, "scoop", "apps")] : []),
+            ...(nonempty(localAppData) ? [path.join(localAppData, "Programs", "Eclipse Adoptium")] : []),
+        ];
+        for (const root of searchRoots) {
+            try {
+                if (!existsSync(root)) continue;
+                const entries = readdirSync(root, { withFileTypes: true })
+                    .filter((d) => d.isDirectory() && /21|17/.test(d.name))
+                    .map((d) => d.name);
+                for (const entry of entries) {
+                    candidates.push(path.join(root, entry));
+                }
+            } catch {
+                // Ignore directory listing errors during JDK discovery.
+            }
+        }
+    }
+
+    for (const major of preferredMajors) {
+        for (const candidate of candidates) {
+            const detected = readJavaMajorVersion(candidate);
+            if (detected === major && isSupportedJavaHome(target, candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    return "";
+}
+
+export function selectWorkflowJavaHome(targets, env, { explicit = false } = {}) {
+    if (!Array.isArray(targets) || !targets.length) return null;
+    const strictest = targets.find((target) => normalizeRepositoryKey(target.repository) === "authenticator") || targets[0];
+    const home = resolveTargetJavaHome(strictest, env, { allowConfiguredFallback: !explicit });
+    if (!home || !targets.every((target) => isSupportedJavaHome(target, home))) return null;
+    const previous = env.JAVA_HOME || null;
+    env.JAVA_HOME = home;
+    return { javaHome: home, javaMajorVersion: readJavaMajorVersion(home), replacedInheritedHome: !explicit && previous !== home };
+}
+
+function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd()) {
+    if (!nonempty(rawValue)) return "";
+    const unescaped = String(rawValue)
+        .trim()
+        .replace(/\\:/g, ":")
+        .replace(/\\\\/g, "\\");
+    const resolved = path.isAbsolute(unescaped) || /^[A-Za-z]:[\\/]/.test(unescaped)
+        ? unescaped
+        : path.resolve(baseDir, unescaped);
+    return existsSync(resolved) ? resolved : "";
+}
+
+export function runTargetEnvironmentPreflight(workspaceRoot, target, env = process.env) {
+    const repoRoot = path.resolve(workspaceRoot || process.cwd(), target?.localPath || ".");
+    const phoneFactorRoot = path.join(repoRoot, "PhoneFactor");
+    const buildRoot =
+        existsSync(path.join(phoneFactorRoot, "gradlew.bat")) ||
+        existsSync(path.join(phoneFactorRoot, "gradlew")) ||
+        existsSync(path.join(phoneFactorRoot, "settings.gradle")) ||
+        existsSync(path.join(phoneFactorRoot, "settings.gradle.kts"))
+            ? phoneFactorRoot
+            : repoRoot;
+    const javaHome = resolveTargetJavaHome(target, env);
+    const javaMajorVersion = nonempty(javaHome) ? readJavaMajorVersion(javaHome) : null;
+    const localPropsPath = path.join(buildRoot, "local.properties");
+    const androidHomeVal = env?.ANDROID_HOME !== undefined ? env.ANDROID_HOME : process.env.ANDROID_HOME;
+    const androidSdkRootVal = env?.ANDROID_SDK_ROOT !== undefined ? env.ANDROID_SDK_ROOT : process.env.ANDROID_SDK_ROOT;
+    let sdkConfigured =
+        nonempty(resolveConfiguredSdkDir(androidHomeVal, buildRoot)) ||
+        nonempty(resolveConfiguredSdkDir(androidSdkRootVal, buildRoot));
+    if (!sdkConfigured && existsSync(localPropsPath)) {
+        try {
+            const propsText = readFileSync(localPropsPath, "utf8");
+            const sdkMatch = propsText.match(/^\s*sdk\.dir\s*=\s*(.+)$/m);
+            if (sdkMatch && nonempty(sdkMatch[1])) {
+                sdkConfigured = nonempty(resolveConfiguredSdkDir(sdkMatch[1], buildRoot));
+            }
+        } catch {
+            sdkConfigured = false;
+        }
+    }
+    const cmdExecutable = process.platform === "win32" ? resolveWindowsCmdExecutable(env) : "sh";
+    return {
+        repository: target?.repository || "repo",
+        repoRoot,
+        buildRoot,
+        javaHome: javaHome || null,
+        javaMajorVersion,
+        sdkConfigured,
+        cmdExecutable,
+    };
+}
+
+function runProbeSequence(sequence, exec) {
+    let next = sequence.next();
+    while (!next.done) {
+        let output;
+        try { output = exec(...next.value); }
+        catch (error) { next = sequence.throw(error); continue; }
+        next = sequence.next(output);
+    }
+    return next.value;
+}
+
+async function runProbeSequenceAsync(sequence, exec, signal) {
+    signal?.throwIfAborted();
+    let next = sequence.next();
+    while (!next.done) {
+        let output;
+        try {
+            const [command, args, options] = next.value;
+            output = await exec(command, args, { ...options, ...(signal ? { signal } : {}) });
+        } catch (error) {
+            if (signal?.aborted || error?.name === "AbortError") throw error;
+            next = sequence.throw(error);
+            continue;
+        }
+        signal?.throwIfAborted();
+        next = sequence.next(output);
+    }
+    return next.value;
+}
+
+export function verifyWorkflowPrerequisites({ exec = defaultExec, ...options } = {}) {
+    return runProbeSequence(prerequisiteProbes(options), exec);
+}
+
+export async function verifyWorkflowPrerequisitesAsync({ exec = executePrerequisiteProbe, signal, ...options } = {}) {
+    return runProbeSequenceAsync(prerequisiteProbes(options), exec, signal);
+}
+
+function* prerequisiteProbes({
+    workspaceRoot = process.cwd(),
+    targets = [],
+    createPullRequests = false,
+    env = process.env,
+    seedLocalProperties = env === process.env,
+} = {}) {
+    const normalizedEnv = buildNormalizedProcessEnv(env);
+    const issues = [];
+    const questions = [];
+    const environments = [];
+
+    try {
+        yield ["git", ["--version"], { cwd: workspaceRoot, env: normalizedEnv }];
+    } catch {
+        const msg = "Prerequisite failed: 'git' executable could not be started in the workflow host environment.";
+        issues.push(msg);
+        questions.push(
+            "Git could not be started in the workflow host environment. Please install Git (or reply with the full path to your Git 'cmd' directory) so the workflow can continue.",
+        );
+    }
+
+    for (const target of Array.isArray(targets) ? targets : []) {
+        if (!record(target) || !nonempty(target.repository)) continue;
+        const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+        if (seedLocalProperties && existsSync(repoRoot)) {
+            try {
+                ensureAndroidLocalProperties(repoRoot);
+            } catch {
+                // Best-effort local.properties seeding before checking SDK configuration.
+            }
+        }
+        const preflight = runTargetEnvironmentPreflight(workspaceRoot, target, env);
+        environments.push(preflight);
+
+        const hasGradleWrapper =
+            existsSync(path.join(preflight.buildRoot, "gradlew.bat")) ||
+            existsSync(path.join(preflight.buildRoot, "gradlew"));
+        if (!hasGradleWrapper) {
+            issues.push(
+                `Prerequisite failed for '${target.repository}': Gradle wrapper not found in ${preflight.buildRoot}.`,
+            );
+            questions.push(
+                `The '${target.repository}' checkout (expected at ${preflight.buildRoot}) is missing its Gradle wrapper. Please clone/initialize the '${target.repository}' repository checkout (for example via 'git droidSetup'), then reply 'ready' to continue.`,
+            );
+        }
+
+        const isAuthApp = normalizeRepositoryKey(target.repository) === "authenticator";
+        const requiredJdkLabel = isAuthApp ? "JDK 21" : "JDK 17 or 21";
+        const jdkIncompatible = !isSupportedJavaHome(target, preflight.javaHome);
+        if (jdkIncompatible) {
+            const configuredHome = nonempty(env?.JAVA_HOME) ? String(env.JAVA_HOME).trim() : "";
+            const configuredMajor = readJavaMajorVersion(configuredHome);
+            const configuredDescription = configuredHome
+                ? `${configuredHome} (${configuredMajor ? `JDK ${configuredMajor}` : "version unknown"})`
+                : "unset";
+            const alternative = resolveTargetJavaHome(target, env, { ignoreConfigured: true });
+            issues.push(
+                `Prerequisite failed for '${target.repository}': ${requiredJdkLabel} is required (configured JAVA_HOME: ${configuredDescription}).`,
+            );
+            questions.push(
+                `Repository '${target.repository}' requires ${requiredJdkLabel} (configured JAVA_HOME: ${configuredDescription}). ` +
+                (alternative
+                    ? `A compatible JDK was found at ${alternative}. Reply 'yes' to use it for this workflow run, or provide another ${requiredJdkLabel} installation directory.`
+                    : `Please install ${requiredJdkLabel} or provide the full path to a compatible installation directory.`),
+            );
+        }
+
+        if (hasGradleWrapper && !preflight.sdkConfigured) {
+            issues.push(
+                `Prerequisite failed for '${target.repository}': Android SDK is not configured in ANDROID_HOME, ANDROID_SDK_ROOT, or ${path.join(preflight.buildRoot, "local.properties")}.`,
+            );
+            questions.push(
+                `Android SDK was not found for '${target.repository}' (checked ANDROID_HOME, ANDROID_SDK_ROOT, and ${path.join(preflight.buildRoot, "local.properties")}). Please reply with the full path to your Android SDK directory so local.properties can be configured automatically.`,
+            );
+        }
+
+        const isAdoRepo = isAuthApp || /visualstudio\.com|dev\.azure\.com/i.test(String(target.hostname || ""));
+        if (isAdoRepo || createPullRequests) {
+            try {
+                const azToken = yield [
+                    "az",
+                    [
+                        "account",
+                        "get-access-token",
+                        "--resource",
+                        "499b84ac-1321-427f-aa17-267ca6975798",
+                        "--query",
+                        "accessToken",
+                        "-o",
+                        "tsv",
+                    ],
+                    { cwd: workspaceRoot, env: normalizedEnv },
+                ];
+                if (!nonempty(azToken)) {
+                    throw new Error("Empty Azure DevOps access token.");
+                }
+            } catch {
+                issues.push(
+                    `Prerequisite failed for '${target.repository}': Azure CLI token for Azure DevOps (499b84ac-1321-427f-aa17-267ca6975798) is missing or expired.`,
+                );
+                questions.push(
+                    `Azure CLI authentication for Azure DevOps (needed for internal Maven dependency feeds and ADO pull requests) is missing or expired. Please run 'az login' in a terminal, then reply 'ready' to continue.`,
+                );
+            }
+        }
+
+        if (createPullRequests && !isAdoRepo && nonempty(target.hostname)) {
+            const account = yield* gitHubAccountProbes(target, workspaceRoot);
+            let ghAuthenticated = false;
+            try {
+                const ghArgs = nonempty(account)
+                    ? ["auth", "token", "--hostname", target.hostname, "--user", account]
+                    : ["auth", "token", "--hostname", target.hostname];
+                const ghToken = yield ["gh", ghArgs, { cwd: workspaceRoot, env: normalizedEnv }];
+                ghAuthenticated = nonempty(ghToken);
+            } catch {
+                ghAuthenticated = false;
+            }
+            if (!ghAuthenticated) {
+                issues.push(
+                    `Prerequisite failed for '${target.repository}': GitHub CLI is not authenticated for ${target.hostname}${nonempty(account) ? ` (account: ${account})` : ""}.`,
+                );
+                questions.push(
+                    `GitHub CLI authentication for ${target.hostname} (${target.slug}${nonempty(account) ? `, account ${account}` : ""}) is missing or expired. Please run 'gh auth login --hostname ${target.hostname}' in a terminal, then reply 'ready' to continue.`,
+                );
+            }
+        }
+    }
+
+    return {
+        ok: issues.length === 0,
+        issues: [...new Set(issues)],
+        questions: [...new Set(questions)],
+        environments,
+    };
+}
+
+export function applyPrerequisiteAnswers(answers, { workspaceRoot = process.cwd(), targets = [], env = process.env } = {}) {
+    if (!Array.isArray(answers)) return;
+    for (const entry of answers) {
+        const q = String(entry?.question || "");
+        const rawAns = String(entry?.answer || "").trim().replace(/^["']|["']$/g, "");
+        if (!nonempty(rawAns)) {
+            continue;
+        }
+        if (/JDK|JAVA_HOME/i.test(q)) {
+            const mentionedRepo = q.match(/Repository\s+'([^']+)'/i)?.[1]?.trim().toLowerCase() || "";
+            const target = targets.find((item) => String(item?.repository || "").trim().toLowerCase() === mentionedRepo);
+            const selectedHome = /^(?:yes)$/i.test(rawAns) && target
+                ? (q.match(/A compatible JDK was found at (.+)\. Reply 'yes'/)?.[1] || "")
+                : rawAns;
+            if (target && isSupportedJavaHome(target, selectedHome)) env.JAVA_HOME = selectedHome;
+        } else if (/^(?:ready|done|ok|yes|fixed|continue|retry)$/i.test(rawAns)) {
+            continue;
+        } else if (/Android SDK|local\.properties|ANDROID_HOME/i.test(q) && existsSync(rawAns)) {
+            env.ANDROID_HOME = rawAns;
+            env.ANDROID_SDK_ROOT = rawAns;
+            const escapedSdk = rawAns.replace(/\\/g, "\\\\").replace(/:/g, "\\:");
+            const mentionedRepo = q.match(/for\s+'([^']+)'/i)?.[1]?.trim().toLowerCase() || "";
+            for (const target of Array.isArray(targets) ? targets : []) {
+                const targetRepo = String(target?.repository || "").trim().toLowerCase();
+                if (nonempty(mentionedRepo) && targetRepo !== mentionedRepo) continue;
+                const preflight = runTargetEnvironmentPreflight(workspaceRoot, target, env);
+                if (existsSync(preflight.buildRoot)) {
+                    try {
+                        const propsPath = path.join(preflight.buildRoot, "local.properties");
+                        if (existsSync(propsPath)) {
+                            const existingProps = readFileSync(propsPath, "utf8");
+                            const updatedProps = /^\s*sdk\.dir\s*=/m.test(existingProps)
+                                ? existingProps.replace(/^\s*sdk\.dir\s*=.*$/m, `sdk.dir=${escapedSdk}`)
+                                : `${existingProps.replace(/\s*$/, "")}\nsdk.dir=${escapedSdk}\n`;
+                            writeFileSync(propsPath, updatedProps, "utf8");
+                        } else {
+                            writeFileSync(propsPath, `sdk.dir=${escapedSdk}\n`, "utf8");
+                        }
+                    } catch {
+                        // Best-effort local.properties write.
+                    }
+                }
+            }
+        } else if (/\bgit\b/i.test(q) && existsSync(rawAns)) {
+            const currentPath = env.PATH || env.Path || "";
+            env.PATH = `${rawAns}${process.platform === "win32" ? ";" : path.delimiter}${currentPath}`;
+        }
+    }
+}
+
+export function prerequisiteRecoveryPath(workspaceRoot, runId) {
+    if (!nonempty(runId)) return null;
+    if (!/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error("Invalid workflow run ID for prerequisite recovery.");
+    return path.resolve(workspaceRoot, ".github", "local-context", "code-feature", `${runId}.json`);
+}
+
+function applyPrerequisiteRecoveryFile(filePath, runId, targets, env) {
+    if (!filePath || !existsSync(filePath)) return;
+    const text = readFileSync(filePath, "utf8");
+    let recovery;
+    try {
+        recovery = JSON.parse(text);
+    } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        throw new Error(`Invalid prerequisite recovery file ${filePath}: expected valid JSON.`);
+    }
+    if (
+        !record(recovery) ||
+        recovery.runId !== runId ||
+        !nonempty(recovery.javaHome) ||
+        Object.keys(recovery).some((key) => !["runId", "javaHome"].includes(key))
+    ) {
+        throw new Error(`Invalid prerequisite recovery file ${filePath}: expected only runId and javaHome for this run.`);
+    }
+    if (!targets.every((target) => isSupportedJavaHome(target, recovery.javaHome))) {
+        throw new Error(`Invalid JDK in prerequisite recovery file ${filePath}: javaHome must support every target.`);
+    }
+    env.JAVA_HOME = recovery.javaHome;
+}
+
+export function collectBuildReceiptOnDisk(repoRoot, { minMtimeMs = 0, javaHome = null, exec = defaultExec } = {}) {
+    if (!nonempty(repoRoot) || !existsSync(repoRoot)) {
+        return { verified: false, testsRun: 0, testsFailed: 0, recentArtifacts: [], worktreeDigest: "", javaHome };
+    }
+    const testResultDirs = [
+        path.join(repoRoot, "PhoneFactor", "app", "build", "test-results"),
+        path.join(repoRoot, "broker4j", "build", "test-results"),
+        path.join(repoRoot, "AADAuthenticator", "build", "test-results"),
+        path.join(repoRoot, "common4j", "build", "test-results"),
+        path.join(repoRoot, "common", "build", "test-results"),
+        path.join(repoRoot, "msal", "build", "test-results"),
+    ];
+    const compileAndLintDirs = [
+        path.join(repoRoot, "PhoneFactor", "app", "build", "tmp", "kotlin-classes"),
+        path.join(repoRoot, "PhoneFactor", "app", "build", "reports", "detekt"),
+        path.join(repoRoot, "broker4j", "build", "classes"),
+        path.join(repoRoot, "common4j", "build", "classes"),
+        path.join(repoRoot, "msal", "build", "intermediates"),
+        path.join(repoRoot, "adal", "build", "intermediates"),
+    ];
+
+    let testsRun = 0;
+    let testsFailed = 0;
+    const recentArtifacts = [];
+
+    const scanXmlDir = (dirPath) => {
+        try {
+            if (!existsSync(dirPath)) return;
+            for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+                const full = path.join(dirPath, entry.name);
+                if (entry.isDirectory()) {
+                    scanXmlDir(full);
+                } else if (entry.isFile() && /^TEST-.*\.xml$/i.test(entry.name)) {
+                    const stat = lstatSync(full);
+                    if (minMtimeMs <= 0 || stat.mtimeMs >= minMtimeMs - 5000) {
+                        recentArtifacts.push(full);
+                        const xml = readFileSync(full, "utf8");
+                        const tMatch = xml.match(/\btests="(\d+)"/);
+                        const fMatch = xml.match(/\bfailures="(\d+)"/);
+                        const eMatch = xml.match(/\berrors="(\d+)"/);
+                        testsRun += tMatch ? Number(tMatch[1]) : 0;
+                        testsFailed += (fMatch ? Number(fMatch[1]) : 0) + (eMatch ? Number(eMatch[1]) : 0);
+                    }
+                }
+            }
+        } catch {
+            // Ignore unreadable test-result subdirectories.
+        }
+    };
+
+    for (const dir of testResultDirs) {
+        scanXmlDir(dir);
+    }
+    for (const dir of compileAndLintDirs) {
+        try {
+            if (!existsSync(dir)) continue;
+            const stat = lstatSync(dir);
+            if (minMtimeMs <= 0 || stat.mtimeMs >= minMtimeMs - 5000) {
+                recentArtifacts.push(dir);
+            }
+        } catch {
+            // Continue checking other candidate receipt directories.
+        }
+    }
+
+    const worktreeDigest = snapshotWorktree(repoRoot, exec) || "";
+    const verified = testsFailed === 0 && testsRun > 0;
+    return {
+        verified,
+        testsRun,
+        testsFailed,
+        recentArtifacts,
+        worktreeDigest,
+        javaHome: javaHome || null,
+    };
+}
+
+export function hasVerifiedBuildReceiptOnDisk(repoRoot, minMtimeMs = 0) {
+    return collectBuildReceiptOnDisk(repoRoot, { minMtimeMs }).verified;
 }
 
 export function runLocalVerificationGate({
@@ -1037,40 +1729,52 @@ export function runLocalVerificationGate({
     targetImpl,
     implementation,
     exec = defaultExec,
+    log = null,
+    environment = process.env,
 }) {
     const rawCommands = Array.isArray(target?.verificationCommands)
         ? target.verificationCommands.filter(nonempty)
         : [];
-    if (rawCommands.length === 0) return { errors: [], ranCommands: [], deferredNotes: [] };
-
-    const env = { ...process.env };
-    delete env.ENV_VSTS_MVN_CRED_ACCESSTOKEN;
-    delete env.ENV_VSTS_MVN_CRED_USERNAME;
-    delete env.VSTS_MAVEN_ACCESS_TOKEN;
-    delete env.SYSTEM_ACCESSTOKEN;
-    delete env.AZURE_ACCESS_TOKEN;
-    delete env.GH_TOKEN;
-    delete env.GITHUB_TOKEN;
-    const defaultStudioJbr = "C:\\Program Files\\Android\\Android Studio\\jbr";
-    if (existsSync(defaultStudioJbr) && (!nonempty(env.JAVA_HOME) || !existsSync(env.JAVA_HOME))) {
-        env.JAVA_HOME = defaultStudioJbr;
-        env.PATH = `${path.join(defaultStudioJbr, "bin")};${env.PATH || ""}`;
+    const outcomes = { passed: [], failed: [], blocked: [], deferred: [] };
+    if (rawCommands.length === 0) {
+        return { errors: [], infraBlockers: [], ranCommands: [], deferredNotes: [], outcomes, receipt: null };
     }
 
+    const preflight = runTargetEnvironmentPreflight(path.dirname(repoRoot), target, environment);
+    const resolvedJavaHome = preflight.javaHome || resolveTargetJavaHome(target, environment);
+    const env = buildNormalizedProcessEnv(
+        environment,
+        nonempty(resolvedJavaHome) ? { JAVA_HOME: resolvedJavaHome } : {},
+        {
+            stripKeys: CREDENTIAL_ENV_KEYS_TO_STRIP,
+            prependPathDirs: nonempty(resolvedJavaHome) ? [path.join(resolvedJavaHome, "bin")] : [],
+        },
+    );
+    const defaultStudioJbr = "C:\\Program Files\\Android\\Android Studio\\jbr";
+    const gateStartedAtMs = Date.now();
+
     const errors = [];
+    const infraBlockers = [];
     const ranCommands = [];
     const deferredNotes = [];
     for (const rawCommand of rawCommands) {
         const parsed = parseAllowedGradleVerificationCommand(rawCommand);
         if (!parsed) {
-            errors.push(
-                `Target ${target.id} workspace verification rejected non-allowlisted command (${String(rawCommand).trim()}): only allowlisted Gradle verification tasks and flags are permitted.`,
-            );
+            const rejectMsg = `Target ${target.id} workspace verification rejected non-allowlisted command (${String(rawCommand).trim()}): only allowlisted Gradle verification tasks and flags are permitted.`;
+            errors.push(rejectMsg);
+            outcomes.failed.push({ command: String(rawCommand).trim(), reason: rejectMsg });
             continue;
         }
         if (parsed.deferredToCi) {
-            deferredNotes.push(`Local command deferred to CI (${parsed.command}): ${parsed.deferralReason}`);
+            const deferNote = `Local command deferred to CI (${parsed.command}): ${parsed.deferralReason}`;
+            deferredNotes.push(deferNote);
+            outcomes.deferred.push({ command: parsed.command, reason: parsed.deferralReason });
             continue;
+        }
+        for (const deferred of parsed.deferredTasks || []) {
+            const command = `${parsed.executable} ${deferred.task}`;
+            deferredNotes.push(`Local task deferred to CI (${command}): ${deferred.reason}`);
+            outcomes.deferred.push({ command, reason: deferred.reason });
         }
         const strippedExec = parsed.executable.replace(/^PhoneFactor[\\/]/i, "");
         const execCwd =
@@ -1082,38 +1786,33 @@ export function runLocalVerificationGate({
                 existsSync(path.resolve(repoRoot, "PhoneFactor", "gradlew")))
                 ? path.join(repoRoot, "PhoneFactor")
                 : repoRoot;
+        const cmdStartMs = Date.now();
+        log?.(`Running local verification command in ${path.basename(execCwd)}: ${parsed.command}`);
         try {
             exec(parsed.executable, parsed.args, {
                 cwd: execCwd,
                 env,
                 timeout: DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS,
             });
+            const elapsedSec = ((Date.now() - cmdStartMs) / 1000).toFixed(1);
+            log?.(`Completed local verification command in ${elapsedSec}s: ${parsed.command}`);
             ranCommands.push(parsed.command);
+            outcomes.passed.push({ command: parsed.command, durationMs: Date.now() - cmdStartMs });
         } catch (error) {
-            let msg = error instanceof Error ? error.message : String(error);
-            if (
-                /Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible/i.test(msg) &&
-                existsSync(defaultStudioJbr) &&
-                env.JAVA_HOME !== defaultStudioJbr
-            ) {
-                env.JAVA_HOME = defaultStudioJbr;
-                env.PATH = `${path.join(defaultStudioJbr, "bin")};${env.PATH || ""}`;
-                try {
-                    exec(parsed.executable, parsed.args, {
-                        cwd: execCwd,
-                        env,
-                        timeout: DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS,
-                    });
-                    ranCommands.push(parsed.command);
-                    continue;
-                } catch (retryError) {
-                    msg = retryError instanceof Error ? retryError.message : String(retryError);
+            const msg = error instanceof Error ? error.message : String(error);
+            if (!isDefinitiveCodeOrTestFailure(msg)) {
+                const deferNote = `Local command short-circuited to CI (${parsed.command}): ${msg}`;
+                deferredNotes.push(deferNote);
+                outcomes.deferred.push({ command: parsed.command, reason: msg });
+                if (!isLocalBuildEnvError(msg)) {
+                    infraBlockers.push(deferNote);
                 }
-            }
-            if (isLocalBuildEnvError(msg) && !/compileKotlin FAILED|compileJava FAILED|Unresolved reference:|Compilation error|There were failing tests/i.test(msg)) {
-                deferredNotes.push(`Local command deferred to CI (${parsed.command}): ${msg}`);
+                log?.(`Short-circuiting local verification to remote CI after non-code build issue (${parsed.command}).`);
+                break;
             } else {
-                errors.push(`Target ${target.id} workspace verification failed (${parsed.command}): ${msg}`);
+                const failMsg = `Target ${target.id} workspace verification failed (${parsed.command}): ${msg}`;
+                errors.push(failMsg);
+                outcomes.failed.push({ command: parsed.command, reason: msg });
             }
         }
     }
@@ -1130,7 +1829,12 @@ export function runLocalVerificationGate({
             ...deferredNotes,
         ];
     }
-    return { errors, ranCommands, deferredNotes };
+    const receipt = collectBuildReceiptOnDisk(repoRoot, {
+        minMtimeMs: gateStartedAtMs,
+        javaHome: resolvedJavaHome,
+        exec,
+    });
+    return { errors, infraBlockers, ranCommands, deferredNotes, outcomes, receipt };
 }
 
 export function parseAdoDesignDocUrl(textValue) {
@@ -1452,7 +2156,7 @@ export function normalizeTask(args) {
                             ? `AB#${abFromText}`
                             : `${inputMode}:${revision}`,
                 }
-                : raw.approval;
+                : (raw.approval ?? null);
 
     const blockingUnknowns = Array.isArray(raw.blockingUnknowns)
         ? raw.blockingUnknowns
@@ -1460,7 +2164,7 @@ export function normalizeTask(args) {
             ? designPacket.stage0.blockingUnknowns
             : inputMode !== "structured"
                 ? []
-                : raw.blockingUnknowns;
+                : (raw.blockingUnknowns ?? null);
 
     const needsExtraction = inputMode !== "structured" && (
         !Array.isArray(raw.requirements) ||
@@ -1776,7 +2480,7 @@ export function formatPrBody(
         .map((row) => `| \`${row.requirementId}\` | ${row.filePaths.map((p) => `\`${p}\``).join(", ")} | ${row.testLocations.map((t) => `\`${t}\``).join(", ")} | ${row.verification.trim()} |`)
         .join("\n");
     const criteriaLines = target.acceptanceCriteria
-        .map((criterion) => `- [x] ${criterion}`)
+        .map((criterion) => `- [ ] ${criterion} (implementation reviewed; runtime acceptance is not independently attested)`)
         .join("\n");
     const testLines = targetImpl.testsAddedOrUpdated
         .map((testItem) => `- \`${testItem}\``)
@@ -1787,7 +2491,7 @@ export function formatPrBody(
         rolloutTag: /^(?:none|n\/a|not[\s-]applicable)\b/i.test(rolloutText) ? "not-applicable" : "feature-flag",
         rolloutJustification: rolloutText,
         testCoverageTag: "unit-tests",
-        testCoverageJustification: `${targetImpl.testsAddedOrUpdated.length} unit test target(s) verified.`,
+        testCoverageJustification: `${targetImpl.testsAddedOrUpdated.length} test target(s) authored/updated. ${verificationSummary(targetImpl.verification)}`,
     });
     const statusBlock = renderCurrentStatusBlock({
         status: currentStatuses.publishedForObservation,
@@ -1795,7 +2499,7 @@ export function formatPrBody(
         runId,
         repository: target.repository,
         prUrl,
-        summary: "Implementation, validation, and independent review completed.",
+        summary: `Implementation and independent source review completed. ${verificationSummary(targetImpl.verification)}`,
         nextAction: "Run pr-observer for this PR.",
     });
 
@@ -1838,7 +2542,11 @@ export function formatPrBody(
         traceLines,
         "",
         "## Validation & Testing",
-        targetImpl.pr.testPlan.trim(),
+        verificationSummary(targetImpl.verification),
+        renderVerificationBlock(targetImpl.verification || pendingVerification()),
+        "",
+        "Builder-reported test plan (advisory; not an execution receipt):",
+        targetImpl.pr.testPlan.trim().split(/\r?\n/).map((line) => `> ${line}`).join("\n"),
         "",
         "### Unit Tests Added / Updated",
         testLines,
@@ -1855,9 +2563,8 @@ export function formatPrBody(
         statusBlock,
     ].join("\n");
 
-    if (!isAdoTarget || fullBody.length <= 3900) {
-        return fullBody;
-    }
+    if (!isAdoTarget) return fullBody;
+    if (fullBody.length <= 3500) return fitAdoDescription(fullBody, { maximum: 3500, truncateNarrative: true });
 
     const compactFiles = targetImpl.files
         .slice(0, 12)
@@ -1874,7 +2581,7 @@ export function formatPrBody(
         )
         .join("\n");
 
-    return [
+    const compactBody = [
         abLinks.join(" · "),
         "",
         "## Summary",
@@ -1884,7 +2591,11 @@ export function formatPrBody(
         compactFiles,
         "",
         "## Validation & Testing",
-        targetImpl.pr.testPlan.trim().slice(0, 500),
+        verificationSummary(targetImpl.verification),
+        renderVerificationBlock(targetImpl.verification || pendingVerification()),
+        "",
+        "Builder-reported test plan (advisory; not an execution receipt):",
+        `> ${targetImpl.pr.testPlan.trim().slice(0, 500).replace(/\r?\n/g, "\n> ")}`,
         "",
         "### Unit Tests Added / Updated",
         compactTests,
@@ -1900,12 +2611,13 @@ export function formatPrBody(
         "",
         statusBlock,
     ].join("\n");
+    return fitAdoDescription(compactBody, { maximum: 3500, truncateNarrative: true });
 }
 
 export function discoverChangedFilesFromGit(
     repoRoot,
     exec = defaultExec,
-    { allowPipelineEdits = false } = {},
+    { allowPipelineEdits = false, baseBranch = "" } = {},
 ) {
     if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git"))) {
         return { files: [], testsAddedOrUpdated: [] };
@@ -1919,9 +2631,24 @@ export function discoverChangedFilesFromGit(
             ["--no-pager", "status", "--porcelain", "--untracked-files=all"],
             { cwd: repoRoot },
         ) || "";
+        const committed = nonempty(baseBranch)
+            ? exec("git", ["-c", "core.quotepath=false", "--no-pager", "diff", "--name-status", "--no-renames", `origin/${baseBranch}...HEAD`], { cwd: repoRoot }) || ""
+            : "";
+        const changes = new Map();
+        for (const line of committed.split(/\r?\n/)) {
+            const match = line.match(/^([AMD])\t(.+)$/);
+            if (match) changes.set(match[2], `${match[1]} ${match[2]}`);
+        }
+        for (const line of porcelain.split(/\r?\n/)) {
+            const match = line.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
+            if (match) {
+                const key = match[2].trim().replace(/^"(.*)"$/, "$1").split(" -> ").pop().trim();
+                changes.set(key, line);
+            }
+        }
         const files = [];
         const testsAddedOrUpdated = [];
-        for (const rawLine of porcelain.split(/\r?\n/)) {
+        for (const rawLine of changes.values()) {
             const lineMatch = rawLine.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
             if (!lineMatch) continue;
             const status = lineMatch[1];
@@ -1948,12 +2675,15 @@ export function discoverChangedFilesFromGit(
                 content: "",
                 summary: `Updated ${relPath.replace(/\\/g, "/")} in target worktree.`,
             });
-            if (/(?:^|[\\/])(?:src[\\/](?:test|androidTest)[\\/]|.*Test[^\\/]*\.(?:kt|java)$)/i.test(relPath)) {
+            if (action !== "delete" && /(?:^|[\\/])(?:src[\\/](?:test|androidTest)[\\/]|.*Test[^\\/]*\.(?:kt|java)$)/i.test(relPath)) {
                 testsAddedOrUpdated.push(relPath.replace(/\\/g, "/"));
             }
         }
         return { files, testsAddedOrUpdated };
-    } catch {
+    } catch (error) {
+        if (nonempty(baseBranch)) {
+            throw new Error(`Could not reconstruct implementation metadata against origin/${baseBranch}: ${error.message}`);
+        }
         return { files: [], testsAddedOrUpdated: [] };
     }
 }
@@ -2014,7 +2744,9 @@ export function normalizeEvidenceResponse(rawEvidence, task) {
                     description: rawEvidence.summary || task?.designSummary || "",
                     acceptanceCriteria: reqList.map((r) => r.text),
                     verificationCommands: Array.isArray(rawEvidence.verificationCommands)
-                        ? rawEvidence.verificationCommands.filter(nonempty)
+                        ? rawEvidence.verificationCommands
+                            .filter(nonempty)
+                            .filter((cmd) => parseAllowedGradleVerificationCommand(cmd) !== null)
                         : [],
                 },
             ],
@@ -2135,9 +2867,10 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
             const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
             const actual = rawImpl.targets.find((t) => t?.targetId === expectedTarget.id) ||
                 (rawImpl.targets.length === 1 ? rawImpl.targets[0] : null);
+            if (record(actual)) actual.verification = pendingVerification("Builder-reported commands have not been independently attested.");
             if (record(actual) && (!Array.isArray(actual.files) || actual.files.length === 0) && nonempty(workspaceRoot)) {
                 const repoRoot = path.resolve(workspaceRoot, expectedTarget.localPath || ".");
-                const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits });
+                const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits, baseBranch: expectedTarget.baseBranch });
                 if (discovered.files.length > 0) {
                     actual.files = discovered.files;
                 }
@@ -2158,7 +2891,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         const repoRoot = nonempty(workspaceRoot)
             ? path.resolve(workspaceRoot, expectedTarget.localPath || ".")
             : "";
-        const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits });
+        const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits, baseBranch: expectedTarget.baseBranch });
         const fallbackFiles = evidenceList
             .map((item) => item.split(":")[0]?.trim())
             .filter((candidate) =>
@@ -2174,29 +2907,19 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         const files = discovered.files.length > 0 ? discovered.files : fallbackFiles;
         const testsAddedOrUpdated = discovered.testsAddedOrUpdated.length > 0
             ? discovered.testsAddedOrUpdated
-            : evidenceList.filter((item) => /test/i.test(item));
-        const candidateLines = [
-            ...evidenceList,
-            ...String(rawImpl.testPlan || "").split(/\r?\n/),
-            ...String(rawImpl.summary || "").split(/\r?\n/),
-        ]
-            .map((s) => s.trim())
-            .filter(nonempty);
-        const inferredCommandsRun = candidateLines
-            .filter((item) => /gradlew|gradle\b|tests?\s+passed|pass(?:ed)?\s+local\s+validation|\b\d+\s+(?:focused\s+|JVM\s+|unit\s+|app\s+|ECS\s+|API-\d+\s+|instrumentation\s+)*tests?\b|BUILD SUCCESSFUL/i.test(item))
-            .slice(0, 5);
-
+            : files.filter((file) => /(?:Test|src\/test\/|src\/androidTest\/)/i.test(file.path)).map((file) => file.path);
         return {
             targetId: expectedTarget.id,
             repository: expectedTarget.repository,
             summary: rawImpl.summary || expectedTarget.title,
             files,
-            testsAddedOrUpdated: testsAddedOrUpdated.length > 0 ? testsAddedOrUpdated : ["Verified unit tests in worktree"],
-            verificationCommandsRun: inferredCommandsRun,
+            testsAddedOrUpdated,
+            verificationCommandsRun: [],
+            verification: pendingVerification("Builder prose is advisory; it is not a successful command receipt."),
             pr: {
                 title: nonempty(rawImpl.prTitle) ? rawImpl.prTitle.trim() : expectedTarget.title,
                 summary: nonempty(rawImpl.prSummary) ? rawImpl.prSummary.trim() : (rawImpl.summary || expectedTarget.title),
-                testPlan: nonempty(rawImpl.testPlan) ? rawImpl.testPlan.trim() : (evidenceList.join("\n") || "Unit tests added and verified."),
+                testPlan: nonempty(rawImpl.testPlan) ? rawImpl.testPlan.trim() : (evidenceList.join("\n") || "Tests require execution; no successful verification receipt is available."),
                 breakingChanges: "None — additive/flight-gated change.",
                 rolloutAndFlag: nonempty(rawImpl.rolloutAndFlag) ? rawImpl.rolloutAndFlag.trim() : "Guarded behind default-off flight.",
             },
@@ -2211,7 +2934,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         targetIds: primary ? [primary.targetId] : [],
         filePaths: defaultFiles,
         testLocations: defaultTests,
-        verification: rawImpl.testPlan || rawImpl.summary || "Verified by unit tests.",
+        verification: rawImpl.testPlan || "Implementation traceability only; execution remains unverified.",
     }));
 
     return reconcileImplementationWithTask({
@@ -2227,7 +2950,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
 export function normalizeReviewResponse(rawReview, task) {
     if (!record(rawReview) || !record(task)) return rawReview;
     if (Array.isArray(rawReview.criteria) && Array.isArray(rawReview.acceptanceCriteria)) {
-        return rawReview;
+        return { ...rawReview, assessmentScope: "source-review; execution verification is tracked separately" };
     }
     if (typeof rawReview.verdict !== "string") return rawReview;
 
@@ -2242,12 +2965,15 @@ export function normalizeReviewResponse(rawReview, task) {
         id,
         pass: passed || id !== "correctnessAndEdgeCases",
     }));
+    const compactCriterionEvidence = passed
+        ? "Source reviewed (see review summary and evidence); runtime verification is tracked separately."
+        : (rawFindings[0] || rawReview.summary || evidenceText.slice(0, 300));
     const acceptanceCriteria = (task.targets || []).flatMap((target) =>
         (target.acceptanceCriteria || []).map((criterion) => ({
             targetId: target.id,
             criterion,
             passed,
-            evidence: evidenceText,
+            evidence: compactCriterionEvidence,
         })),
     );
     const findings = rawFindings.map((textItem, idx) => ({
@@ -2262,6 +2988,9 @@ export function normalizeReviewResponse(rawReview, task) {
     }));
 
     return {
+        summary: rawReview.summary || "",
+        evidence: Array.isArray(rawReview.evidence) ? rawReview.evidence.filter(nonempty) : [],
+        assessmentScope: "source-review; execution verification is tracked separately",
         criteria,
         acceptanceCriteria,
         findings,
@@ -2455,7 +3184,16 @@ export function applyTargetFiles(repoRoot, files, backups) {
         }
         if (!backups.has(file.path)) {
             const existed = existsSync(destination);
-            backups.set(file.path, { exists: existed, content: existed ? readFileSync(destination) : null });
+            if (!nonempty(file.content) && existsSync(path.join(canonicalRoot, ".git"))) {
+                backups.set(file.path, {
+                    exists: existed,
+                    content: null,
+                    onDiskGit: true,
+                    action: file.action,
+                });
+            } else {
+                backups.set(file.path, { exists: existed, content: existed ? readFileSync(destination) : null });
+            }
         }
         if (file.action === "delete") {
             if (existsSync(destination)) rmSync(destination, { force: true });
@@ -2472,20 +3210,57 @@ export function applyTargetFiles(repoRoot, files, backups) {
             if (rawDisk.includes("\r\n") && /\.(?:kt|kts|java|md|gradle|pro|xml|json)$/i.test(file.path)) {
                 const lfContent = rawDisk.replace(/\r\n/g, "\n");
                 writeFileSync(destination, lfContent, "utf8");
-                file.content = lfContent;
-            } else {
-                file.content = rawDisk;
             }
         }
     }
 }
 
-export function restoreTargetFiles(repoRoot, backups) {
+export function capturePreBuilderBaselineBackups(repoRoot, backups, { exec = defaultExec } = {}) {
+    if (!nonempty(repoRoot) || !existsSync(path.join(repoRoot, ".git")) || !(backups instanceof Map)) {
+        return;
+    }
+    try {
+        const porcelain = exec(
+            "git",
+            ["--no-pager", "status", "--porcelain", "--untracked-files=all"],
+            { cwd: repoRoot },
+        ) || "";
+        for (const rawLine of porcelain.split(/\r?\n/)) {
+            const lineMatch = rawLine.match(/^\s*([MADRCU?!]{1,2})\s+(.+)$/);
+            if (!lineMatch) continue;
+            const rawPath = lineMatch[2].trim().replace(/^"(.*)"$/, "$1");
+            const relPath = (rawPath.includes(" -> ") ? rawPath.split(" -> ").pop().trim() : rawPath).replace(/\\/g, "/");
+            if (!isSafeRelativeFilePath(relPath) || backups.has(relPath)) continue;
+            const fullPath = path.resolve(repoRoot, relPath);
+            const existed = existsSync(fullPath);
+            if (existed && !lstatSync(fullPath).isFile()) continue;
+            backups.set(relPath, {
+                exists: existed,
+                content: existed ? readFileSync(fullPath) : null,
+            });
+        }
+    } catch {
+        // Best-effort baseline capture of pre-existing dirty files.
+    }
+}
+
+export function restoreTargetFiles(repoRoot, backups, { exec = defaultExec } = {}) {
     if (!existsSync(repoRoot)) return;
     const canonicalRoot = realpathSync(repoRoot);
+    const hasGit = existsSync(path.join(canonicalRoot, ".git"));
     for (const [relativePath, backup] of backups.entries()) {
         const destination = path.resolve(canonicalRoot, relativePath);
-        if (backup.exists && backup.content !== null) {
+        if (backup.onDiskGit && hasGit) {
+            if (backup.action === "create") {
+                if (existsSync(destination)) rmSync(destination, { force: true });
+            } else {
+                try {
+                    exec("git", ["checkout", "HEAD", "--", relativePath.replace(/\\/g, "/")], { cwd: canonicalRoot });
+                } catch {
+                    // Best-effort git checkout restore.
+                }
+            }
+        } else if (backup.exists && backup.content !== null) {
             mkdirSync(path.dirname(destination), { recursive: true });
             writeFileSync(destination, backup.content);
         } else if (existsSync(destination)) {
@@ -2494,19 +3269,30 @@ export function restoreTargetFiles(repoRoot, backups) {
     }
 }
 
+const MAX_SINGLE_FILE_DIFF_CHARS = 24000;
+
 export function renderUnifiedDiff(backups, files, { repoRoot = "", exec = defaultExec } = {}) {
     return files.map((file) => {
         if (nonempty(repoRoot) && existsSync(path.join(repoRoot, ".git"))) {
             const fullPath = path.resolve(repoRoot, file.path);
-            if (!nonempty(file.content) && existsSync(fullPath)) {
+            if (!nonempty(file.content)) {
                 try {
                     const gitDiff = exec("git", ["--no-pager", "diff", "HEAD", "--", file.path], { cwd: repoRoot });
-                    if (nonempty(gitDiff)) return gitDiff;
+                    if (nonempty(gitDiff)) {
+                        return gitDiff.length > MAX_SINGLE_FILE_DIFF_CHARS
+                            ? `${gitDiff.slice(0, MAX_SINGLE_FILE_DIFF_CHARS)}\n... [diff truncated at ${MAX_SINGLE_FILE_DIFF_CHARS} chars]`
+                            : gitDiff;
+                    }
                 } catch {
                     // Fall back to reading file from disk.
                 }
-                const diskText = readFileSync(fullPath, "utf8");
-                return `--- /dev/null\n+++ b/${file.path}\n${diskText.split(/\r?\n/).map((line) => `+${line}`).join("\n")}`;
+                if (existsSync(fullPath)) {
+                    const diskText = readFileSync(fullPath, "utf8");
+                    const renderedNew = `--- /dev/null\n+++ b/${file.path}\n${diskText.split(/\r?\n/).map((line) => `+${line}`).join("\n")}`;
+                    return renderedNew.length > MAX_SINGLE_FILE_DIFF_CHARS
+                        ? `${renderedNew.slice(0, MAX_SINGLE_FILE_DIFF_CHARS)}\n... [diff truncated at ${MAX_SINGLE_FILE_DIFF_CHARS} chars]`
+                        : renderedNew;
+                }
             }
         }
         const prior = backups.get(file.path);
@@ -2534,9 +3320,12 @@ export function runWindowsBatchFileSafely(batPath, args = [], options = {}) {
     }
     const quoteCmdToken = (value) => `"${String(value).replace(/"/g, '""')}"`;
     const cmdLine = `"${[quoteCmdToken(resolvedBat), ...safeArgs.map(quoteCmdToken)].join(" ")}"`;
-    return execFileSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/v:off", "/c", cmdLine], {
+    const execEnv = options.env
+        ? (options.env.__completeEnv ? options.env : buildNormalizedProcessEnv(process.env, options.env))
+        : buildNormalizedProcessEnv(process.env);
+    return execFileSync(resolveWindowsCmdExecutable(execEnv), ["/d", "/s", "/v:off", "/c", cmdLine], {
         cwd: options.cwd,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
+        env: execEnv,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         windowsVerbatimArguments: true,
@@ -2545,11 +3334,14 @@ export function runWindowsBatchFileSafely(batPath, args = [], options = {}) {
 }
 
 function defaultExec(command, args, options = {}) {
+    const execEnv = options.env
+        ? (options.env.__completeEnv ? options.env : buildNormalizedProcessEnv(process.env, options.env))
+        : buildNormalizedProcessEnv(process.env);
     if (process.platform === "win32" && command === "az") {
         const quoted = (args || []).map((a) => `'${String(a).replace(/'/g, "''")}'`).join(" ");
         return execFileSync("powershell", ["-NoProfile", "-Command", `& az ${quoted}`], {
             cwd: options.cwd,
-            env: options.env ? { ...process.env, ...options.env } : process.env,
+            env: execEnv,
             encoding: "utf8",
             stdio: ["ignore", "pipe", "pipe"],
         }).trim();
@@ -2570,22 +3362,51 @@ function defaultExec(command, args, options = {}) {
         if (!normalizedArgs.some((a) => /^--max-workers=/.test(String(a)))) {
             normalizedArgs.push("--max-workers=2");
         }
+        if (!normalizedArgs.some((a) => /kotlin\.compiler\.execution\.strategy/i.test(String(a)))) {
+            normalizedArgs.push("-Pkotlin.compiler.execution.strategy=in-process");
+        }
         return runWindowsBatchFileSafely(resolvedBat, normalizedArgs, {
             ...options,
+            env: execEnv,
             cwd,
             timeout: options.timeout ?? DEFAULT_GRADLE_VERIFICATION_TIMEOUT_MS,
         });
     }
     return execFileSync(command, args, {
         cwd: options.cwd,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
+        env: execEnv,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         ...(Number.isFinite(options.timeout) && options.timeout > 0 ? { timeout: options.timeout } : {}),
     }).trim();
 }
 
+export function executePrerequisiteProbe(command, args, options = {}) {
+    const env = options.env
+        ? (options.env.__completeEnv ? options.env : buildNormalizedProcessEnv(process.env, options.env))
+        : buildNormalizedProcessEnv(process.env);
+    const azureCli = process.platform === "win32" && command === "az";
+    const executable = azureCli ? "powershell" : command;
+    const commandArgs = azureCli
+        ? ["-NoProfile", "-Command", `& az ${(args || []).map((arg) => `'${String(arg).replace(/'/g, "''")}'`).join(" ")}; exit $LASTEXITCODE`]
+        : args;
+    return new Promise((resolve, reject) => {
+        execFile(executable, commandArgs, {
+            cwd: options.cwd, env, encoding: "utf8", windowsHide: true,
+            timeout: options.timeout ?? 120_000,
+            ...(options.signal ? { signal: options.signal } : {}),
+        }, (error, stdout) => {
+            if (error) reject(error);
+            else resolve(stdout.trim());
+        });
+    });
+}
+
 export function resolveGitHubAccount(target, workspaceRoot, exec = defaultExec) {
+    return runProbeSequence(gitHubAccountProbes(target, workspaceRoot), exec);
+}
+
+function* gitHubAccountProbes(target, workspaceRoot) {
     if (nonempty(target.account)) return target.account.trim();
     const localConfigPath = path.join(workspaceRoot, ".github", "developer-local.json");
     if (existsSync(localConfigPath)) {
@@ -2602,7 +3423,7 @@ export function resolveGitHubAccount(target, workspaceRoot, exec = defaultExec) 
         }
     }
     try {
-        const statusOutput = exec("gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot });
+        const statusOutput = yield ["gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot }];
         const match = statusOutput.match(/Logged in to [^\s]+ account ([^\s(]+)/i);
         if (match && nonempty(match[1])) return match[1].trim();
     } catch {
@@ -2649,6 +3470,39 @@ export function buildBranchName(target, branchPrefix = "") {
     return `${prefix}/${abSegment}${slug || "change"}`;
 }
 
+export function buildAdoPullRequestPublicationScript(apiBase, payload) {
+    if (typeof payload?.description === "string" && payload.description.length > 4000) {
+        throw new Error("ADO PR description exceeds the 4000-character limit before publication.");
+    }
+    const input = Buffer.from(JSON.stringify({ apiBase, payload }), "utf8").toString("base64");
+    return [
+        "$ErrorActionPreference = 'Stop'",
+        `$inputData = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${input}')) | ConvertFrom-Json`,
+        "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+        "if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$token)) { throw 'Azure DevOps authentication failed.' }",
+        '$headers = @{ Authorization = "Bearer $token"; \'Content-Type\' = \'application/json\' }',
+        "$lookupUri = $inputData.apiBase + '?searchCriteria.status=active&searchCriteria.sourceRefName=' + [uri]::EscapeDataString($inputData.payload.sourceRefName) + '&searchCriteria.targetRefName=' + [uri]::EscapeDataString($inputData.payload.targetRefName) + '&api-version=7.0'",
+        "function FindExistingPullRequest {",
+        "  $matches = @((Invoke-RestMethod -Uri $lookupUri -Headers $headers -Method Get).value | Where-Object { $_.status -eq 'active' -and $_.sourceRefName -ceq $inputData.payload.sourceRefName -and $_.targetRefName -ceq $inputData.payload.targetRefName })",
+        "  if ($matches.Count -gt 1) { throw 'Multiple active pull requests match the source and target branches.' }",
+        "  if ($matches.Count -eq 1) { return $matches[0] }",
+        "}",
+        "$pr = FindExistingPullRequest",
+        "if (-not $pr) {",
+        "  $bytes = [System.Text.Encoding]::UTF8.GetBytes(($inputData.payload | ConvertTo-Json -Depth 8 -Compress))",
+        "  try {",
+        "    $pr = Invoke-RestMethod -Uri ($inputData.apiBase + '?api-version=7.0') -Headers $headers -Method Post -Body $bytes",
+        "  } catch {",
+        "    $creationError = $_",
+        "    $pr = FindExistingPullRequest",
+        "    if (-not $pr) { throw $creationError }",
+        "  }",
+        "}",
+        "if (-not $pr.pullRequestId) { throw 'Azure DevOps publication returned no pull request ID.' }",
+        "Write-Output $pr.pullRequestId",
+    ].join("\n");
+}
+
 export function publishTargetPullRequest({
     target,
     targetImpl,
@@ -2661,6 +3515,7 @@ export function publishTargetPullRequest({
     branchPrefix = "",
     runId = "local",
     exec = defaultExec,
+    sourceBinding = null,
 }) {
     const account = createPullRequests ? resolveGitHubAccount(target, workspaceRoot, exec) : (target.account || "");
     let branch = buildBranchName(target, branchPrefix || account);
@@ -2697,21 +3552,56 @@ export function publishTargetPullRequest({
         }
     }
     const gitEnv = nonempty(token)
-        ? { GH_TOKEN: token, GITHUB_TOKEN: token, GIT_CONFIG_PARAMETERS: "", GIT_CONFIG_COUNT: "" }
+        ? buildNormalizedProcessEnv(process.env, {
+            GH_TOKEN: token,
+            GITHUB_TOKEN: token,
+            GIT_CONFIG_PARAMETERS: "",
+            GIT_CONFIG_COUNT: "",
+        })
         : undefined;
 
+    const runSuffix = String(runId || randomUUID()).replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase() || "r2";
+    const suffixedBranch = `${branch}-${runSuffix}`;
     if (exec === defaultExec) {
+        let currentBranch = "";
+        let localHeadSha = "";
         try {
-            const remoteHead = exec("git", ["ls-remote", "--heads", "origin", `refs/heads/${branch}`], {
-                cwd: repoRoot,
-                env: gitEnv,
-            });
-            if (nonempty(remoteHead)) {
-                const runSuffix = String(runId || randomUUID()).replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase() || "r2";
-                branch = `${branch}-${runSuffix}`;
-            }
+            currentBranch = exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoRoot, env: gitEnv });
         } catch {
-            // Best-effort remote branch collision check.
+            currentBranch = "";
+        }
+        try {
+            localHeadSha = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
+        } catch {
+            localHeadSha = "";
+        }
+        if (currentBranch === suffixedBranch) {
+            branch = suffixedBranch;
+        } else {
+            try {
+                const remoteHead = exec("git", ["ls-remote", "--heads", "origin", `refs/heads/${branch}`], {
+                    cwd: repoRoot,
+                    env: gitEnv,
+                });
+                if (nonempty(remoteHead)) {
+                    const remoteSha = remoteHead.trim().split(/\s+/)[0] || "";
+                    let baseSha = "";
+                    try {
+                        baseSha = exec("git", ["rev-parse", `origin/${target.baseBranch}`], { cwd: repoRoot, env: gitEnv });
+                    } catch {
+                        baseSha = "";
+                    }
+                    const isSamePublishedCommit =
+                        nonempty(localHeadSha) &&
+                        remoteSha === localHeadSha &&
+                        (!nonempty(baseSha) || localHeadSha !== baseSha);
+                    if (!isSamePublishedCommit) {
+                        branch = suffixedBranch;
+                    }
+                }
+            } catch {
+                // Best-effort remote branch collision check.
+            }
         }
     }
 
@@ -2729,18 +3619,29 @@ export function publishTargetPullRequest({
             exec("git", ["add", "--", file.path], { cwd: repoRoot, env: gitEnv });
         }
     }
-    exec(
-        "git",
-        [
-            "commit",
-            "-m",
-            title,
-            "-m",
-            "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
-        ],
-        { cwd: repoRoot, env: gitEnv },
-    );
-    const headSha = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
+    if (sourceBinding) verifyPublicationSource(repoRoot, targetImpl, sourceBinding, exec, { staged: true });
+    let shouldCommit = true;
+    if (existsSync(path.join(repoRoot, ".git"))) {
+        const stagedNames = exec("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot, env: gitEnv });
+        shouldCommit = nonempty(stagedNames);
+    }
+    if (shouldCommit) {
+        exec(
+            "git",
+            [
+                "commit",
+                "-m",
+                title,
+                "-m",
+                "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+            ],
+            { cwd: repoRoot, env: gitEnv },
+        );
+    }
+    const headSha = sourceBinding
+        ? verifyPublicationSource(repoRoot, targetImpl, sourceBinding, exec, { staged: true, committed: true })
+        : exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
+    const pushRef = `${headSha}:refs/heads/${branch}`;
     const pushArgs = nonempty(token)
         ? [
             "-c",
@@ -2750,13 +3651,17 @@ export function publishTargetPullRequest({
             "push",
             "-u",
             "origin",
-            branch,
+            pushRef,
         ]
-        : ["push", "-u", "origin", branch];
+        : ["push", "-u", "origin", pushRef];
     exec("git", pushArgs, { cwd: repoRoot, env: gitEnv });
 
     const isAdoTarget = target.repository === "authenticator" ||
         /visualstudio\.com|dev\.azure\.com/i.test(String(target.hostname || ""));
+    targetImpl.verification ||= pendingVerification();
+    targetImpl.verification.local.headSha = headSha;
+    body = upsertMarkerBlock(body, verificationMarkers, renderVerificationBlock(targetImpl.verification));
+    if (isAdoTarget) body = fitAdoDescription(body, { maximum: 3500, truncateNarrative: true });
     let url = "";
 
     if (isAdoTarget) {
@@ -2767,26 +3672,16 @@ export function publishTargetPullRequest({
         const prTypeTag = /\b(fix|bug|hotfix|regression)\b/i.test(title) ? "bug" : "Feature";
         let prId = "";
         if (exec === defaultExec) {
-            const createPayloadB64 = Buffer.from(
-                JSON.stringify({
-                    sourceRefName: `refs/heads/${branch}`,
-                    targetRefName: `refs/heads/${target.baseBranch}`,
-                    title,
-                    description: body,
-                    isDraft: Boolean(draftPullRequest),
-                    labels: [{ name: "agentic-cli" }, { name: prTypeTag }],
-                }),
-                "utf8",
-            ).toString("base64");
+            const createPayload = {
+                sourceRefName: `refs/heads/${branch}`,
+                targetRefName: `refs/heads/${target.baseBranch}`,
+                title,
+                description: body,
+                isDraft: Boolean(draftPullRequest),
+                labels: [{ name: "agentic-cli" }, { name: prTypeTag }],
+            };
             const apiBase = `${orgUrl}/${encodeURIComponent(adoProject)}/_apis/git/repositories/${encodeURIComponent(adoRepo)}/pullRequests`;
-            const psCreate = [
-                "$ErrorActionPreference = 'Stop'",
-                "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
-                "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
-                `$bytes = [System.Convert]::FromBase64String('${createPayloadB64}')`,
-                `$pr = Invoke-RestMethod -Uri '${apiBase.replace(/'/g, "''")}?api-version=7.0' -Headers $headers -Method Post -Body $bytes`,
-                "[Console]::Out.Write($pr.pullRequestId)",
-            ].join("; ");
+            const psCreate = buildAdoPullRequestPublicationScript(apiBase, createPayload);
             const rawCreate = exec("powershell", ["-NoProfile", "-Command", psCreate], { cwd: repoRoot });
             prId = extractAdoPullRequestId(rawCreate);
         } else {
@@ -2841,7 +3736,22 @@ export function publishTargetPullRequest({
             body,
         ];
         if (draftPullRequest) prArgs.push("--draft");
-        url = exec("gh", prArgs, { cwd: repoRoot, env: gitEnv });
+        try {
+            url = exec("gh", prArgs, { cwd: repoRoot, env: gitEnv });
+        } catch (createErr) {
+            if (exec === defaultExec) {
+                try {
+                    url = exec("gh", ["pr", "view", branch, "--repo", repoArg, "--json", "url", "-q", ".url"], {
+                        cwd: repoRoot,
+                        env: gitEnv,
+                    });
+                } catch {
+                    throw createErr;
+                }
+            } else {
+                throw createErr;
+            }
+        }
 
         if (nonempty(url)) {
             try {
@@ -2862,7 +3772,7 @@ export function publishTargetPullRequest({
                 runId,
                 repository: target.repository,
                 prUrl: url,
-                summary: "Implementation, validation, and independent review completed.",
+                summary: `Implementation and independent source review completed. ${verificationSummary(targetImpl.verification)}`,
                 nextAction: "Run pr-observer for this PR.",
             }),
         );
@@ -2931,19 +3841,19 @@ async function askUserForClarifications(questions, ctx, askUser) {
         const properties = Object.fromEntries(
             cleaned.map((question, idx) => [`q${idx + 1}`, { type: "string", title: question }]),
         );
-        let response;
-        try {
-            response = await ctx.session.ui.elicitation({
-                message: "Clarification needed to complete the coding task:",
-                requestedSchema: {
-                    type: "object",
-                    properties,
-                    required: Object.keys(properties),
-                },
-            });
-        } catch {
+        const attempt = await attemptAction(ctx, () => ctx.session.ui.elicitation({
+            message: "Clarification needed to complete the coding task:",
+            requestedSchema: {
+                type: "object",
+                properties,
+                required: Object.keys(properties),
+            },
+        }));
+        if (attempt.problem) {
+            ctx?.log?.(`Clarification UI failed: ${attempt.problem}`);
             return null;
         }
+        const response = attempt.result;
         if (!record(response) || response.action !== "accept" || !record(response.content)) {
             return null;
         }
@@ -3007,25 +3917,32 @@ export async function confirmBriefApproval(task, ctx, askBriefApproval) {
     return { decision: "start", feedback: "" };
 }
 
-export async function pauseForHelp(ctx, key, reason) {
+export async function pauseForHelp(ctx, key, reason, { questions = [], recoveryPath = null } = {}) {
     const msg = `${reason}\nWorkflow run ${ctx?.runId || "current"} is paused at "${key}". Inspect and resolve the blocker, then resume this same run ID.`;
-    ctx?.log?.(msg);
+    await ctx?.log?.(msg);
     if (typeof ctx?.pause === "function") {
+        await recordHumanInputRequest(ctx, {
+            key,
+            questions: questions.length ? questions : [`What should happen next for this blocked workflow? ${reason}`],
+            recoveryPath,
+        });
         await ctx.pause(key);
         return true;
     }
     return false;
 }
 
+function isWorkflowControlError(ctx, error) {
+    return ctx?.signal?.aborted ||
+        ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name) ||
+        /workflow_limit_reached/.test(`${error?.code || ""} ${error?.message || ""}`);
+}
+
 export async function attemptAction(ctx, action) {
     try {
         return { result: (await action()) ?? null };
     } catch (error) {
-        if (
-            ctx?.signal?.aborted ||
-            ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name) ||
-            /workflow_limit_reached/.test(`${error?.code || ""} ${error?.message || ""}`)
-        ) {
+        if (isWorkflowControlError(ctx, error)) {
             throw error;
         }
         if (!(error instanceof Error)) throw error;
@@ -3041,7 +3958,65 @@ export function normalizeQuestionKey(question) {
         .trim();
 }
 
-export async function runCodeFeature(ctx, dependencies = {}) {
+function implementationContentFingerprint(workspaceRoot, target, targetImpl) {
+    const digest = createHash("sha256");
+    const root = path.resolve(workspaceRoot, target.localPath || ".");
+    for (const file of [...targetImpl.files].sort((a, b) => a.path.localeCompare(b.path))) {
+        digest.update(`${file.path}\0${file.action}\0`);
+        const fullPath = path.resolve(root, file.path);
+        const present = existsSync(fullPath);
+        digest.update(present ? "present\0" : "missing\0");
+        digest.update(present ? readFileSync(fullPath) : String(file.content || ""));
+    }
+    return digest.digest("hex");
+}
+
+function publicationTree(repoRoot, targetImpl, exec, indexTree) {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "code-feature-index-"));
+    const env = buildNormalizedProcessEnv(process.env, { GIT_INDEX_FILE: path.join(directory, "index") });
+    try {
+        exec("git", ["read-tree", indexTree], { cwd: repoRoot, env });
+        for (const file of targetImpl.files) {
+            exec("git", file.action === "delete"
+                ? ["update-index", "--force-remove", "--", file.path]
+                : ["add", "--", file.path], { cwd: repoRoot, env });
+        }
+        return exec("git", ["write-tree"], { cwd: repoRoot, env });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
+function capturePublicationSource(repoRoot, target, targetImpl, exec) {
+    const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
+    const indexTree = exec("git", ["write-tree"], { cwd: repoRoot });
+    const base = exec("git", ["merge-base", head, `origin/${target.baseBranch}`], { cwd: repoRoot });
+    const tree = publicationTree(repoRoot, targetImpl, exec, indexTree);
+    if (![head, indexTree, base, tree].every((oid) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid))) {
+        throw new Error(`Cannot bind the complete Git publication tree for ${target.id}.`);
+    }
+    return { head, indexTree, base, tree };
+}
+
+function verifyPublicationSource(repoRoot, targetImpl, binding, exec, { staged = false, committed = false } = {}) {
+    const changed = () => { throw new Error(`Reviewed implementation changed for ${targetImpl.targetId}; publication requires a new source review.`); };
+    if (!binding?.head || !binding.indexTree || !binding.base || !binding.tree) changed();
+    const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
+    const indexTree = exec("git", ["write-tree"], { cwd: repoRoot });
+    if (indexTree !== binding.indexTree && indexTree !== binding.tree) changed();
+    if (staged && indexTree !== binding.tree) changed();
+    if (committed || head !== binding.head) {
+        const headTree = exec("git", ["rev-parse", `${head}^{tree}`], { cwd: repoRoot });
+        if (headTree !== binding.tree) changed();
+    }
+    if (head !== binding.head) {
+        const parents = exec("git", ["rev-list", "--parents", "-n", "1", head], { cwd: repoRoot }).split(/\s+/);
+        // A publication retry may observe the one commit made from the reviewed tree.
+        if (parents.length !== 2 || parents[1] !== binding.head) changed();
+    }
+    if (publicationTree(repoRoot, targetImpl, exec, indexTree) !== binding.tree) changed();
+    return head;
+}
+
+async function prepareCodeFeature(ctx, dependencies = {}) {
     const rawOptions = record(ctx.args?.options) ? ctx.args.options : {};
     const maxFixes = positiveInt(rawOptions.maxFixIterations)
         ? Math.min(rawOptions.maxFixIterations, MAX_FIX_ITERATIONS)
@@ -3057,15 +4032,70 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const applyToWorkspace = rawOptions.applyToWorkspace === true || effectiveCreatePrs;
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
+    const workflowEnv = { ...(dependencies.environment || process.env) };
+    if (rawOptions.javaHome !== undefined) {
+        if (!nonempty(rawOptions.javaHome)) throw new Error("options.javaHome must be a non-empty approved JDK installation path.");
+        workflowEnv.JAVA_HOME = rawOptions.javaHome;
+    }
+    const applyWorkflowAnswers = (answers, targets) => {
+        const otherAnswers = answers.filter(({ question }) => !/JDK|JAVA_HOME/i.test(String(question || "")));
+        applyPrerequisiteAnswers(otherAnswers, { workspaceRoot, targets, env: process.env });
+        applyPrerequisiteAnswers(answers, { workspaceRoot, targets, env: workflowEnv });
+    };
 
     const manageWorkspace = applyToWorkspace || Boolean(ctx?.session) || nonempty(rawOptions.workspaceRoot);
-    const resolvedArgs = resolveInputSources(ctx.args, {
+    const pauseOnBlocker = rawOptions.pauseOnBlocker !== undefined
+        ? rawOptions.pauseOnBlocker === true && typeof ctx?.pause === "function"
+        : typeof ctx?.pause === "function";
+    let resolvedArgs = resolveInputSources(ctx.args, {
         workspaceRoot,
         exec,
         fetchWorkItem: dependencies.fetchWorkItem,
         fetchDesignDoc: dependencies.fetchDesignDoc,
         linkSubrepos: manageWorkspace,
     });
+    if (
+        nonempty(resolvedArgs?.resolutionError) &&
+        (rawOptions.verifyPrerequisites === true ||
+            (Boolean(ctx?.session) && exec === defaultExec && rawOptions.verifyPrerequisites !== false))
+    ) {
+        const authRecoveryPrefix = `code-feature-v1-auth-${createHash("sha256").update(JSON.stringify(ctx.args)).digest("hex").slice(0, 16)}`;
+        const adoProbeTarget = {
+            id: "ado-input-resolution",
+            repository: "authenticator",
+            localPath: "authenticator",
+            hostname: "msazure.visualstudio.com",
+            slug: "One/_git/AD-MFA-phonefactor-phoneApp-android",
+            baseBranch: "working",
+        };
+        const authPrereq = await verifyWorkflowPrerequisitesAsync({
+            workspaceRoot,
+            targets: [adoProbeTarget],
+            createPullRequests: true,
+            exec: dependencies.execAsync || (exec === defaultExec ? executePrerequisiteProbe : exec),
+            signal: ctx.signal,
+            env: workflowEnv,
+            seedLocalProperties: exec === defaultExec,
+        });
+        const authQuestions = authPrereq.questions.filter((q) => /az login|git/i.test(q));
+        if (authQuestions.length > 0) {
+            const authAnswers = await ctx.step(
+                `${authRecoveryPrefix}-input-auth-help`,
+                () => askUserForClarifications(authQuestions.slice(0, 2), ctx, dependencies.askUser),
+                { volatile: true },
+            );
+            if (Array.isArray(authAnswers) && authAnswers.length > 0) {
+                applyWorkflowAnswers(authAnswers, [adoProbeTarget]);
+                resolvedArgs = resolveInputSources(ctx.args, {
+                    workspaceRoot,
+                    exec,
+                    fetchWorkItem: dependencies.fetchWorkItem,
+                    fetchDesignDoc: dependencies.fetchDesignDoc,
+                    linkSubrepos: manageWorkspace,
+                });
+            }
+        }
+    }
     const initialErrors = validateTask(resolvedArgs, { allowDeferredTargets: true });
     const history = [];
     let evidence = null;
@@ -3098,6 +4128,10 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         reviews: history,
         pullRequests,
         observations,
+        verification: implementation?.targets?.map((target) => ({
+            targetId: target.targetId,
+            ...(target.verification || pendingVerification()),
+        })) || [],
         rubric: [...rubric],
         nextAction: recommendation === "GO to PR Review"
             ? `Human must review the verified pull request packet and approve/merge in ${getHostingLabel()}.`
@@ -3112,17 +4146,31 @@ export async function runCodeFeature(ctx, dependencies = {}) {
     const approvedSnapshot = JSON.stringify(task);
     const prefix = `code-feature-v1-${createHash("sha256").update(approvedSnapshot).digest("hex")}`;
     const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
+    const normalizeBuild = (raw, stage) => step(`normalized-${stage}-v2`, () =>
+        normalizeImplementationResponse(raw ?? null, task, { workspaceRoot, exec }));
+    const targetContentFingerprint = (target, targetImpl) => implementationContentFingerprint(workspaceRoot, target, targetImpl);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
-    const ask = (label, agentName, promptTask, schema, data, modelOverride) => ctx.agent(
-        `${agentName === BUILDER_AGENT ? builderBoundaries : readerBoundaries}\n${promptTask}\nDATA:\n${JSON.stringify(data)}`,
-        {
-            label,
-            agent: agentName,
-            schema,
-            ...(nonempty(modelOverride) ? { model: modelOverride } : {}),
-        },
-    );
+    const ask = async (label, agentName, promptTask, schema, data, modelOverride) => {
+        const startedAt = Date.now();
+        ctx.log?.(`${new Date().toISOString()} Starting ${label}.`);
+        const roleBoundaries = agentName === BUILDER_AGENT
+            ? builderBoundaries
+            : agentName === REVIEWER_AGENT
+                ? reviewerBoundaries
+                : readerBoundaries;
+        const result = await ctx.agent(
+            `${roleBoundaries}\n${promptTask}\nDATA:\n${JSON.stringify(data)}`,
+            {
+                label,
+                agent: agentName,
+                schema,
+                ...(nonempty(modelOverride) ? { model: modelOverride } : {}),
+            },
+        );
+        ctx.log?.(`${new Date().toISOString()} ${label} ${result === null ? "returned no valid result" : "returned a structured result"} after ${Math.round((Date.now() - startedAt) / 1000)}s.`);
+        return result;
+    };
 
     if (manageWorkspace) {
         for (const target of task.targets) {
@@ -3134,6 +4182,70 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         }
     }
 
+    const shouldVerifyPrerequisites =
+        rawOptions.verifyPrerequisites === true ||
+        (Boolean(ctx?.session) && exec === defaultExec && rawOptions.verifyPrerequisites !== false);
+    const runInteractivePrerequisites = async (targetsToVerify, stepPrefix) => {
+        if (!shouldVerifyPrerequisites) return null;
+        for (let prereqRound = 0; prereqRound < 2; prereqRound++) {
+            const recoveryPath = prerequisiteRecoveryPath(workspaceRoot, ctx.runId);
+            applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
+            const selectedJava = selectWorkflowJavaHome(targetsToVerify, workflowEnv, { explicit: rawOptions.javaHome !== undefined });
+            if (selectedJava) {
+                await recordMilestone(ctx, {
+                    id: `${prefix}-toolchain-${createHash("sha256").update(selectedJava.javaHome).digest("hex")}`,
+                    title: "Build toolchain selected",
+                    outcome: "completed",
+                    summary: `Using installed JDK ${selectedJava.javaMajorVersion} at ${selectedJava.javaHome} for this workflow run only. Global JAVA_HOME is unchanged. No installation or additional approval was required.`,
+                });
+            }
+            const verify = () => verifyWorkflowPrerequisitesAsync({
+                workspaceRoot,
+                targets: targetsToVerify,
+                createPullRequests: effectiveCreatePrs,
+                exec: dependencies.execAsync || (exec === defaultExec ? executePrerequisiteProbe : exec),
+                signal: ctx.signal,
+                env: workflowEnv,
+                seedLocalProperties: exec === defaultExec,
+            });
+            const prereqCheck = await verify();
+            const prereqStepKey = `${stepPrefix}-answers-v2-${prereqRound}`;
+            const prereqAnswers = await step(
+                prereqStepKey,
+                () => prereqCheck.ok
+                    ? []
+                    : askUserForClarifications(prereqCheck.questions.slice(0, 3), ctx, dependencies.askUser),
+            );
+            if (Array.isArray(prereqAnswers) && prereqAnswers.length > 0) {
+                applyWorkflowAnswers(prereqAnswers, targetsToVerify);
+            }
+            // External recovery is authoritative over previously journaled answers.
+            applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
+            const recheck = await verify();
+            if (recheck.ok) return null;
+            if (Array.isArray(prereqAnswers) && prereqAnswers.length > 0 && prereqRound + 1 < 2) continue;
+            if (pauseOnBlocker) {
+                const recoveryHelp = recoveryPath
+                    ? `\nFor an approved run-scoped JDK selection, write {"runId":"${ctx.runId}","javaHome":"<approved JDK directory>"} to ${recoveryPath} before resuming. Do not write this file without the user's approval. Never store credentials here.`
+                    : "";
+                await pauseForHelp(ctx, `${prefix}-${stepPrefix}-pause-v2-${prereqRound}`, recheck.issues.join("\n") + recoveryHelp, {
+                    questions: recheck.questions,
+                    recoveryPath,
+                });
+                applyPrerequisiteRecoveryFile(recoveryPath, ctx.runId, targetsToVerify, workflowEnv);
+                const afterResume = await verify();
+                if (afterResume.ok) return null;
+                if (prereqRound + 1 < 2) continue;
+                return packet("needs clarification", afterResume.issues, afterResume.questions);
+            }
+            return packet("needs clarification", recheck.issues, recheck.questions);
+        }
+        return null;
+    };
+
+    const initialPrereqPacket = await runInteractivePrerequisites(task.targets, "prerequisites-help");
+    if (initialPrereqPacket) return initialPrereqPacket;
+
     phase("Validate task and gather evidence");
     const needsSpecExtraction = task.needsExtraction === true;
     const evidenceGuides = resolveRoleSkillGuides("evidence", task.targets);
@@ -3144,9 +4256,6 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         ? rawOptions.iterativeIntake === true
         : Boolean(ctx?.session?.ui?.elicitation);
     const requireBriefApproval = rawOptions.requireBriefApproval === true || typeof dependencies.askBriefApproval === "function";
-    const pauseOnBlocker = rawOptions.pauseOnBlocker !== undefined
-        ? rawOptions.pauseOnBlocker === true && typeof ctx?.pause === "function"
-        : typeof ctx?.pause === "function";
     const useSlimSchemas = rawOptions.slimSchemas !== undefined
         ? rawOptions.slimSchemas === true
         : (Boolean(ctx?.session) && task.inputMode !== "structured");
@@ -3442,10 +4551,36 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
         }
     }
 
+    if (needsSpecExtraction) {
+        const postIntakePrereqPacket = await runInteractivePrerequisites(task.targets, "post-intake-prerequisites-help");
+        if (postIntakePrereqPacket) return postIntakePrereqPacket;
+    }
+
+    await recordMilestone(ctx, {
+        id: `${prefix}-evidence-completed`,
+        title: "Evidence and requirements",
+        outcome: "completed",
+        summary: `Repository evidence and task validation completed for ${task.targets.length} target(s) and ${task.requirements.length} requirement(s). Implementation and execution verification are still pending.`,
+    });
+
+    const backupsByTarget = new Map();
+    if (applyToWorkspace && manageWorkspace) {
+        for (const target of task.targets) {
+            const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+            const targetBackups = new Map();
+            capturePreBuilderBaselineBackups(repoRoot, targetBackups, { exec });
+            backupsByTarget.set(target.id, targetBackups);
+        }
+    }
+
     const isLocalBuildEnvBlocker = isLocalBuildEnvError;
 
     const builderGuides = resolveRoleSkillGuides("builder", task.targets);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
+    const executionEnvironments = manageWorkspace
+        ? task.targets.map((target) => runTargetEnvironmentPreflight(workspaceRoot, target, workflowEnv))
+        : [];
+    const primaryJavaHome = executionEnvironments[0]?.javaHome || "C:\\Program Files\\Android\\Android Studio\\jbr";
     const inspectedFiles = manageWorkspace ? buildInspectedFilesContext(workspaceRoot, task, evidence) : [];
     const pbiScopeInstruction = Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
         ? `\nSCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—implement and test ONLY the specified PBI scope, and do NOT implement or require work explicitly deferred to other PBIs.`
@@ -3454,32 +4589,35 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
 Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
 Preserve all approved requirements and acceptance criteria verbatim.${pbiScopeInstruction}
 DATA.inspectedFiles already pre-loads the exact repo-relative file paths and numbered source excerpts identified by Stage 1 (code-evidence). Do NOT re-run broad glob/grep discovery across the repository for files and symbols already provided in DATA.inspectedFiles—view only additional lines if needed, apply your surgical edits, and run ONE combined Gradle verification command.
+DATA.executionEnvironments provides the pre-validated buildRoot and JAVA_HOME (${primaryJavaHome}) for this host—use that exact JAVA_HOME and buildRoot when running .\\gradlew.bat in PowerShell so your shell environment matches the workflow verification gate.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
-Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon); connected emulator tests run in CI.
-Never let a background Gradle shell command stall indefinitely: if a Gradle build/test command produces no new task progress for more than 10 minutes (or exceeds 25 minutes total), call stop_powershell on that shellId and retry once with --no-daemon --max-workers=2.
-If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
+Verify new test helper names and overloads against existing repository declarations, and match mock stubs to actual call arguments (including account/tenant identifiers). Do not invent instrumentation launch helpers. Clearly distinguish authored tests, commands attempted, successful command exits, and deferred/failed checks in testPlan and evidence; a verdict "pass" is a source implementation handoff, not proof of tests passing.
+Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process'); connected emulator tests run in CI.
+Always quote the entire '-Pkotlin.compiler.execution.strategy=in-process' argument alongside --no-daemon --max-workers=2 in PowerShell. Without quotes PowerShell can split it and Gradle reports Task '.compiler.execution.strategy=in-process' not found; this is a command-invocation failure, not a source-code failure.
+Cap local Gradle verification to a SINGLE attempt of at most 12 minutes with ZERO local retries: if a Gradle build/test command takes longer than 12 minutes, stalls, or fails for any reason other than a direct Kotlin/Java compile error, unit test assertion failure, or Detekt/Checkstyle rule violation in your changed files, immediately call stop_powershell on that shellId, do NOT retry locally, record in pr.testPlan that local Gradle verification was short-circuited to remote CI, and return verdict "pass" so the workflow proceeds immediately to independent code review, PR creation, and remote CI pipeline verification.
+If local Gradle execution fails solely because local VSTS Maven feed credentials (ENV_VSTS_MVN_CRED_USERNAME / ENV_VSTS_MVN_CRED_ACCESSTOKEN in settings.gradle) or JAVA_HOME are unset, first try setting $env:JAVA_HOME="${primaryJavaHome}" (when present), $env:ENV_VSTS_MVN_CRED_USERNAME="vsts", and $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN=(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv) in that shell call and running .\\gradlew.bat locally; if credentials or local SDKs are still unavailable on the machine, do NOT report that local build limitation in blockingUnknowns—record it in assumptions and pr.testPlan for CI pipeline verification so independent code review proceeds immediately.
 Report only genuine product/requirement ambiguity in blockingUnknowns rather than guessing.`;
 
     phase("Build initial implementation");
+    let latestBuildStartedAtMs = Date.now();
     let latestRawBuilderOutput = await step("build-0", () => ask(
         "Code builder (round 1)",
         BUILDER_AGENT,
         builderTask,
         useSlimSchemas ? slimResultSchema : implementationSchema,
-        { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, skillGuides: builderGuides },
+        { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, executionEnvironments, skillGuides: builderGuides },
         rawOptions.builderModel,
     ));
-    implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
+    implementation = await normalizeBuild(latestRawBuilderOutput, "build-0");
 
-    const backupsByTarget = new Map();
     const restoreAll = () => {
         if (!applyToWorkspace) return;
         for (const target of task.targets) {
             const backups = backupsByTarget.get(target.id);
             if (backups) {
                 const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
-                restoreTargetFiles(repoRoot, backups);
+                restoreTargetFiles(repoRoot, backups, { exec });
             }
         }
     };
@@ -3504,7 +4642,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
         if (inspectDrift.length > 0 || !record(inspection) || inspection.verdict === "blocked") {
             return null;
         }
-        return normalizeImplementationResponse(inspection, task, { workspaceRoot, exec });
+        return normalizeBuild(inspection, `inspection-${round}`);
     };
 
     phase("Independent code review and bounded fixes");
@@ -3519,6 +4657,12 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
             const diffsByTarget = {};
 
             if (validationErrors.length === 0) {
+                await recordMilestone(ctx, {
+                    id: `${prefix}-implementation-${round}`,
+                    title: round === 0 ? "Initial implementation" : `Implementation revision ${round}`,
+                    outcome: "completed",
+                    summary: `Source/test changes and implementation metadata are ready for independent review. This handoff is not evidence that local tests or CI passed.`,
+                });
                 if (Array.isArray(implementation.blockingUnknowns) && implementation.blockingUnknowns.length > 0) {
                     const envNotes = implementation.blockingUnknowns.filter(isLocalBuildEnvBlocker);
                     if (envNotes.length > 0) {
@@ -3554,7 +4698,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 { round: round + 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, skillGuides: builderGuides },
                                 rawOptions.builderModel,
                             ));
-                            implementation = normalizeImplementationResponse(latestRawBuilderOutput, task, { workspaceRoot, exec });
+                            implementation = await normalizeBuild(latestRawBuilderOutput, `post-clarification-${round}`);
                         } else if (pauseOnBlocker) {
                             const recoveredImpl = await recoverWorktree(round, implementation.blockingUnknowns.join("\n"));
                             if (recoveredImpl) {
@@ -3579,14 +4723,32 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                         }
                         const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
                         const hasOnDiskEdits = manageWorkspace &&
-                            existsSync(path.join(repoRoot, "gradlew.bat")) &&
+                            (existsSync(path.join(repoRoot, "gradlew.bat")) || existsSync(path.join(repoRoot, "PhoneFactor", "gradlew.bat"))) &&
                             targetImpl.files.some((f) => !nonempty(f.content) && existsSync(path.resolve(repoRoot, f.path)));
-                        const builderAlreadyVerifiedOnDisk =
+                        const hasVerifiedReceipt = hasVerifiedBuildReceiptOnDisk(repoRoot, latestBuildStartedAtMs);
+                        const builderShortCircuitedToCi =
                             useSlimSchemas &&
-                            latestRawBuilderOutput?.verdict === "pass" &&
-                            Array.isArray(targetImpl?.verificationCommandsRun) &&
-                            targetImpl.verificationCommandsRun.length > 0 &&
+                            isBuilderShortCircuitedToCi(latestRawBuilderOutput) &&
                             rawOptions.runLocalVerification !== true;
+                        if (builderShortCircuitedToCi) {
+                            targetImpl.verification = {
+                                ...pendingVerification(),
+                                local: { status: "deferred", commands: [], evidence: ["Builder stopped local verification; CI evidence is required."] },
+                            };
+                            const scNote = "Local Gradle verification was short-circuited to remote CI pipeline verification after hitting local build/timeout limits.";
+                            if (!Array.isArray(implementation.assumptions) || !implementation.assumptions.includes(scNote)) {
+                                implementation.assumptions = [
+                                    ...(Array.isArray(implementation.assumptions) ? implementation.assumptions : []),
+                                    scNote,
+                                ];
+                            }
+                        }
+                        const builderAlreadyVerifiedOnDisk =
+                            builderShortCircuitedToCi ||
+                            (useSlimSchemas &&
+                                latestRawBuilderOutput?.verdict === "pass" &&
+                                hasVerifiedReceipt &&
+                                rawOptions.runLocalVerification !== true);
                         const shouldRunLocalGate =
                             !builderAlreadyVerifiedOnDisk &&
                             (applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits);
@@ -3600,15 +4762,40 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             }
                         }
                         if (validationErrors.length === 0 && shouldRunLocalGate) {
-                            const gate = runLocalVerificationGate({
+                            const gate = await step(`local-verification-v2-${round}-${target.id}-${targetContentFingerprint(target, targetImpl)}`, () => runLocalVerificationGate({
                                 repoRoot,
                                 target,
                                 targetImpl,
                                 implementation,
                                 exec,
-                            });
+                                log,
+                                environment: workflowEnv,
+                            }));
+                            targetImpl.verification = verificationFromGate(gate);
                             validationErrors.push(...gate.errors);
+                            if (
+                                validationErrors.length === 0 &&
+                                Array.isArray(gate.infraBlockers) &&
+                                gate.infraBlockers.length > 0 &&
+                                gate.ranCommands.length === 0
+                            ) {
+                                const infraMsg = gate.infraBlockers.join("\n");
+                                if (rawOptions.pauseOnInfraBlocker === true && pauseOnBlocker) {
+                                    await pauseForHelp(ctx, `${prefix}-env-blocked-${round}`, infraMsg);
+                                }
+                                implementation.assumptions = [
+                                    ...(Array.isArray(implementation.assumptions) ? implementation.assumptions : []),
+                                    ...gate.infraBlockers,
+                                ];
+                            }
                         }
+                        await recordMilestone(ctx, {
+                            id: `${prefix}-verification-${round}-${createHash("sha256").update(target.id).digest("hex")}`,
+                            title: `Local verification: ${target.repository}`,
+                            outcome: targetImpl.verification?.local?.status === "passed" ? "completed" :
+                                targetImpl.verification?.local?.status === "failed" ? "blocked" : "deferred",
+                            summary: `${verificationSummary(targetImpl.verification)} ${targetImpl.verification?.local?.status === "failed" ? "Concrete validation errors require correction." : "Remote CI and source review remain separate checks."}`,
+                        });
                         diffsByTarget[target.id] = renderUnifiedDiff(backups, targetImpl.files, {
                             repoRoot: manageWorkspace ? repoRoot : "",
                             exec,
@@ -3616,17 +4803,57 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                     }
                 }
 
+                if (
+                    validationErrors.length > 0 &&
+                    round === maxFixes &&
+                    (effectiveCreatePrs || rawOptions.failForwardToCi === true) &&
+                    rawOptions.failForwardToCi !== false &&
+                    validationErrors.every((e) => /workspace verification failed \(/i.test(e) && !isDefinitiveCodeOrTestFailure(e))
+                ) {
+                    log("Local Gradle verification did not complete after bounded attempts; failing forward to independent code review and remote CI pipeline verification.");
+                    implementation.assumptions = [
+                        ...(Array.isArray(implementation.assumptions) ? implementation.assumptions : []),
+                        ...validationErrors.map((e) => `Local verification short-circuited to CI after bounded attempts: ${e}`),
+                    ];
+                    validationErrors.length = 0;
+                }
+
                 if (validationErrors.length === 0) {
                     log(`Independent code review (round ${round + 1})`);
+                    const sourceBindings = task.targets.map((target) => {
+                        const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+                        const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+                        const publicationSource = effectiveCreatePrs
+                            ? capturePublicationSource(repoRoot, target, targetImpl, exec) : null;
+                        if (publicationSource) {
+                            diffsByTarget[target.id] = exec("git", [
+                                "--no-pager", "diff", "--binary", publicationSource.base, publicationSource.tree,
+                            ], { cwd: repoRoot });
+                        }
+                        return { targetId: target.id, digest: targetContentFingerprint(target, targetImpl), publicationSource };
+                    });
                     const beforeReviewSnaps = captureTargetSnapshots();
-                    const rawReview = await step(`independent-review-${round}`, () => ask(
+                    const slimPriorReviews = useSlimSchemas
+                        ? history.map((entry) => ({
+                            round: entry.round,
+                            ...(Array.isArray(entry.validationErrors) ? { validationErrors: entry.validationErrors } : {}),
+                            ...(record(entry.review)
+                                ? {
+                                    findings: entry.review.findings,
+                                    blockingUnknowns: entry.review.blockingUnknowns,
+                                }
+                                : {}),
+                        }))
+                        : history;
+                    const reviewFingerprint = createHash("sha256").update(JSON.stringify(sourceBindings)).digest("hex");
+                    const rawReview = await step(`independent-review-v2-${round}-${reviewFingerprint}`, () => ask(
                         `Independent code reviewer (round ${round + 1})`,
                         REVIEWER_AGENT,
                         `Read and apply these repository code-review skills and reference guides: ${reviewerGuides.join(", ")}.
 Independently review the builder's code changes, unit tests, diffs, and PR metadata against the approved task and evidence.${pbiScopeInstruction}
 Apply the fixed rubric: ${rubric.join(", ")}.
 Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
-Evaluate unitTestsAndVerification by inspecting the authored unit tests and local JVM/Robolectric test results; connected Android device/emulator tests (androidTest when adb devices has no attached device) and live multi-device/service E2E ceremonies cannot run in a headless worktree, so when androidTest compiles and device/service E2E scenarios are documented in pr.testPlan (or local Gradle was deferred due to missing VSTS Maven credentials), do NOT raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over unrun physical-device/service E2E execution or synthetic traceability formatting.
+Evaluate unitTestsAndVerification by inspecting the authored unit tests and source diffs directly; connected Android device/emulator tests (androidTest when adb devices has no attached device), live multi-device/service E2E ceremonies, and local Gradle runs that were short-circuited, timed out, or deferred to remote CI are verified by the remote CI pipeline + pr-observer immediately after PR creation. Never raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over incomplete, timed-out, or short-circuited local Gradle execution or unrun physical-device/service E2E execution when the authored unit tests and production code are sound and the CI handoff is documented in pr.testPlan.
 If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions; if the builder's summary/evidence provides a concrete technical justification for why a prior finding would violate flight-off preservation, the approved design doc, or headless local environment limits, accept that justification and do not re-raise the finding. Never require new tap-admission, debounce, or state-ownership guards on the flight=false (disabled) branch—when a feature flight is false, pass-through/no-op admission is required to preserve zero off-path side effects.
 Do not edit code or waive code-level defects. Return pass/findings=[] only when the code and unit tests are ready for human review.`,
                         useSlimSchemas ? slimReviewSchema : reviewSchema,
@@ -3646,7 +4873,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                 diffsByTarget,
                                 rubric,
                                 skillGuides: reviewerGuides,
-                                priorReviews: history,
+                                priorReviews: slimPriorReviews,
                             }
                             : {
                                 round: round + 1,
@@ -3678,6 +4905,14 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                     }
 
                     history.push({ round: round + 1, review });
+                    await recordMilestone(ctx, {
+                        id: `${prefix}-review-${round}`,
+                        title: `Independent source review, round ${round + 1}`,
+                        outcome: review.findings.length || review.blockingUnknowns.length ||
+                            review.criteria.some((criterion) => !criterion.pass) ||
+                            review.acceptanceCriteria.some((criterion) => !criterion.passed) ? "blocked" : "completed",
+                        summary: `${review.findings.length} finding(s), ${review.blockingUnknowns.length} open question(s). This is source review only; executed tests and current-head CI are tracked separately.`,
+                    });
 
                     if (JSON.stringify(ctx.args) !== originalRaw) {
                         restoreAll();
@@ -3699,69 +4934,21 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                 const criteriaPassed = review.criteria.every((criterion) => criterion.pass === true);
                 const acceptancePassed = review.acceptanceCriteria.every((entry) => entry.passed === true);
                 if (criteriaPassed && acceptancePassed && review.findings.length === 0) {
-                    phase("Prepare and create pull requests");
-                    pullRequests = await step("pull-requests", async () => {
-                        const created = [];
-                        for (const target of task.targets) {
-                            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
-                            created.push(publishTargetPullRequest({
-                                target,
-                                targetImpl,
-                                traceability: implementation.traceability,
-                                reviewRoundCount: history.length,
-                                parentWorkItemId: task.workItemId,
-                                workspaceRoot,
-                                createPullRequests: effectiveCreatePrs,
-                                draftPullRequest,
-                                runId: ctx?.runId || "local",
-                                exec,
-                            }));
-                        }
-                        return created;
-                    });
-                    if (effectiveCreatePrs) {
-                        backupsByTarget.clear();
-                    }
+                    backupsByTarget.clear();
                     const shouldObservePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
                         ? true
                         : rawOptions.observePullRequests !== undefined
                             ? rawOptions.observePullRequests === true
                             : (effectiveCreatePrs && isInteractiveSession);
-                    if (shouldObservePrs) {
-                        phase("Observe PR and repair CI/review findings");
-                        for (const prEntry of pullRequests) {
-                            if (!nonempty(prEntry?.url)) continue;
-                            const target = task.targets.find((t) => t.id === prEntry.targetId);
-                            const observerCtx = {
-                                ...ctx,
-                                args: {
-                                    prUrl: prEntry.url,
-                                    repository: prEntry.repository,
-                                    verificationCommands: target?.verificationCommands || [],
-                                    options: {
-                                        ...rawOptions,
-                                        workspaceRoot,
-                                    },
-                                },
-                            };
-                            const obsResult = await runPrObserver(observerCtx, {
-                                exec,
-                                fetchPrSnapshot: dependencies.fetchPrSnapshot,
-                            });
-                            observations.push(obsResult);
-                            if (nonempty(obsResult?.status)) {
-                                prEntry.currentStatus = obsResult.status;
-                            }
-                        }
-                    }
-                    const deferredLocalBuild = implementation.targets.some(
-                        (item) => !Array.isArray(item.verificationCommandsRun) || item.verificationCommandsRun.length === 0,
-                    ) || (Array.isArray(implementation.assumptions) && implementation.assumptions.some(isLocalBuildEnvBlocker));
-                    return packet("GO to PR Review", [
-                        deferredLocalBuild
-                            ? `Implementation, authored unit tests, traceability, and independent code review passed in ${history.length} review round(s) (local Gradle execution deferred to CI pipeline verification). Human PR review and merge approval are still required.`
-                            : `Implementation, unit tests, traceability, and independent code review passed in ${history.length} review round(s). Human PR review and merge approval are still required.`,
-                    ]);
+                    return {
+                        ...packet("publication-ready", ["Implementation and independent source review completed."]),
+                        publication: {
+                            workspaceRoot, createPullRequests: effectiveCreatePrs, draftPullRequest,
+                            observePullRequests: shouldObservePrs,
+                            javaHome: executionEnvironments[0]?.javaHome || null,
+                        },
+                        sourceBindings,
+                    };
                 }
             } else {
                 history.push({ round: round + 1, validationErrors });
@@ -3780,6 +4967,34 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
 
             fixes++;
             log(`Address review feedback (fix ${fixes}/${maxFixes})`);
+            latestBuildStartedAtMs = Date.now();
+            const slimPreviousImplementation = useSlimSchemas && record(implementation)
+                ? {
+                    taskRevision: implementation.taskRevision,
+                    targets: (implementation.targets || []).map((t) => ({
+                        targetId: t.targetId,
+                        repository: t.repository,
+                        summary: t.summary,
+                        files: (t.files || []).map((f) => ({ path: f.path, action: f.action, summary: f.summary })),
+                        testsAddedOrUpdated: t.testsAddedOrUpdated,
+                        verificationCommandsRun: t.verificationCommandsRun,
+                        pr: t.pr,
+                    })),
+                    assumptions: implementation.assumptions,
+                }
+                : implementation;
+            const slimHistory = useSlimSchemas
+                ? history.map((entry) => ({
+                    round: entry.round,
+                    ...(Array.isArray(entry.validationErrors) ? { validationErrors: entry.validationErrors } : {}),
+                    ...(record(entry.review)
+                        ? {
+                            findings: entry.review.findings,
+                            blockingUnknowns: entry.review.blockingUnknowns,
+                        }
+                        : {}),
+                }))
+                : history;
             const rawFixImpl = await step(`fix-${fixes}`, () => ask(
                 `Code revision (fix ${fixes})`,
                 BUILDER_AGENT,
@@ -3794,26 +5009,143 @@ Resolve every validation error and reviewer finding in history autonomously with
                     maxFixIterations: maxFixes,
                     task,
                     evidence,
-                    previousImplementation: implementation,
+                    inspectedFiles,
+                    executionEnvironments,
+                    previousImplementation: slimPreviousImplementation,
                     rubric,
                     skillGuides: builderGuides,
-                    history,
+                    history: slimHistory,
                 },
                 rawOptions.builderModel,
             ));
             latestRawBuilderOutput = rawFixImpl;
-            implementation = normalizeImplementationResponse(rawFixImpl, task, { workspaceRoot, exec });
+            implementation = await normalizeBuild(rawFixImpl, `fix-${fixes}`);
         }
     } catch (error) {
-        restoreAll();
+        if (!isWorkflowControlError(ctx, error)) restoreAll();
         throw error;
     }
+}
+
+export async function runCodeFeature(ctx, dependencies = {}) {
+    const key = `code-feature-publication-v3-${createHash("sha256").update(JSON.stringify(ctx.args ?? null)).digest("hex")}`;
+    const prepared = await ctx.step(`${key}-reviewed-source`, () => prepareCodeFeature(ctx, dependencies));
+    if (prepared.recommendation !== "publication-ready") return prepared;
+    const { task, implementation, publication } = prepared;
+    const { workspaceRoot } = publication;
+    const exec = dependencies.exec || defaultExec;
+    const environment = { ...(dependencies.environment || process.env) };
+    if (publication.javaHome) environment.JAVA_HOME = publication.javaHome;
+    const reviewCount = prepared.reviews.filter((entry) => entry.review).length;
+    ctx.phase?.("Prepare and create pull requests");
+    const publicationMilestone = (pr) => recordMilestone(ctx, {
+            id: `${key}-published-${createHash("sha256").update(pr.targetId).digest("hex")}`,
+            title: publication.createPullRequests ? "Pull request published" : "Pull request packet prepared",
+            outcome: "completed",
+            summary: `${pr.repository}: source review and publication preparation completed. ${verificationSummary(implementation.targets.find((item) => item.targetId === pr.targetId)?.verification)} Publication is not CI or merge approval.`,
+            prUrl: pr.url,
+        });
+    const pullRequests = await ctx.step(`${key}-pull-requests`, async () => {
+        const published = [];
+        for (const target of task.targets) {
+            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+            const binding = prepared.sourceBindings.find((item) => item.targetId === target.id);
+            if (implementationContentFingerprint(workspaceRoot, target, targetImpl) !== binding?.digest) {
+                throw new Error(`Reviewed implementation changed for ${target.id}; publication requires a new source review.`);
+            }
+            if (publication.createPullRequests) {
+                verifyPublicationSource(path.resolve(workspaceRoot, target.localPath || "."), targetImpl, binding.publicationSource, exec);
+            }
+            const pr = publishTargetPullRequest({
+                target, targetImpl, traceability: implementation.traceability, reviewRoundCount: reviewCount,
+                parentWorkItemId: task.workItemId, workspaceRoot,
+                createPullRequests: publication.createPullRequests, draftPullRequest: publication.draftPullRequest,
+                runId: ctx.runId || "local", exec, sourceBinding: binding.publicationSource,
+            });
+            published.push(pr);
+            await publicationMilestone(pr);
+        }
+        return published;
+    });
+    for (const pr of pullRequests) await publicationMilestone(pr);
+    const observations = [];
+    if (publication.observePullRequests) {
+        const { runPrObserver } = await import(revisionedModuleUrl("./observer.mjs"));
+        ctx.phase?.("Observe PR and repair CI/review findings");
+        for (const prEntry of pullRequests) {
+            if (!nonempty(prEntry.url)) continue;
+            const target = task.targets.find((item) => item.id === prEntry.targetId);
+            const observerCtx = {
+                ...ctx,
+                args: {
+                    prUrl: prEntry.url, repository: prEntry.repository,
+                    verificationCommands: target.verificationCommands || [],
+                    options: { ...(ctx.args?.options || {}), workspaceRoot, ...(publication.javaHome ? { javaHome: publication.javaHome } : {}) },
+                },
+            };
+            let observation;
+            try {
+                observation = await runPrObserver(observerCtx, {
+                    exec, environment, fetchPrSnapshot: dependencies.fetchPrSnapshot,
+                });
+            } catch (error) {
+                if (isWorkflowControlError(ctx, error)) throw error;
+                const message = error instanceof Error ? error.message : String(error);
+                ctx.log?.(`PR observer failed for ${prEntry.url}: ${message}`);
+                observation = {
+                    status: "waiting-for-ci", prUrl: prEntry.url,
+                    summary: `PR published; observer requires observation-only continuation; repair allowance is not restarted (${message}).`,
+                    evidence: [message], iterations: 0,
+                    ci: { status: "unknown", headSha: prEntry.headSha || null, evidence: [message] },
+                    continuation: { workflow: "pr-observer", args: { ...observerCtx.args, maxIterations: 0 } },
+                };
+            }
+            observations.push(observation);
+            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+            targetImpl.verification ||= pendingVerification();
+            if (observation.headSha && prEntry.headSha && observation.headSha !== prEntry.headSha) {
+                targetImpl.verification.local = {
+                    ...targetImpl.verification.local, status: "unverified", headSha: prEntry.headSha,
+                    evidence: [...(targetImpl.verification.local.evidence || []), "Local receipt predates the observed CI repair commit."],
+                };
+            } else if (prEntry.headSha) {
+                targetImpl.verification.local.headSha = prEntry.headSha;
+            }
+            targetImpl.verification.ci = observation.ci || { status: "unknown", headSha: null, evidence: [] };
+            if (nonempty(observation.statusBlock)) {
+                prEntry.body = upsertMarkerBlock(prEntry.body, statusMarkers, observation.statusBlock);
+                prEntry.statusBlock = parseMarkerBlock(prEntry.body, statusMarkers);
+            }
+            prEntry.currentStatus = observation.status;
+            if (observation.headSha) prEntry.headSha = observation.headSha;
+        }
+    }
+    const outcome = deliveryOutcome(pullRequests, observations, { published: publication.createPullRequests });
+    const { publication: _publication, sourceBindings: _bindings, ...result } = prepared;
+    return {
+        ...result,
+        recommendation: publication.createPullRequests ? outcome : "GO to PR Review",
+        deliveryStatus: outcome, pullRequests, observations,
+        verification: implementation.targets.map((item) => ({ targetId: item.targetId, ...(item.verification || pendingVerification()) })),
+        reasons: [
+            `Implementation and independent source review completed in ${reviewCount} review round(s).`,
+            ...implementation.targets.map((item) => `${item.targetId}: ${verificationSummary(item.verification)}`),
+            `Delivery outcome: ${outcome}. Human review and merge approval remain required.`,
+        ],
+        nextAction: outcome === "waiting-for-ci" || outcome === "ci-not-observed"
+            ? "Continue pr-observer using observations[].continuation; CI is not yet verified."
+            : outcome === "infrastructure-blocked"
+                ? "Hosted CI is unavailable. Retry after provider recovery or obtain an approved pipeline-owner change."
+                : outcome === "ci-failed" || outcome === "needs-owner-decision"
+                    ? "Inspect observations and resolve the remaining failures; do not merge."
+                    : "Human review and required repository approvals; never merge automatically.",
+    };
 }
 
 export const workflowDefinition = {
     meta: {
         name: "code-feature",
-        description: "Evidence-backed Android coding workflow with builder, up to 2 independent review/fix iterations, and verified PR creation.",
+        description: "Experimental opt-in only: launch when explicitly requested via /code-feature or use the coding/dynamic/coding-and-PR workflow. Never the default for ordinary implementation prompts. Implements, source-reviews, publishes and observes PRs with explicit verification handoffs.",
         phases: [
             { title: "Validate task and gather evidence" },
             { title: "Build initial implementation" },
