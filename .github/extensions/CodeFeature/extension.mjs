@@ -4,10 +4,10 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { withWorkflowActivity } from "./activity.mjs";
 import { createWorkflowCompletionDelivery, createWorkflowStatusTool } from "./completion.mjs";
 import { observerCustomAgent, observerWorkflowDefinition } from "./observer.mjs";
 import { customAgents, workflowDefinition } from "./workflow.mjs";
+import { createWorkflowSupervision } from "./supervision.mjs";
 
 const sdkModule = process.env.COPILOT_SDK_PATH
     ? pathToFileURL(path.join(process.env.COPILOT_SDK_PATH, "extension.js")).href
@@ -18,9 +18,14 @@ const observerUrl = new URL("./observer.mjs", import.meta.url);
 
 let activeWorkflow = null;
 let completionDelivery;
-function milestoneHandoff(runId, workflowName, receipt) {
+const supervision = createWorkflowSupervision(() => session);
+async function milestoneHandoff(runId, workflowName, receipt) {
     if (!completionDelivery) throw new Error("Owning-session chat delivery has not initialized.");
-    return completionDelivery.enqueueMilestone(runId, workflowName, receipt);
+    try {
+        return await completionDelivery.enqueueMilestone(runId, workflowName, receipt);
+    } finally {
+        supervision.notifyMilestone(runId, receipt);
+    }
 }
 async function runExclusively(name, fn) {
     if (activeWorkflow) {
@@ -35,20 +40,18 @@ async function runExclusively(name, fn) {
 }
 
 const session = await joinSession({
-    tools: [createWorkflowStatusTool(() => session)],
+    tools: [createWorkflowStatusTool(() => session), supervision.tool],
     customAgents: [...customAgents, observerCustomAgent],
     workflows: [
         defineWorkflow({
             ...workflowDefinition,
             run: async (ctx) => runExclusively("code-feature", async () => {
                 completionDelivery?.track(ctx.runId, "code-feature");
-                return withWorkflowActivity(session, "code-feature", ctx, async () => {
-                    const { mtimeMs } = statSync(workflowUrl);
-                    const latest = await import(`${workflowUrl.href}?v=${mtimeMs}`);
-                    return latest.runCodeFeature({
-                        ...ctx,
-                        onMilestone: (receipt) => milestoneHandoff(ctx.runId, "code-feature", receipt),
-                    });
+                const { mtimeMs } = statSync(workflowUrl);
+                const latest = await import(`${workflowUrl.href}?v=${mtimeMs}`);
+                return latest.runCodeFeature({
+                    ...ctx,
+                    onMilestone: (receipt) => milestoneHandoff(ctx.runId, "code-feature", receipt),
                 });
             }),
         }),
@@ -56,13 +59,11 @@ const session = await joinSession({
             ...observerWorkflowDefinition,
             run: async (ctx) => runExclusively("pr-observer", async () => {
                 completionDelivery?.track(ctx.runId, "pr-observer");
-                return withWorkflowActivity(session, "pr-observer", ctx, async () => {
-                    const { mtimeMs } = statSync(observerUrl);
-                    const latest = await import(`${observerUrl.href}?v=${mtimeMs}`);
-                    return latest.runPrObserver({
-                        ...ctx,
-                        onMilestone: (receipt) => milestoneHandoff(ctx.runId, "pr-observer", receipt),
-                    });
+                const { mtimeMs } = statSync(observerUrl);
+                const latest = await import(`${observerUrl.href}?v=${mtimeMs}`);
+                return latest.runPrObserver({
+                    ...ctx,
+                    onMilestone: (receipt) => milestoneHandoff(ctx.runId, "pr-observer", receipt),
                 });
             }),
         }),

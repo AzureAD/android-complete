@@ -99,5 +99,8 @@ test("explicit launch keeps milestone, recovery and budget safeguards available 
     assert.match(launcher, /automatically selects an installed compatible/);
     assert.match(launcher, /open an actual `ask_user` question/);
     assert.match(launcher, /Do not set model, effort, context, or resource ceilings without explicit user instructions/);
-    assert.match(launcher, /end the caller turn without `Start-Sleep` or inspect-run polling loops/);
+    assert.match(launcher, /After launch, call `code_feature_workflow_wait` with the returned run ID/);
+    assert.match(launcher, /Do not use `task_complete` or end supervision merely because launch succeeded/);
+    assert.match(launcher, /Do not substitute `Start-Sleep`, inspect-run\/status polling loops, chat pings/);
+    assert.match(launcher, /if they asked to stop or pause/);
 });

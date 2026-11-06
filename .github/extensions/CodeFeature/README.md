@@ -159,34 +159,36 @@ watcher. It sends a system-sourced, immediate follow-up to the owning session af
 settles, with actual delivery/verification status, PR links, and remaining actions. A
 completed workflow is never described as green solely because its body returned.
 
-### Runtime activity while chat is idle
+### Attached supervision during quiet workflow phases
 
-Each registered `code-feature` or `pr-observer` invocation registers its real executing
-body through the SDK's public `session.rpc.tasks.register` client-task API before doing
-work. The task remains `running` through child-agent work, local commands, and agent-free
-CI waits. This is background-work accounting, not a model agent, chat heartbeat, shell
-keepalive, app setting change, or workflow budget increase. The caller can finish its
-chat turn while this work remains visible to the runtime.
+The launcher calls `code_feature_workflow_wait` after a run starts. This is a real
+attached tool wait on the existing run through the public SDK `workflow.waitForRun`,
+not a status-poll loop or a new workflow. It returns on a directly delivered milestone,
+attempt settlement, or a five-minute observation boundary. While work remains active,
+the caller relays new progress and waits again on the same ID instead of declaring
+launch complete and leaving the session idle for the entire CI wait.
 
-`activity.mjs` scopes the registration to that invocation. Return, error, or cooperative
-pause/cancellation sends a terminal `session.rpc.tasks.update`. Task completion means
-only that the execution scope ended; the workflow's actual delivery/CI/human-review
-status remains authoritative. Cancel through the workflow controls, not the non-cancellable
-activity mirror. A resumed workflow registers a new invocation task; it never reopens an
-old completed/orphaned task or resets its workflow's repair allowance.
+`supervision.mjs` registers its milestone listener before reading status, cancels its
+SDK watcher/timer when the call ends, and handles the caller's cancellation signal.
+Cancelling a wait does not cancel/resume/restart the workflow. Paused/halted/error
+outcomes remain explicit and preserve their recovery requirements. Completion of a
+wait, a source-review round, or a workflow body is not a CI success claim.
 
-If these SDK methods are unavailable or registration fails, the workflow fails explicitly
-before entering its body rather than silently using an untracked CI wait. A failed terminal
-update is reported without masking an existing pause/cancellation exception. Owner disconnects
-are represented by the runtime as orphaned tasks; this does not survive app exit or make
-disconnected work appear active. The workflow's durable result is still the recovery authority.
+This mitigates the desktop idle-reaper failure without changing the app: the observed
+app unloaded quiet chat sessions while their extension-only workflows were still
+waiting for CI. A native client-background-task registration was also tested and was
+insufficient: the app still reaped its owner after ten minutes. That rejected approach
+is not used. There are no heartbeat messages, dummy shells, extra model agents, or
+global timeout changes. The tradeoff is that the owning caller must remain in attached
+supervision; app exit, interrupted supervision, or host loss still requires recovery.
+Already-loaded sessions need refreshed extension/skill instructions before adopting
+this behavior. Do not restart an existing run or reset its budgets to install it.
 
-The observed failure on desktop app 1.1.34 was `idle_cli_reap_check` unloading both
-CI-observing sessions roughly ten minutes after their final chat turns. Explicit background
-task accounting addresses that idle classification in the extension we own. It does not
-patch the app's workflow panel or guarantee against other process/host failures. Already-loaded
-extensions need a fresh session/reload before using this code; do not change or restart an
-active run to retrofit it.
+A bounded native-app validation kept the production wait handler attached for
+720,036 ms with a synthetic workflow provider, with no intervening chat/tool activity
+and no main/session idle event during the call. It returned normally after twelve minutes,
+past the observed ten-minute cleanup threshold. This proves the attached-tool lifecycle
+mitigation on that runtime, not a complete feature/CI E2E or an app-panel repair.
 
 ### Phase and milestone updates in chat
 

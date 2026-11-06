@@ -45,27 +45,12 @@ const logs = [];
 const messages = [];
 let returned = false;
 let uiQuestions = 0;
-let activityStatus = null;
-const activityCalls = [];
 const session = {
     sessionId: "extension-registration-fixture",
-    rpc: {tasks: {
-        register: async args => {
-            activityCalls.push(["register", args]);
-            activityStatus = "running";
-            return {task:{id:"native-activity",sequence:0,status:"running"}};
-        },
-        update: async args => {
-            activityCalls.push(["update", args]);
-            activityStatus = args.update.kind;
-            return {task:{id:"native-activity",sequence:args.sequence,status:activityStatus}};
-        },
-    }},
     ui: {elicitation: async () => {uiQuestions++; throw new Error("Compatible installed JDK must not prompt");}},
     on: () => () => {}, // The extension receives NO ephemeral workflow progress events.
     send: async (message) => {
         assert.equal(returned, false, "Phase updates must be admitted before workflow settlement");
-        assert.equal(activityStatus, "running", "Live milestones must stay inside the tracked execution scope");
         messages.push(message);
         return "message-" + messages.length;
     },
@@ -73,15 +58,19 @@ const session = {
     workflow: {
         listRuns: async () => ({runs:[], omittedOlder:0, oldestSeq:null}),
         getRun: async (runId) => ({runId, status:"running"}),
-        getRunDetail: async () => ({workflowName:"code-feature"}),
+        getRunDetail: async runId => ({runId,workflowName:"code-feature",status:"running"}),
         getRunProgress: async () => ({records:[], hasMoreNewer:false}),
-        waitForRun: async () => new Promise(() => {}),
+        waitForRun: async (_runId, {signal}) => new Promise((_resolve,reject) => {
+            signal.addEventListener("abort",()=>reject(signal.reason),{once:true});
+        }),
     },
 };
 globalThis.fixtureSession = session;
 await import(pathToFileURL(source).href);
 const workflow = globalThis.fixtureConfig.workflows.find(item => item.meta.name === "code-feature");
 assert.ok(workflow);
+const waiter = globalThis.fixtureConfig.tools.find(item => item.name === "code_feature_workflow_wait");
+assert.ok(waiter,"The production extension must expose attached supervision");
 const task = {
     title:"Fixture", revision:"v1", workItemId:12345,
     approval:{approvedRevision:"v1", approvedBy:"fixture", reference:"fixture"},
@@ -122,12 +111,16 @@ const ctx = {
         return journal.get(key);
     },
     agent:async()=>{
-        assert.equal(activityStatus,"running");
         assert.ok(results.length,"Unexpected model callback");
         return results.shift();
     },
 };
+const noticeWait = waiter.handler({runId:ctx.runId});
 const result = await workflow.run(ctx);
+const notice = await noticeWait;
+assert.equal(notice.kind,"milestone");
+assert.equal(notice.milestone.title,"Build toolchain selected");
+assert.ok(notice.marker.startsWith("[workflow-milestone:extension-run:"));
 returned = true;
 assert.equal(result.deliveryStatus,"prepared-for-review");
 assert.equal(uiQuestions,0);
@@ -139,12 +132,11 @@ assert.ok(messages[0].prompt.includes(jdk));
 assert.ok(messages.at(-1).prompt.includes("Pull request packet prepared"));
 assert.ok(messages.some(message=>message.prompt.includes("Local verification: common")&&message.prompt.includes("deferred")));
 assert.equal(results.length,0);
-assert.equal(activityStatus,"completed");
-assert.deepEqual(activityCalls.map(([name])=>name),["register","update"]);
-const observer = globalThis.fixtureConfig.workflows.find(item => item.meta.name === "pr-observer");
-await observer.run({runId:"observer-fixture",args:{prUrl:"invalid"},log:()=>{}});
-assert.deepEqual(activityCalls.map(([name])=>name),["register","update","register","update"]);
-assert.equal(activityStatus,"completed");
+session.workflow.getRunDetail = async runId => ({runId,workflowName:"code-feature",status:"completed"});
+session.workflow.getRun = async runId => ({runId,status:"completed",result});
+const supervised = await waiter.handler({runId:ctx.runId});
+assert.equal(supervised.kind,"settled");
+assert.equal(supervised.run.result.deliveryStatus,"prepared-for-review");
 console.log(JSON.stringify({milestones:messages.length,jdkQuestions:uiQuestions,globalJavaHomeUnchanged:true,deliveryStatus:result.deliveryStatus}));
 `;
         const file = path.join(root, "registration.mjs");

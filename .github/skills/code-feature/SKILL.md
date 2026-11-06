@@ -68,13 +68,16 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
 
 ## Keep the caller informed
 
-- After launch, end the caller turn without `Start-Sleep` or inspect-run polling loops.
-  In Autopilot, use the normal task handoff tool to leave the caller idle; a launch
-  acknowledgment is not a claim that implementation or validation completed.
-  The extension registers actual workflow execution as a client-owned background task,
-  including CI waits, so a quiet chat is not the same as an idle workflow. Do not add
-  chat pings, dummy shell jobs, or extra agents to keep it alive. If activity registration
-  is unsupported, report the explicit compatibility failure instead of bypassing it.
+- After launch, call `code_feature_workflow_wait` with the returned run ID. Keep the
+  caller attached to this real, event-driven wait while the authorized workflow runs.
+  It yields for new milestones, settlement, or a five-minute observation boundary.
+  Relay only new progress, then call it again for the SAME run if still running.
+  Do not use `task_complete` or end supervision merely because launch succeeded.
+  Do not substitute `Start-Sleep`, inspect-run/status polling loops, chat pings,
+  dummy shell jobs, or extra agents. Background-task registration alone was tested
+  and does not prevent this desktop app's idle reaper from unloading the session.
+  If the wait is interrupted by a user message, respect the user's direction; do
+  not automatically resume supervision if they asked to stop or pause.
 - Relay each new `[workflow-milestone:...]` receipt as a concise visible chat update,
   including blocked/deferred verification and any PR link. Do not wait until terminal
   settlement, restart the workflow, or repeat an already-reported marker.
@@ -83,9 +86,8 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
   local/CI receipts, PR links, remaining failures/policies, and the next responsible owner.
   `completed` is not proof of tests passing or merge readiness. Never infer success from
   authored test counts, builder/reviewer verdicts, or a `GO` label.
-  A completed background-activity mirror only means that attempt's execution scope ended.
-  Use "in progress", "not started yet", or a named blocker where known rather than an
-  ambiguous "pending"; do not infer that the next phase has started from a completion receipt.
+  Use "in progress", "not started yet", or a named blocker where known rather than
+  an ambiguous "pending"; a completed milestone does not prove the next phase started.
 - If paused for a prerequisite or owner decision, open an actual `ask_user` question
   immediately; do not end with only a paused-status report or silently wait for the user
   to discover the blocker. Use the recorded `pendingInput`/question data, ask one question
@@ -106,3 +108,7 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
 - Completion/milestone delivery uses a durable owning-session outbox, but an unavailable
   host/client may prevent a visible reply. State that limitation instead of pretending
   the developer received an update.
+- If `code_feature_workflow_wait` is unavailable or fails, report supervision as
+  unavailable; do not claim the idle caller is safely monitoring CI. Preserve the
+  run and its budgets. A durable pause/halt/cancellation ends this supervision
+  attempt and requires the corresponding recovery decision, not an automatic restart.
