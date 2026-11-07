@@ -79,6 +79,9 @@ const workflow = globalThis.fixtureConfig.workflows.find(item => item.meta.name 
 assert.ok(workflow);
 const waiter = globalThis.fixtureConfig.tools.find(item => item.name === "code_feature_workflow_wait");
 assert.ok(waiter,"The production extension must expose attached supervision");
+const pauseTool = globalThis.fixtureConfig.tools.find(item => item.name === "code_feature_workflow_pause");
+assert.ok(pauseTool,"The production extension must expose owner-scoped pause control");
+assert.equal(pauseTool.skipPermission,false,"Pause retains normal permission gating");
 const task = {
     title:"Fixture", revision:"v1", workItemId:12345,
     approval:{approvedRevision:"v1", approvedBy:"fixture", reference:"fixture"},

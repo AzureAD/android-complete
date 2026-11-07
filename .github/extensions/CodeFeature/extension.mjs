@@ -4,7 +4,7 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createWorkflowCompletionDelivery, createWorkflowStatusTool } from "./completion.mjs";
+import { createWorkflowCompletionDelivery, createWorkflowPauseTool, createWorkflowStatusTool } from "./completion.mjs";
 import { observerCustomAgent, observerWorkflowDefinition } from "./observer.mjs";
 import { customAgents, workflowDefinition } from "./workflow.mjs";
 import { createWorkflowSupervision } from "./supervision.mjs";
@@ -40,7 +40,7 @@ async function runExclusively(name, fn) {
 }
 
 const session = await joinSession({
-    tools: [createWorkflowStatusTool(() => session), supervision.tool],
+    tools: [createWorkflowStatusTool(() => session), createWorkflowPauseTool(() => session), supervision.tool],
     customAgents: [...customAgents, observerCustomAgent],
     workflows: [
         defineWorkflow({

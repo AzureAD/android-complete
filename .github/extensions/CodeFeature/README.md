@@ -331,6 +331,15 @@ successful reads, writes or deliveries do not clear it. This coalescing is proce
 an extension restart can report an existing problem again. It does not deduplicate actual
 workflow failures, change terminal outcomes, or claim that a message was rendered.
 
+`code_feature_workflow_pause` exposes the documented SDK pause from the joined owner
+session, outside the workflow body. It checks run identity, workflow name and state,
+applies normal tool permission gating, and confirms the settled envelope and subsequent
+live-agent evidence. It cannot select another session, resume, replace, requeue, merge
+or change limits. Already-settled attempts are read without applying a control.
+Use it only for a requested stop or an authorized stop-on-error policy. User-initiated
+pause receipts do not fabricate prerequisite questions. A failed or unconfirmed pause
+is explicit, never a success-shaped stop claim.
+
 Full notification-error details and repeat counts stay in the ignored
 `completion/diagnostics/<session-hash>.jsonl`, independently of the atomic outbox snapshot.
 The log rotates at 1 MiB and retains one `.previous` file. Diagnostic-write failures are

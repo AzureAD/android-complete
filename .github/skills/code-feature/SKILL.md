@@ -116,6 +116,13 @@ The [code-author standards](../code-author/SKILL.md) still govern implementation
 - Preserve the checkout/evidence after an interruption or non-resumable error. A new
   implementation run requires user authorization. Human approvals, presence checks,
   merge strategy and merge decisions remain human gates.
+- When the user requests a stop or delegates a stop-on-error policy, use
+  `code_feature_workflow_pause` on the SAME owning-session run and verify the returned
+  settlement and live-agent evidence. It retains normal tool permission gating and
+  never resumes, replaces or changes budgets. A user-initiated pause is a requested
+  stop, not a new prerequisite question. Do not pause for ordinary CI waiting, quiet
+  windows or admission-delay diagnostics. If the control fails or is unavailable,
+  report stop as unconfirmed; do not substitute private RPC/DB or process termination.
 - Completion/milestone delivery uses a durable owning-session outbox, but an unavailable
   host/client may prevent a visible reply. State that limitation instead of pretending
   the developer received an update.

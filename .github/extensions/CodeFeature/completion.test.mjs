@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, watch, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { createWorkflowCompletionDelivery, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
+import { createWorkflowCompletionDelivery, createWorkflowPauseTool, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
 import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, recordHumanInputRequest, recordMilestone } from "./milestones.mjs";
 import { deliveryStatusSummary } from "./status.mjs";
 
@@ -1648,6 +1648,105 @@ test("missing required SDK observation API is an explicit startup error, not inv
     const { session, install } = fixture(t);
     delete session.workflow.waitForRun;
     assert.throws(() => install(), /SDK lacks session.workflow.waitForRun/);
+});
+
+test("owner pause requires permission and confirms cooperative work cancellation without changing accounting", async () => {
+    const session = new FakeSession();
+    const controller = new AbortController();
+    const cancelled = deferred();
+    controller.signal.addEventListener("abort", () => cancelled.reject(controller.signal.reason), { once: true });
+    let continued = false, state = "running", sessionReads = 0;
+    const work = cancelled.promise.then(() => { continued = true; });
+    const consumed = { activeMs: 200, subagents: 1, nanoAiu: 123 };
+    const calls = [];
+    session.workflow.getRunDetail = async (id) => {
+        calls.push(["detail", id]);
+        return { runId: id, workflowName: "code-feature", status: state, liveAgentCount: state === "running" ? 1 : 0, canResume: state === "paused", consumed };
+    };
+    session.workflow.pause = async (id) => {
+        calls.push(["pause", id]);
+        controller.abort(new DOMException("Owner pause", "AbortError"));
+        await assert.rejects(work, { name: "AbortError" });
+        state = "paused";
+        return { runId: id, attempt: 1, status: state, pauseInfo: { type: "user" } };
+    };
+    const tool = createWorkflowPauseTool(() => { sessionReads++; return session; });
+    assert.equal(sessionReads, 0, "Registration cannot access the not-yet-joined session");
+    assert.equal(tool.skipPermission, false, "Mutation must retain normal tool permission gating");
+    const result = JSON.parse(await tool.handler({ runId: " run-active " }));
+    assert.equal(result.status, "paused");
+    assert.equal(result.pauseRequested, true);
+    assert.equal(result.liveAgentCount, 0);
+    assert.equal(result.canResume, true);
+    assert.equal(continued, false);
+    assert.deepEqual(result.consumed, consumed);
+    assert.deepEqual(calls, [["detail", "run-active"], ["pause", "run-active"], ["detail", "run-active"]]);
+});
+
+test("already-settled supported runs are reported without applying pause or another control", async () => {
+    for (const status of ["paused", "completed", "error", "halted", "cancelled"]) {
+        for (const workflowName of ["code-feature", "pr-observer"]) {
+            const session = new FakeSession();
+            session.workflow.getRunDetail = async (id) => ({ runId: id, workflowName, status, liveAgentCount: 0 });
+            session.workflow.getRun = async (id) => ({ runId: id, status });
+            const result = JSON.parse(await createWorkflowPauseTool(() => session).handler({ runId: "settled" }));
+            assert.equal(result.pauseRequested, false);
+            assert.equal(result.status, status);
+            assert.match(result.note, /already settled/);
+            assert.equal(result.consumed, null, "Missing accounting is not fabricated");
+        }
+    }
+});
+
+test("pause rejects invalid inputs, foreign identities, unrelated workflows and unknown states before mutation", async () => {
+    const session = new FakeSession();
+    const tool = createWorkflowPauseTool(() => session);
+    for (const args of [{}, { runId: "" }, { runId: 1 }, { runId: " \t" }, { runId: "active", sessionId: "other-owner" }]) {
+        await assert.rejects(tool.handler(args), /runId|owning session/);
+    }
+    for (const detail of [
+        { runId: "foreign", workflowName: "code-feature", status: "running" },
+        { runId: "active", workflowName: "other-workflow", status: "running" },
+        { runId: "active", workflowName: "code-feature", status: "unknown" },
+    ]) {
+        session.workflow.getRunDetail = async () => detail;
+        await assert.rejects(tool.handler({ runId: "active" }), /owning-session|unrecognized/);
+    }
+    session.workflow.getRunDetail = async () => { throw new Error("Run is not owned by this session"); };
+    await assert.rejects(tool.handler({ runId: "foreign" }), /not owned/);
+});
+
+test("pause preserves SDK errors and refuses unsupported APIs or unconfirmed stop acknowledgements", async () => {
+    const session = new FakeSession();
+    const detail = { runId: "active", workflowName: "code-feature", status: "running", liveAgentCount: 1 };
+    session.workflow.getRunDetail = async () => detail;
+    const tool = createWorkflowPauseTool(() => session);
+    delete session.workflow.pause;
+    await assert.rejects(tool.handler({ runId: "active" }), /SDK lacks session.workflow.pause/);
+    session.workflow.pause = async () => { throw new Error("Pause persistence failed"); };
+    await assert.rejects(tool.handler({ runId: "active" }), /Pause persistence failed/);
+    session.workflow.pause = async () => undefined;
+    await assert.rejects(tool.handler({ runId: "active" }), /settled owning-session outcome/);
+    session.workflow.pause = async () => ({ runId: "foreign", status: "paused" });
+    await assert.rejects(tool.handler({ runId: "active" }), /settled owning-session outcome/);
+    session.workflow.pause = async () => ({ runId: "active", status: "running" });
+    await assert.rejects(tool.handler({ runId: "active" }), /settled owning-session outcome/);
+    session.workflow.pause = async () => ({ runId: "active", status: "paused" });
+    await assert.rejects(tool.handler({ runId: "active" }), /stop is not confirmed/);
+    let reads = 0;
+    session.workflow.getRunDetail = async () => ++reads === 1 ? detail : { ...detail, status: "paused", liveAgentCount: 1 };
+    await assert.rejects(tool.handler({ runId: "active" }), /stop is not confirmed/);
+});
+
+test("user-requested pause is a stopped attempt, not an invented prerequisite question", async () => {
+    const run = completed({ status: "paused", result: undefined, pauseInfo: { type: "user" } });
+    const prompt = formatWorkflowCompletion("code-feature", run);
+    assert.match(prompt, /paused at the user's request/);
+    assert.doesNotMatch(prompt, /Human input is required|ask_user|resolve the recorded prerequisite/);
+    const session = new FakeSession([[run]]);
+    session.workflow.getRunDetail = async () => ({ runId: run.runId, workflowName: "code-feature", status: "paused", canResume: true });
+    const result = JSON.parse(await createWorkflowStatusTool(() => session).handler({ runId: run.runId }));
+    assert.equal(result.pendingInput, null);
 });
 
 test("read-only status tool exposes current phase and latest progress while a workflow is still running", async () => {

@@ -137,7 +137,8 @@ export function formatWorkflowCompletion(name, run, progress = []) {
         if (result?.nextAction) lines.push(`Next: ${text(result.nextAction)}`);
     } else {
         lines.push({
-            paused: "Work is paused for a prerequisite or developer decision.",
+            paused: run.pauseInfo?.type === "user" ? "Work was paused at the user's request."
+                : "Work is paused for a prerequisite or developer decision.",
             error: "The workflow stopped with an error.",
             halted: "The workflow was interrupted.",
             cancelled: "The workflow was cancelled.",
@@ -154,7 +155,9 @@ export function formatWorkflowCompletion(name, run, progress = []) {
             lines.push(`PR link in partial snapshot (publication/verification not confirmed): ${link}`);
         }
         lines.push("Verification is incomplete; preserve the existing checkout and run.");
-        if (run.status === "paused") {
+        if (run.status === "paused" && run.pauseInfo?.type === "user") {
+            lines.push("This is a requested stop, not a prerequisite question. Follow the user's recovery instructions; do not ask a duplicate question or automatically resume.");
+        } else if (run.status === "paused") {
             const input = humanInputRequestFromProgress(progress.filter((record) =>
                 run.attempt === undefined || record.attempt === run.attempt), run.pauseInfo?.key);
             lines.push("Human input is required: open an actionable ask_user question now; do not end with only a paused-status report. Ask one question at a time and preserve any existing input request instead of creating duplicates. If the user already answered this recorded question, apply that answer instead of asking again.");
@@ -228,7 +231,7 @@ export function createWorkflowStatusTool(getSession) {
                 })),
                 settledSummary: outcome && settledStatuses.has(outcome.status)
                     ? formatWorkflowCompletion(detail.workflowName, outcome, array(progress.records)) : null,
-                pendingInput: outcome?.status === "paused"
+                pendingInput: outcome?.status === "paused" && outcome.pauseInfo?.type !== "user"
                     ? humanInputRequestFromProgress(array(progress.records), outcome.pauseInfo?.key) : null,
                 revision: detail.revision,
                 observedAt: detail.observedAt,
@@ -250,6 +253,51 @@ export function createWorkflowStatusTool(getSession) {
                 omittedAgents: Math.max(0, array(detail.agents).length - 20),
                 progress,
                 note: "Read-only snapshot. Running is not completed; completed is not proof of verification success. Phase, progress and outcome reads are not an atomic snapshot. consumed uses raw SDK units: activeMs in milliseconds, subagents as a count, nanoAiu in nano-AIU (not converted credits). liveAgentCount and totalSpawnedAgentCount describe direct workflow agents. lastObservedPhase is historical within the returned progress window, not a live/current phase.",
+            });
+        },
+    };
+}
+
+/** Pause only supported runs in the joined owner session; never start or resume work. */
+export function createWorkflowPauseTool(getSession) {
+    return {
+        name: "code_feature_workflow_pause",
+        description: "Pause an owning-session code-feature or pr-observer attempt and confirm settlement. Use only for a user-requested stop or an authorized stop-on-error policy. Preserves the journal and accounting; does not start, resume, replace, requeue, merge or change budgets.",
+        parameters: {
+            type: "object",
+            properties: { runId: { type: "string", description: "The owning session's workflow run ID." } },
+            required: ["runId"],
+            additionalProperties: false,
+        },
+        skipPermission: false,
+        handler: async (args) => {
+            if (typeof args?.runId !== "string" || !args.runId.trim()) throw new Error("runId is required");
+            if (Object.keys(args).some((key) => key !== "runId")) throw new Error("Only runId is accepted; pause is scoped to the owning session");
+            const runId = args.runId.trim();
+            const session = getSession();
+            for (const method of ["getRunDetail", "getRun", "pause"]) {
+                if (typeof session.workflow?.[method] !== "function") throw new Error(`The installed Copilot SDK lacks session.workflow.${method}`);
+            }
+            const before = await session.workflow.getRunDetail(runId);
+            if (before?.runId !== runId || !workflowNames.has(before.workflowName)) {
+                throw new Error("This pause tool only supports owning-session code-feature and pr-observer runs");
+            }
+            const pauseRequested = before.status === "running";
+            if (!pauseRequested && !settledStatuses.has(before.status)) throw new Error(`Cannot pause unrecognized workflow state: ${before.status}`);
+            const outcome = pauseRequested ? await session.workflow.pause(runId) : await session.workflow.getRun(runId);
+            if (outcome?.runId !== runId || !settledStatuses.has(outcome.status)) throw new Error("SDK pause did not return a settled owning-session outcome");
+            const observed = await session.workflow.getRunDetail(runId);
+            if (observed?.runId !== runId || observed.workflowName !== before.workflowName ||
+                observed.status !== outcome.status || observed.liveAgentCount > 0) {
+                throw new Error("Workflow stop is not confirmed: the run changed or still has live agents");
+            }
+            return JSON.stringify({
+                runId, workflowName: before.workflowName, status: outcome.status, attempt: outcome.attempt ?? null,
+                pauseRequested, pauseInfo: outcome.pauseInfo ?? null,
+                liveAgentCount: observed.liveAgentCount ?? null, canResume: observed.canResume ?? null,
+                consumed: observed.consumed ?? null,
+                note: pauseRequested ? "The attempt settled after the pause request. Preserve its work and follow the user's recovery instructions."
+                    : "The attempt was already settled; no pause or other control was applied.",
             });
         },
     };
