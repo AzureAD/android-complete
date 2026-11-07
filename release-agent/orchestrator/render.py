@@ -7,6 +7,7 @@ it its own way. These are pure functions: data in, string out. No state, no IO.
 from __future__ import annotations
 
 import re
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from orchestrator import schedule
 
 # First URL anywhere in a note (e.g. the wiki page link) — surfaced as a compact
@@ -18,6 +19,23 @@ def _cell(text: str) -> str:
     """Make arbitrary text safe for a single markdown table cell: collapse all
     whitespace/newlines to one line and escape pipes."""
     return re.sub(r"\s+", " ", str(text)).replace("|", "\\|").strip()
+
+
+def _markdown_url(value: str) -> str:
+    """Normalize URL destinations so markdown links stay clickable.
+
+    SharePoint web URLs may contain raw spaces (for example "Shared Documents"),
+    which break markdown link destinations. Encode path/query/fragment safely while
+    preserving already-encoded bytes.
+    """
+    text = str(value or "").strip()
+    parts = urlsplit(text)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return text
+    path = quote(unquote(parts.path), safe="/-._~!$&'()*+,;=:@")
+    query = quote(unquote(parts.query), safe="=&-._~!$'()*+,;:@/?")
+    fragment = quote(unquote(parts.fragment), safe="-._~!$&'()*+,;=:@/?")
+    return urlunsplit((parts.scheme, parts.netloc, path, query, fragment))
 
 
 def _execution_guidance(execution: dict, status=None) -> str:
@@ -61,8 +79,10 @@ def step_detail(s: dict, limit: int = 160) -> str:
     lead = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
     # Prefer STRUCTURED links (first-class, stored on state) over URL-in-prose.
     if links:
-        link_md = "  ·  ".join(f"[{l.get('name', 'link')}]({l['url']})"
+        link_md = "  ·  ".join(f"[{l.get('name', 'link')}]({_markdown_url(l['url'])})"
                                for l in links if l.get("url"))
+        # Avoid showing a truncated raw URL when we already have structured links.
+        lead = _URL_RE.sub("", lead).strip()
         lead_c = _cell(lead).rstrip(" :.—-")
         if len(lead_c) > limit:
             lead_c = lead_c[: limit - 1].rstrip() + "…"
@@ -75,7 +95,7 @@ def step_detail(s: dict, limit: int = 160) -> str:
     if len(lead_c) > limit:
         lead_c = lead_c[: limit - 1].rstrip() + "…"
     if url:
-        link = f"[link]({url.group(0)})"
+        link = f"[link]({_markdown_url(url.group(0))})"
         return f"{lead_c} · {link}" if lead_c else link
     return lead_c
 

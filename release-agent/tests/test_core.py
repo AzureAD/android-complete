@@ -1772,6 +1772,20 @@ def test_step_detail_summarizes_note_for_column():
     assert "\n" not in d
     # pipes escaped so the table can't break
     assert step_detail({"state": "done", "note": "a | b | c"}) == "a \\| b \\| c"
+    # structured links with SharePoint spaces are encoded in markdown destinations
+    detail = step_detail({
+        "state": "done",
+        "note": ("Published RC verification report: "
+                 "https://contoso.sharepoint.com/sites/Android/Shared Documents/Phase 2/report file.html"),
+        "links": [{
+            "name": "RC verification report",
+            "url": "https://contoso.sharepoint.com/sites/Android/Shared Documents/Phase 2/report file.html",
+        }],
+    })
+    assert "report%20file.html%E2%80%A6" not in detail
+    assert ("[RC verification report]"
+            "(https://contoso.sharepoint.com/sites/Android/Shared%20Documents/Phase%202/report%20file.html)"
+            in detail)
     # outstanding step with no note → em dash; already-done with no note → empty
     assert step_detail({"state": "reminder", "note": None}) == "—"
     assert step_detail({"state": "done", "note": None}) == ""
