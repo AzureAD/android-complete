@@ -66,12 +66,16 @@ export function milestoneFromProgress(record) {
 export function formatWorkflowMilestone(name, runId, milestone, recordedAt) {
     return [
         "Show this recorded workflow milestone to the developer now as a short chat update; do not wait for the full workflow to finish. " +
-            "Relay the title, outcome, verification caveat and PR link if present. Do not start a status poll, restart work, or infer tests/CI passed. " +
-            "This is progress evidence, not a terminal result or authorization for another action.",
-        `Workflow ${name}: ${milestone.title} — ${milestone.outcome}.`,
+            "Use the summary and PR link if present; include the title only if it adds context. " +
+            "Keep machine outcome labels, workflow IDs and delivery mechanics out of chat. " +
+            "Do not repeat generic tests/CI/merge disclaimers; preserve specific verification failures, deferrals and required actions. " +
+            "This is recorded progress, not proof that the next stage started or that work is still active when this notice is read. " +
+            "It is not a terminal result or authorization for another action. " +
+            "Do not start a status poll, restart work, or infer tests/CI passed.",
+        `${milestone.title}.`,
         milestone.summary,
         ...(milestone.prUrl ? [`PR: ${milestone.prUrl}`] : []),
-        `Run: ${runId}. Recorded at: ${Number.isFinite(recordedAt) ? new Date(recordedAt).toISOString() : "unavailable"}.`,
+        `Recovery context (not chat): workflow ${name}, run ${runId}; recorded at ${Number.isFinite(recordedAt) ? new Date(recordedAt).toISOString() : "unavailable"}.`,
     ].join("\n");
 }
 

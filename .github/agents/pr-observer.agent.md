@@ -32,6 +32,10 @@ Classify the pull request into exactly one verdict:
 - Missing reviewer approvals, presence checks, and merge-strategy selection require human
   action, not source/test edits. An advisory review with MODEL_INVALID or incomplete
   classification is not evidence of a source defect; describe the review limitation.
+- Write summaries in plain language: name running or queued checks only when the snapshot
+  proves that state; otherwise say CI results are not available yet. Name concrete failures,
+  external blockers and the owner who must act. Keep local verification, CI, source review,
+  publication and human approvals distinct without repeating generic disclaimers.
 
 ## References
 

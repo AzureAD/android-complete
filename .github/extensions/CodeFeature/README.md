@@ -131,6 +131,11 @@ Given an approved coding task or PBI specification:
   not reported as executed tests. The compact verification marker carries actual states.
 - The observer updates the PR status/verification markers from its final snapshot, guarding
   against a concurrently changed head or description. Write failures are explicit.
+- Failed/deferred local-verification summaries retain a diagnostic excerpt of at most
+  500 characters; full evidence remains in the workflow verification receipt. Repeated
+  CI updates preserve that local reason in the managed narrative without expanding the
+  compact PR marker schema. Disabling source repairs is reported as disabled repairs,
+  not as a spent budget or proof of a CI failure.
 - ADO creation descriptions are budgeted to 3,500 UTF-16 characters, preserving required
   work-item/telemetry and JSON status markers and reserving room for final status updates.
   Oversized generated narrative is explicitly summarized with a receipt reference. Observer
@@ -146,6 +151,12 @@ Given an approved coding task or PBI specification:
   including when feedback first appears during a CI poll. GitHub/GHE snapshots collect
   inline threads and Azure build diagnostics through the supplied executor, whether
   observing standalone or from `code-feature`; unavailable diagnostic reads stay explicit.
+- Once the observer classifies existing feedback as waiting for CI, unchanged evidence
+  reuses that decision through the existing wait bound, including the final observation.
+  Edited comment/review bodies, review states, policies, diagnostics, conflicts, and
+  source/merge/build bindings invalidate it. Collection timestamps and unordered check,
+  build, policy and thread ordering do not. This in-memory decision cache is separate
+  from durable milestone fingerprints; it adds no agents, polling or repair allowance.
 - Hosted-image brownouts and provider-unavailable cancellations retain timeline evidence
   and return `infrastructure-blocked` without spending source/test-repair agents or
   modifying pipeline YAML, even if an external coverage status is pending. Retry requires
@@ -213,6 +224,7 @@ The same owning-session delivery path now relays explicit durable milestone rece
 **while the workflow is running**, rather than waiting for its final result:
 
 - Evidence/requirements validated; initial implementation or a revision handed off.
+- Builder dispatched; implementation or a tactical repair in progress.
 - Local verification completed, blocked, or deferred (with the actual verification state).
 - Independent source-review rounds completed or returned findings.
 - Each PR published, immediately with its link, even when another target later fails.
@@ -221,6 +233,33 @@ The same owning-session delivery path now relays explicit durable milestone rece
 Entering a phase, routine tool logs, or `BUILD SUCCESSFUL` text alone never creates a
 completed-phase notice. Source review and publication updates explicitly do not claim
 tests/CI passed. Pending CI is reported once per head, not on every poll.
+
+Chat uses concise, plain-language summaries, not raw outcome labels or workflow
+transport diagnostics. Each update states the recorded fact and the relevant next
+step; specific failures, deferred checks and required human actions remain explicit.
+Local verification, source review, publication, exact-head CI and merge approval
+are separate facts, but do not require a repeated disclaimer at every milestone.
+
+| Recorded event | Example chat wording |
+| --- | --- |
+| Evidence validated | Evidence complete; implementation is next. |
+| Builder dispatched | Implementation in progress. |
+| Source authored | Source and test changes authored; verification results and independent source review follow. |
+| Local command deferred | Local verification is incomplete; remaining checks need CI. Local build hit its time limit. |
+| Source review passed | Independent source review passed; PR preparation is next. |
+| Published with observation enabled | PR published. CI observation is next. |
+| CI state observed | CI checks are queued. / CI checks are running. / Waiting for CI results for the current PR head. |
+| External blocker | CI provider is unavailable; the provider or pipeline owner must resolve it before retrying. |
+| Verified handoff | CI and observed PR checks passed; human review and merge approval are still required. |
+
+Builder-start receipts are emitted only inside the existing journaled agent-call
+producer, after invoking the builder. Replaying a cached builder step does not
+announce a new start or launch another agent. Their unchanged `completed` outcome
+records the dispatch event, not completion of implementation; chat uses the summary.
+The same durable identity/outbox and cancellation rules apply to these receipts.
+Delayed/replayed receipts are historical evidence, not proof work is still active.
+Final handoffs name the next responsible owner and preserve diagnostics; continuation
+arguments alone never claim an observer is running.
 
 Milestones are journaled by stable identity and pushed directly from the executing
 workflow to its owning-session outbox. They do not wait for an ephemeral run-updated
@@ -270,6 +309,33 @@ The ignored outbox is scoped by `SHA-256(session.sessionId)` under
 restart and deduplicates lifecycle events. Failed delivery is retained for retry. This is
 at-least-once queue admission, not a guarantee that an unavailable client displayed a reply;
 crash-window duplicates remain possible. No cross-session runs or credentials are stored.
+
+Windows readers and scanners can briefly deny atomic replacement of an existing
+outbox snapshot (`EPERM`, `EACCES`, or `EBUSY`). Persistence retries these failures
+asynchronously with bounded backoff, without blocking SDK replies or changing the
+workflow/admission wait windows. All outbox commits are serialized across runs:
+the previous snapshot remains authoritative until the replacement succeeds, and
+no notice is sent before its pending receipt is durable. Exhausted retries remain
+explicit errors; they never become false delivery acknowledgements. Flush operations
+also wait for queued persistence. External diagnostic readers should allow delete
+sharing on Windows and close their handles before waiting for another file event.
+Disposal during a pending terminal-notice commit prevents the subsequent send; the
+committed notice remains pending for a later delivery instance.
+
+Notification failures are coalesced by operation and underlying cause, not Error-object
+identity. The shared outbox has one storage incident across runs; reads and sends retain
+their run/operation scope. A continuing incident produces one concise informational
+notice rather than repeated session-error banners. A changed cause produces another
+notice, and success of the affected operation produces one recovery notice. Unrelated
+successful reads, writes or deliveries do not clear it. This coalescing is process-local:
+an extension restart can report an existing problem again. It does not deduplicate actual
+workflow failures, change terminal outcomes, or claim that a message was rendered.
+
+Full notification-error details and repeat counts stay in the ignored
+`completion/diagnostics/<session-hash>.jsonl`, independently of the atomic outbox snapshot.
+The log rotates at 1 MiB and retains one `.previous` file. Diagnostic-write failures are
+explicit, with coalesced extension-log fallback rather than recursive session logging.
+Ordinary admission-window delays remain silent and are not notification incidents.
 
 On recovery, fast-forward the workflow source only after the current attempt settles,
 then resume the same run with unchanged approved task inputs. Verify that cached

@@ -2,12 +2,14 @@
 // Licensed under the MIT License.
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, watch, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { createWorkflowCompletionDelivery, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
-import { humanInputRequestFromProgress, milestoneFromProgress, recordHumanInputRequest, recordMilestone } from "./milestones.mjs";
+import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, recordHumanInputRequest, recordMilestone } from "./milestones.mjs";
+import { deliveryStatusSummary } from "./status.mjs";
 
 const pr = "https://github.com/AzureAD/example/pull/42";
 const adoPr = "https://dev.azure.com/IdentityDivision/Engineering/_git/authenticator/pullrequest/43";
@@ -37,6 +39,62 @@ function completed(overrides = {}) {
         ...overrides,
     };
 }
+
+test("milestone presentation uses the actual summary, not a misleading completed label for dispatch", () => {
+    const milestone = { id: "builder-start", title: "Implementation started", outcome: "completed", summary: "Implementation in progress." };
+    const prompt = formatWorkflowMilestone("code-feature", "run-1", milestone, 1000);
+    assert.match(prompt, /Implementation in progress/);
+    assert.doesNotMatch(prompt, /Implementation started — completed|Workflow code-feature:/);
+    assert.match(prompt, /not proof that the next stage started or that work is still active/);
+    assert.equal(milestone.outcome, "completed", "Presentation must not rewrite the durable receipt schema");
+});
+
+test("terminal failures are not softened to deferred verification or a successful workflow", () => {
+    const run = completed({
+        result: {
+            recommendation: "NO-GO", deliveryStatus: "ci-failed", pullRequests: [{ url: pr }],
+            verification: [{ targetId: "common", local: { status: "failed", evidence: ["FooTest assertion failed."] }, ci: { status: "failed", headSha: "abc123" } }],
+            observations: [{ prUrl: pr, status: "max-iterations-reached", ci: { status: "failed", headSha: "abc123" }, summary: "FooTest failed twice.", actionableFindings: ["FooTest.kt:12 expected tenant A but received tenant B"] }],
+        },
+    });
+    const prompt = formatWorkflowCompletion("code-feature", run);
+    assert.match(prompt, /Local verification failed\. FooTest assertion failed/);
+    assert.match(prompt, /CI failed for the current PR head/);
+    assert.match(prompt, /repair allowance is used up/);
+    assert.match(prompt, /Remaining finding: FooTest.kt:12 expected tenant A but received tenant B/);
+    assert.doesNotMatch(prompt, /Local verification is incomplete|CI and observed PR checks passed|Delivery status:|Recommendation:/);
+});
+
+test("terminal messages distinguish unpublished packets, human approvals and external owner blockers", () => {
+    const packet = formatWorkflowCompletion("code-feature", completed({
+        result: { deliveryStatus: "prepared-for-review", pullRequests: [{ url: null }], observations: [] },
+    }));
+    assert.match(packet, /PR packet is prepared but has not been published/);
+    const approvals = formatWorkflowCompletion("pr-observer", completed({
+        result: { status: "awaiting-human-review", prUrl: pr, ci: { status: "passed", headSha: "abc123" } },
+    }));
+    assert.match(approvals, /Required human review or repository approvals remain/);
+    assert.match(approvals, /CI passed for the current PR head/);
+    assert.match(approvals, /human reviewer must complete/);
+    const blocked = formatWorkflowCompletion("pr-observer", completed({
+        result: { status: "needs-owner-decision", blockerKind: "ci-dependencies", prUrl: pr, ci: { status: "failed", headSha: "abc123" }, summary: "Internal feed returned 403.", evidence: ["Artifact feed: HTTP 403 while resolving plugin"] },
+    }));
+    assert.match(blocked, /Internal feed returned 403/);
+    assert.match(blocked, /feed or pipeline owner must check dependency access/);
+    assert.match(blocked, /PR check evidence: Artifact feed: HTTP 403 while resolving plugin/);
+    assert.doesNotMatch(blocked, /— blocked|Observer: needs-owner-decision/);
+});
+
+test("ready and approval labels without bound CI evidence never become a readiness or pass claim", () => {
+    for (const status of ["ready-for-human-merge", "awaiting-human-review"]) {
+        const prompt = formatWorkflowCompletion("pr-observer", completed({
+            result: { status, prUrl: pr, ci: { status: "passed" } },
+        }));
+        assert.match(prompt, /CI reports a pass, but its PR head has not been confirmed/);
+        assert.doesNotMatch(prompt, /CI passed for the current PR head|CI and observed PR checks passed|Ready for human/);
+    }
+    assert.equal(typeof deliveryStatusSummary("constructor"), "string");
+});
 
 class FakeSession {
     sessionId = "owning-session";
@@ -154,8 +212,456 @@ function fixture(t, runs = [], options = {}) {
         const directory = path.join(root, ".github", "local-context", "code-feature", "completion");
         return path.join(directory, readdirSync(directory).find((file) => file.endsWith(".json")));
     }
-    return { session, errors, install, stateFile };
+    function diagnosticFile() {
+        const directory = path.join(root, ".github", "local-context", "code-feature", "completion", "diagnostics");
+        return path.join(directory, readdirSync(directory).find((file) => file.endsWith(".jsonl")));
+    }
+    return { root, session, errors, install, stateFile, diagnosticFile };
 }
+
+test("fresh errors for one delivery incident produce one concise notice, with changed-cause and recovery notices", async (t) => {
+    const { session, install, stateFile, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    const originalErrors = [];
+    session.sendHook = () => {
+        const error = new Error("Chat unavailable: C:\\private\\session-state\\full-diagnostic");
+        originalErrors.push(error);
+        throw error;
+    };
+    const milestone = { id: "incident", title: "Evidence", outcome: "completed", summary: "Evidence complete; implementation is next." };
+    for (let i = 0; i < 3; i++) await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /Chat unavailable/);
+    session.sendHook = () => { throw originalErrors[0]; };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /Chat unavailable/);
+    assert.equal(session.logs.length, 1, "Fresh Error objects and wrappers must not repeat the same notice");
+    assert.equal(session.errors.length, 0, "A delivery incident must not create repeated session-error banners");
+    assert.match(session.logs[0].message, /could not reach this chat/);
+    assert.doesNotMatch(session.logs[0].message, /C:\\private|session-state|not acknowledged/);
+    let diagnostics = readFileSync(diagnosticFile(), "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(diagnostics.map((record) => record.kind), ["failure", "repeat", "repeat", "repeat"]);
+    assert.equal(diagnostics.at(-1).occurrences, 4, "A new retry is counted even when it reuses the same Error instance");
+    assert.match(diagnostics[0].errors.at(-1).stack, /C:\\private\\session-state\\full-diagnostic/);
+    assert.equal(new Set(diagnostics.map((record) => record.id)).size, 1);
+    assert.equal(session.messages.length, 0);
+
+    session.sendHook = () => { throw new Error("A different transport failure"); };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /different transport/);
+    assert.equal(session.logs.length, 2);
+    assert.match(session.logs[1].message, /cause has changed/);
+    session.sendHook = undefined;
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    await delivery.flush();
+    assert.equal(session.logs.length, 3);
+    assert.equal(session.logs[2].message, "Workflow updates can reach this chat again.");
+    assert.equal(session.messages.length, 1);
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.delivered.length, 1);
+
+    session.sendHook = () => { throw originalErrors[0]; };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", { ...milestone, id: "new-incident" }), /Chat unavailable/);
+    assert.equal(session.logs.length, 4, "The same Error object must be reportable again after recovery");
+    diagnostics = readFileSync(diagnosticFile(), "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(diagnostics.filter((record) => record.kind === "failure").length, 3);
+    assert.equal(diagnostics.filter((record) => record.kind === "recovered").length, 1);
+});
+
+test("shared outbox failures coalesce across runs and temporary filenames without unrelated read recovery", async (t) => {
+    const { session, errors, install } = fixture(t, [
+        [completed({ status: "running" })], [completed({ runId: "run-2", status: "running" })],
+    ]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    let blocked = false;
+    const failures = [];
+    const delivery = install({ store: {
+        load: () => saved,
+        save(next) {
+            if (blocked) {
+                const error = Object.assign(new Error(`EPERM: rename C:\\private\\outbox.json.${100 + failures.length}.next`), {
+                    code: "EPERM", syscall: "rename", path: `C:\\private\\outbox.json.${100 + failures.length}.next`, dest: "C:\\private\\outbox.json",
+                });
+                failures.push(error);
+                throw error;
+            }
+            saved = structuredClone(next);
+        },
+    } });
+    await delivery.ready;
+    blocked = true;
+    const milestone = { id: "save-incident", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    for (const runId of ["run-1", "run-2", "run-1"]) {
+        await assert.rejects(delivery.enqueueMilestone(runId, "code-feature", milestone), { code: "EPERM" });
+    }
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0], failures[0], "Injected reporters retain the original failure object");
+    await delivery.track("run-1");
+    await delivery.flush();
+    assert.equal(session.logs.length, 0, "A successful progress read cannot recover a failed outbox save");
+    assert.equal(session.messages.length, 0);
+    blocked = false;
+    await delivery.enqueueMilestone("run-2", "code-feature", milestone);
+    assert.equal(session.logs.length, 1);
+    assert.equal(session.logs[0].message, "Workflow updates can be saved again.");
+    assert.equal(saved.runs["run-2"].milestones.delivered.length, 1);
+    blocked = true;
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), { code: "EPERM" });
+    assert.equal(errors.length, 2);
+});
+
+test("success for another run or operation does not clear a milestone delivery incident", async (t) => {
+    const { session, install } = fixture(t, [
+        [completed({ status: "running" })], [completed({ runId: "run-2", status: "running" })],
+    ]);
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    session.sendHook = (message) => {
+        if (message.prompt.includes("[workflow-milestone:")) throw new Error("Milestone transport unavailable");
+    };
+    const milestone = { id: "still-blocked", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /transport unavailable/);
+    session.set(completed({ runId: "run-2" }));
+    await delivery.track("run-2");
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.match(session.messages[0].prompt, /\[workflow-outcome:run-2:/);
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /transport unavailable/);
+    assert.equal(session.logs.length, 1, "Other saves, progress reads and terminal sends must not reset this incident");
+    session.sendHook = undefined;
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    assert.equal(session.logs.filter((record) => /can reach this chat again/.test(record.message)).length, 1);
+});
+
+test("unavailable settled progress is coalesced without hiding terminal failures or false recovery", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "error", error: "Actual workflow failure" })]]);
+    let blocked = true;
+    const readProgress = session.workflow.getRunProgress;
+    session.workflow.getRunProgress = async (id, options) => {
+        if (blocked && options.afterSeq === undefined) throw new Error("Private progress-tail diagnostic");
+        return readProgress(id, options);
+    };
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    session.set(completed({ status: "error", attempt: 2, error: "Actual workflow failure" }));
+    await delivery.track("run-1");
+    await delivery.flush();
+    assert.equal(session.logs.length, 1);
+    assert.match(session.logs[0].message, /recorded outcome is still available/);
+    assert.doesNotMatch(session.logs[0].message, /Retrying automatically|Private progress-tail/);
+    assert.equal(session.messages.length, 2);
+    for (const message of session.messages) assert.match(message.prompt, /Actual workflow failure/);
+    blocked = false;
+    session.set(completed({ status: "error", attempt: 3, error: "Actual workflow failure" }));
+    await delivery.track("run-1");
+    await delivery.flush();
+    assert.equal(session.messages.length, 3);
+    assert.equal(session.logs.length, 2);
+    assert.equal(session.logs[1].message, "Workflow progress is available again.");
+});
+
+test("diagnostic write failures are explicit and coalesced without recursively logging through the failing channel", async (t) => {
+    const { root, session, install, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    const consoleError = t.mock.method(console, "error", () => {});
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    const blockedDirectory = path.join(root, ".github", "local-context", "code-feature", "completion", "diagnostics");
+    writeFileSync(blockedDirectory, "A file blocks diagnostic directory creation.");
+    session.sendHook = () => { throw new Error("Original private transport diagnostic"); };
+    const milestone = { id: "diagnostic-failure", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    for (let i = 0; i < 2; i++) await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    assert.equal(session.logs.length, 1);
+    assert.match(session.logs[0].message, /Detailed diagnostics could not be saved/);
+    assert.equal(consoleError.mock.callCount(), 1);
+    assert.match(consoleError.mock.calls[0].arguments[2].errors.at(-1).message, /Original private transport diagnostic/);
+    rmSync(blockedDirectory);
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    const record = JSON.parse(readFileSync(diagnosticFile(), "utf8").trim());
+    assert.equal(record.kind, "repeat");
+    assert.match(record.errors.at(-1).message, /Original private transport diagnostic/);
+    session.sendHook = undefined;
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    assert.equal(session.logs.length, 2);
+});
+
+test("private incident diagnostics rotate separately from the durable delivery snapshot", async (t) => {
+    const { session, install, stateFile, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    session.sendHook = () => { throw new Error("Transport unavailable"); };
+    const milestone = { id: "rotation", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    const file = diagnosticFile();
+    const previous = `${"x".repeat(1_048_575)}\n`;
+    writeFileSync(file, previous);
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    assert.equal(readFileSync(`${file}.previous`, "utf8"), previous);
+    assert.equal(JSON.parse(readFileSync(file, "utf8").trim()).kind, "repeat");
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 1);
+    assert.equal(session.logs.length, 1);
+});
+
+test("late catch-up joiners preserve the actual send-failure scope and do not duplicate incident notices", async (t) => {
+    const { session, install, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    const cursorSaved = deferred();
+    const delivery = install({ reportError: undefined, store: {
+        load: () => saved,
+        save(next) {
+            saved = structuredClone(next);
+            if (saved.runs["run-1"]?.milestones?.cursor === 1) cursorSaved.resolve();
+        },
+    } });
+    await delivery.ready;
+    const blocked = deferred();
+    const entered = deferred();
+    session.sendHook = () => { entered.resolve(); return blocked.promise; };
+    const progress = await milestoneProgress("joined-failure", "Evidence");
+    const enqueued = delivery.enqueueMilestone("run-1", "code-feature", milestoneFromProgress(progress));
+    await entered.promise;
+    session.progress = [progress];
+    const catchingUp = delivery.track("run-1");
+    await cursorSaved.promise;
+    await new Promise(setImmediate);
+    blocked.reject(new Error("Actual milestone transport failure"));
+    await assert.rejects(enqueued, /Actual milestone transport failure/);
+    await catchingUp;
+    await delivery.flush();
+    assert.equal(session.logs.length, 1);
+    assert.match(session.logs[0].message, /could not reach this chat/);
+    const diagnostics = readFileSync(diagnosticFile(), "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(diagnostics.filter((record) => record.kind === "failure").length, 1);
+    assert.equal(diagnostics[0].key, "milestones:run-1");
+    assert.equal(saved.runs["run-1"].milestones.pending.length, 1);
+});
+
+test("verbose failed and deferred local evidence stays bounded in completion prompts and pending outboxes", async (t) => {
+    for (const status of ["failed", "deferred"]) {
+        const evidence = `SDK location not found. ${"Verbose build output. ".repeat(10_000)}`;
+        const run = completed();
+        run.result.verification = [{ targetId: "common", local: { status, evidence: [evidence] }, ci: { status: "not-observed" } }];
+        const { session, install, stateFile } = fixture(t, [[run]]);
+        let persistedPrompt;
+        session.sendHook = () => { persistedPrompt = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].pending.prompt; };
+        const delivery = install();
+        await delivery.ready;
+        await delivery.flush();
+        assert.ok(session.messages[0].prompt.length < 4000, status);
+        assert.equal(persistedPrompt, session.messages[0].prompt, "The durable-before-send prompt has the same bound");
+        assert.match(persistedPrompt, /SDK location not found/);
+        assert.equal(run.result.verification[0].local.evidence[0], evidence, "The full verification receipt is unchanged");
+    }
+});
+
+async function holdWindowsOutbox(t, file) {
+    const encodedPath = Buffer.from(file).toString("base64");
+    const script = [
+        "$ErrorActionPreference = 'Stop'",
+        `$file = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
+        "$stream = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)",
+        "try { [Console]::WriteLine('locked'); [Console]::Out.Flush(); [Console]::ReadLine() | Out-Null } finally { $stream.Dispose() }",
+    ].join("; ");
+    const holder = spawn(path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), [
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64"),
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const ready = deferred();
+    const exited = deferred();
+    let locked = false;
+    let output = "";
+    let errors = "";
+    const timer = setTimeout(() => ready.reject(new Error("Timed out acquiring the Windows outbox sharing lock")), 20_000);
+    holder.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (output.includes("locked")) { locked = true; ready.resolve(); }
+    });
+    holder.stderr.on("data", (chunk) => { errors += chunk; });
+    holder.on("error", (error) => { ready.reject(error); exited.resolve({ error }); });
+    holder.on("exit", (code) => {
+        if (!locked) ready.reject(new Error(`Windows lock process exited before acquiring the file: ${code}; ${errors}`));
+        exited.resolve({ code });
+    });
+    const release = async () => {
+        if (!holder.stdin.destroyed && !holder.stdin.writableEnded) holder.stdin.end("\n");
+        const result = await exited.promise;
+        if (result.error) throw result.error;
+        assert.equal(result.code, 0, errors);
+    };
+    t.after(release);
+    try { await ready.promise; }
+    finally { clearTimeout(timer); }
+    return release;
+}
+
+test("Windows sharing locks retry atomically without blocking the event loop or admitting unpersisted messages",
+    { skip: process.platform !== "win32" }, async (t) => {
+    const { session, install, stateFile, errors } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install();
+    await delivery.ready;
+    const file = stateFile();
+    const before = readFileSync(file, "utf8");
+    const release = await holdWindowsOutbox(t, file);
+    try {
+        const sending = delivery.enqueueMilestone("run-1", "code-feature", {
+            id: "windows-lock", title: "Evidence", outcome: "completed", summary: "Evidence complete; implementation is next.",
+        }).then((value) => ({ value }), (error) => ({ error }));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.equal(session.messages.length, 0, "A notice must not be sent before its outbox commit succeeds");
+        assert.equal(readFileSync(file, "utf8"), before, "A sharing violation must preserve the previous complete snapshot");
+        await release();
+        const result = await sending;
+        if (result.error) throw result.error;
+    } finally { await release(); }
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.equal(errors.length, 0, "A recovered transient lock is not a failed chat handoff");
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).runs["run-1"].milestones.delivered.length, 1);
+    assert.equal(readdirSync(path.dirname(file)).some((name) => name.endsWith(".next")), false);
+});
+
+test("persistent Windows sharing failures remain explicit and retryable without false acknowledgement",
+    { skip: process.platform !== "win32" }, async (t) => {
+    const { session, install, stateFile } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install();
+    await delivery.ready;
+    const file = stateFile();
+    const before = readFileSync(file, "utf8");
+    const release = await holdWindowsOutbox(t, file);
+    const milestone = { id: "persistent-lock", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    try {
+        await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), (error) =>
+            ["EPERM", "EACCES", "EBUSY"].includes(error.code));
+        assert.equal(session.messages.length, 0);
+        assert.equal(readFileSync(file, "utf8"), before);
+        assert.equal(readdirSync(path.dirname(file)).some((name) => name.endsWith(".next")), false);
+    } finally { await release(); }
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).runs["run-1"].milestones.delivered.length, 1);
+});
+
+test("disposal during Windows terminal-outbox replacement retains the pending notice for replay",
+    { skip: process.platform !== "win32" }, async (t) => {
+    const { session, install, stateFile, errors } = fixture(t, [[completed({ status: "running" })]]);
+    const first = install();
+    await first.ready;
+    const file = stateFile();
+    const before = readFileSync(file, "utf8");
+    const release = await holdWindowsOutbox(t, file);
+    const nextFile = `${file}.${process.pid}.next`;
+    const entered = deferred();
+    const watcher = watch(path.dirname(file), (_event, filename) => {
+        if (filename && String(filename) !== path.basename(nextFile)) return;
+        try {
+            const pending = JSON.parse(readFileSync(nextFile, "utf8")).runs["run-1"]?.pending;
+            if (pending) entered.resolve(pending);
+        } catch (error) {
+            if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) entered.reject(error);
+        }
+    });
+    watcher.on("error", entered.reject);
+    const timer = setTimeout(() => entered.reject(new Error("Terminal outbox did not enter the locked replacement")), 5000);
+    session.set(completed());
+    const inspecting = first.track("run-1");
+    let pending;
+    try {
+        pending = await entered.promise;
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        assert.equal(readFileSync(file, "utf8"), before, "The sharing lock must still prevent the pending commit");
+        first.dispose();
+    } finally {
+        clearTimeout(timer);
+        watcher.close();
+        await release();
+    }
+    await inspecting;
+    await first.flush();
+    const retained = JSON.parse(readFileSync(file, "utf8")).runs["run-1"];
+    assert.equal(session.messages.length, 0, "Disposal during persistence must prevent a new terminal send");
+    assert.deepEqual(retained.pending, pending);
+    assert.deepEqual(retained.delivered, []);
+    assert.deepEqual(errors, []);
+
+    await install().ready;
+    assert.equal(session.messages.length, 1);
+    assert.equal(session.messages[0].prompt, pending.prompt);
+    const delivered = JSON.parse(readFileSync(file, "utf8")).runs["run-1"];
+    assert.deepEqual(delivered.delivered, [pending.key]);
+    assert.equal(delivered.pending, undefined);
+});
+
+test("disposal during an asynchronous terminal-outbox save does not send or acknowledge before restart", async (t) => {
+    const { session, install, errors } = fixture(t, [[completed({ status: "running" })]]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    let held = false;
+    const entered = deferred();
+    const release = deferred();
+    const store = {
+        load: () => structuredClone(saved),
+        async save(next) {
+            if (held && next.runs["run-1"]?.pending) {
+                entered.resolve(structuredClone(next.runs["run-1"].pending));
+                await release.promise;
+            }
+            saved = structuredClone(next);
+        },
+    };
+    const first = install({ store });
+    await first.ready;
+    held = true;
+    session.set(completed());
+    const inspecting = first.track("run-1");
+    const pending = await entered.promise;
+    assert.equal(saved.runs["run-1"].pending, undefined);
+    first.dispose();
+    held = false;
+    release.resolve();
+    await inspecting;
+    await first.flush();
+    assert.equal(session.messages.length, 0);
+    assert.deepEqual(saved.runs["run-1"].pending, pending);
+    assert.deepEqual(saved.runs["run-1"].delivered, []);
+    assert.deepEqual(errors, []);
+
+    await install({ store }).ready;
+    assert.equal(session.messages.length, 1);
+    assert.equal(session.messages[0].prompt, pending.prompt);
+    assert.deepEqual(saved.runs["run-1"].delivered, [pending.key]);
+    assert.equal(saved.runs["run-1"].pending, undefined);
+});
+
+test("asynchronous outbox writes serialize across runs and concurrent duplicate notices", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "running" })], [completed({ runId: "run-2", status: "running" })]]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    let hold = false;
+    let liveWrites = 0;
+    let maximumWrites = 0;
+    const entered = deferred();
+    const release = deferred();
+    const delivery = install({ store: {
+        load: () => saved,
+        async save(next) {
+            liveWrites++;
+            maximumWrites = Math.max(maximumWrites, liveWrites);
+            try {
+                if (hold) { entered.resolve(); await release.promise; }
+                saved = structuredClone(next);
+            } finally { liveWrites--; }
+        },
+    } });
+    await delivery.ready;
+    hold = true;
+    const milestone = { id: "concurrent", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    const one = delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    const two = delivery.enqueueMilestone("run-2", "code-feature", milestone);
+    const duplicate = delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    await entered.promise;
+    assert.equal(session.messages.length, 0);
+    hold = false;
+    release.resolve();
+    await Promise.all([one, two, duplicate]);
+    await delivery.flush();
+    assert.equal(maximumWrites, 1);
+    assert.equal(session.messages.length, 2);
+    assert.equal(saved.runs["run-1"].milestones.delivered.length, 1);
+    assert.equal(saved.runs["run-2"].milestones.delivered.length, 1);
+});
 
 async function milestoneProgress(id, title, outcome = "completed", summary = "Source review only; CI is unverified.", link) {
     let message;
@@ -176,7 +682,7 @@ test("completed phases appear in chat while the workflow is running, not just at
     session.emit("workflow.run_updated", { runId: "run-1", revision: 2 });
     await delivery.flush();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /Evidence and requirements — completed/);
+    assert.match(session.messages[0].prompt, /Evidence and requirements\./);
     assert.match(session.messages[0].prompt, /CI is unverified/);
     assert.match(session.messages[0].prompt, /not a terminal result/);
     assert.match(session.messages[0].prompt, /\[workflow-milestone:run-1:[a-f0-9]{64}\]/);
@@ -210,8 +716,8 @@ test("milestone catch-up pages all progress and orders completed phases before t
     const delivery = install();
     await delivery.ready;
     assert.equal(session.messages.length, 3);
-    assert.match(session.messages[0].prompt, /Evidence — completed/);
-    assert.match(session.messages[1].prompt, /Review — completed/);
+    assert.match(session.messages[0].prompt, /Evidence\./);
+    assert.match(session.messages[1].prompt, /Review\./);
     assert.match(session.messages[2].prompt, /\[workflow-outcome:/);
     assert.deepEqual(session.calls.filter(([name]) => name === "getRunProgress").map(([, , options]) => options.afterSeq), [0, 100, 200]);
     delivery.dispose();
@@ -238,7 +744,8 @@ test("failed milestone delivery survives restart, retains order, and does not lo
     await install().ready;
     assert.equal(session.messages.length, 2);
     assert.equal(session.messages[0].prompt, failedPrompt);
-    assert.match(session.messages[1].prompt, /Local verification — deferred/);
+    assert.match(session.messages[1].prompt, /Local verification\./);
+    assert.match(session.messages[1].prompt, /Local command timed out; tests require CI/);
     assert.match(session.messages[1].prompt, /tests require CI/);
     assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 0);
 });
@@ -259,7 +766,7 @@ test("replayed and concurrent milestone events announce the same durable identit
     admitted.resolve();
     await delivery.flush();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /round 1 — blocked/);
+    assert.match(session.messages[0].prompt, /round 1\./);
 });
 
 test("ordinary or malformed progress never fabricates completed phases, and missing invalidations catch up", async (t) => {
@@ -278,7 +785,7 @@ test("ordinary or malformed progress never fabricates completed phases, and miss
     session.emit("session.resume");
     await delivery.reconcile();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /Pull request published — completed/);
+    assert.match(session.messages[0].prompt, /Pull request published\./);
     assert.equal(session.calls.filter(([method]) => ["run", "resume", "pause"].includes(method)).length, 0);
 });
 
@@ -294,7 +801,7 @@ test("a progress-page failure cannot hide a terminal blocker, and later catch-up
     session.progress = [await milestoneProgress("review", "Source review")];
     await delivery.reconcile();
     assert.equal(session.messages.length, 2);
-    assert.match(session.messages[1].prompt, /Source review — completed/);
+    assert.match(session.messages[1].prompt, /Source review\./);
 });
 
 test("milestone producer journals explicit completion once and does not log it again on replay", async () => {
@@ -338,7 +845,7 @@ test("the workflow producer pushes phase updates without run events, progress re
     await recordMilestone(context, receipt);
     await delivery.flushMilestones();
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /Evidence — completed/);
+    assert.match(session.messages[0].prompt, /Evidence\./);
     assert.match(session.messages[0].prompt, /implementation and CI remain pending/);
     assert.equal(session.calls.filter(([method]) => ["getRun", "getRunProgress", "waitForRun"].includes(method)).length, 0);
     const state = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones;
@@ -349,6 +856,7 @@ test("the workflow producer pushes phase updates without run events, progress re
     assert.ok(state.receipts[key].admittedAt >= state.receipts[key].enqueuedAt);
     assert.equal(state.receipts[key].observedAt, undefined, "Admission alone is not proof of transcript delivery");
     session.emit("user.message", { source: "system", content: session.messages[0].prompt });
+    await delivery.flush();
     const observed = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones.receipts[key];
     assert.ok(observed.observedAt >= observed.enqueuedAt);
     assert.equal(session.messages.length, 1);
@@ -372,7 +880,7 @@ test("direct producer and concurrent progress catch-up share ordered, deduplicat
     release.resolve();
     await delivery.flush();
     assert.equal(session.messages.length, 2);
-    assert.match(session.messages[0].prompt, /Source review — completed/);
+    assert.match(session.messages[0].prompt, /Source review\./);
     assert.deepEqual(prLinkUrls(session.messages[1].prompt), [adoPr]);
     delivery.enqueueMilestone("run-1", "code-feature", receipt);
     await delivery.flushMilestones();
@@ -578,8 +1086,8 @@ test("startup catch-up can time out before a directly delivered milestone withou
 });
 
 for (const stage of ["catch-up", "admission"]) {
-    test(`a real ${stage} failure after the delay boundary is still reported as an error`, async (t) => {
-        const { session, install } = fixture(t, stage === "catch-up" ? [[completed({ status: "running" })]] : [],
+    test(`a real ${stage} failure after the delay boundary remains explicit without a session-error banner`, { timeout: 3000 }, async (t) => {
+        const { session, install, diagnosticFile } = fixture(t, stage === "catch-up" ? [[completed({ status: "running" })]] : [],
             { admissionTimeoutMs: 5 });
         const blocked = deferred();
         const failure = deferred();
@@ -587,7 +1095,7 @@ for (const stage of ["catch-up", "admission"]) {
         const log = session.log.bind(session);
         session.log = async (message, options) => {
             await log(message, options);
-            if (options?.level === "error") failure.resolve();
+            if (options?.level === "info") failure.resolve();
         };
         if (stage === "catch-up") session.workflow.getRunProgress = () => blocked.promise;
         else session.sendHook = () => blocked.promise;
@@ -600,7 +1108,10 @@ for (const stage of ["catch-up", "admission"]) {
             assert.equal(session.errors.length, 0, "A slow operation is not a failed operation");
             blocked.reject(new Error("Actual transport failure after timeout"));
             await failure.promise;
-            assert.ok(session.errors.some((message) => /Actual transport failure after timeout/.test(message)));
+            assert.equal(session.errors.length, 0);
+            assert.equal(session.logs.length, 1);
+            assert.doesNotMatch(session.logs[0].message, /Actual transport failure after timeout/);
+            assert.match(readFileSync(diagnosticFile(), "utf8"), /Actual transport failure after timeout/);
         } finally {
             blocked.resolve({ records: [] });
             delivery.dispose();
@@ -720,10 +1231,10 @@ test("startup catch-up delivers durable completion to the owning session with ho
     assert.equal(message.mode, "immediate");
     assert.equal(message.source, "system");
     assert.equal(message.agentMode, undefined, "Preserve the caller's current mode");
-    assert.match(message.prompt, /Workflow code-feature: completed/);
+    assert.match(message.prompt, /workflow code-feature, run run-1/);
     assert.match(message.prompt, /attempt 1/);
     assert.deepEqual(prLinkUrls(message.prompt), [pr]);
-    assert.match(message.prompt, /observer reports ready-for-human-merge/);
+    assert.match(message.prompt, /CI and observed PR checks passed for every published PR/);
     assert.match(message.prompt, /Human review and merge approval are still required/);
     assert.match(message.prompt, /\[workflow-outcome:run-1:[a-f0-9]{64}\]/);
     assert.equal(errors.length, 0);
@@ -741,11 +1252,11 @@ test("completed code-feature does not claim CI success or a continuing observer 
     await install().ready;
     const prompt = session.messages[0].prompt;
     assert.deepEqual(prLinkUrls(prompt), [pr, adoPr]);
-    assert.match(prompt, /Observer: waiting-for-ci/);
-    assert.match(prompt, /Verification is not confirmed ready for every PR/);
-    assert.match(prompt, /No continuing observer or automatic merge is implied/);
-    assert.match(prompt, /Local verification was deferred or incomplete/);
-    assert.doesNotMatch(prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.match(prompt, /Observer stopped after timeout/);
+    assert.match(prompt, /Merge readiness is not confirmed for every PR/);
+    assert.match(prompt, /Continue observing this PR with the remaining repair allowance/);
+    assert.match(prompt, /Local verification is incomplete/);
+    assert.doesNotMatch(prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("completed NO-GO and missing results remain non-successful deliverables", async (t) => {
@@ -756,12 +1267,12 @@ test("completed NO-GO and missing results remain non-successful deliverables", a
     await install().ready;
     assert.equal(session.messages.length, 2);
     const prompt = session.messages.find((message) => message.prompt.includes("run run-1")).prompt;
-    assert.match(prompt, /Recommendation: NO-GO/);
+    assert.match(prompt, /Work stopped with unresolved issues/);
     assert.match(prompt, /Unit test assertion failed/);
     assert.match(prompt, /Needs input: Which requirement applies/);
     for (const message of session.messages) {
         assert.match(message.prompt, /no published URL recorded/);
-        assert.match(message.prompt, /CI is unverified here/);
+        assert.match(message.prompt, /CI has not been confirmed/);
     }
 });
 
@@ -782,8 +1293,8 @@ for (const status of ["paused", "error", "halted", "cancelled"]) {
         ];
         await install().ready;
         const prompt = session.messages[0].prompt;
-        assert.match(prompt, new RegExp(`Workflow code-feature: ${status}`));
-        assert.match(prompt, /Verification: incomplete\/unconfirmed/);
+        assert.match(prompt, new RegExp(`settled state ${status}`));
+        assert.match(prompt, /Verification is incomplete/);
         assert.match(prompt, /publication\/verification not confirmed/);
         assert.deepEqual(prLinkUrls(prompt), [adoPr]);
         assert.match(prompt, /Requires an approved compatible JDK/);
@@ -837,8 +1348,8 @@ test("pr-observer completion includes its independent result and PR link", async
     const run = completed({ result: { status: "needs-owner-decision", prUrl: adoPr, summary: "Review requests a scope decision." } });
     const { session, install } = fixture(t, [[run, "pr-observer"]]);
     await install().ready;
-    assert.match(session.messages[0].prompt, /Workflow pr-observer: completed/);
-    assert.match(session.messages[0].prompt, /Observer: needs-owner-decision/);
+    assert.match(session.messages[0].prompt, /PR observation finished/);
+    assert.match(session.messages[0].prompt, /developer must resolve the recorded blocker or scope decision/);
     assert.deepEqual(prLinkUrls(session.messages[0].prompt), [adoPr]);
     assert.match(session.messages[0].prompt, /Review requests a scope decision/);
 });
@@ -1013,7 +1524,7 @@ test("old pending pauses are replaced by the latest durable completed outcome af
     session.sendHook = undefined;
     await install().ready;
     assert.equal(session.messages.length, 1);
-    assert.match(session.messages[0].prompt, /completed.*attempt 2/);
+    assert.match(session.messages[0].prompt, /attempt 2; settled state completed/);
     assert.doesNotMatch(session.messages[0].prompt, /resume this same run/);
 });
 
@@ -1071,16 +1582,16 @@ test("deliveryStatus, verification receipts, observer continuation and publicati
     const { session, install } = fixture(t, [[run]]);
     await install().ready;
     const prompt = session.messages[0].prompt;
-    assert.match(prompt, /Delivery status: ci-failed/);
-    assert.match(prompt, /Verification common: local deferred; CI failed; head abc123/);
-    assert.match(prompt, /Observed CI: failed; head abc123/);
+    assert.match(prompt, /CI failed; the reported failures need attention/);
+    assert.match(prompt, /common: Local verification is incomplete/);
+    assert.match(prompt, /CI failed for the current PR head\. Observed head: abc123/);
     assert.match(prompt, /Build hit the local time limit/);
     assert.match(prompt, /PR status publication failed: PR edit rejected/);
     assert.match(prompt, /The PR body may be stale/);
-    assert.match(prompt, /Observer handoff available: pr-observer/);
-    assert.match(prompt, /Recorded continuation input is not a running workflow/);
+    assert.match(prompt, /A continuation is available for this PR/);
+    assert.match(prompt, /this handoff is not a running observer/);
     assert.match(prompt, /do not merge/);
-    assert.doesNotMatch(prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.doesNotMatch(prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("legacy observer status without explicit CI evidence cannot claim current-head success", async (t) => {
@@ -1088,8 +1599,8 @@ test("legacy observer status without explicit CI evidence cannot claim current-h
     delete run.result.observations[0].ci;
     const { session, install } = fixture(t, [[run]]);
     await install().ready;
-    assert.match(session.messages[0].prompt, /Observed CI: not-observed; head unknown/);
-    assert.doesNotMatch(session.messages[0].prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.match(session.messages[0].prompt, /CI has not been checked yet\. Observed head: unavailable/);
+    assert.doesNotMatch(session.messages[0].prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("failed PR status publication prevents a readiness claim even when CI passed", async (t) => {
@@ -1098,7 +1609,8 @@ test("failed PR status publication prevents a readiness claim even when CI passe
     const { session, install } = fixture(t, [[run]]);
     await install().ready;
     assert.match(session.messages[0].prompt, /PR status publication failed/);
-    assert.doesNotMatch(session.messages[0].prompt, /Verification: observer reports ready-for-human-merge/);
+    assert.match(session.messages[0].prompt, /developer must restore the PR status update/);
+    assert.doesNotMatch(session.messages[0].prompt, /CI and observed PR checks passed for every published PR/);
 });
 
 test("progress read failure is reported and the delivered recovery message explicitly says progress is unavailable", async (t) => {
@@ -1308,8 +1820,8 @@ for (const deliveryStatus of ["awaiting-human-review", "ci-failed"]) {
         assert.equal(result.deliveryStatus, deliveryStatus);
         assert.equal(result.recommendation, deliveryStatus);
         assert.equal(result.verification[0].ci.status, run.result.verification[0].ci.status);
-        assert.match(result.settledSummary, new RegExp(`Delivery status: ${deliveryStatus}`));
-        assert.match(session.messages[0].prompt, new RegExp(`Delivery status: ${deliveryStatus}`));
-        assert.doesNotMatch(result.settledSummary, /Verification: observer reports ready-for-human-merge/);
+        assert.ok(result.settledSummary.includes(deliveryStatusSummary(deliveryStatus)));
+        assert.ok(session.messages[0].prompt.includes(deliveryStatusSummary(deliveryStatus)));
+        assert.doesNotMatch(result.settledSummary, /CI and observed PR checks passed for every published PR/);
     });
 }

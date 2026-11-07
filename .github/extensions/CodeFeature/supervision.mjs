@@ -72,7 +72,7 @@ export function createWorkflowSupervision(getSession, { waitMs = 300_000 } = {})
                             marker: `[workflow-milestone:${runId}:${createHash("sha256").update(result.milestone.id).digest("hex")}]`,
                         } : {}),
                         note: "Work is not complete. This wait performed no workflow or CI mutations. A milestone is recorded progress, not proof the next phase or verification completed.",
-                        nextAction: `Relay only new progress; deduplicate the marker against system milestone messages. Then call code_feature_workflow_wait with the same runId ${runId}. Do not end supervision with task_complete while the authorized run is still running. If the user interrupted or withdrew the request, respect that instead.`,
+                        nextAction: `Relay only new progress in plain language; deduplicate the marker against system milestone messages. Do not echo protocol labels or announce this observation boundary. If there is no new progress, wait again silently. Then call code_feature_workflow_wait with the same runId ${runId}. Do not end supervision with task_complete while the authorized run is still running. If the user interrupted or withdrew the request, respect that instead.`,
                     };
                 } finally {
                     clearTimeout(timer);

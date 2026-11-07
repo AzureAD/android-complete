@@ -14,9 +14,9 @@ import {
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
-    ciEvidenceFromSnapshot, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
+    ciEvidenceFromSnapshot, ciWaitingSummary, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
-import { deliveryOutcome, pendingVerification, verificationFromGate } from "./verification.mjs";
+import { ciVerificationSummary, deliveryOutcome, localVerificationSummary, pendingVerification, verificationFromGate, verificationSummary } from "./verification.mjs";
 import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, renderVerificationBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
 
 const task = {
@@ -61,6 +61,76 @@ const implementation = () => ({
     }],
     traceability: [{ requirementId: "R1", targetIds: ["common"], filePaths: ["FooTest.kt"], testLocations: ["FooTest"], verification: "Source reviewed only" }],
     assumptions: [], openDecisions: [], blockingUnknowns: [],
+});
+
+test("verification wording separates failed, deferred, unconfirmed and executed checks without raw labels", () => {
+    const cases = [
+        ["passed", "Local verification passed."],
+        ["failed", "Local verification failed."],
+        ["deferred", "Local verification is incomplete; remaining checks need CI."],
+        ["unverified", "Local verification has not been confirmed."],
+    ];
+    for (const [status, expected] of cases) {
+        const verification = { local: { status, evidence: ["Successful command: compile", "Specific task diagnostic."] }, ci: { status: "not-observed" } };
+        assert.ok(localVerificationSummary(verification).startsWith(expected));
+        if (["failed", "deferred"].includes(status)) assert.match(localVerificationSummary(verification), /Specific task diagnostic/);
+        else assert.doesNotMatch(localVerificationSummary(verification), /Specific task diagnostic/);
+        assert.match(verificationSummary(verification), /CI has not been checked yet/);
+    }
+    assert.equal(ciVerificationSummary({ ci: { status: "pending" } }), "Waiting for CI results for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "failed", headSha: "abc123" } }), "CI failed for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "unknown" } }), "CI results for the current PR head could not be confirmed.");
+    assert.equal(ciVerificationSummary({ ci: { status: "passed", headSha: "abc123" } }), "CI passed for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "passed" } }), "CI reports a pass, but its PR head has not been confirmed.");
+    assert.equal(ciVerificationSummary({ ci: { status: "failed" } }), "CI reports a failure, but its PR head has not been confirmed.");
+});
+
+test("local diagnostic summaries are bounded without changing full failed or deferred receipts", () => {
+    for (const status of ["failed", "deferred"]) {
+        const reason = `SDK location not found. ${"Full build diagnostic. ".repeat(10_000)}`;
+        const receipt = { local: { status, evidence: ["Successful command: compile", reason] } };
+        const summary = localVerificationSummary(receipt);
+        assert.ok(summary.length <= 500);
+        assert.match(summary, /SDK location not found/);
+        assert.ok(summary.endsWith("..."));
+        assert.equal(receipt.local.evidence[1], reason);
+    }
+});
+
+test("repeated CI updates retain failed and deferred local reasons without changing the compact marker schema", () => {
+    const parsed = parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42");
+    for (const status of ["failed", "deferred"]) {
+        const verification = {
+            local: { status, headSha: "a".repeat(40), evidence: ["SDK location not found. Device verification needs authorized CI."] },
+            ci: { status: "not-observed", headSha: null },
+        };
+        let description = `## Validation & Testing\n${verificationSummary(verification)}\nHuman details.\n${renderVerificationBlock(verification)}`;
+        for (const ciStatus of ["pending", "passed", "failed", "passed"]) {
+            const ci = { status: ciStatus, headSha: "a".repeat(40) };
+            description = publishObserverStatus(parsed, snapshot({ description }), "status", { exec: () => "", ci });
+            const line = description.split("\n").find((value) => value.startsWith("Local verification"));
+            assert.equal(line, verificationSummary({ ...verification, ci }));
+            assert.match(description, /Human details\./);
+            const marker = parseMarkerBlock(description, verificationMarkers);
+            assert.deepEqual(Object.keys(marker.local).sort(), ["headSha", "status"]);
+            assert.equal(marker.local.status, status);
+            assert.equal(marker.ci.status, ciStatus);
+        }
+        assert.deepEqual(verification.local.evidence, ["SDK location not found. Device verification needs authorized CI."]);
+    }
+});
+
+test("CI waiting wording claims running or queued only from the actual current-head snapshot", () => {
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "queued" }] })), "CI checks are queued.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "in_progress" }] })), "CI checks are running.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "queued" }, { status: "in_progress" }] })), "CI has running and queued checks.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ state: "pending" }] })), "Waiting for CI results for the current PR head.");
+    assert.equal(ciWaitingSummary(snapshot({ snapshotHeadChanged: true })), "The PR head changed; waiting for fresh CI results.");
+    assert.match(ciWaitingSummary(snapshot(), "b".repeat(40)), /Waiting for the CI provider to recognize pushed commit b+/);
+    assert.equal(ciWaitingSummary(snapshot({
+        provider: "ado", statusCheckRollup: [],
+        prBuilds: [{ status: "inProgress", sourceHeadSha: "b".repeat(40) }],
+    })), "Waiting for CI results for the current PR head.", "An old build cannot establish current activity");
 });
 
 test("builder timeout, failure, and planned commands never become successful verification receipts", () => {
@@ -126,10 +196,18 @@ test("final managed narrative and JSON show the same current verification state"
         parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42"),
         snapshot({ description }), "status", { exec: () => "" },
     );
-    assert.match(updated, /Local verification: unverified\. Current-head CI: passed\./);
+    assert.match(updated, /Local verification has not been confirmed\. CI passed for the current PR head\./);
     assert.match(updated, /Human details stay unchanged\./);
     assert.equal(parseMarkerBlock(updated, verificationMarkers).ci.status, "passed");
     assert.equal(updated.split(/\r?\n/).filter((line) => line === wi).length, 1);
+    const failed = publishObserverStatus(
+        parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42"),
+        snapshot({ description: updated }), "status", { exec: () => "", ci: { status: "failed", headSha: "a".repeat(40) } },
+    );
+    assert.match(failed, /CI failed for the current PR head\./);
+    assert.doesNotMatch(failed, /CI passed for the current PR head/);
+    assert.match(failed, /Human details stay unchanged\./);
+    assert.equal(parseMarkerBlock(failed, verificationMarkers).ci.status, "failed");
 });
 
 test("a local pass for a previous source head is not promoted to the repaired current head", () => {
@@ -613,7 +691,44 @@ test("pending CI returns explicit continuation without spending classifier agent
     const milestone = logs.map((text) => milestoneFromProgress({ kind: "log", text })).find((item) => item?.title === "PR observation");
     assert.equal(milestone.title, "PR observation");
     assert.equal(milestone.outcome, "deferred");
-    assert.match(milestone.summary, /Current-head CI: pending/);
+    assert.match(milestone.summary, /Waiting for CI results for the current PR head/);
+    assert.match(milestone.summary, /Continue observing this PR with the remaining repair allowance/);
+    assert.doesNotMatch(milestone.summary, /pending|not merge approval|success is not established/);
+});
+
+test("live CI handoff messages preserve queued versus running without spending agents or repeating each poll", async () => {
+    for (const [state, expected] of [["QUEUED", "CI checks are queued."], ["IN_PROGRESS", "CI checks are running."], ["PENDING", "Waiting for CI results for the current PR head."]]) {
+        const context = ctx([], { maxCiPollAttempts: 2, ciPollIntervalMs: 0 });
+        const logs = [];
+        context.log = (text) => logs.push(text);
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => {},
+            fetchPrSnapshot: () => snapshot({ statusCheckRollup: [{ name: "CI", status: state }] }),
+        });
+        const waits = logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter((item) => item?.title === "Waiting for CI");
+        assert.equal(waits.length, 1, "One durable wait update per head, not one per poll");
+        assert.ok(waits[0].summary.startsWith(expected));
+        assert.equal(result.summary, expected);
+        assert.equal(result.ci.status, "pending");
+        assert.equal(result.status, "waiting-for-ci");
+        assert.equal(context.calls.length, 0);
+    }
+});
+
+test("external blocker milestones name who can act and keep the actual CI diagnostic", async () => {
+    const context = ctx();
+    const logs = [];
+    context.log = (text) => logs.push(text);
+    const diagnostic = "Hosted image unavailable: provider unable to process this request during brownout.";
+    const result = await runPrObserver(context, {
+        exec: () => "",
+        fetchPrSnapshot: () => snapshot({ prBuilds: [{ id: 7, status: "completed", result: "canceled", infrastructureIssues: [diagnostic] }] }),
+    });
+    const milestone = logs.map((text) => milestoneFromProgress({ kind: "log", text })).find((item) => item?.title === "PR observation");
+    assert.match(milestone.summary, /CI provider or pipeline owner must resolve/);
+    assert.equal(milestone.outcome, "blocked");
+    assert.ok(result.evidence.includes(diagnostic));
+    assert.equal(context.calls.length, 0);
 });
 
 test("pending CI never bypasses merge conflicts or actionable review feedback before or after a poll", async () => {
@@ -637,6 +752,168 @@ test("pending CI never bypasses merge conflicts or actionable review feedback be
             assert.equal(result.status, "needs-owner-decision");
         }
     }
+});
+
+const classifiedWait = {
+    verdict: "waiting-for-ci", repairKind: "none", summary: "Review feedback has no blocking findings; CI is still running.",
+    evidence: ["Existing feedback was classified."], actionableFindings: [],
+};
+const reviewedWaitingSnapshot = () => snapshot({
+    statusCheckRollup: [{ name: "CI", state: "PENDING" }, { name: "Advisory", state: "SUCCESS" }],
+    prBuilds: [{ id: 91, status: "inProgress", sourceHeadSha: "a".repeat(40) }],
+    inlineReviewComments: [{ id: 7, body: "Consider simplifying this optional helper.", path: "Foo.kt", line: 12 }],
+    activeReviewThreads: [{ id: 8, status: "active", comments: [{ id: 9, content: "Optional style suggestion." }] }],
+    reviews: [{ id: 10, author: { login: "reviewer" }, state: "COMMENTED", body: "Optional observations." }],
+    comments: [{ id: 11, author: { login: "reviewer" }, body: "Existing nonblocking note." }],
+    policyEvaluations: [{ evaluationId: 12, status: "queued", blocking: true, minimumApproverCount: 1 }],
+});
+
+test("unchanged classified feedback uses one observer across sixty CI waits, including the final bound", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 60, ciPollIntervalMs: 0 });
+    let reads = 0, sleeps = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => { sleeps++; },
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            value.collectedAt = ++reads;
+            value.inlineReviewComments[0].updatedAt = String(reads);
+            value.prBuilds[0].startTime = String(reads);
+            if (reads % 2) value.statusCheckRollup.reverse();
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1, "Already-classified feedback must not spend an agent on every CI wait");
+    assert.equal(sleeps, 60);
+    assert.equal(reads, 61);
+    assert.equal(result.status, "waiting-for-ci");
+    assert.equal(result.ci.status, "pending");
+    assert.equal(result.summary, classifiedWait.summary);
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(result.continuation.args.maxIterations, 2, "Waiting must not consume or reset the tactical repair allowance");
+});
+
+test("zero source-repair allowance is described as disabled repairs, not exhausted budget or failed CI", async () => {
+    const context = ctx([{
+        verdict: "repair", repairKind: "review-comment", summary: "A review finding needs source verification.",
+        evidence: [], actionableFindings: ["Verify the unresolved review finding."],
+    }]);
+    context.args.maxIterations = 0;
+    const logs = [];
+    context.log = (value) => logs.push(value);
+    const result = await runPrObserver(context, { exec: () => "", fetchPrSnapshot: reviewedWaitingSnapshot });
+    assert.equal(result.status, "max-iterations-reached", "The raw protocol remains unchanged");
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(context.calls.length, 1);
+    assert.match(result.summary, /Source repairs are disabled for this run/);
+    assert.doesNotMatch(result.summary, /budget exhausted|remaining failures/);
+    const milestones = logs.map((value) => milestoneFromProgress({ kind: "log", text: value })).filter(Boolean);
+    assert.ok(milestones.some((value) => /Source repairs are disabled for this run/.test(value.summary)));
+    assert.ok(milestones.every((value) => !/repair allowance is used up/i.test(value.summary)));
+});
+
+test("reused waiting decisions are invalidated by edited feedback, policies, diagnostics and source identity", async () => {
+    const changes = [
+        ["inline body", (value) => { value.inlineReviewComments[0].body = "Fix cancellation before merging."; }],
+        ["thread body", (value) => { value.activeReviewThreads[0].comments[0].content = "Fix a newly identified defect."; }],
+        ["review body", (value) => { value.reviews[0].body = "New required review finding."; }],
+        ["review state", (value) => { value.reviews[0].state = "CHANGES_REQUESTED"; }],
+        ["top-level body", (value) => { value.comments[0].body = "New required source correction."; }],
+        ["policy", (value) => { value.policyEvaluations[0].minimumApproverCount = 2; }],
+        ["source head", (value) => { value.headRefOid = "b".repeat(40); }],
+        ["merge head", (value) => { value.mergeHeadSha = "b".repeat(40); }],
+        ["build binding", (value) => { value.prBuilds[0].sourceHeadSha = "b".repeat(40); }],
+        ["CI description", (value) => { value.statusCheckRollup[0].description = "New provider diagnostic."; }],
+        ["merge conflict", (value) => { value.mergeStateStatus = "DIRTY"; }],
+        ["PR narrative", (value) => { value.body = "New owner instructions about the change."; }],
+    ];
+    for (const [label, change] of changes) {
+        const context = ctx([structuredClone(classifiedWait), {
+            verdict: "needs-owner-decision", repairKind: "none", summary: "New evidence needs an owner decision.",
+            evidence: [], actionableFindings: [],
+        }], { maxCiPollAttempts: 4, ciPollIntervalMs: 0 });
+        context.args.maxIterations = 0;
+        let reads = 0, sleeps = 0;
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => { sleeps++; },
+            fetchPrSnapshot: () => {
+                const value = reviewedWaitingSnapshot();
+                if (++reads >= 3) change(value);
+                return value;
+            },
+        });
+        assert.equal(context.calls.length, 2, label);
+        assert.equal(sleeps, 2, label);
+        assert.equal(result.status, "needs-owner-decision", label);
+    }
+});
+
+test("new failed tasks interrupt a reused CI wait without another classifier or a repair-budget reset", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 5, ciPollIntervalMs: 0 });
+    context.args.maxIterations = 0;
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) {
+                value.prBuilds[0].status = "completed";
+                value.prBuilds[0].result = "failed";
+                value.prBuilds[0].failedTasks = [{ name: "Unit tests", failedTests: [{ testName: "CancellationTest", errorMessage: "New exact-head regression" }] }];
+                value.statusCheckRollup[0].state = "FAILURE";
+            }
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1);
+    assert.equal(result.status, "max-iterations-reached");
+    assert.equal(result.ci.status, "failed");
+    assert.equal(result.repairAttempts, 0);
+    assert.ok(result.actionableFindings.some((finding) => finding.includes("New exact-head regression")));
+    assert.equal(result.continuation.args.maxIterations, 0);
+});
+
+test("CI completion replaces an earlier waiting classification with a fresh terminal decision", async () => {
+    const context = ctx([structuredClone(classifiedWait), {
+        verdict: "ready", repairKind: "none", summary: "Current CI and source checks passed.",
+        evidence: ["Exact-head CI succeeded."], actionableFindings: [],
+    }], { maxCiPollAttempts: 4, ciPollIntervalMs: 0 });
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) {
+                value.statusCheckRollup[0].state = "SUCCESS";
+                value.prBuilds[0].status = "completed";
+                value.prBuilds[0].result = "succeeded";
+                value.policyEvaluations = [];
+            }
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 2);
+    assert.equal(result.status, "ready-for-human-merge");
+    assert.equal(result.ci.status, "passed");
+    assert.equal(result.ci.headSha, "a".repeat(40));
+    assert.equal(result.humanMergeOnly, true);
+});
+
+test("a stale snapshot invalidates classified waiting and explicitly waits for fresh head evidence", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 3, ciPollIntervalMs: 0 });
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) value.snapshotHeadChanged = true;
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1);
+    assert.equal(result.status, "waiting-for-ci");
+    assert.match(result.summary, /PR head changed; waiting for fresh CI results/);
+    assert.notEqual(result.summary, classifiedWait.summary);
+    assert.notEqual(result.ci.status, "passed");
 });
 
 test("GitHub and GHE observers enrich readable Azure build diagnostics through the supplied executor", async () => {

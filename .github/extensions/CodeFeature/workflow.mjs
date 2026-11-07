@@ -11,12 +11,13 @@ const revisionedModuleUrl = (name) => {
     const url = new URL(name, import.meta.url);
     return `${url.href}?v=${statSync(url).mtimeMs}`;
 };
-const { deliveryOutcome, pendingVerification, verificationFromGate, verificationSummary } =
+const { deliveryOutcome, localVerificationSummary, pendingVerification, verificationFromGate, verificationSummary } =
     await import(revisionedModuleUrl("./verification.mjs"));
 const { recordMilestone, recordHumanInputRequest } = await import(revisionedModuleUrl("./milestones.mjs"));
 const {
     currentStatusOwners,
     currentStatuses,
+    deliveryStatusSummary,
     deliveryDecisionMarkers,
     fitAdoDescription,
     parseMarkerBlock,
@@ -4152,6 +4153,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
     const ask = async (label, agentName, promptTask, schema, data, modelOverride) => {
+        ctx.signal?.throwIfAborted();
         const startedAt = Date.now();
         ctx.log?.(`${new Date().toISOString()} Starting ${label}.`);
         const roleBoundaries = agentName === BUILDER_AGENT
@@ -4159,7 +4161,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
             : agentName === REVIEWER_AGENT
                 ? reviewerBoundaries
                 : readerBoundaries;
-        const result = await ctx.agent(
+        const execution = ctx.agent(
             `${roleBoundaries}\n${promptTask}\nDATA:\n${JSON.stringify(data)}`,
             {
                 label,
@@ -4168,6 +4170,18 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
                 ...(nonempty(modelOverride) ? { model: modelOverride } : {}),
             },
         );
+        // Invoke the agent before reporting its start, inside the journaled producer.
+        const [result] = await Promise.all([
+            execution,
+            ...(agentName === BUILDER_AGENT ? [recordMilestone(ctx, {
+                id: `${prefix}-builder-start-${createHash("sha256").update(label).digest("hex")}`,
+                title: label === "Code builder (round 1)" ? "Implementation started" : "Implementation update started",
+                outcome: "completed",
+                summary: label === "Code builder (round 1)"
+                    ? "Implementation in progress."
+                    : `Implementation update in progress (${label.toLowerCase()}).`,
+            })] : []),
+        ]);
         ctx.log?.(`${new Date().toISOString()} ${label} ${result === null ? "returned no valid result" : "returned a structured result"} after ${Math.round((Date.now() - startedAt) / 1000)}s.`);
         return result;
     };
@@ -4196,7 +4210,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
                     id: `${prefix}-toolchain-${createHash("sha256").update(selectedJava.javaHome).digest("hex")}`,
                     title: "Build toolchain selected",
                     outcome: "completed",
-                    summary: `Using installed JDK ${selectedJava.javaMajorVersion} at ${selectedJava.javaHome} for this workflow run only. Global JAVA_HOME is unchanged. No installation or additional approval was required.`,
+                    summary: `Using installed JDK ${selectedJava.javaMajorVersion} at ${selectedJava.javaHome} for this run. Global JAVA_HOME is unchanged.`,
                 });
             }
             const verify = () => verifyWorkflowPrerequisitesAsync({
@@ -4560,7 +4574,7 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
         id: `${prefix}-evidence-completed`,
         title: "Evidence and requirements",
         outcome: "completed",
-        summary: `Repository evidence and task validation completed for ${task.targets.length} target(s) and ${task.requirements.length} requirement(s). Implementation and execution verification are still pending.`,
+        summary: "Evidence complete; implementation is next.",
     });
 
     const backupsByTarget = new Map();
@@ -4657,12 +4671,6 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
             const diffsByTarget = {};
 
             if (validationErrors.length === 0) {
-                await recordMilestone(ctx, {
-                    id: `${prefix}-implementation-${round}`,
-                    title: round === 0 ? "Initial implementation" : `Implementation revision ${round}`,
-                    outcome: "completed",
-                    summary: `Source/test changes and implementation metadata are ready for independent review. This handoff is not evidence that local tests or CI passed.`,
-                });
                 if (Array.isArray(implementation.blockingUnknowns) && implementation.blockingUnknowns.length > 0) {
                     const envNotes = implementation.blockingUnknowns.filter(isLocalBuildEnvBlocker);
                     if (envNotes.length > 0) {
@@ -4714,6 +4722,12 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                         }
                     }
 
+                    await recordMilestone(ctx, {
+                        id: `${prefix}-implementation-${round}`,
+                        title: round === 0 ? "Initial implementation" : `Implementation revision ${round}`,
+                        outcome: "completed",
+                        summary: "Source and test changes authored; verification results and independent source review follow.",
+                    });
                     for (const target of task.targets) {
                         const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
                         let backups = backupsByTarget.get(target.id);
@@ -4733,7 +4747,10 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                         if (builderShortCircuitedToCi) {
                             targetImpl.verification = {
                                 ...pendingVerification(),
-                                local: { status: "deferred", commands: [], evidence: ["Builder stopped local verification; CI evidence is required."] },
+                                local: {
+                                    status: "deferred", commands: [],
+                                    evidence: [`Builder reported: ${targetImpl.pr.testPlan || "Local verification stopped; remaining checks need CI."}`],
+                                },
                             };
                             const scNote = "Local Gradle verification was short-circuited to remote CI pipeline verification after hitting local build/timeout limits.";
                             if (!Array.isArray(implementation.assumptions) || !implementation.assumptions.includes(scNote)) {
@@ -4794,7 +4811,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             title: `Local verification: ${target.repository}`,
                             outcome: targetImpl.verification?.local?.status === "passed" ? "completed" :
                                 targetImpl.verification?.local?.status === "failed" ? "blocked" : "deferred",
-                            summary: `${verificationSummary(targetImpl.verification)} ${targetImpl.verification?.local?.status === "failed" ? "Concrete validation errors require correction." : "Remote CI and source review remain separate checks."}`,
+                            summary: `${target.repository}: ${localVerificationSummary(targetImpl.verification)}`,
                         });
                         diffsByTarget[target.id] = renderUnifiedDiff(backups, targetImpl.files, {
                             repoRoot: manageWorkspace ? repoRoot : "",
@@ -4904,6 +4921,9 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                         return packet("NO-GO", ["Independent code reviewer failed or returned malformed output."]);
                     }
 
+                    if (Array.isArray(review.blockingUnknowns) && review.blockingUnknowns.length > 0) {
+                        review.blockingUnknowns = review.blockingUnknowns.filter((item) => !isLocalBuildEnvBlocker(item));
+                    }
                     history.push({ round: round + 1, review });
                     await recordMilestone(ctx, {
                         id: `${prefix}-review-${round}`,
@@ -4911,16 +4931,17 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                         outcome: review.findings.length || review.blockingUnknowns.length ||
                             review.criteria.some((criterion) => !criterion.pass) ||
                             review.acceptanceCriteria.some((criterion) => !criterion.passed) ? "blocked" : "completed",
-                        summary: `${review.findings.length} finding(s), ${review.blockingUnknowns.length} open question(s). This is source review only; executed tests and current-head CI are tracked separately.`,
+                        summary: review.blockingUnknowns.length
+                            ? `Source review needs developer input: ${review.blockingUnknowns.join("; ")}`
+                            : review.findings.length || review.criteria.some((criterion) => !criterion.pass) ||
+                                review.acceptanceCriteria.some((criterion) => !criterion.passed)
+                                ? `Source review found ${review.findings.length} finding(s) or unmet criteria; ${round < maxFixes ? "an implementation update is next" : "the fix allowance is used up"}.`
+                                : "Independent source review passed; PR preparation is next.",
                     });
 
                     if (JSON.stringify(ctx.args) !== originalRaw) {
                         restoreAll();
                         return packet("NO-GO", ["Approved input changed during review; start a new run."]);
-                    }
-
-                    if (Array.isArray(review.blockingUnknowns) && review.blockingUnknowns.length > 0) {
-                        review.blockingUnknowns = review.blockingUnknowns.filter((item) => !isLocalBuildEnvBlocker(item));
                     }
 
                     if (review.blockingUnknowns.length) {
@@ -5042,7 +5063,9 @@ export async function runCodeFeature(ctx, dependencies = {}) {
             id: `${key}-published-${createHash("sha256").update(pr.targetId).digest("hex")}`,
             title: publication.createPullRequests ? "Pull request published" : "Pull request packet prepared",
             outcome: "completed",
-            summary: `${pr.repository}: source review and publication preparation completed. ${verificationSummary(implementation.targets.find((item) => item.targetId === pr.targetId)?.verification)} Publication is not CI or merge approval.`,
+            summary: publication.createPullRequests
+                ? `${pr.repository}: PR published.${publication.observePullRequests ? " CI observation is next." : " CI observation was not requested."}`
+                : `${pr.repository}: source-reviewed PR packet prepared; no PR was published.`,
             prUrl: pr.url,
         });
     const pullRequests = await ctx.step(`${key}-pull-requests`, async () => {
@@ -5130,15 +5153,17 @@ export async function runCodeFeature(ctx, dependencies = {}) {
         reasons: [
             `Implementation and independent source review completed in ${reviewCount} review round(s).`,
             ...implementation.targets.map((item) => `${item.targetId}: ${verificationSummary(item.verification)}`),
-            `Delivery outcome: ${outcome}. Human review and merge approval remain required.`,
+            deliveryStatusSummary(outcome),
         ],
-        nextAction: outcome === "waiting-for-ci" || outcome === "ci-not-observed"
-            ? "Continue pr-observer using observations[].continuation; CI is not yet verified."
+        nextAction: outcome === "prepared-for-review"
+            ? "Review the prepared PR packet; publication has not been performed."
+            : outcome === "waiting-for-ci" || outcome === "ci-not-observed"
+            ? "Continue observing the existing PRs using the recorded continuation and remaining repair allowance."
             : outcome === "infrastructure-blocked"
                 ? "Hosted CI is unavailable. Retry after provider recovery or obtain an approved pipeline-owner change."
                 : outcome === "ci-failed" || outcome === "needs-owner-decision"
-                    ? "Inspect observations and resolve the remaining failures; do not merge."
-                    : "Human review and required repository approvals; never merge automatically.",
+                    ? "The developer must inspect the remaining failures or blockers before merge."
+                    : "A human reviewer must complete the required review, repository approvals, and merge decision.",
     };
 }
 
