@@ -839,6 +839,25 @@ export function computeSnapshotFingerprint(snapshot) {
         .slice(0, 16);
 }
 
+function classificationFingerprint(snapshot) {
+    const metadata = new Set([
+        "createdAt", "updatedAt", "submittedAt", "createdDate", "creationDate", "publishedDate", "lastUpdatedDate",
+        "queueTime", "startTime", "finishTime", "observedAt", "collectedAt", "avatarUrl", "imageUrl", "_links",
+    ]);
+    const normalize = (value) => {
+        if (Array.isArray(value)) return value.map(normalize);
+        if (value && typeof value === "object") {
+            return Object.fromEntries(Object.keys(value).filter((key) => !metadata.has(key)).sort().map((key) => {
+                const normalized = normalize(value[key]);
+                return [key, ["statusCheckRollup", "prBuilds", "policyEvaluations", "activeReviewThreads"].includes(key) && Array.isArray(normalized)
+                    ? normalized.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) : normalized];
+            }));
+        }
+        return value;
+    };
+    return createHash("sha256").update(JSON.stringify(normalize(snapshot))).digest("hex");
+}
+
 export function isTransientCiInfrastructureFailure(textValue) {
     return /UnknownHostException|SocketException|nodename nor servname|ETIMEDOUT|ECONNRESET|Connection reset|502 Bad Gateway|503 Service Unavailable|feed network|No source\/test defect was evidenced|canceled iteration|stale iteration|current-head.*running|no confirmed repair to make/i.test(
         String(textValue || ""),
@@ -1336,6 +1355,8 @@ async function runObserverLoop(ctx, dependencies = {}) {
         let observation = null;
         let afterObserveSnap = snapshotWorktree(repoRoot, exec);
         let lastWaitingFingerprint = null;
+        const unchangedWaiting = () => nonempty(lastWaitingFingerprint) &&
+            classificationFingerprint(snapshot) === lastWaitingFingerprint;
 
         for (let ciWaitRound = 0; ciWaitRound <= maxCiPollAttempts; ciWaitRound++) {
             if (!expectedHeadSha || snapshot.headRefOid === expectedHeadSha) {
@@ -1359,9 +1380,9 @@ async function runObserverLoop(ctx, dependencies = {}) {
             while (
                 totalPollsUsed < maxCiPollAttempts &&
                 ((expectedHeadSha && snapshot.headRefOid !== expectedHeadSha) ||
+                    unchangedWaiting() ||
                     (!hasPendingRepairFeedback(snapshot) &&
-                        (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot) ||
-                            (nonempty(lastWaitingFingerprint) && computeSnapshotFingerprint(snapshot) === lastWaitingFingerprint))))
+                        (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot))))
             ) {
                 await recordMilestone(ctx, {
                     id: `${prefix}-ci-wait-${createHash("sha256").update(String(expectedHeadSha || snapshot.headRefOid || "unknown")).digest("hex")}`,
@@ -1404,6 +1425,9 @@ async function runObserverLoop(ctx, dependencies = {}) {
 
             const blocked = environmentHandoff(snapshot, parsedPr.prUrl, iteration);
             if (blocked) return blocked;
+
+            // Reaching the wait bound does not require classifying the same evidence again.
+            if (unchangedWaiting()) break;
 
             if (!hasPendingRepairFeedback(snapshot) &&
                 (ciEvidenceFromSnapshot(snapshot).status === "pending" || isSnapshotWaitingForCiOnly(snapshot))) {
@@ -1473,7 +1497,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 };
             }
 
-            const currentFingerprint = computeSnapshotFingerprint(snapshot);
+            const currentFingerprint = classificationFingerprint(snapshot);
             const beforeObserveSnap = snapshotWorktree(repoRoot, exec);
             const prChangedFiles = listPrChangedFiles(repoRoot, snapshot, exec);
             const stepKey = ciWaitRound === 0

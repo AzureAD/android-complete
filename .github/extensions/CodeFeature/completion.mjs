@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -323,14 +323,10 @@ export function createWorkflowCompletionDelivery(session, {
     store = fileStore(workspaceRoot, session.sessionId),
     retryDelayMs = 30_000,
     admissionTimeoutMs = 10_000,
-    reportError = (error) => {
-        const message = `Workflow chat delivery failed: ${error.message}. Delivery will retry; inspect the durable workflow run if the caller remains silent.`;
-        console.error(message);
-        void session.log(message, { level: "error" }).catch((logError) =>
-            console.error(`Cannot log completion delivery failure: ${logError.message}`));
-    },
+    reportError,
 } = {}) {
     if (!Number.isFinite(admissionTimeoutMs) || admissionTimeoutMs <= 0) throw new Error("Chat admission timeout must be positive.");
+    if (reportError !== undefined && typeof reportError !== "function") throw new Error("reportError must be a function.");
     for (const method of ["listRuns", "getRun", "getRunDetail", "getRunProgress", "waitForRun"]) {
         if (typeof session.workflow?.[method] !== "function") {
             throw new Error(`The installed Copilot SDK lacks session.workflow.${method}; completion delivery requires a compatible SDK`);
@@ -345,10 +341,86 @@ export function createWorkflowCompletionDelivery(session, {
     const catchups = new Map();
     const watches = new Map();
     const delayedOperations = new WeakSet();
-    const reportedFailures = new WeakSet();
+    const reportedFailures = new WeakMap();
+    const errorContexts = new WeakMap();
+    const incidents = new Map();
+    const diagnosticFile = path.join(workspaceRoot, ".github", "local-context", "code-feature", "completion", "diagnostics", `${digest(session.sessionId)}.jsonl`);
+    const report = reportError || ((_error, notice) => notify(notice.summary));
+    let incidentSequence = 0;
+    let operationSequence = 0;
+    let diagnosticFailure = null;
     const names = new Map(Object.entries(state.runs).map(([id, run]) => [id, run.workflowName]));
     let persistence = Promise.resolve();
     let pendingUpdates = 0;
+
+    function chain(error) {
+        const values = [];
+        const seen = new Set();
+        for (let value = error; value != null && !seen.has(value) && values.length < 8; value = value?.cause) {
+            seen.add(value);
+            values.push(value);
+        }
+        return values;
+    }
+
+    function signature(error) {
+        const root = chain(error).at(-1);
+        const normalizePath = (value) => String(value || "").replace(/\.json\.\d+\.next\b/g, ".json.<process>.next");
+        return digest(JSON.stringify(root?.code && root?.syscall ? {
+            code: root.code, syscall: root.syscall, path: normalizePath(root.path), dest: normalizePath(root.dest),
+        } : { name: root?.name || "Error", message: String(root?.message ?? root) }));
+    }
+
+    function diagnostic(record) {
+        try {
+            mkdirSync(path.dirname(diagnosticFile), { recursive: true });
+            if ((statSync(diagnosticFile, { throwIfNoEntry: false })?.size || 0) >= 1_048_576) {
+                copyFileSync(diagnosticFile, `${diagnosticFile}.previous`);
+                writeFileSync(diagnosticFile, "", { mode: 0o600 });
+            }
+            appendFileSync(diagnosticFile, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+            diagnosticFailure = null;
+            return true;
+        } catch (error) {
+            const key = `${signature(error)}:${record.id || record.kind}`;
+            if (diagnosticFailure !== key) {
+                diagnosticFailure = key;
+                console.error("Cannot save private workflow notification diagnostics:", error, record);
+            }
+            return false;
+        }
+    }
+
+    function notify(summary) {
+        try {
+            void Promise.resolve(session.log(summary, { level: "info" })).catch((error) =>
+                diagnostic({ kind: "notice-failed", recordedAt: Date.now(), error: String(error?.stack || error) }));
+        } catch (error) {
+            diagnostic({ kind: "notice-failed", recordedAt: Date.now(), error: String(error?.stack || error) });
+        }
+    }
+
+    function recovered(context) {
+        const incident = incidents.get(context.key);
+        if (!incident) return;
+        incidents.delete(context.key);
+        diagnostic({ kind: "recovered", recordedAt: Date.now(), ...incident });
+        if (!disposed) notify(context.kind === "save" ? "Workflow updates can be saved again."
+            : ["milestones", "outcome"].includes(context.kind) ? "Workflow updates can reach this chat again."
+                : "Workflow progress is available again.");
+    }
+
+    async function attempt(kind, runId, action) {
+        const context = { kind, runId, key: kind === "save" ? "save" : `${kind}:${runId || "session"}`, sequence: ++operationSequence };
+        try {
+            const result = await action();
+            recovered(context);
+            return result;
+        } catch (error) {
+            if (error && typeof error === "object" && (errorContexts.get(error)?.sequence || 0) < context.sequence) errorContexts.set(error, context);
+            throw error;
+        }
+    }
 
     function update(runId, change) {
         pendingUpdates++;
@@ -356,7 +428,7 @@ export function createWorkflowCompletionDelivery(session, {
             const next = structuredClone(state);
             const entry = next.runs[runId] ||= { workflowName: names.get(runId), delivered: [] };
             if (change(entry) === false) return;
-            await store.save(next);
+            await attempt("save", runId, () => store.save(next));
             state = next;
         });
         // Callers retain the rejection; a failed write must not poison later recovery.
@@ -378,9 +450,42 @@ export function createWorkflowCompletionDelivery(session, {
     }
 
     function failed(error) {
-        if (!error || typeof error !== "object" || !reportedFailures.has(error)) {
-            if (error && typeof error === "object") reportedFailures.add(error);
-            reportError(error);
+        const causes = chain(error);
+        const root = causes.at(-1);
+        const context = causes.map((cause) => errorContexts.get(cause)).filter(Boolean)
+            .sort((a, b) => b.sequence - a.sequence)[0] ||
+            { kind: "delivery", key: "delivery", runId: null };
+        const fingerprint = signature(error);
+        let incident = incidents.get(context.key);
+        const changed = !incident || incident.fingerprint !== fingerprint;
+        const changedCause = Boolean(incident && changed);
+        if (changed) {
+            incident = { id: digest(`${context.key}:${Date.now()}:${process.pid}:${++incidentSequence}`), key: context.key, fingerprint,
+                firstSeenAt: Date.now(), lastSeenAt: Date.now(), occurrences: 0 };
+            incidents.set(context.key, incident);
+        }
+        if (root && typeof root === "object" && reportedFailures.get(root) === incident.id) {
+            scheduleRetry();
+            return;
+        }
+        if (root && typeof root === "object") reportedFailures.set(root, incident.id);
+        incident.lastSeenAt = Date.now();
+        incident.occurrences++;
+        const recorded = diagnostic({
+            kind: changed ? "failure" : "repeat", recordedAt: Date.now(), ...incident, runId: context.runId,
+            errors: causes.map((cause) => ({
+                name: cause?.name, message: String(cause?.message ?? cause), code: cause?.code,
+                syscall: cause?.syscall, path: cause?.path, dest: cause?.dest, stack: cause?.stack,
+            })),
+        });
+        if (changed && !disposed) {
+            const summary = context.kind === "save" ? "Workflow updates could not be saved. Retrying automatically."
+                : ["milestones", "outcome"].includes(context.kind) ? "Some workflow updates could not reach this chat. Retrying automatically."
+                    : context.kind === "delivery" ? "Workflow updates encountered an error. Retrying automatically."
+                        : context.kind === "progress-tail" ? "Some workflow details could not be read. The recorded outcome is still available."
+                        : "Workflow progress could not be read. Retrying automatically.";
+            report(error, { ...incident, changedCause, summary: `${summary}${changedCause ? " The cause has changed." : ""}${recorded ? " Details are in the local workflow diagnostics."
+                : " Detailed diagnostics could not be saved; inspect the extension logs."}` });
         }
         scheduleRetry();
     }
@@ -420,7 +525,7 @@ export function createWorkflowCompletionDelivery(session, {
         if (watches.has(runId) || disposed) return;
         const controller = new AbortController();
         watches.set(runId, controller);
-        void session.workflow.waitForRun(runId, { signal: controller.signal }).then(() => {
+        void attempt("watch", runId, () => session.workflow.waitForRun(runId, { signal: controller.signal })).then(() => {
             if (watches.get(runId) === controller) watches.delete(runId);
             if (!disposed) track(runId);
         }, (error) => {
@@ -465,7 +570,7 @@ export function createWorkflowCompletionDelivery(session, {
         const worker = {};
         catchups.set(runId, worker);
         worker.promise = (async () => {
-            try { await catchUpMilestones(runId); }
+            try { await attempt("progress", runId, () => catchUpMilestones(runId)); }
             finally { catchups.delete(runId); }
         })();
         return worker.promise;
@@ -501,7 +606,7 @@ export function createWorkflowCompletionDelivery(session, {
         worker.promise = (async () => {
             try {
                 do {
-                    await drainMilestones(runId);
+                    await attempt("milestones", runId, () => drainMilestones(runId));
                 } while (!disposed && state.runs[runId]?.milestones?.pending?.length);
                 // Delete atomically with the final queue check, before resolving joiners.
                 // A later enqueue creates a new worker instead of joining a finished one.
@@ -568,9 +673,9 @@ export function createWorkflowCompletionDelivery(session, {
         let progress = [];
         if (run.status !== "completed") {
             try {
-                progress = array((await session.workflow.getRunProgress(runId, { limit: 8 })).records);
+                progress = array((await attempt("progress-tail", runId, () => session.workflow.getRunProgress(runId, { limit: 8 }))).records);
             } catch (error) {
-                reportError(new Error(`Progress unavailable for run ${runId}: ${error.message}`, { cause: error }));
+                failed(new Error(`Progress unavailable for run ${runId}: ${error.message}`, { cause: error }));
                 progress = [{ attempt: run.attempt, text: "Progress unavailable; inspect this run's durable progress before taking recovery action." }];
             }
         }
@@ -584,11 +689,11 @@ export function createWorkflowCompletionDelivery(session, {
             });
         }
         try {
-            await session.send({
+            await attempt("outcome", runId, () => session.send({
                 prompt: state.runs[runId].pending.prompt,
                 source: "system",
                 mode: "immediate",
-            });
+            }));
             await update(runId, (entry) => {
                 entry.delivered.push(key);
                 delete entry.pending;
@@ -614,7 +719,7 @@ export function createWorkflowCompletionDelivery(session, {
             try {
                 do {
                     worker.dirty = false;
-                    await inspect(runId);
+                    await attempt("inspection", runId, () => inspect(runId));
                 } while (worker.dirty && !disposed);
                 // Remove with the final dirty check, before resolving any joiners.
                 workers.delete(runId);
@@ -636,7 +741,7 @@ export function createWorkflowCompletionDelivery(session, {
     function reconcile() {
         if (disposed) return Promise.resolve();
         if (reconciliation) return reconciliation;
-        reconciliation = (async () => {
+        reconciliation = attempt("reconciliation", null, async () => {
             for (const [runId, name] of names) track(runId, name);
             let beforeSeq;
             do {
@@ -649,7 +754,7 @@ export function createWorkflowCompletionDelivery(session, {
                 beforeSeq = page.oldestSeq;
             } while (!disposed);
             await flush();
-        })().finally(() => { reconciliation = undefined; });
+        }).finally(() => { reconciliation = undefined; });
         return reconciliation;
     }
 

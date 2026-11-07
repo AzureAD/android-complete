@@ -719,6 +719,149 @@ test("pending CI never bypasses merge conflicts or actionable review feedback be
     }
 });
 
+const classifiedWait = {
+    verdict: "waiting-for-ci", repairKind: "none", summary: "Review feedback has no blocking findings; CI is still running.",
+    evidence: ["Existing feedback was classified."], actionableFindings: [],
+};
+const reviewedWaitingSnapshot = () => snapshot({
+    statusCheckRollup: [{ name: "CI", state: "PENDING" }, { name: "Advisory", state: "SUCCESS" }],
+    prBuilds: [{ id: 91, status: "inProgress", sourceHeadSha: "a".repeat(40) }],
+    inlineReviewComments: [{ id: 7, body: "Consider simplifying this optional helper.", path: "Foo.kt", line: 12 }],
+    activeReviewThreads: [{ id: 8, status: "active", comments: [{ id: 9, content: "Optional style suggestion." }] }],
+    reviews: [{ id: 10, author: { login: "reviewer" }, state: "COMMENTED", body: "Optional observations." }],
+    comments: [{ id: 11, author: { login: "reviewer" }, body: "Existing nonblocking note." }],
+    policyEvaluations: [{ evaluationId: 12, status: "queued", blocking: true, minimumApproverCount: 1 }],
+});
+
+test("unchanged classified feedback uses one observer across sixty CI waits, including the final bound", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 60, ciPollIntervalMs: 0 });
+    let reads = 0, sleeps = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => { sleeps++; },
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            value.collectedAt = ++reads;
+            value.inlineReviewComments[0].updatedAt = String(reads);
+            value.prBuilds[0].startTime = String(reads);
+            if (reads % 2) value.statusCheckRollup.reverse();
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1, "Already-classified feedback must not spend an agent on every CI wait");
+    assert.equal(sleeps, 60);
+    assert.equal(reads, 61);
+    assert.equal(result.status, "waiting-for-ci");
+    assert.equal(result.ci.status, "pending");
+    assert.equal(result.summary, classifiedWait.summary);
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(result.continuation.args.maxIterations, 2, "Waiting must not consume or reset the tactical repair allowance");
+});
+
+test("reused waiting decisions are invalidated by edited feedback, policies, diagnostics and source identity", async () => {
+    const changes = [
+        ["inline body", (value) => { value.inlineReviewComments[0].body = "Fix cancellation before merging."; }],
+        ["thread body", (value) => { value.activeReviewThreads[0].comments[0].content = "Fix a newly identified defect."; }],
+        ["review body", (value) => { value.reviews[0].body = "New required review finding."; }],
+        ["review state", (value) => { value.reviews[0].state = "CHANGES_REQUESTED"; }],
+        ["top-level body", (value) => { value.comments[0].body = "New required source correction."; }],
+        ["policy", (value) => { value.policyEvaluations[0].minimumApproverCount = 2; }],
+        ["source head", (value) => { value.headRefOid = "b".repeat(40); }],
+        ["merge head", (value) => { value.mergeHeadSha = "b".repeat(40); }],
+        ["build binding", (value) => { value.prBuilds[0].sourceHeadSha = "b".repeat(40); }],
+        ["CI description", (value) => { value.statusCheckRollup[0].description = "New provider diagnostic."; }],
+        ["merge conflict", (value) => { value.mergeStateStatus = "DIRTY"; }],
+        ["PR narrative", (value) => { value.body = "New owner instructions about the change."; }],
+    ];
+    for (const [label, change] of changes) {
+        const context = ctx([structuredClone(classifiedWait), {
+            verdict: "needs-owner-decision", repairKind: "none", summary: "New evidence needs an owner decision.",
+            evidence: [], actionableFindings: [],
+        }], { maxCiPollAttempts: 4, ciPollIntervalMs: 0 });
+        context.args.maxIterations = 0;
+        let reads = 0, sleeps = 0;
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => { sleeps++; },
+            fetchPrSnapshot: () => {
+                const value = reviewedWaitingSnapshot();
+                if (++reads >= 3) change(value);
+                return value;
+            },
+        });
+        assert.equal(context.calls.length, 2, label);
+        assert.equal(sleeps, 2, label);
+        assert.equal(result.status, "needs-owner-decision", label);
+    }
+});
+
+test("new failed tasks interrupt a reused CI wait without another classifier or a repair-budget reset", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 5, ciPollIntervalMs: 0 });
+    context.args.maxIterations = 0;
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) {
+                value.prBuilds[0].status = "completed";
+                value.prBuilds[0].result = "failed";
+                value.prBuilds[0].failedTasks = [{ name: "Unit tests", failedTests: [{ testName: "CancellationTest", errorMessage: "New exact-head regression" }] }];
+                value.statusCheckRollup[0].state = "FAILURE";
+            }
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1);
+    assert.equal(result.status, "max-iterations-reached");
+    assert.equal(result.ci.status, "failed");
+    assert.equal(result.repairAttempts, 0);
+    assert.ok(result.actionableFindings.some((finding) => finding.includes("New exact-head regression")));
+    assert.equal(result.continuation.args.maxIterations, 0);
+});
+
+test("CI completion replaces an earlier waiting classification with a fresh terminal decision", async () => {
+    const context = ctx([structuredClone(classifiedWait), {
+        verdict: "ready", repairKind: "none", summary: "Current CI and source checks passed.",
+        evidence: ["Exact-head CI succeeded."], actionableFindings: [],
+    }], { maxCiPollAttempts: 4, ciPollIntervalMs: 0 });
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) {
+                value.statusCheckRollup[0].state = "SUCCESS";
+                value.prBuilds[0].status = "completed";
+                value.prBuilds[0].result = "succeeded";
+                value.policyEvaluations = [];
+            }
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 2);
+    assert.equal(result.status, "ready-for-human-merge");
+    assert.equal(result.ci.status, "passed");
+    assert.equal(result.ci.headSha, "a".repeat(40));
+    assert.equal(result.humanMergeOnly, true);
+});
+
+test("a stale snapshot invalidates classified waiting and explicitly waits for fresh head evidence", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 3, ciPollIntervalMs: 0 });
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) value.snapshotHeadChanged = true;
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1);
+    assert.equal(result.status, "waiting-for-ci");
+    assert.match(result.summary, /PR head changed; waiting for fresh CI results/);
+    assert.notEqual(result.summary, classifiedWait.summary);
+    assert.notEqual(result.ci.status, "passed");
+});
+
 test("GitHub and GHE observers enrich readable Azure build diagnostics through the supplied executor", async () => {
     for (const url of [prUrl, "https://msft.ghe.com/security/ad-accounts-for-android/pull/42"]) {
         const parsed = parsePullRequestUrl(url);

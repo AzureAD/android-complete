@@ -212,8 +212,188 @@ function fixture(t, runs = [], options = {}) {
         const directory = path.join(root, ".github", "local-context", "code-feature", "completion");
         return path.join(directory, readdirSync(directory).find((file) => file.endsWith(".json")));
     }
-    return { session, errors, install, stateFile };
+    function diagnosticFile() {
+        const directory = path.join(root, ".github", "local-context", "code-feature", "completion", "diagnostics");
+        return path.join(directory, readdirSync(directory).find((file) => file.endsWith(".jsonl")));
+    }
+    return { root, session, errors, install, stateFile, diagnosticFile };
 }
+
+test("fresh errors for one delivery incident produce one concise notice, with changed-cause and recovery notices", async (t) => {
+    const { session, install, stateFile, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    const originalErrors = [];
+    session.sendHook = () => {
+        const error = new Error("Chat unavailable: C:\\private\\session-state\\full-diagnostic");
+        originalErrors.push(error);
+        throw error;
+    };
+    const milestone = { id: "incident", title: "Evidence", outcome: "completed", summary: "Evidence complete; implementation is next." };
+    for (let i = 0; i < 3; i++) await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /Chat unavailable/);
+    assert.equal(session.logs.length, 1, "Fresh Error objects and wrappers must not repeat the same notice");
+    assert.equal(session.errors.length, 0, "A delivery incident must not create repeated session-error banners");
+    assert.match(session.logs[0].message, /could not reach this chat/);
+    assert.doesNotMatch(session.logs[0].message, /C:\\private|session-state|not acknowledged/);
+    let diagnostics = readFileSync(diagnosticFile(), "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(diagnostics.map((record) => record.kind), ["failure", "repeat", "repeat"]);
+    assert.equal(diagnostics.at(-1).occurrences, 3);
+    assert.match(diagnostics[0].errors.at(-1).stack, /C:\\private\\session-state\\full-diagnostic/);
+    assert.equal(new Set(diagnostics.map((record) => record.id)).size, 1);
+    assert.equal(session.messages.length, 0);
+
+    session.sendHook = () => { throw new Error("A different transport failure"); };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /different transport/);
+    assert.equal(session.logs.length, 2);
+    assert.match(session.logs[1].message, /cause has changed/);
+    session.sendHook = undefined;
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    await delivery.flush();
+    assert.equal(session.logs.length, 3);
+    assert.equal(session.logs[2].message, "Workflow updates can reach this chat again.");
+    assert.equal(session.messages.length, 1);
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.delivered.length, 1);
+
+    session.sendHook = () => { throw originalErrors[0]; };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", { ...milestone, id: "new-incident" }), /Chat unavailable/);
+    assert.equal(session.logs.length, 4, "The same Error object must be reportable again after recovery");
+    diagnostics = readFileSync(diagnosticFile(), "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(diagnostics.filter((record) => record.kind === "failure").length, 3);
+    assert.equal(diagnostics.filter((record) => record.kind === "recovered").length, 1);
+});
+
+test("shared outbox failures coalesce across runs and temporary filenames without unrelated read recovery", async (t) => {
+    const { session, errors, install } = fixture(t, [
+        [completed({ status: "running" })], [completed({ runId: "run-2", status: "running" })],
+    ]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    let blocked = false;
+    const failures = [];
+    const delivery = install({ store: {
+        load: () => saved,
+        save(next) {
+            if (blocked) {
+                const error = Object.assign(new Error(`EPERM: rename C:\\private\\outbox.json.${100 + failures.length}.next`), {
+                    code: "EPERM", syscall: "rename", path: `C:\\private\\outbox.json.${100 + failures.length}.next`, dest: "C:\\private\\outbox.json",
+                });
+                failures.push(error);
+                throw error;
+            }
+            saved = structuredClone(next);
+        },
+    } });
+    await delivery.ready;
+    blocked = true;
+    const milestone = { id: "save-incident", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    for (const runId of ["run-1", "run-2", "run-1"]) {
+        await assert.rejects(delivery.enqueueMilestone(runId, "code-feature", milestone), { code: "EPERM" });
+    }
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0], failures[0], "Injected reporters retain the original failure object");
+    await delivery.track("run-1");
+    await delivery.flush();
+    assert.equal(session.logs.length, 0, "A successful progress read cannot recover a failed outbox save");
+    assert.equal(session.messages.length, 0);
+    blocked = false;
+    await delivery.enqueueMilestone("run-2", "code-feature", milestone);
+    assert.equal(session.logs.length, 1);
+    assert.equal(session.logs[0].message, "Workflow updates can be saved again.");
+    assert.equal(saved.runs["run-2"].milestones.delivered.length, 1);
+    blocked = true;
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), { code: "EPERM" });
+    assert.equal(errors.length, 2);
+});
+
+test("success for another run or operation does not clear a milestone delivery incident", async (t) => {
+    const { session, install } = fixture(t, [
+        [completed({ status: "running" })], [completed({ runId: "run-2", status: "running" })],
+    ]);
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    session.sendHook = (message) => {
+        if (message.prompt.includes("[workflow-milestone:")) throw new Error("Milestone transport unavailable");
+    };
+    const milestone = { id: "still-blocked", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /transport unavailable/);
+    session.set(completed({ runId: "run-2" }));
+    await delivery.track("run-2");
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.match(session.messages[0].prompt, /\[workflow-outcome:run-2:/);
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /transport unavailable/);
+    assert.equal(session.logs.length, 1, "Other saves, progress reads and terminal sends must not reset this incident");
+    session.sendHook = undefined;
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    assert.equal(session.logs.filter((record) => /can reach this chat again/.test(record.message)).length, 1);
+});
+
+test("unavailable settled progress is coalesced without hiding terminal failures or false recovery", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "error", error: "Actual workflow failure" })]]);
+    let blocked = true;
+    const readProgress = session.workflow.getRunProgress;
+    session.workflow.getRunProgress = async (id, options) => {
+        if (blocked && options.afterSeq === undefined) throw new Error("Private progress-tail diagnostic");
+        return readProgress(id, options);
+    };
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    session.set(completed({ status: "error", attempt: 2, error: "Actual workflow failure" }));
+    await delivery.track("run-1");
+    await delivery.flush();
+    assert.equal(session.logs.length, 1);
+    assert.match(session.logs[0].message, /recorded outcome is still available/);
+    assert.doesNotMatch(session.logs[0].message, /Retrying automatically|Private progress-tail/);
+    assert.equal(session.messages.length, 2);
+    for (const message of session.messages) assert.match(message.prompt, /Actual workflow failure/);
+    blocked = false;
+    session.set(completed({ status: "error", attempt: 3, error: "Actual workflow failure" }));
+    await delivery.track("run-1");
+    await delivery.flush();
+    assert.equal(session.messages.length, 3);
+    assert.equal(session.logs.length, 2);
+    assert.equal(session.logs[1].message, "Workflow progress is available again.");
+});
+
+test("diagnostic write failures are explicit and coalesced without recursively logging through the failing channel", async (t) => {
+    const { root, session, install, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    const consoleError = t.mock.method(console, "error", () => {});
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    const blockedDirectory = path.join(root, ".github", "local-context", "code-feature", "completion", "diagnostics");
+    writeFileSync(blockedDirectory, "A file blocks diagnostic directory creation.");
+    session.sendHook = () => { throw new Error("Original private transport diagnostic"); };
+    const milestone = { id: "diagnostic-failure", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    for (let i = 0; i < 2; i++) await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    assert.equal(session.logs.length, 1);
+    assert.match(session.logs[0].message, /Detailed diagnostics could not be saved/);
+    assert.equal(consoleError.mock.callCount(), 1);
+    assert.match(consoleError.mock.calls[0].arguments[2].errors.at(-1).message, /Original private transport diagnostic/);
+    rmSync(blockedDirectory);
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    const record = JSON.parse(readFileSync(diagnosticFile(), "utf8").trim());
+    assert.equal(record.kind, "repeat");
+    assert.match(record.errors.at(-1).message, /Original private transport diagnostic/);
+    session.sendHook = undefined;
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    assert.equal(session.logs.length, 2);
+});
+
+test("private incident diagnostics rotate separately from the durable delivery snapshot", async (t) => {
+    const { session, install, stateFile, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install({ reportError: undefined });
+    await delivery.ready;
+    session.sendHook = () => { throw new Error("Transport unavailable"); };
+    const milestone = { id: "rotation", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    const file = diagnosticFile();
+    const previous = `${"x".repeat(1_048_575)}\n`;
+    writeFileSync(file, previous);
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone));
+    assert.equal(readFileSync(`${file}.previous`, "utf8"), previous);
+    assert.equal(JSON.parse(readFileSync(file, "utf8").trim()).kind, "repeat");
+    assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 1);
+    assert.equal(session.logs.length, 1);
+});
 
 async function holdWindowsOutbox(t, file) {
     const encodedPath = Buffer.from(file).toString("base64");
@@ -762,8 +942,8 @@ test("startup catch-up can time out before a directly delivered milestone withou
 });
 
 for (const stage of ["catch-up", "admission"]) {
-    test(`a real ${stage} failure after the delay boundary is still reported as an error`, async (t) => {
-        const { session, install } = fixture(t, stage === "catch-up" ? [[completed({ status: "running" })]] : [],
+    test(`a real ${stage} failure after the delay boundary remains explicit without a session-error banner`, { timeout: 3000 }, async (t) => {
+        const { session, install, diagnosticFile } = fixture(t, stage === "catch-up" ? [[completed({ status: "running" })]] : [],
             { admissionTimeoutMs: 5 });
         const blocked = deferred();
         const failure = deferred();
@@ -771,7 +951,7 @@ for (const stage of ["catch-up", "admission"]) {
         const log = session.log.bind(session);
         session.log = async (message, options) => {
             await log(message, options);
-            if (options?.level === "error") failure.resolve();
+            if (options?.level === "info") failure.resolve();
         };
         if (stage === "catch-up") session.workflow.getRunProgress = () => blocked.promise;
         else session.sendHook = () => blocked.promise;
@@ -784,7 +964,10 @@ for (const stage of ["catch-up", "admission"]) {
             assert.equal(session.errors.length, 0, "A slow operation is not a failed operation");
             blocked.reject(new Error("Actual transport failure after timeout"));
             await failure.promise;
-            assert.ok(session.errors.some((message) => /Actual transport failure after timeout/.test(message)));
+            assert.equal(session.errors.length, 0);
+            assert.equal(session.logs.length, 1);
+            assert.doesNotMatch(session.logs[0].message, /Actual transport failure after timeout/);
+            assert.match(readFileSync(diagnosticFile(), "utf8"), /Actual transport failure after timeout/);
         } finally {
             blocked.resolve({ records: [] });
             delivery.dispose();

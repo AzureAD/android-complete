@@ -146,6 +146,12 @@ Given an approved coding task or PBI specification:
   including when feedback first appears during a CI poll. GitHub/GHE snapshots collect
   inline threads and Azure build diagnostics through the supplied executor, whether
   observing standalone or from `code-feature`; unavailable diagnostic reads stay explicit.
+- Once the observer classifies existing feedback as waiting for CI, unchanged evidence
+  reuses that decision through the existing wait bound, including the final observation.
+  Edited comment/review bodies, review states, policies, diagnostics, conflicts, and
+  source/merge/build bindings invalidate it. Collection timestamps and unordered check,
+  build, policy and thread ordering do not. This in-memory decision cache is separate
+  from durable milestone fingerprints; it adds no agents, polling or repair allowance.
 - Hosted-image brownouts and provider-unavailable cancellations retain timeline evidence
   and return `infrastructure-blocked` without spending source/test-repair agents or
   modifying pipeline YAML, even if an external coverage status is pending. Retry requires
@@ -308,6 +314,21 @@ no notice is sent before its pending receipt is durable. Exhausted retries remai
 explicit errors; they never become false delivery acknowledgements. Flush operations
 also wait for queued persistence. External diagnostic readers should allow delete
 sharing on Windows and close their handles before waiting for another file event.
+
+Notification failures are coalesced by operation and underlying cause, not Error-object
+identity. The shared outbox has one storage incident across runs; reads and sends retain
+their run/operation scope. A continuing incident produces one concise informational
+notice rather than repeated session-error banners. A changed cause produces another
+notice, and success of the affected operation produces one recovery notice. Unrelated
+successful reads, writes or deliveries do not clear it. This coalescing is process-local:
+an extension restart can report an existing problem again. It does not deduplicate actual
+workflow failures, change terminal outcomes, or claim that a message was rendered.
+
+Full notification-error details and repeat counts stay in the ignored
+`completion/diagnostics/<session-hash>.jsonl`, independently of the atomic outbox snapshot.
+The log rotates at 1 MiB and retains one `.previous` file. Diagnostic-write failures are
+explicit, with coalesced extension-log fallback rather than recursive session logging.
+Ordinary admission-window delays remain silent and are not notification incidents.
 
 On recovery, fast-forward the workflow source only after the current attempt settles,
 then resume the same run with unchanged approved task inputs. Verify that cached
