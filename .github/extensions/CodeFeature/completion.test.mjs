@@ -231,13 +231,15 @@ test("fresh errors for one delivery incident produce one concise notice, with ch
     };
     const milestone = { id: "incident", title: "Evidence", outcome: "completed", summary: "Evidence complete; implementation is next." };
     for (let i = 0; i < 3; i++) await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /Chat unavailable/);
+    session.sendHook = () => { throw originalErrors[0]; };
+    await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), /Chat unavailable/);
     assert.equal(session.logs.length, 1, "Fresh Error objects and wrappers must not repeat the same notice");
     assert.equal(session.errors.length, 0, "A delivery incident must not create repeated session-error banners");
     assert.match(session.logs[0].message, /could not reach this chat/);
     assert.doesNotMatch(session.logs[0].message, /C:\\private|session-state|not acknowledged/);
     let diagnostics = readFileSync(diagnosticFile(), "utf8").trim().split("\n").map(JSON.parse);
-    assert.deepEqual(diagnostics.map((record) => record.kind), ["failure", "repeat", "repeat"]);
-    assert.equal(diagnostics.at(-1).occurrences, 3);
+    assert.deepEqual(diagnostics.map((record) => record.kind), ["failure", "repeat", "repeat", "repeat"]);
+    assert.equal(diagnostics.at(-1).occurrences, 4, "A new retry is counted even when it reuses the same Error instance");
     assert.match(diagnostics[0].errors.at(-1).stack, /C:\\private\\session-state\\full-diagnostic/);
     assert.equal(new Set(diagnostics.map((record) => record.id)).size, 1);
     assert.equal(session.messages.length, 0);
@@ -393,6 +395,58 @@ test("private incident diagnostics rotate separately from the durable delivery s
     assert.equal(JSON.parse(readFileSync(file, "utf8").trim()).kind, "repeat");
     assert.equal(JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].milestones.pending.length, 1);
     assert.equal(session.logs.length, 1);
+});
+
+test("late catch-up joiners preserve the actual send-failure scope and do not duplicate incident notices", async (t) => {
+    const { session, install, diagnosticFile } = fixture(t, [[completed({ status: "running" })]]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    const cursorSaved = deferred();
+    const delivery = install({ reportError: undefined, store: {
+        load: () => saved,
+        save(next) {
+            saved = structuredClone(next);
+            if (saved.runs["run-1"]?.milestones?.cursor === 1) cursorSaved.resolve();
+        },
+    } });
+    await delivery.ready;
+    const blocked = deferred();
+    const entered = deferred();
+    session.sendHook = () => { entered.resolve(); return blocked.promise; };
+    const progress = await milestoneProgress("joined-failure", "Evidence");
+    const enqueued = delivery.enqueueMilestone("run-1", "code-feature", milestoneFromProgress(progress));
+    await entered.promise;
+    session.progress = [progress];
+    const catchingUp = delivery.track("run-1");
+    await cursorSaved.promise;
+    await new Promise(setImmediate);
+    blocked.reject(new Error("Actual milestone transport failure"));
+    await assert.rejects(enqueued, /Actual milestone transport failure/);
+    await catchingUp;
+    await delivery.flush();
+    assert.equal(session.logs.length, 1);
+    assert.match(session.logs[0].message, /could not reach this chat/);
+    const diagnostics = readFileSync(diagnosticFile(), "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(diagnostics.filter((record) => record.kind === "failure").length, 1);
+    assert.equal(diagnostics[0].key, "milestones:run-1");
+    assert.equal(saved.runs["run-1"].milestones.pending.length, 1);
+});
+
+test("verbose failed and deferred local evidence stays bounded in completion prompts and pending outboxes", async (t) => {
+    for (const status of ["failed", "deferred"]) {
+        const evidence = `SDK location not found. ${"Verbose build output. ".repeat(10_000)}`;
+        const run = completed();
+        run.result.verification = [{ targetId: "common", local: { status, evidence: [evidence] }, ci: { status: "not-observed" } }];
+        const { session, install, stateFile } = fixture(t, [[run]]);
+        let persistedPrompt;
+        session.sendHook = () => { persistedPrompt = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].pending.prompt; };
+        const delivery = install();
+        await delivery.ready;
+        await delivery.flush();
+        assert.ok(session.messages[0].prompt.length < 4000, status);
+        assert.equal(persistedPrompt, session.messages[0].prompt, "The durable-before-send prompt has the same bound");
+        assert.match(persistedPrompt, /SDK location not found/);
+        assert.equal(run.result.verification[0].local.evidence[0], evidence, "The full verification receipt is unchanged");
+    }
 });
 
 async function holdWindowsOutbox(t, file) {

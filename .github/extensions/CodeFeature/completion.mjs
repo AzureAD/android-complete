@@ -417,7 +417,7 @@ export function createWorkflowCompletionDelivery(session, {
             recovered(context);
             return result;
         } catch (error) {
-            if (error && typeof error === "object" && (errorContexts.get(error)?.sequence || 0) < context.sequence) errorContexts.set(error, context);
+            if (error && typeof error === "object") errorContexts.set(error, context);
             throw error;
         }
     }
@@ -452,8 +452,7 @@ export function createWorkflowCompletionDelivery(session, {
     function failed(error) {
         const causes = chain(error);
         const root = causes.at(-1);
-        const context = causes.map((cause) => errorContexts.get(cause)).filter(Boolean)
-            .sort((a, b) => b.sequence - a.sequence)[0] ||
+        const context = causes.map((cause) => errorContexts.get(cause)).find(Boolean) ||
             { kind: "delivery", key: "delivery", runId: null };
         const fingerprint = signature(error);
         let incident = incidents.get(context.key);
@@ -464,11 +463,12 @@ export function createWorkflowCompletionDelivery(session, {
                 firstSeenAt: Date.now(), lastSeenAt: Date.now(), occurrences: 0 };
             incidents.set(context.key, incident);
         }
-        if (root && typeof root === "object" && reportedFailures.get(root) === incident.id) {
+        const reportKey = `${incident.id}:${context.sequence || 0}`;
+        if (root && typeof root === "object" && reportedFailures.get(root) === reportKey) {
             scheduleRetry();
             return;
         }
-        if (root && typeof root === "object") reportedFailures.set(root, incident.id);
+        if (root && typeof root === "object") reportedFailures.set(root, reportKey);
         incident.lastSeenAt = Date.now();
         incident.occurrences++;
         const recorded = diagnostic({
@@ -537,10 +537,13 @@ export function createWorkflowCompletionDelivery(session, {
     async function catchUpMilestones(runId) {
         let cursor = state.runs[runId]?.milestones?.cursor ?? 0;
         while (!disposed) {
-            const page = await session.workflow.getRunProgress(runId, { afterSeq: cursor, limit: 100 });
-            const records = array(page.records).filter((record) => Number.isSafeInteger(record.seq) && record.seq > cursor)
-                .sort((a, b) => a.seq - b.seq);
-            if (page.hasMoreNewer && !records.length) throw new Error(`Milestone progress cursor did not advance for run ${runId}.`);
+            const { page, records } = await attempt("progress", runId, async () => {
+                const page = await session.workflow.getRunProgress(runId, { afterSeq: cursor, limit: 100 });
+                const records = array(page.records).filter((record) => Number.isSafeInteger(record.seq) && record.seq > cursor)
+                    .sort((a, b) => a.seq - b.seq);
+                if (page.hasMoreNewer && !records.length) throw new Error(`Milestone progress cursor did not advance for run ${runId}.`);
+                return { page, records };
+            });
             if (records.length) {
                 await update(runId, (entry) => {
                     const milestones = entry.milestones ||= { cursor: 0, delivered: [], pending: [] };
@@ -570,7 +573,7 @@ export function createWorkflowCompletionDelivery(session, {
         const worker = {};
         catchups.set(runId, worker);
         worker.promise = (async () => {
-            try { await attempt("progress", runId, () => catchUpMilestones(runId)); }
+            try { await catchUpMilestones(runId); }
             finally { catchups.delete(runId); }
         })();
         return worker.promise;
@@ -580,7 +583,8 @@ export function createWorkflowCompletionDelivery(session, {
         while (!disposed && state.runs[runId]?.milestones?.pending?.length) {
             const notice = state.runs[runId].milestones.pending[0];
             try {
-                const messageId = await session.send({ prompt: notice.prompt, source: "system", mode: "immediate" });
+                const messageId = await attempt("milestones", runId, () =>
+                    session.send({ prompt: notice.prompt, source: "system", mode: "immediate" }));
                 const admittedAt = Date.now();
                 await update(runId, (entry) => {
                     if (!entry.milestones.delivered.includes(notice.key)) entry.milestones.delivered.push(notice.key);
@@ -606,7 +610,7 @@ export function createWorkflowCompletionDelivery(session, {
         worker.promise = (async () => {
             try {
                 do {
-                    await attempt("milestones", runId, () => drainMilestones(runId));
+                    await drainMilestones(runId);
                 } while (!disposed && state.runs[runId]?.milestones?.pending?.length);
                 // Delete atomically with the final queue check, before resolving joiners.
                 // A later enqueue creates a new worker instead of joining a finished one.
@@ -648,12 +652,12 @@ export function createWorkflowCompletionDelivery(session, {
 
     async function inspect(runId) {
         if (!names.has(runId)) {
-            const detail = await session.workflow.getRunDetail(runId);
+            const detail = await attempt("identity", runId, () => session.workflow.getRunDetail(runId));
             if (!workflowNames.has(detail.workflowName)) return;
             names.set(runId, detail.workflowName);
         }
         if (!workflowNames.has(names.get(runId))) return;
-        const run = await session.workflow.getRun(runId);
+        const run = await attempt("inspection", runId, () => session.workflow.getRun(runId));
         if (disposed) return;
         try {
             await waitForAdmission(runId, deliverMilestones(runId), "milestone catch-up");
@@ -719,7 +723,7 @@ export function createWorkflowCompletionDelivery(session, {
             try {
                 do {
                     worker.dirty = false;
-                    await attempt("inspection", runId, () => inspect(runId));
+                    await inspect(runId);
                 } while (worker.dirty && !disposed);
                 // Remove with the final dirty check, before resolving any joiners.
                 workers.delete(runId);
@@ -741,20 +745,23 @@ export function createWorkflowCompletionDelivery(session, {
     function reconcile() {
         if (disposed) return Promise.resolve();
         if (reconciliation) return reconciliation;
-        reconciliation = attempt("reconciliation", null, async () => {
+        reconciliation = (async () => {
             for (const [runId, name] of names) track(runId, name);
             let beforeSeq;
             do {
-                const page = await session.workflow.listRuns({ limit: 500, ...(beforeSeq === undefined ? {} : { beforeSeq }) });
+                const page = await attempt("reconciliation", null, async () => {
+                    const page = await session.workflow.listRuns({ limit: 500, ...(beforeSeq === undefined ? {} : { beforeSeq }) });
+                    if (page.omittedOlder && (page.oldestSeq == null || page.oldestSeq === beforeSeq)) {
+                        throw new Error("Workflow run catch-up could not advance its durable paging cursor");
+                    }
+                    return page;
+                });
                 for (const run of page.runs) track(run.runId, run.workflowName);
                 if (!page.omittedOlder) break;
-                if (page.oldestSeq == null || page.oldestSeq === beforeSeq) {
-                    throw new Error("Workflow run catch-up could not advance its durable paging cursor");
-                }
                 beforeSeq = page.oldestSeq;
             } while (!disposed);
             await flush();
-        }).finally(() => { reconciliation = undefined; });
+        })().finally(() => { reconciliation = undefined; });
         return reconciliation;
     }
 

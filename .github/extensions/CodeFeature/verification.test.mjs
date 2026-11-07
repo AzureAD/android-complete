@@ -85,6 +85,41 @@ test("verification wording separates failed, deferred, unconfirmed and executed 
     assert.equal(ciVerificationSummary({ ci: { status: "failed" } }), "CI reports a failure, but its PR head has not been confirmed.");
 });
 
+test("local diagnostic summaries are bounded without changing full failed or deferred receipts", () => {
+    for (const status of ["failed", "deferred"]) {
+        const reason = `SDK location not found. ${"Full build diagnostic. ".repeat(10_000)}`;
+        const receipt = { local: { status, evidence: ["Successful command: compile", reason] } };
+        const summary = localVerificationSummary(receipt);
+        assert.ok(summary.length <= 500);
+        assert.match(summary, /SDK location not found/);
+        assert.ok(summary.endsWith("..."));
+        assert.equal(receipt.local.evidence[1], reason);
+    }
+});
+
+test("repeated CI updates retain failed and deferred local reasons without changing the compact marker schema", () => {
+    const parsed = parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42");
+    for (const status of ["failed", "deferred"]) {
+        const verification = {
+            local: { status, headSha: "a".repeat(40), evidence: ["SDK location not found. Device verification needs authorized CI."] },
+            ci: { status: "not-observed", headSha: null },
+        };
+        let description = `## Validation & Testing\n${verificationSummary(verification)}\nHuman details.\n${renderVerificationBlock(verification)}`;
+        for (const ciStatus of ["pending", "passed", "failed", "passed"]) {
+            const ci = { status: ciStatus, headSha: "a".repeat(40) };
+            description = publishObserverStatus(parsed, snapshot({ description }), "status", { exec: () => "", ci });
+            const line = description.split("\n").find((value) => value.startsWith("Local verification"));
+            assert.equal(line, verificationSummary({ ...verification, ci }));
+            assert.match(description, /Human details\./);
+            const marker = parseMarkerBlock(description, verificationMarkers);
+            assert.deepEqual(Object.keys(marker.local).sort(), ["headSha", "status"]);
+            assert.equal(marker.local.status, status);
+            assert.equal(marker.ci.status, ciStatus);
+        }
+        assert.deepEqual(verification.local.evidence, ["SDK location not found. Device verification needs authorized CI."]);
+    }
+});
+
 test("CI waiting wording claims running or queued only from the actual current-head snapshot", () => {
     assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "queued" }] })), "CI checks are queued.");
     assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "in_progress" }] })), "CI checks are running.");
@@ -755,6 +790,25 @@ test("unchanged classified feedback uses one observer across sixty CI waits, inc
     assert.equal(result.summary, classifiedWait.summary);
     assert.equal(result.repairAttempts, 0);
     assert.equal(result.continuation.args.maxIterations, 2, "Waiting must not consume or reset the tactical repair allowance");
+});
+
+test("zero source-repair allowance is described as disabled repairs, not exhausted budget or failed CI", async () => {
+    const context = ctx([{
+        verdict: "repair", repairKind: "review-comment", summary: "A review finding needs source verification.",
+        evidence: [], actionableFindings: ["Verify the unresolved review finding."],
+    }]);
+    context.args.maxIterations = 0;
+    const logs = [];
+    context.log = (value) => logs.push(value);
+    const result = await runPrObserver(context, { exec: () => "", fetchPrSnapshot: reviewedWaitingSnapshot });
+    assert.equal(result.status, "max-iterations-reached", "The raw protocol remains unchanged");
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(context.calls.length, 1);
+    assert.match(result.summary, /Source repairs are disabled for this run/);
+    assert.doesNotMatch(result.summary, /budget exhausted|remaining failures/);
+    const milestones = logs.map((value) => milestoneFromProgress({ kind: "log", text: value })).filter(Boolean);
+    assert.ok(milestones.some((value) => /Source repairs are disabled for this run/.test(value.summary)));
+    assert.ok(milestones.every((value) => !/repair allowance is used up/i.test(value.summary)));
 });
 
 test("reused waiting decisions are invalidated by edited feedback, policies, diagnostics and source identity", async () => {

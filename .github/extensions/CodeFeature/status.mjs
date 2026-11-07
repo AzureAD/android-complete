@@ -27,7 +27,7 @@ export function deliveryStatusSummary(status) {
         "ci-failed": "CI failed; the reported failures need attention.",
         "awaiting-human-review": "Required human review or repository approvals remain.",
         "infrastructure-blocked": "CI is blocked by its provider or build environment.",
-        "max-iterations-reached": "The repair allowance is used up; unresolved findings need a developer decision.",
+        "max-iterations-reached": "Unresolved findings need a developer decision.",
         "NO-GO": "Work stopped with unresolved issues.",
         "needs clarification": "A developer answer is needed before work can continue.",
         "GO to PR Review": "Source review complete; inspect publication and verification results before review.",
@@ -40,7 +40,9 @@ export function observerNextAction(result) {
     if (result.blockerKind === "ci-infrastructure") return "The CI provider or pipeline owner must resolve the environment blocker before retrying.";
     if (result.blockerKind === "ci-dependencies") return "The feed or pipeline owner must check dependency access and configuration before retrying.";
     if (result.blockerKind === "ci-diagnostics") return "Inspect the failing build's diagnostics before assigning a source repair.";
-    if (result.status === currentStatuses.observationExhausted) return "A developer must review the remaining findings and decide how to continue; the repair allowance is used up.";
+    if (result.status === currentStatuses.observationExhausted) return result.repairAttempts === 0
+        ? "A developer must review the remaining findings and decide how to continue."
+        : "A developer must review the remaining findings and decide how to continue; the repair allowance is used up.";
     if (result.status === currentStatuses.needsOwnerDecision) return "The developer must resolve the recorded blocker or scope decision.";
     if (result.ci?.status === "failed") return "Resolve the reported CI failures before merge.";
     if (result.status === currentStatuses.waitingForCi) return "Continue observing this PR with the remaining repair allowance.";

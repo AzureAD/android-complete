@@ -131,6 +131,11 @@ Given an approved coding task or PBI specification:
   not reported as executed tests. The compact verification marker carries actual states.
 - The observer updates the PR status/verification markers from its final snapshot, guarding
   against a concurrently changed head or description. Write failures are explicit.
+- Failed/deferred local-verification summaries retain a diagnostic excerpt of at most
+  500 characters; full evidence remains in the workflow verification receipt. Repeated
+  CI updates preserve that local reason in the managed narrative without expanding the
+  compact PR marker schema. Disabling source repairs is reported as disabled repairs,
+  not as a spent budget or proof of a CI failure.
 - ADO creation descriptions are budgeted to 3,500 UTF-16 characters, preserving required
   work-item/telemetry and JSON status markers and reserving room for final status updates.
   Oversized generated narrative is explicitly summarized with a receipt reference. Observer

@@ -42,7 +42,7 @@ const {
     slimReviewSchema,
     snapshotWorktree,
 } = await import(revisionedModuleUrl("./workflow.mjs"));
-const { ciVerificationSummary, verificationSummary } = await import(revisionedModuleUrl("./verification.mjs"));
+const { ciVerificationSummary, localVerificationSummary, verificationSummary } = await import(revisionedModuleUrl("./verification.mjs"));
 const { recordMilestone } = await import(revisionedModuleUrl("./milestones.mjs"));
 
 function loadObserverAgentPrompt(agentName, fallbackPrompt = "") {
@@ -1147,7 +1147,22 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
     }
     body = body.replace(
         /(## Validation & Testing\r?\n)Local verification(?::| (?:passed\.|failed\.|is incomplete;|has not been confirmed\.|status could not be confirmed\.))[^\r\n]*/,
-        (_line, heading) => heading + verificationSummary({ ...previousVerification, ci }),
+        (line, heading) => {
+            // The compact marker omits local evidence; retain the bounded narrative reason.
+            const previousLine = line.slice(heading.length);
+            const localSummary = localVerificationSummary({ local: { status: previousVerification.local?.status } });
+            const ciSuffix = ["passed", "failed", "pending", "unknown", "not-observed"].flatMap((status) => [
+                ciVerificationSummary({ ci: { status, headSha: snapshot.headRefOid } }),
+                ciVerificationSummary({ ci: { status } }),
+            ]).find((summary) => previousLine.endsWith(` ${summary}`));
+            const previousLocal = ciSuffix ? previousLine.slice(0, -ciSuffix.length).trimEnd() : "";
+            const preserveReason = ["failed", "deferred"].includes(previousVerification.local?.status) &&
+                (previousLocal === localSummary || previousLocal.startsWith(`${localSummary} `));
+            const local = preserveReason ? {
+                ...previousVerification.local, evidence: [previousLocal.slice(localSummary.length).trim()],
+            } : previousVerification.local;
+            return heading + verificationSummary({ local, ci });
+        },
     );
     body = upsertMarkerBlock(body, verificationMarkers, renderVerificationBlock({ ...previousVerification, ci }));
     const decisions = parseMarkerBlock(originalBody, deliveryDecisionMarkers);
@@ -1561,7 +1576,9 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
             outcome: observation.verdict === "ready" ? "completed" :
                 observation.verdict === "waiting-for-ci" ? "deferred" : "blocked",
             summary: `${observation.summary} ${observation.verdict === "repair"
-                ? (iteration < maxIterations ? "A tactical repair is next." : "The repair allowance is used up; a developer must review the remaining findings.")
+                ? (iteration < maxIterations ? "A tactical repair is next." : maxIterations === 0
+                    ? "Source repairs are disabled for this run; a developer must review the remaining findings."
+                    : "The repair allowance is used up; a developer must review the remaining findings.")
                 : ciVerificationSummary({ ci: ciEvidenceFromSnapshot(snapshot) })}`,
             prUrl: parsedPr.prUrl,
         });
@@ -1620,7 +1637,9 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
             return {
                 status: "max-iterations-reached",
                 prUrl: parsedPr.prUrl,
-                summary: `Repair budget exhausted after ${maxIterations} repair(s); remaining failures require a new observation/owner decision.`,
+                summary: maxIterations === 0
+                    ? "Source repairs are disabled for this run. A developer must review the remaining findings."
+                    : `The tactical repair allowance is used up after ${maxIterations} repairs; a developer must review the remaining findings.`,
                 evidence: observation.evidence || [],
                 actionableFindings: observation.actionableFindings || [],
                 iterations: maxIterations,

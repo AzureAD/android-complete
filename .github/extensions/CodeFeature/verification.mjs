@@ -40,7 +40,8 @@ export function localVerificationSummary(verification) {
     const evidence = Array.isArray(verification?.local?.evidence) ? verification.local.evidence : [];
     const reason = evidence.find((entry) => typeof entry === "string" && entry.trim() &&
         !entry.startsWith("Successful command:"));
-    return ["failed", "deferred"].includes(local) && reason ? `${summary} ${reason.replace(/\s+/g, " ").trim()}` : summary;
+    const message = ["failed", "deferred"].includes(local) && reason ? `${summary} ${reason.replace(/\s+/g, " ").trim()}` : summary;
+    return message.length > 500 ? `${message.slice(0, 497).trimEnd()}...` : message;
 }
 
 export function ciVerificationSummary(verification) {
