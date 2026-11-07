@@ -299,6 +299,16 @@ restart and deduplicates lifecycle events. Failed delivery is retained for retry
 at-least-once queue admission, not a guarantee that an unavailable client displayed a reply;
 crash-window duplicates remain possible. No cross-session runs or credentials are stored.
 
+Windows readers and scanners can briefly deny atomic replacement of an existing
+outbox snapshot (`EPERM`, `EACCES`, or `EBUSY`). Persistence retries these failures
+asynchronously with bounded backoff, without blocking SDK replies or changing the
+workflow/admission wait windows. All outbox commits are serialized across runs:
+the previous snapshot remains authoritative until the replacement succeeds, and
+no notice is sent before its pending receipt is durable. Exhausted retries remain
+explicit errors; they never become false delivery acknowledgements. Flush operations
+also wait for queued persistence. External diagnostic readers should allow delete
+sharing on Windows and close their handles before waiting for another file event.
+
 On recovery, fast-forward the workflow source only after the current attempt settles,
 then resume the same run with unchanged approved task inputs. Verify that cached
 evidence/build/review steps are reused rather than starting another implementation.

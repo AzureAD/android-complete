@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -214,6 +215,130 @@ function fixture(t, runs = [], options = {}) {
     return { session, errors, install, stateFile };
 }
 
+async function holdWindowsOutbox(t, file) {
+    const encodedPath = Buffer.from(file).toString("base64");
+    const script = [
+        "$ErrorActionPreference = 'Stop'",
+        `$file = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
+        "$stream = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)",
+        "try { [Console]::WriteLine('locked'); [Console]::Out.Flush(); [Console]::ReadLine() | Out-Null } finally { $stream.Dispose() }",
+    ].join("; ");
+    const holder = spawn(path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), [
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64"),
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const ready = deferred();
+    const exited = deferred();
+    let locked = false;
+    let output = "";
+    let errors = "";
+    const timer = setTimeout(() => ready.reject(new Error("Timed out acquiring the Windows outbox sharing lock")), 20_000);
+    holder.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (output.includes("locked")) { locked = true; ready.resolve(); }
+    });
+    holder.stderr.on("data", (chunk) => { errors += chunk; });
+    holder.on("error", (error) => { ready.reject(error); exited.resolve({ error }); });
+    holder.on("exit", (code) => {
+        if (!locked) ready.reject(new Error(`Windows lock process exited before acquiring the file: ${code}; ${errors}`));
+        exited.resolve({ code });
+    });
+    const release = async () => {
+        if (!holder.stdin.destroyed && !holder.stdin.writableEnded) holder.stdin.end("\n");
+        const result = await exited.promise;
+        if (result.error) throw result.error;
+        assert.equal(result.code, 0, errors);
+    };
+    t.after(release);
+    try { await ready.promise; }
+    finally { clearTimeout(timer); }
+    return release;
+}
+
+test("Windows sharing locks retry atomically without blocking the event loop or admitting unpersisted messages",
+    { skip: process.platform !== "win32" }, async (t) => {
+    const { session, install, stateFile, errors } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install();
+    await delivery.ready;
+    const file = stateFile();
+    const before = readFileSync(file, "utf8");
+    const release = await holdWindowsOutbox(t, file);
+    try {
+        const sending = delivery.enqueueMilestone("run-1", "code-feature", {
+            id: "windows-lock", title: "Evidence", outcome: "completed", summary: "Evidence complete; implementation is next.",
+        }).then((value) => ({ value }), (error) => ({ error }));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.equal(session.messages.length, 0, "A notice must not be sent before its outbox commit succeeds");
+        assert.equal(readFileSync(file, "utf8"), before, "A sharing violation must preserve the previous complete snapshot");
+        await release();
+        const result = await sending;
+        if (result.error) throw result.error;
+    } finally { await release(); }
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.equal(errors.length, 0, "A recovered transient lock is not a failed chat handoff");
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).runs["run-1"].milestones.delivered.length, 1);
+    assert.equal(readdirSync(path.dirname(file)).some((name) => name.endsWith(".next")), false);
+});
+
+test("persistent Windows sharing failures remain explicit and retryable without false acknowledgement",
+    { skip: process.platform !== "win32" }, async (t) => {
+    const { session, install, stateFile } = fixture(t, [[completed({ status: "running" })]]);
+    const delivery = install();
+    await delivery.ready;
+    const file = stateFile();
+    const before = readFileSync(file, "utf8");
+    const release = await holdWindowsOutbox(t, file);
+    const milestone = { id: "persistent-lock", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    try {
+        await assert.rejects(delivery.enqueueMilestone("run-1", "code-feature", milestone), (error) =>
+            ["EPERM", "EACCES", "EBUSY"].includes(error.code));
+        assert.equal(session.messages.length, 0);
+        assert.equal(readFileSync(file, "utf8"), before);
+        assert.equal(readdirSync(path.dirname(file)).some((name) => name.endsWith(".next")), false);
+    } finally { await release(); }
+    await delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    await delivery.flush();
+    assert.equal(session.messages.length, 1);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).runs["run-1"].milestones.delivered.length, 1);
+});
+
+test("asynchronous outbox writes serialize across runs and concurrent duplicate notices", async (t) => {
+    const { session, install } = fixture(t, [[completed({ status: "running" })], [completed({ runId: "run-2", status: "running" })]]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    let hold = false;
+    let liveWrites = 0;
+    let maximumWrites = 0;
+    const entered = deferred();
+    const release = deferred();
+    const delivery = install({ store: {
+        load: () => saved,
+        async save(next) {
+            liveWrites++;
+            maximumWrites = Math.max(maximumWrites, liveWrites);
+            try {
+                if (hold) { entered.resolve(); await release.promise; }
+                saved = structuredClone(next);
+            } finally { liveWrites--; }
+        },
+    } });
+    await delivery.ready;
+    hold = true;
+    const milestone = { id: "concurrent", title: "Evidence", outcome: "completed", summary: "Evidence gathered." };
+    const one = delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    const two = delivery.enqueueMilestone("run-2", "code-feature", milestone);
+    const duplicate = delivery.enqueueMilestone("run-1", "code-feature", milestone);
+    await entered.promise;
+    assert.equal(session.messages.length, 0);
+    hold = false;
+    release.resolve();
+    await Promise.all([one, two, duplicate]);
+    await delivery.flush();
+    assert.equal(maximumWrites, 1);
+    assert.equal(session.messages.length, 2);
+    assert.equal(saved.runs["run-1"].milestones.delivered.length, 1);
+    assert.equal(saved.runs["run-2"].milestones.delivered.length, 1);
+});
+
 async function milestoneProgress(id, title, outcome = "completed", summary = "Source review only; CI is unverified.", link) {
     let message;
     await recordMilestone({
@@ -407,6 +532,7 @@ test("the workflow producer pushes phase updates without run events, progress re
     assert.ok(state.receipts[key].admittedAt >= state.receipts[key].enqueuedAt);
     assert.equal(state.receipts[key].observedAt, undefined, "Admission alone is not proof of transcript delivery");
     session.emit("user.message", { source: "system", content: session.messages[0].prompt });
+    await delivery.flush();
     const observed = JSON.parse(readFileSync(stateFile(), "utf8")).runs["live-run"].milestones.receipts[key];
     assert.ok(observed.observedAt >= observed.enqueuedAt);
     assert.equal(session.messages.length, 1);

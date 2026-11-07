@@ -2,8 +2,10 @@
 // Licensed under the MIT License.
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, normalizeMilestone } from "./milestones.mjs";
 import { deliveryStatusSummary, observerNextAction } from "./status.mjs";
 import { ciVerificationSummary, localVerificationSummary } from "./verification.mjs";
@@ -269,12 +271,21 @@ function fileStore(workspaceRoot, sessionId) {
                 throw new Error(`Cannot read completion delivery state ${file}: ${error.message}`, { cause: error });
             }
         },
-        save(state) {
+        async save(state) {
             mkdirSync(path.dirname(file), { recursive: true });
             const next = `${file}.${process.pid}.next`;
             try {
                 writeFileSync(next, JSON.stringify(state), { encoding: "utf8", mode: 0o600 });
-                renameSync(next, file);
+                for (let attempt = 0; ; attempt++) {
+                    try {
+                        await rename(next, file);
+                        break;
+                    } catch (error) {
+                        if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || attempt === 5) throw error;
+                        // Windows readers/scanners can briefly deny replacement of the old snapshot.
+                        await sleep(25 * 2 ** attempt);
+                    }
+                }
             } finally {
                 rmSync(next, { force: true });
             }
@@ -336,13 +347,21 @@ export function createWorkflowCompletionDelivery(session, {
     const delayedOperations = new WeakSet();
     const reportedFailures = new WeakSet();
     const names = new Map(Object.entries(state.runs).map(([id, run]) => [id, run.workflowName]));
+    let persistence = Promise.resolve();
+    let pendingUpdates = 0;
 
     function update(runId, change) {
-        const next = structuredClone(state);
-        const entry = next.runs[runId] ||= { workflowName: names.get(runId), delivered: [] };
-        change(entry);
-        store.save(next);
-        state = next;
+        pendingUpdates++;
+        const operation = persistence.then(async () => {
+            const next = structuredClone(state);
+            const entry = next.runs[runId] ||= { workflowName: names.get(runId), delivered: [] };
+            if (change(entry) === false) return;
+            await store.save(next);
+            state = next;
+        });
+        // Callers retain the rejection; a failed write must not poison later recovery.
+        persistence = operation.then(() => { pendingUpdates--; }, () => { pendingUpdates--; });
+        return operation;
     }
 
     function scheduleRetry() {
@@ -379,7 +398,7 @@ export function createWorkflowCompletionDelivery(session, {
             if (result.status === "delayed" && !disposed) {
                 if (!delayedOperations.has(operation)) {
                     delayedOperations.add(operation);
-                    update(runId, (entry) => {
+                    await update(runId, (entry) => {
                         (entry.notificationDiagnostics ||= {})[stage] = {
                             lastWindowExceededAt: Date.now(),
                             elapsedMs: Date.now() - startedAt,
@@ -418,7 +437,7 @@ export function createWorkflowCompletionDelivery(session, {
                 .sort((a, b) => a.seq - b.seq);
             if (page.hasMoreNewer && !records.length) throw new Error(`Milestone progress cursor did not advance for run ${runId}.`);
             if (records.length) {
-                update(runId, (entry) => {
+                await update(runId, (entry) => {
                     const milestones = entry.milestones ||= { cursor: 0, delivered: [], pending: [] };
                     for (const record of records) {
                         const milestone = milestoneFromProgress(record);
@@ -457,18 +476,19 @@ export function createWorkflowCompletionDelivery(session, {
             const notice = state.runs[runId].milestones.pending[0];
             try {
                 const messageId = await session.send({ prompt: notice.prompt, source: "system", mode: "immediate" });
-                update(runId, (entry) => {
+                const admittedAt = Date.now();
+                await update(runId, (entry) => {
                     if (!entry.milestones.delivered.includes(notice.key)) entry.milestones.delivered.push(notice.key);
                     entry.milestones.pending = entry.milestones.pending.filter((item) => item.key !== notice.key);
                     const receipt = (entry.milestones.receipts ||= {})[notice.key] ||= {};
                     Object.assign(receipt, {
                         recordedAt: notice.recordedAt ?? null, enqueuedAt: notice.enqueuedAt ?? null,
-                        admittedAt: Date.now(), messageId: messageId ?? null,
+                        admittedAt, messageId: messageId ?? null,
                     });
                     delete entry.milestones.lastError;
                 });
             } catch (error) {
-                update(runId, (entry) => { entry.milestones.lastError = text(error.message); });
+                await update(runId, (entry) => { entry.milestones.lastError = text(error.message); });
                 throw new Error(`Run ${runId} milestone was not acknowledged: ${error.message}`, { cause: error });
             }
         }
@@ -502,22 +522,23 @@ export function createWorkflowCompletionDelivery(session, {
         names.set(runId, name);
         const key = digest(milestone.id);
         if (array(state.runs[runId]?.milestones?.delivered).includes(key)) return;
-        if (!array(state.runs[runId]?.milestones?.pending).some((item) => item.key === key)) {
+        const enqueued = (async () => {
             const recordedAt = Number.isFinite(input.recordedAt) ? input.recordedAt : Date.now();
-            update(runId, (entry) => {
+            await update(runId, (entry) => {
                 const milestones = entry.milestones ||= { cursor: 0, delivered: [], pending: [] };
+                if (milestones.delivered.includes(key) || milestones.pending.some((item) => item.key === key)) return false;
                 milestones.pending.push({
                     key, recordedAt, enqueuedAt: Date.now(),
                     prompt: `${formatWorkflowMilestone(name, runId, milestone, recordedAt)}\n[workflow-milestone:${runId}:${key}]`,
                 });
             });
-        }
-        const sending = sendPendingMilestones(runId);
-        // Wait only for queue admission before a following synchronous build can occupy
-        // the extension event loop. This does not wait for a caller model response.
-        const admitted = waitForAdmission(runId, sending, "chat admission");
-        void admitted.catch(failed);
-        return admitted;
+            if (array(state.runs[runId]?.milestones?.delivered).includes(key)) return;
+            const sending = sendPendingMilestones(runId);
+            // Wait for queue admission, not a caller model response.
+            return waitForAdmission(runId, sending, "chat admission");
+        })();
+        void enqueued.catch(failed);
+        return enqueued;
     }
 
     async function inspect(runId) {
@@ -538,7 +559,7 @@ export function createWorkflowCompletionDelivery(session, {
         if (disposed) return;
         if (!settledStatuses.has(run.status)) {
             // Persist identity even when no lifecycle event survives a restart.
-            if (!state.runs[runId]) update(runId, () => {});
+            if (!state.runs[runId]) await update(runId, () => {});
             watch(runId);
             return;
         }
@@ -555,7 +576,7 @@ export function createWorkflowCompletionDelivery(session, {
         }
         if (disposed) return;
         if (state.runs[runId]?.pending?.key !== key) {
-            update(runId, (entry) => {
+            await update(runId, (entry) => {
                 entry.pending = {
                     key,
                     prompt: `${formatWorkflowCompletion(names.get(runId), run, progress)}\n[workflow-outcome:${runId}:${key}]`,
@@ -568,13 +589,13 @@ export function createWorkflowCompletionDelivery(session, {
                 source: "system",
                 mode: "immediate",
             });
-            update(runId, (entry) => {
+            await update(runId, (entry) => {
                 entry.delivered.push(key);
                 delete entry.pending;
                 delete entry.lastError;
             });
         } catch (error) {
-            update(runId, (entry) => { entry.lastError = text(error.message); });
+            await update(runId, (entry) => { entry.lastError = text(error.message); });
             throw new Error(`Run ${runId} outcome was not acknowledged: ${error.message}`, { cause: error });
         }
     }
@@ -606,8 +627,9 @@ export function createWorkflowCompletionDelivery(session, {
     }
 
     async function flush() {
-        while (workers.size || sends.size) await Promise.all([
+        while (workers.size || sends.size || pendingUpdates) await Promise.all([
             ...[...workers.values()].map((worker) => worker.promise), ...[...sends.values()].map((worker) => worker.promise),
+            persistence,
         ]);
     }
 
@@ -640,10 +662,11 @@ export function createWorkflowCompletionDelivery(session, {
             const match = String(event.data.content || "").match(/\[workflow-milestone:([^:\]]+):([a-f0-9]{64})\]/);
             if (match && (state.runs[match[1]]?.milestones?.pending?.some((item) => item.key === match[2]) ||
                 state.runs[match[1]]?.milestones?.delivered?.includes(match[2]))) {
-                update(match[1], (entry) => {
+                const observedAt = Date.now();
+                void update(match[1], (entry) => {
                     const receipt = (entry.milestones.receipts ||= {})[match[2]] ||= {};
-                    receipt.observedAt = Date.now();
-                });
+                    receipt.observedAt = observedAt;
+                }).catch(failed);
             }
         }
     });
@@ -655,7 +678,9 @@ export function createWorkflowCompletionDelivery(session, {
         reconcile,
         flush,
         async flushMilestones() {
-            while (sends.size) await Promise.all([...sends.values()].map((worker) => worker.promise));
+            while (sends.size || pendingUpdates) await Promise.all([
+                ...[...sends.values()].map((worker) => worker.promise), persistence,
+            ]);
         },
         dispose() {
             disposed = true;
