@@ -41,7 +41,7 @@ An actual startup input hold uses `--hold-step "automation:<slug>=<actual reason
 and remains host-reported/incomplete. Active registry receipt is not a live-provider check.
 
 **Mid-release status:** run `status --release <id>` (no `--json`) and show its output as rendered markdown — a next-action headline, a **phase map** (✅ done · ⏸ in progress · 📅 scheduled · ⬜ not started), and the **current phase's steps** table. It logs emitted output, not proof of display in the conversation. Add a sentence before/after, but reproduce the block faithfully; don't re-render from `--json` (that skips the auto-log) and don't invent a layout. Never surface raw engine state names (`holding_gate`, `awaiting_action`, `scheduled`) — the view already translates them ("Waiting for your approval", "Action needed from you", "Scheduled").
-For explicit `/release-agent show status` requests, this rule is mandatory: the only valid response body is the complete markdown block emitted by `status --release <id>` plus optional surrounding prose. A condensed substitute status table is invalid.
+For explicit `/release-agent show status` requests, this rule is mandatory: the response must include the complete markdown block emitted by `status --release <id>` (no condensed substitute table). If that block shows an actionable owner hold (`gate`, `action`, or `pending_human`), the same turn must include an `m_ask_user` options card for that exact decision; status-only requests are not exempt from actionable prompting.
 
 **Every release iteration ends with one fresh table.** This means every user-facing
 release turn before a final response or `m_ask_user`, not just a successful advance:
