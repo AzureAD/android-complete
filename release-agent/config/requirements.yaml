@@ -232,6 +232,28 @@ mcp_servers:
       - SearchTeamMessagesQueryParameters
     note: "Provided by the Agency CLI (agency mcp teams). Fills Teams gaps WorkIQ lacks (group-chat creation, add members, channel posts). After registering, RESTART Scout. NOT auto-approved — Teams writes prompt for confirmation; see docs/teams-mcp-setup.md."
 
+  - id: sharepoint
+    name: "SharePoint MCP server (Agency — site/library/file primitives)"
+    scout_key: sharepoint
+    launcher: agency
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "sharepoint"]
+    required_by: [m365_connectors.report_creation, rc report publication/readback]
+    readiness_tools: [getSiteByPath, getDefaultDocumentLibraryInSite, listDocumentLibrariesInSite, getFolderChildren]
+    tools:
+      - getSiteByPath
+      - getSiteByUrl
+      - getDefaultDocumentLibraryInSite
+      - listDocumentLibrariesInSite
+      - getFolderChildren
+      - resolvePathInDocumentLibrary
+      - getFileOrFolderMetadataByUrl
+      - createSmallTextFile
+      - readSmallTextFile
+      - getAllFileContentAsText
+    note: "Provided by the Agency CLI (agency mcp sharepoint). Used for native report upload/readback evidence. After registering, RESTART Scout."
+
   - id: ecs
     name: "ECS MCP server (Experimentation & Configuration Service)"
     scout_key: ecs
@@ -334,5 +356,5 @@ m365_connectors:
   calendar_mail_files: "Scout structured workiq_* tools"
   teams: "Agency Microsoft Teams MCP"
   directory: "Required logical workiq.fetch via actual MCP tool OR discovered native WorkIQ CLI/workiq-read; exact configured mail-group lookup and all members pages, never people search or WorkIQ Ask"
-  report_creation: "Checked SharePoint browser upload with native link resolution and byte verification"
+  report_creation: "Native SharePoint createSmallTextFile upload with exact metadata/readback verification"
   readiness: "Fresh profile/calendar, exact roster/all pages, Teams and report site/library reads; m365-capabilities then record-check --item m365_access --evidence-file <observations.json>; saved profile routing is recipe only"

@@ -137,10 +137,104 @@ def publication_receipt(tmp_path, handoff):
     return path, value
 
 
+def sharepoint_upload_request(local_path):
+    return {
+        "version": 1,
+        "route": "sharepoint_new_file",
+        "local_path": str(local_path),
+        "site_host": "microsoft.sharepoint-df.com",
+        "site_path": "/teams/MsalAndroidRelease",
+        "document_library_id": "library-1",
+        "parent_folder_id": "folder-1",
+    }
+
+
+def sharepoint_publication_proof(target, html):
+    url = (f"{target['site_url']}/Shared Documents/{target['folder']}/"
+           f"{target['file_name']}")
+    return {
+        "item_url": url,
+        "metadata": publication_observation(
+            "getFileOrFolderMetadataByUrl",
+            {"fileOrFolderUrl": url},
+            {"id": "file-1", "documentLibraryId": "library-1", "webUrl": url},
+        ),
+        "download": publication_observation(
+            "readSmallTextFile",
+            {"fileId": "file-1", "documentLibraryId": "library-1"},
+            {"contentText": html},
+        ),
+    }
+
+
 def receipt_arguments(tmp_path, handoff, path):
     return ["--runs-root", str(tmp_path), S.WRITE_COMMAND,
             "--release", handoff["receipt_binding"]["release"],
             "--execution-id", handoff["execution_id"], "--receipt-file", str(path)]
+
+
+def test_sharepoint_new_file_action_uses_create_small_text_file(ready, tmp_path):
+    from orchestrator.commands import rc_report_publish as command
+    _, orch = ready
+    operation = command.plan_rc_report_publish(orch).operations[0]
+    local = tmp_path / operation.target["file_name"]
+    local.write_bytes(operation.content["html"].encode("utf-8"))
+    request = sharepoint_upload_request(local)
+    action = command._upload_action(request, operation, "test@example.com")
+    assert action["route"] == "sharepoint_new_file"
+    assert action["tool"] == "createSmallTextFile"
+    assert action["arguments"]["filename"] == operation.target["file_name"]
+    assert action["arguments"]["documentLibraryId"] == "library-1"
+    assert action["arguments"]["parentfolderId"] == "folder-1"
+    assert "Shared%20Documents" in action["item_url"]
+
+
+def test_sharepoint_new_file_receipt_verifies_metadata_and_download(ready, tmp_path):
+    from orchestrator.commands import rc_report_publish as command
+    _, orch = ready
+    operation = command.plan_rc_report_publish(orch).operations[0]
+    local = tmp_path / operation.target["file_name"]
+    html = operation.content["html"]
+    local.write_bytes(html.encode("utf-8"))
+    request = sharepoint_upload_request(local)
+    action = command._upload_action(request, operation, "test@example.com")
+    digest = command._digest(html.encode("utf-8"))
+    receipt = command._observed_sharepoint_new_file(
+        sharepoint_publication_proof(operation.target, html),
+        operation.target,
+        "test@example.com",
+        digest,
+        len(html.encode("utf-8")),
+        action=action,
+    )
+    assert receipt["item_id"] == "file-1"
+    assert receipt["drive_id"] == "library-1"
+
+
+def test_sharepoint_new_file_receipt_uses_provider_weburl(ready, tmp_path):
+    from orchestrator.commands import rc_report_publish as command
+    _, orch = ready
+    operation = command.plan_rc_report_publish(orch).operations[0]
+    local = tmp_path / operation.target["file_name"]
+    html = operation.content["html"]
+    local.write_bytes(html.encode("utf-8"))
+    request = sharepoint_upload_request(local)
+    action = command._upload_action(request, operation, "test@example.com")
+    digest = command._digest(html.encode("utf-8"))
+    proof = sharepoint_publication_proof(operation.target, html)
+    canonical = action["item_url"]
+    proof["metadata"]["result"]["webUrl"] = canonical
+    proof["item_url"] = canonical.replace("Shared%20Documents", "Shared Documents")
+    receipt = command._observed_sharepoint_new_file(
+        proof,
+        operation.target,
+        "test@example.com",
+        digest,
+        len(html.encode("utf-8")),
+        action=action,
+    )
+    assert receipt["report_link"] == canonical
+    assert receipt["web_url"] == canonical
 
 
 def test_report_link_email_does_not_apply_quality_gate(ready):

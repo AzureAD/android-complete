@@ -93,11 +93,27 @@ def _parse_params(pairs) -> dict:
 
 def prepare_step(args, st, orch):
     handler = orch.handler(args.phase, args.step)
+    force_reopen = bool(getattr(args, "owner_force_rerun", False))
+    forced_reopen = False
+    if force_reopen:
+        reopen_reason = (getattr(args, "owner_force_reason", "") or "").strip()
+        reopen_result = orch.reopen(
+            args.phase,
+            args.step,
+            reopen_reason,
+            force_owner=True,
+        )
+        if not reopen_result.changed and "already pending" not in reopen_result.message:
+            raise ValueError(reopen_result.message)
+        forced_reopen = reopen_result.changed
     from orchestrator.write_review import continuation
     resumed = continuation(orch, args.phase, args.step)
     if resumed is not None:
-        return {**as_dict(resumed), "release": args.release, "phase": args.phase,
-                "step": args.step, "permission_to_execute": False, "reservable": False}
+        payload = {**as_dict(resumed), "release": args.release, "phase": args.phase,
+                   "step": args.step, "permission_to_execute": False, "reservable": False}
+        if forced_reopen:
+            payload["state_changed"] = True
+        return payload
 
     # Agent steps run IN-PROCESS inside the engine's `next` (they perform the real
     # deterministic action). Executing their build() here would run that action a
@@ -220,6 +236,9 @@ def prepare_step(args, st, orch):
                 out["permission_to_execute"] = True
         elif getattr(args, "reserve", False):
             raise ValueError("Read-only external work does not require a reservation")
+    if forced_reopen:
+        out["state_changed"] = True
+        out["owner_forced_rerun"] = True
     return out
 
 
@@ -410,6 +429,10 @@ def register(sub):
     sp.add_argument("--reserve", action="store_true", help="Reserve standard record-step work after approval")
     sp.add_argument("--executor", help="Automation/session identifier for the reservation")
     sp.add_argument("--execution-id", help="Exact active execution ID when polling reserved work")
+    sp.add_argument("--owner-force-rerun", action="store_true",
+                    help="Owner override: force-reopen the step before resolving action output")
+    sp.add_argument("--owner-force-reason", default="",
+                    help="Audit reason recorded when --owner-force-rerun is used")
     sp.set_defaults(func=cmd_step_action)
 
     reserve = sub.add_parser(

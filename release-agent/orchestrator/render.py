@@ -374,6 +374,19 @@ def work_followup(plan: dict) -> str:
                 lines.append(f"- **{_cell(label)}** — queued for Scout execution.")
     for item in plan.get("deferred_work", []):
         lines.append(f"- `{item['key']}` remains incomplete: {_cell(item['reason'])} (host-reported hold).")
+    held = plan.get("held_work") or []
+    if held:
+        lines.append("**Held executions (recover exactly, do not replay):**")
+        for item in held:
+            key = item.get("key") or f"{item.get('phase')}.{item.get('step')}"
+            status = item.get("status") or "held"
+            execution = item.get("execution_id")
+            command = item.get("resume_command")
+            tail = f" (execution `{execution}`)" if execution else ""
+            if command:
+                lines.append(f"- `{key}` is `{status}`{tail}: run `{command}`.")
+            else:
+                lines.append(f"- `{key}` is `{status}`{tail}.")
     if plan.get("pending_work") or plan.get("deferred_work"):
         lines.append("Scout must finish these actions before control can return to you.")
     startup = plan.get("startup_automation")
@@ -466,7 +479,7 @@ def status_view(r: dict) -> str:
     elif r.get("action"):
         a = r["action"]
         if a.get("execution"):
-            lines.append(f"**Execution needs review — {a['step_name']}.** {_execution_guidance(a['execution'])}")
+            lines.append(f"**Execution recovery needed — {a['step_name']}.** {_execution_guidance(a['execution'])}")
         elif a.get("reason") == "blocked":
             lines.append(f"⛔ **Blocked check — {a['step_name']}.** "
                          "Fix and rerun the owning check, or review an explicit override; "

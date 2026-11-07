@@ -769,6 +769,19 @@ def test_requirements_declares_teams_mcp_with_tools():
     assert "CreateChat" in teams.get("tools", []) and len(teams["tools"]) >= 30
 
 
+def test_requirements_declares_sharepoint_mcp_with_tools():
+    """The repo requirements.yaml ships SharePoint MCP with a populated tools
+    allowlist so setup can register it without Scout dropping the command server."""
+    from orchestrator import infra
+    root = os.path.dirname(os.path.abspath(__file__))
+    req = infra.load_requirements(os.path.join(os.path.dirname(root), "config", "requirements.yaml"))
+    sharepoint = next((m for m in req.get("mcp_servers", []) if m.get("scout_key") == "sharepoint"), None)
+    assert sharepoint is not None, "SharePoint MCP missing from requirements.yaml"
+    tools = sharepoint.get("tools", [])
+    assert "createSmallTextFile" in tools
+    assert "readSmallTextFile" in tools
+    assert "getDefaultDocumentLibraryInSite" in tools
+    assert len(tools) >= 8
 
 
 def test_all_command_mcps_ship_nonempty_tool_allowlists():
@@ -788,6 +801,7 @@ def test_all_command_mcps_ship_nonempty_tool_allowlists():
     by = {m["scout_key"]: m for m in req["mcp_servers"]}
     assert "get_on_call_schedule_by_team_id" in by["icm"]["tools"]   # readiness.oncall_now
     assert "kusto_query" in by["kusto"]["tools"]                     # readiness.adx_access
+    assert "createSmallTextFile" in by["sharepoint"]["tools"]        # report publication
 
 
 

@@ -949,8 +949,11 @@ class Orchestrator(StatusViewMixin):
             phase_id, step_id, data=data, links=links, note=note, by=by)
 
     @revision_checked
-    def reopen(self, phase_id: str, step_id: str, reason: str = "") -> TransitionResult:
-        return self._transition_kernel().reopen(phase_id, step_id, reason)
+    def reopen(self, phase_id: str, step_id: str, reason: str = "",
+               *, force_owner: bool = False) -> TransitionResult:
+        return self._transition_kernel().reopen(
+            phase_id, step_id, reason, force_owner=force_owner
+        )
 
     @revision_checked
     def cancel(self, reason: str) -> TransitionResult:
@@ -1157,10 +1160,11 @@ class Orchestrator(StatusViewMixin):
         return self.apply_outcome(permit, outcome)
 
     @revision_checked
-    def reopen_step(self, phase_id: str, step_id: str, reason: str = "") -> NextAction:
+    def reopen_step(self, phase_id: str, step_id: str, reason: str = "",
+                    *, force_owner: bool = False) -> NextAction:
         """Undo a done/skipped step so the conductor runs it again. Reason optional."""
         return self._next_from_transition(
-            self.reopen(phase_id, step_id, reason)
+            self.reopen(phase_id, step_id, reason, force_owner=force_owner)
         )
 
     @revision_checked

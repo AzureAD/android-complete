@@ -903,44 +903,50 @@ class TransitionKernel:
         )
 
     def reopen(
-        self, phase_id: str, step_id: str, reason: str = ""
+        self, phase_id: str, step_id: str, reason: str = "", *, force_owner: bool = False
     ) -> TransitionResult:
         check = self.eligibility().evaluate(
             TransitionIntent.REOPEN, phase_id, step_id
         )
         if not check.allowed:
             return self._reject(check.reason, phase_id, step_id)
-        if (check.execution or {}).get("write_progress"):
+        if not force_owner and (check.execution or {}).get("write_progress"):
             return self._reject("Continue the checked compound writer; reopen cannot clear its receipts.",
                                 phase_id, step_id)
-        if check.execution and check.execution.get("approval"):
+        if not force_owner and check.execution and check.execution.get("approval"):
             return self._reject("External gate ownership cannot be cleared by reopen; reconcile its exact approval.",
                                 phase_id, step_id)
-        if check.execution and check.execution.get("effect_mode"):
+        if not force_owner and check.execution and check.execution.get("effect_mode"):
             return self._reject(
                 "Engine-owned effect execution cannot be cleared by reopen. "
                 "Continue reconciliation or use verified retry recovery.",
                 phase_id,
                 step_id,
             )
-        if (check.execution or self.state.get_step(phase_id, step_id).data.get("last_write_review")) and not reason.strip():
+        if (not force_owner
+                and (check.execution or self.state.get_step(phase_id, step_id).data.get("last_write_review"))
+                and not reason.strip()):
             return self._reject(
                 "Reopening owned or previously reviewed work requires owner-reviewed evidence in --reason.",
                 phase_id,
                 step_id,
             )
+        effective_reason = reason.strip()
+        if force_owner and not effective_reason:
+            effective_reason = "owner-forced rerun"
         affected = self.workflow.invalidation_closure(phase_id, step_id)
         rejected = self._invalidate_steps(
             affected,
-            reason=f"Reopened from {phase_id}.{step_id}: {reason or 'owner request'}",
+            reason=f"Reopened from {phase_id}.{step_id}: {effective_reason or 'owner request'}",
             force_clear={f"{phase_id}.{step_id}"},
         )
         if rejected:
             return rejected
-        tail = f" — {reason.strip()}" if reason and reason.strip() else ""
+        force_prefix = "Owner-forced "
+        tail = f" — {effective_reason}" if effective_reason else ""
         return TransitionResult(
             "ran",
-            f"Reopened {phase_id}/{step_id}{tail}; invalidated "
+            f"{force_prefix if force_owner else ''}reopened {phase_id}/{step_id}{tail}; invalidated "
             f"{len(affected)} dependent step(s).",
             phase_id,
             step_id,
@@ -1758,11 +1764,16 @@ class TransitionKernel:
             if step.key != f"{phase_id}.{step_id}"
         )
 
-    def _invalidation_check(self, steps: tuple[StepDefinition, ...]) -> TransitionResult | None:
+    def _invalidation_check(
+        self, steps: tuple[StepDefinition, ...], *, force_clear: Optional[set[str]] = None
+    ) -> TransitionResult | None:
         if rejected := self._invalid():
             return rejected
+        force_clear = force_clear or set()
         protected = []
         for step in steps:
+            if step.key in force_clear:
+                continue
             record = self.state.get_step(step.phase_id, step.id)
             if (record.execution or {}).get("approval"):
                 protected.append(f"{step.key} (approval execution {record.execution['id']})")
@@ -1973,9 +1984,9 @@ class TransitionKernel:
         reason: str,
         force_clear: Optional[set[str]] = None,
     ) -> TransitionResult | None:
-        if rejected := self._invalidation_check(steps):
-            return rejected
         force_clear = force_clear or set()
+        if rejected := self._invalidation_check(steps, force_clear=force_clear):
+            return rejected
         affected_keys = {step.key for step in steps}
         self._outcome_permits = {
             permit: generation for permit, generation in self._outcome_permits.items()

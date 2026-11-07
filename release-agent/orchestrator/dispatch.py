@@ -2,6 +2,22 @@
 from __future__ import annotations
 
 
+def _held_resume_command(release: str, step, execution: dict | None) -> str:
+    execution = execution or {}
+    execution_id = execution.get("id")
+    if not execution_id:
+        return f"step-action --release {release} --phase {step.phase_id} --step {step.id}"
+    if getattr(step, "write_command", None) == "publish-rc-report":
+        return (
+            f"publish-rc-report --release {release} --execution-id {execution_id} "
+            "--receipt-file <receipt.json>"
+        )
+    return (
+        f"step-action --release {release} --phase {step.phase_id} --step {step.id} "
+        f"--execution-id {execution_id}"
+    )
+
+
 def phase_plan(orch, selection, readiness):
     release = orch.state.release_id
     base = {
@@ -57,9 +73,12 @@ def phase_plan(orch, selection, readiness):
             if step.phase_id != selection.frontier.id or item.complete or not item.prerequisites_met:
                 continue
             if item.status in ("blocked", "running", "in_flight") or item.reserved:
+                execution = orch.step_execution(step.phase_id, step.id)
                 held.append({
                     "key": step.key, "phase": step.phase_id, "step": step.id,
                     "status": item.status, "owned": item.reserved,
+                    "execution_id": execution.get("id") if execution else None,
+                    "resume_command": _held_resume_command(release, step, execution),
                     "instruction": "Preserve ownership and use the owning recovery/poll/input protocol; no automatic replay.",
                 })
     action = ("run_phase_work" if pending else "resolve_phase_hold" if held else

@@ -14,14 +14,12 @@ ID = "rc_report_publish"
 KIND = "scout"
 WRITE_COMMAND = "publish-rc-report"
 PUBLICATION_CAPABILITY = (
-    "workiq_upload_file replaces an existing item only: require fresh exact target "
-    "resolution and downloaded matching SHA-256 before one authorized action. "
-    "No native new-file uploader is released. New content-addressed filenames use "
-    "one checked SharePoint browser handoff with an exact local HTML path and fresh "
-    "folder observation or explicit owner-confirmed library context. Inspect the "
-    "real snapshot for Upload/Files, never overwrite, cancel replacement prompts, "
-    "and return an execution-bound native resolve/download receipt. Missing context "
-    "requires owner-assisted recovery. No Graph fallback, sharing change, or replay."
+    "Native SharePoint publication uses one checked createSmallTextFile action for a "
+    "new immutable filename and then requires exact readback proof. Receipt validation "
+    "must include getFileOrFolderMetadataByUrl and readSmallTextFile with matching "
+    "SHA-256 and size for the reviewed HTML bytes. Existing-item replacement remains "
+    "single-action and exact-target only. Missing context requires owner-assisted "
+    "recovery. No Graph fallback, sharing change, or replay."
 )
 
 

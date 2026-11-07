@@ -326,6 +326,33 @@ def test_blocked_transactional_effect_preserves_owner_and_reconciles_next_run(
     assert state.get_step("phase", "effect").status == "done"
 
 
+def test_owner_force_reopen_can_clear_blocked_transactional_effect(tmp_path, monkeypatch):
+    class Handler:
+        ID = "effect"
+        KIND = "agent"
+        EFFECT_MODE = "transactional"
+        EFFECT_RECOVERY = "frozen"
+        build = staticmethod(lambda _state: Done("direct"))
+        prepare_effect = staticmethod(lambda _state: {"target": "resource"})
+        execute = staticmethod(lambda _context: Blocked("provider outcome uncertain"))
+        reconcile = staticmethod(lambda _context: Done("provider confirms resource"))
+
+    state = ReleaseState(release_id="r")
+    state._checkpoint = lambda: None
+    first = _orchestrator(
+        tmp_path, monkeypatch, Handler, "transactional", state
+    ).step_once()
+    assert first.kind == "reminder"
+    assert state.get_step("phase", "effect").status == "blocked"
+
+    forced = _orchestrator(
+        tmp_path, monkeypatch, Handler, "transactional", state
+    ).reopen_step("phase", "effect", "owner override", force_owner=True)
+    assert forced.kind == "ran"
+    assert state.get_step("phase", "effect").status == "pending"
+    assert state.get_step("phase", "effect").execution is None
+
+
 def test_parallel_dispatch_recovers_owned_transactional_effect(
         tmp_path, monkeypatch):
     class Handler:

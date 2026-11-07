@@ -140,6 +140,41 @@ def test_owner_can_confirm_interrupted_work_done_without_repeating_it(run, capsy
     assert orch.step_execution("ccd", "final_reminder") == {}
 
 
+def test_owner_force_reopen_clears_interrupted_execution(run, capsys):
+    execution_id = reserve(run, capsys)
+    st = ReleaseState.load(str(run[1]))
+    st.steps["ccd.final_reminder"]["execution"]["started_at"] = "2000-01-01"
+    st.save(str(run[1]))
+    assert report_result(run, capsys, execution_id, "uncertain")[0] == 0
+
+    rc, text = invoke(run, capsys, "reopen", "--force-owner", "--reason", "owner override")
+    assert rc == 0
+    assert "Owner-forced reopened ccd/final_reminder" in text
+    state = ReleaseState.load(str(run[1]))
+    record = state.get_step("ccd", "final_reminder")
+    assert record.status == "pending"
+    assert record.execution is None
+
+
+def test_step_action_owner_force_rerun_unblocks_reserved_step(run, capsys):
+    execution_id = reserve(run, capsys)
+    st = ReleaseState.load(str(run[1]))
+    st.steps["ccd.final_reminder"]["execution"]["started_at"] = "2000-01-01"
+    st.save(str(run[1]))
+    assert report_result(run, capsys, execution_id, "uncertain")[0] == 0
+
+    rc, text = invoke(
+        run, capsys, "step-action", "--owner-force-rerun", "--owner-force-reason", "owner rerun"
+    )
+    assert rc == 0
+    payload = json.loads(text)
+    assert payload["owner_forced_rerun"] is True
+    assert payload["state_changed"] is True
+    state = ReleaseState.load(str(run[1]))
+    record = state.get_step("ccd", "final_reminder")
+    assert record.execution is None
+
+
 def test_reservation_requires_executor_and_preserves_builder_block(run, capsys):
     from orchestrator.outcomes import Blocked
     before = run[1].read_bytes()

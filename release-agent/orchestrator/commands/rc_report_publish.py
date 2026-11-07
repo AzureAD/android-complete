@@ -1,24 +1,16 @@
 """Single-attempt Scout handoff for immutable RC report publication.
 
-No provider calls are made here. --upload-request-file may select workiq_upload_file
-only for an existing, resolved item whose downloaded bytes already match the report.
-Its JSON contains version:1, route:"existing_item", local_path, item_url, resolve and
-download (fresh orchestrator.m365 observations). For NEW filenames use route:
-"browser_new_file", local_path and library_context:{site_url,library,folder,folder_url,
-owner_confirmed:true,confirmed_by:<release owner>,confirmed_at:<actual UTC time>}.
-These confirmation fields must record actual owner confirmation, never an agent default.
-Alternatively library_context.resolve may contain a fresh exact folder resolution
-observation instead of an owner confirmation. Browser selectors must come from the
-real page snapshot; only the frozen local file may be uploaded, once, without overwrite.
+No provider calls are made here. --upload-request-file may select either:
+1) route:"existing_item" (workiq_upload_file replace-only) with exact resolve/download
+   observations proving bytes already match; or
+2) route:"sharepoint_new_file" (native SharePoint createSmallTextFile) with exact
+   site/library/folder identity for a brand-new immutable filename.
 
 --receipt-file is a separate, read-only result action with --execution-id. Its JSON
-contains the returned receipt_binding plus item_url, resolve, optional requested
-metadata and download observations.
-It cannot issue another upload, including after interrupted or stale completion.
-Resolution supplies canonical drive/item IDs. Missing metadata requests an exact
-structured fetch via the discovered MCP or native WorkIQ CLI route.
-Downloads may be native text/base64 or
-structured content with explicit encoding; only the exact frozen bytes are accepted.
+contains the returned receipt_binding and route-specific readbacks:
+- existing_item: resolve + download
+- sharepoint_new_file: metadata-by-url + readSmallTextFile
+Only exact frozen bytes are accepted; no replay of uncertain writes.
 """
 from __future__ import annotations
 
@@ -81,6 +73,20 @@ def _destination_url(target, item_url):
     if actual_host != host or path not in expected:
         raise ValueError("Provider destination differs from the reviewed SharePoint target")
     return item_url
+
+
+def _sharepoint_item_url(target):
+    folder = quote(target["folder"].strip("/"), safe="/")
+    file_name = quote(target["file_name"], safe="")
+    return f"{target['site_url'].rstrip('/')}/Shared%20Documents/{folder}/{file_name}"
+
+
+def _site_path(site_url):
+    host, path = _url(site_url)
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        raise ValueError("Publication requires a SharePoint site URL with an explicit site path")
+    return host, "/" + "/".join(parts)
 
 
 def _provider_item(result, target, item_url):
@@ -191,6 +197,61 @@ def _observed_item(value, target, owner, digest, size, *, not_before=None):
     return receipt
 
 
+def _decode_sharepoint_text(result):
+    if isinstance(result, str):
+        return result.encode("utf-8")
+    if isinstance(result, dict):
+        for key in ("contentText", "content"):
+            if isinstance(result.get(key), str):
+                return result[key].encode("utf-8")
+    raise ValueError("SharePoint readSmallTextFile must return text content")
+
+
+def _observed_sharepoint_new_file(value, target, owner, digest, size, *, action=None, not_before=None):
+    item_url = _destination_url(target, value.get("item_url"))
+    metadata_args = {"fileOrFolderUrl": item_url}
+    if value.get("metadata") is None:
+        raise PublicationReadRequired("metadata", m365.observation_request(
+            "getFileOrFolderMetadataByUrl", metadata_args, owner))
+    metadata = m365.validate_observation(
+        value.get("metadata"), tool="getFileOrFolderMetadataByUrl",
+        arguments=metadata_args, owner=owner)
+    if not isinstance(metadata, dict):
+        raise ValueError("SharePoint metadata read must be structured")
+    file_id = metadata.get("id") or metadata.get("itemId")
+    document_library_id = metadata.get("documentLibraryId") or (action or {}).get("document_library_id")
+    if not all(isinstance(v, str) and v.strip() for v in (file_id, document_library_id)):
+        raise ValueError("SharePoint metadata must include file and library identifiers")
+    download_args = {"fileId": file_id, "documentLibraryId": document_library_id}
+    if value.get("download") is None:
+        raise PublicationReadRequired("download", m365.observation_request(
+            "readSmallTextFile", download_args, owner))
+    downloaded = m365.validate_observation(
+        value.get("download"), tool="readSmallTextFile",
+        arguments=download_args, owner=owner, allow_text=True)
+    if not_before:
+        issued = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+        for key in ("metadata", "download"):
+            observed = value.get(key)
+            if isinstance(observed, dict) and isinstance(observed.get("observed_at"), str):
+                when = datetime.fromisoformat(observed["observed_at"].replace("Z", "+00:00"))
+                if when < issued:
+                    raise ValueError("Receipt readback predates the owned publication handoff")
+    content = _decode_sharepoint_text(downloaded)
+    if len(content) != size or _digest(content) != digest:
+        raise ValueError("Provider report size/SHA-256 differs from the reviewed HTML")
+    metadata_link = metadata.get("webUrl")
+    canonical_link = _destination_url(target, metadata_link) if isinstance(metadata_link, str) else item_url
+    return {
+        "drive_id": document_library_id,
+        "item_id": file_id,
+        "web_url": canonical_link,
+        "report_link": canonical_link,
+        "size": size,
+        "e_tag": metadata.get("eTag") or metadata.get("etag"),
+    }
+
+
 def _upload_action(request, operation, owner):
     if type(request.get("version")) is not int or request["version"] != 1:
         raise ValueError("Upload request requires version 1")
@@ -201,10 +262,13 @@ def _upload_action(request, operation, owner):
         raise ValueError("Upload requires an absolute local path with the exact immutable filename")
     if Path(local_path).read_bytes() != html:
         raise ValueError("Local report bytes differ from the exact reviewed HTML")
+    if request.get("route") == "sharepoint_new_file":
+        return _sharepoint_new_file_action(request, operation.target, owner, local_path, html)
     if request.get("route") == "browser_new_file":
         return _browser_action(request, operation.target, owner, local_path, html)
     if request.get("route") != "existing_item":
-        raise ValueError("Upload route must be existing_item or browser_new_file; no native create tool is released")
+        raise ValueError(
+            "Upload route must be existing_item, sharepoint_new_file, or browser_new_file")
     receipt = _observed_item(request, operation.target, owner, _digest(html), len(html))
     return {
         "route": "existing_item",
@@ -216,6 +280,45 @@ def _upload_action(request, operation, owner):
         "preconditions": {"content_sha256": _digest(html), "size": len(html),
                           "replace_exact_existing_item_only": True,
                           "recheck_local_bytes_immediately_before_tool": True},
+    }
+
+
+def _sharepoint_new_file_action(request, target, owner, local_path, html):
+    host, site_path = _site_path(target["site_url"])
+    request_site_path = request.get("site_path")
+    if request_site_path not in (None, site_path):
+        raise ValueError("SharePoint upload request site_path differs from reviewed target")
+    document_library_id = request.get("document_library_id")
+    parent_folder_id = request.get("parent_folder_id")
+    if not all(isinstance(value, str) and value.strip() for value in (
+            document_library_id, parent_folder_id)):
+        raise ValueError("SharePoint upload requires document_library_id and parent_folder_id")
+    if request.get("site_host") not in (None, host):
+        raise ValueError("SharePoint upload request site_host differs from reviewed target")
+    item_url = _sharepoint_item_url(target)
+    _destination_url(target, item_url)
+    return {
+        "route": "sharepoint_new_file",
+        "tool": "createSmallTextFile",
+        "arguments": {
+            "filename": target["file_name"],
+            "contentText": html.decode("utf-8"),
+            "documentLibraryId": document_library_id,
+            "parentfolderId": parent_folder_id,
+        },
+        "account": owner,
+        "item_url": item_url,
+        "site_host": host,
+        "site_path": site_path,
+        "document_library_id": document_library_id,
+        "parent_folder_id": parent_folder_id,
+        "preconditions": {
+            "content_sha256": _digest(html),
+            "size": len(html),
+            "create_exact_new_filename_only": True,
+            "never_overwrite": True,
+            "recheck_local_bytes_immediately_before_tool": True,
+        },
     }
 
 
@@ -396,16 +499,30 @@ def _result(args, orch):
         return 0
     if not execution:
         raise ValueError("Completed publication cannot accept a different receipt")
-    receipt = _observed_item(
-        value, handoff["target"], handoff["account"], handoff["content_sha256"],
-        handoff["size"], not_before=handoff["issued_at"])
+    action = handoff.get("action")
+    if action and action.get("route") == "sharepoint_new_file":
+        receipt = _observed_sharepoint_new_file(
+            value, handoff["target"], handoff["account"], handoff["content_sha256"],
+            handoff["size"], action=action, not_before=handoff["issued_at"])
+    else:
+        receipt = _observed_item(
+            value, handoff["target"], handoff["account"], handoff["content_sha256"],
+            handoff["size"], not_before=handoff["issued_at"])
     action = handoff["action"]
     if action and action.get("route") == "browser_new_file":
         folder_identity = action.get("folder_identity")
         if (_url(receipt["web_url"]) != _url(action["item_url"])
                 or folder_identity and receipt["drive_id"] != folder_identity["drive_id"]):
             raise ValueError("Browser receipt destination differs from the frozen folder and filename")
-    elif action and receipt != action["existing_item"]:
+    elif action and action.get("route") == "sharepoint_new_file":
+        if _url(receipt["web_url"]) != _url(action["item_url"]):
+            raise ValueError("SharePoint receipt destination differs from the frozen folder and filename")
+        if receipt["drive_id"] != action["document_library_id"]:
+            raise ValueError("SharePoint receipt library differs from the single permitted upload")
+    elif action and action.get("route") == "direct_file_target":
+        if _url(receipt["web_url"]) != _url(action["item_url"]):
+            raise ValueError("Receipt provider identity differs from the single permitted upload target")
+    elif action and action.get("route") == "existing_item" and receipt != action["existing_item"]:
         # eTag can change after replacing the same bytes, but target identity cannot.
         if any(receipt[key] != action["existing_item"][key] for key in (
                 "drive_id", "item_id", "web_url", "report_link", "size")):
@@ -478,15 +595,27 @@ def cmd_publish_rc_report(args):
         authorization.validate()
         _require_current_plan(orch, authorization)
         if not action:
-            note = ("No checked local-file/browser folder context was supplied. New immutable "
-                    "SharePoint filenames have no released native create uploader. Owner-assisted upload "
+            note = ("No checked upload request was supplied. Owner-assisted upload "
                     "of the exact reviewed HTML only; inspect SharePoint before any recovery. "
                     "Do not replace another item, widen sharing, or replay --execute.")
             _record(orch, args, authorization.execution_id, "attention", note)
-        item_url = (action["item_url"] if action and action.get("route") == "browser_new_file"
+        item_url = (action["item_url"] if action and action.get("route") in ("browser_new_file", "sharepoint_new_file")
                     else action["existing_item"]["web_url"] if action else "<exact item_url>")
         file_id = (f"{action['existing_item']['drive_id']},{action['existing_item']['item_id']}"
-                   if action and action.get("route") == "existing_item" else "<resolved driveId,itemId>")
+                   if action and action.get("route") == "existing_item" else "<resolved fileId>")
+        if action and action.get("route") == "sharepoint_new_file":
+            receipt_reads = [
+                m365.observation_request("getFileOrFolderMetadataByUrl", {"fileOrFolderUrl": item_url}, owner),
+                m365.observation_request("readSmallTextFile", {
+                    "fileId": "<metadata.id>", "documentLibraryId": action["document_library_id"],
+                }, owner),
+            ]
+        else:
+            receipt_reads = [
+                m365.observation_request("workiq_resolve_m365_link", {"url": item_url}, owner),
+                {"tool": "workiq_download_file", "account": owner, "read_only": True,
+                 "arguments": {"fileId": file_id, "maxBytes": handoff["size"] + 1}},
+            ]
         print(json.dumps({
             "kind": "connector_action" if action else "owner_assisted_upload",
             "permission_to_execute": bool(action),
@@ -497,11 +626,7 @@ def cmd_publish_rc_report(args):
             "limitations": S.PUBLICATION_CAPABILITY,
             "followup": (f"{S.WRITE_COMMAND} --release {args.release} "
                          f"--execution-id {authorization.execution_id} --receipt-file <receipt.json>"),
-            "receipt_reads": [
-                m365.observation_request("workiq_resolve_m365_link", {"url": item_url}, owner),
-                {"tool": "workiq_download_file", "account": owner, "read_only": True,
-                 "arguments": {"fileId": file_id, "maxBytes": handoff["size"] + 1}},
-            ],
+            "receipt_reads": receipt_reads,
             "recovery": "Result retries are read-only. Never repeat an uncertain upload.",
         }, indent=2))
         return 0 if action else 2
@@ -533,7 +658,7 @@ def register(sub):
     p.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     p.add_argument("--execute", action="store_true", help="Authorize one exact connector action, not a provider call")
     p.add_argument("--execution-id", help="Owning reservation or result execution id")
-    p.add_argument("--upload-request-file", help="Existing-item proof or checked browser folder context and exact local HTML path JSON")
+    p.add_argument("--upload-request-file", help="Existing-item proof or checked SharePoint new-file context and exact local HTML path JSON")
     p.add_argument("--receipt-file", help="Result-only frozen receipt binding and fresh provider readbacks JSON")
     W.add_auto_approve_argument(
         p, help_text="Checkpoint the current report review before one checked Scout handoff")

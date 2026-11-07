@@ -265,7 +265,12 @@ def cmd_skip(args):
 
 def cmd_reopen(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
-    act = orch.reopen_step(args.phase, args.step, args.reason or "")
+    act = orch.reopen_step(
+        args.phase,
+        args.step,
+        args.reason or "",
+        force_owner=bool(getattr(args, "force_owner", False)),
+    )
     if act.kind == "idle":
         print(act.message)
         return 1
@@ -440,6 +445,11 @@ def register(sub):
     ro.add_argument("--phase", required=True)
     ro.add_argument("--step", required=True)
     ro.add_argument("--reason", default="", help="Why (optional)")
+    ro.add_argument(
+        "--force-owner",
+        action="store_true",
+        help="Owner override: force-clear reservations/review holds and reopen immediately",
+    )
     ro.set_defaults(func=cmd_reopen)
 
     rt = sub.add_parser("rc-retriggered",

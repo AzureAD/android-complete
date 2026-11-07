@@ -115,6 +115,21 @@ def test_local_failures_and_waits_do_not_replay_or_hide_siblings(tmp_path, statu
     assert orch.state.get_step("phase", "scan") == before
 
 
+def test_held_work_includes_recovery_command_and_execution_id(tmp_path):
+    orch, _ = engine(tmp_path, "phase")
+    orch.state.set_step("phase", "gate", StepState(status="done", note="approved"))
+    orch.state.set_step("phase", "gather", StepState(
+        status="in_flight",
+        execution={"id": "exec-123", "owner": "owner@example.com", "started_at": "2026-10-21T00:00:00Z"},
+        note="awaiting external completion",
+    ))
+    held = orch.status_report()["work_dispatch"]["held_work"]
+    item = next(entry for entry in held if entry["step"] == "gather")
+    assert item["execution_id"] == "exec-123"
+    assert "exec-123" in item["resume_command"]
+    assert item["resume_command"].startswith("step-action --release ")
+
+
 @pytest.mark.parametrize("hold", ["halt", "cancellation", "denied"])
 def test_global_holds_precede_independent_phase_dispatch(tmp_path, hold):
     orch, calls = engine(tmp_path, "phase")

@@ -1280,8 +1280,10 @@ with its exact preview, required confirmation, host consent and provider receipt
 Readiness and silent-run settings are not message approval. Future Bug Bash chats
 must still be checked when they exist.
 Native `workiq_upload_file` only
-replaces an existing item. New immutable report creation therefore uses a checked
-SharePoint browser upload with its owning receipt, not a fictitious upload API.
+replaces an existing item. New immutable report creation uses native SharePoint
+MCP create + readback verification (`createSmallTextFile`,
+`getFileOrFolderMetadataByUrl`, `readSmallTextFile`) with an execution-bound
+receipt, not browser-only evidence.
 
 Run from `release-agent/`. **Directory/default runs now select the daily core suite**,
 capped at 1,086 cases (half the previous 2,172-case suite). The reviewed selection in
