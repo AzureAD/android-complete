@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, watch, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { createWorkflowCompletionDelivery, createWorkflowStatusTool, formatWorkflowCompletion } from "./completion.mjs";
@@ -534,6 +534,96 @@ test("persistent Windows sharing failures remain explicit and retryable without 
     await delivery.flush();
     assert.equal(session.messages.length, 1);
     assert.equal(JSON.parse(readFileSync(file, "utf8")).runs["run-1"].milestones.delivered.length, 1);
+});
+
+test("disposal during Windows terminal-outbox replacement retains the pending notice for replay",
+    { skip: process.platform !== "win32" }, async (t) => {
+    const { session, install, stateFile, errors } = fixture(t, [[completed({ status: "running" })]]);
+    const first = install();
+    await first.ready;
+    const file = stateFile();
+    const before = readFileSync(file, "utf8");
+    const release = await holdWindowsOutbox(t, file);
+    const nextFile = `${file}.${process.pid}.next`;
+    const entered = deferred();
+    const watcher = watch(path.dirname(file), (_event, filename) => {
+        if (filename && String(filename) !== path.basename(nextFile)) return;
+        try {
+            const pending = JSON.parse(readFileSync(nextFile, "utf8")).runs["run-1"]?.pending;
+            if (pending) entered.resolve(pending);
+        } catch (error) {
+            if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) entered.reject(error);
+        }
+    });
+    watcher.on("error", entered.reject);
+    const timer = setTimeout(() => entered.reject(new Error("Terminal outbox did not enter the locked replacement")), 5000);
+    session.set(completed());
+    const inspecting = first.track("run-1");
+    let pending;
+    try {
+        pending = await entered.promise;
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        assert.equal(readFileSync(file, "utf8"), before, "The sharing lock must still prevent the pending commit");
+        first.dispose();
+    } finally {
+        clearTimeout(timer);
+        watcher.close();
+        await release();
+    }
+    await inspecting;
+    await first.flush();
+    const retained = JSON.parse(readFileSync(file, "utf8")).runs["run-1"];
+    assert.equal(session.messages.length, 0, "Disposal during persistence must prevent a new terminal send");
+    assert.deepEqual(retained.pending, pending);
+    assert.deepEqual(retained.delivered, []);
+    assert.deepEqual(errors, []);
+
+    await install().ready;
+    assert.equal(session.messages.length, 1);
+    assert.equal(session.messages[0].prompt, pending.prompt);
+    const delivered = JSON.parse(readFileSync(file, "utf8")).runs["run-1"];
+    assert.deepEqual(delivered.delivered, [pending.key]);
+    assert.equal(delivered.pending, undefined);
+});
+
+test("disposal during an asynchronous terminal-outbox save does not send or acknowledge before restart", async (t) => {
+    const { session, install, errors } = fixture(t, [[completed({ status: "running" })]]);
+    let saved = { version: 1, sessionId: session.sessionId, runs: {} };
+    let held = false;
+    const entered = deferred();
+    const release = deferred();
+    const store = {
+        load: () => structuredClone(saved),
+        async save(next) {
+            if (held && next.runs["run-1"]?.pending) {
+                entered.resolve(structuredClone(next.runs["run-1"].pending));
+                await release.promise;
+            }
+            saved = structuredClone(next);
+        },
+    };
+    const first = install({ store });
+    await first.ready;
+    held = true;
+    session.set(completed());
+    const inspecting = first.track("run-1");
+    const pending = await entered.promise;
+    assert.equal(saved.runs["run-1"].pending, undefined);
+    first.dispose();
+    held = false;
+    release.resolve();
+    await inspecting;
+    await first.flush();
+    assert.equal(session.messages.length, 0);
+    assert.deepEqual(saved.runs["run-1"].pending, pending);
+    assert.deepEqual(saved.runs["run-1"].delivered, []);
+    assert.deepEqual(errors, []);
+
+    await install({ store }).ready;
+    assert.equal(session.messages.length, 1);
+    assert.equal(session.messages[0].prompt, pending.prompt);
+    assert.deepEqual(saved.runs["run-1"].delivered, [pending.key]);
+    assert.equal(saved.runs["run-1"].pending, undefined);
 });
 
 test("asynchronous outbox writes serialize across runs and concurrent duplicate notices", async (t) => {

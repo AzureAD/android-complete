@@ -319,6 +319,8 @@ no notice is sent before its pending receipt is durable. Exhausted retries remai
 explicit errors; they never become false delivery acknowledgements. Flush operations
 also wait for queued persistence. External diagnostic readers should allow delete
 sharing on Windows and close their handles before waiting for another file event.
+Disposal during a pending terminal-notice commit prevents the subsequent send; the
+committed notice remains pending for a later delivery instance.
 
 Notification failures are coalesced by operation and underlying cause, not Error-object
 identity. The shared outbox has one storage incident across runs; reads and sends retain

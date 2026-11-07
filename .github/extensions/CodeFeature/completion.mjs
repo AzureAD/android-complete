@@ -692,6 +692,7 @@ export function createWorkflowCompletionDelivery(session, {
                 };
             });
         }
+        if (disposed) return;
         try {
             await attempt("outcome", runId, () => session.send({
                 prompt: state.runs[runId].pending.prompt,
