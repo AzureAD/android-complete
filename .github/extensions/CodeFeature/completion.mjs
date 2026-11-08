@@ -8,7 +8,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, normalizeMilestone } from "./milestones.mjs";
 import { deliveryStatusSummary, observerNextAction } from "./status.mjs";
-import { ciVerificationSummary, localVerificationSummary } from "./verification.mjs";
+import { ciVerificationSummary, localVerificationSummary, verificationEvidenceSummary } from "./verification.mjs";
 
 const workflowNames = new Set(["code-feature", "pr-observer"]);
 const settledStatuses = new Set(["completed", "paused", "error", "halted", "cancelled"]);
@@ -107,7 +107,8 @@ export function formatWorkflowCompletion(name, run, progress = []) {
                 lines.push(`${ciVerificationSummary(entry)} Observed head: ${text(entry?.ci?.headSha) || "unavailable"}.`);
             }
             for (const evidence of [...array(entry?.local?.evidence), ...array(entry?.ci?.evidence)].slice(0, 2)) {
-                if (!localVerificationSummary(entry).includes(evidence)) lines.push(`Verification evidence: ${text(evidence)}`);
+                const excerpt = verificationEvidenceSummary(evidence);
+                if (excerpt && !localVerificationSummary(entry).includes(excerpt)) lines.push(`Verification evidence: ${excerpt}`);
             }
         }
         const ready = links.size > 0 && observations.length > 0 &&

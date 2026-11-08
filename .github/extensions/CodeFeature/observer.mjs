@@ -1761,7 +1761,7 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
             id: `${prefix}-repair-${iteration}-authored`,
             title: `Tactical repair ${iteration + 1}`,
             outcome: "completed",
-            summary: "Repair authored; local verification and independent source review are next.",
+            summary: "Tactical assessment complete; local verification and independent review are next.",
             prUrl: parsedPr.prUrl,
         });
 
@@ -1812,7 +1812,7 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
             id: `${prefix}-repair-${iteration}-reviewed`,
             title: `Tactical repair review ${iteration + 1}`,
             outcome: "completed",
-            summary: `Independent source review accepted the repair; ${pushRepairs ? "push and current-head CI are next" : "pushing the repair was not requested"}.`,
+            summary: `Independent review accepted the tactical disposition; ${pushRepairs ? "push and current-head CI are next" : "pushing was not requested"}.`,
             prUrl: parsedPr.prUrl,
         });
 
@@ -1989,11 +1989,17 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                 return { pushedSha };
             });
             if (nonempty(pushed?.pushedSha)) expectedHeadSha = pushed.pushedSha;
+            const unchangedHead = nonempty(pushed?.pushedSha) && pushed.pushedSha === snapshot.headRefOid;
+            const changedHead = nonempty(pushed?.pushedSha) && nonempty(snapshot.headRefOid) && !unchangedHead;
             await recordMilestone(ctx, {
                 id: `${prefix}-repair-${iteration}-pushed`,
-                title: `Tactical repair ${iteration + 1} pushed`,
+                title: changedHead ? `Tactical repair ${iteration + 1} pushed` : `Tactical push ${iteration + 1} completed`,
                 outcome: "completed",
-                summary: `Repair pushed${pushed?.pushedSha ? ` at ${pushed.pushedSha}` : ""}; waiting for CI results for that commit.`,
+                summary: unchangedHead
+                    ? "Push completed; the source head is unchanged. CI observation continues."
+                    : changedHead
+                        ? `Repair pushed at ${pushed.pushedSha}; waiting for CI results for that commit.`
+                        : "Push completed; the resulting source head could not be confirmed. CI observation is next.",
                 prUrl: parsedPr.prUrl,
             });
         }

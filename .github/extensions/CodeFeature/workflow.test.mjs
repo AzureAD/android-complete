@@ -1411,7 +1411,7 @@ test("pr-observer workflow inspects PR checks/threads, applies verified tactical
     assert.equal(milestones.filter((item) => item.title === "Tactical repair started").length, 1);
     assert.match(milestones.find((item) => item.title === "Tactical repair started").summary, /in progress/);
     assert.match(milestones.find((item) => item.title === "Tactical repair review 1").summary, /push and current-head CI are next/);
-    assert.match(milestones.find((item) => item.title === "Tactical repair 1 pushed").summary, /waiting for CI results for that commit/);
+    assert.match(milestones.find((item) => item.title === "Tactical push 1 completed").summary, /resulting source head could not be confirmed/);
 });
 
 test("question deduplication, pre-coding spec challenge, resume worktree inspection, PR status blocks, and observer anti-loop", async () => {

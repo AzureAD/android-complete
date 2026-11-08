@@ -449,6 +449,28 @@ test("verbose failed and deferred local evidence stays bounded in completion pro
     }
 });
 
+test("terminal verification excerpts retain the stopping cause after long command narration and head changes", async (t) => {
+    for (const status of ["failed", "deferred", "unverified"]) {
+        const cause = "Stopped the running verification shell at the 12-minute cap with zero retries; local verification was short-circuited to remote CI.";
+        const evidence = `Builder reported: Authored tests. Attempted ${":app:compileProductionDebugKotlin --max-workers=2 ".repeat(1000)}. ${cause}`;
+        const run = completed();
+        run.result.verification = [{ targetId: "common", local: { status, evidence: [evidence, "Local receipt predates the observed CI repair commit."] }, ci: { status: "not-observed" } }];
+        const before = structuredClone(run.result.verification);
+        const { session, install, stateFile } = fixture(t, [[run]]);
+        let pending;
+        session.sendHook = () => { pending = JSON.parse(readFileSync(stateFile(), "utf8")).runs["run-1"].pending.prompt; };
+        const delivery = install();
+        await delivery.ready;
+        await delivery.flush();
+        assert.ok(pending.length < 4000);
+        assert.equal(session.messages[0].prompt, pending);
+        assert.ok(pending.includes(cause), pending);
+        assert.match(pending, /Local receipt predates the observed CI repair commit/);
+        assert.doesNotMatch(pending, /Local verification passed|--max-workers/);
+        assert.deepEqual(run.result.verification, before);
+    }
+});
+
 async function holdWindowsOutbox(t, file) {
     const encodedPath = Buffer.from(file).toString("base64");
     const script = [

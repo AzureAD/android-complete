@@ -28,6 +28,18 @@ export function verificationFromGate(gate) {
     };
 }
 
+export function verificationEvidenceSummary(value) {
+    if (typeof value !== "string") return "";
+    const narrative = value.replace(/\s+/g, " ").trim();
+    const sentences = narrative.split(/(?<=[.!?])\s+(?=[A-Z])/);
+    const cause = sentences.find((sentence) =>
+        /\b(?:stopped|halted|cancelled|canceled|blocked|failed|timed out|not found|unavailable|could not|cannot|unable to)\b|\b(?:exceeded|hit|reached)\b.{0,80}\b(?:cap|limit|budget|deadline)\b/i.test(sentence));
+    const summary = cause && cause !== sentences[0]
+        ? `${narrative.startsWith("Builder reported:") ? "Builder reported: " : ""}${cause}`
+        : narrative;
+    return summary.length > 500 ? `${summary.slice(0, 497).trimEnd()}...` : summary;
+}
+
 export function localVerificationSummary(verification) {
     const local = verification?.local?.status || "unverified";
     const summaries = {
@@ -40,7 +52,7 @@ export function localVerificationSummary(verification) {
     const evidence = Array.isArray(verification?.local?.evidence) ? verification.local.evidence : [];
     const reason = evidence.find((entry) => typeof entry === "string" && entry.trim() &&
         !entry.startsWith("Successful command:"));
-    const message = ["failed", "deferred"].includes(local) && reason ? `${summary} ${reason.replace(/\s+/g, " ").trim()}` : summary;
+    const message = ["failed", "deferred"].includes(local) && reason ? `${summary} ${verificationEvidenceSummary(reason)}` : summary;
     return message.length > 500 ? `${message.slice(0, 497).trimEnd()}...` : message;
 }
 

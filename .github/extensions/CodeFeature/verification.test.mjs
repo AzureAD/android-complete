@@ -97,6 +97,23 @@ test("local diagnostic summaries are bounded without changing full failed or def
     }
 });
 
+test("long command narration cannot hide the recorded verification stopping or failure cause", () => {
+    for (const [status, cause] of [
+        ["deferred", "Stopped the running verification shell at the 12-minute cap with zero retries; local verification was short-circuited to remote CI."],
+        ["failed", "Execution failed for task :app:compileProductionDebugKotlin: unresolved reference in the changed file."],
+    ]) {
+        const narration = `Builder reported: Authored five focused Kotlin test classes. Attempted the combined Gradle command with ${"--no-daemon --max-workers=2 :app:compileProductionDebugKotlin ".repeat(100)}. Completed evidence: 41 ECS tests passed. ${cause} Remaining checks need CI.`;
+        const receipt = { local: { status, commands: [], evidence: [narration] }, ci: { status: "not-observed" } };
+        const before = structuredClone(receipt);
+        const summary = localVerificationSummary(receipt);
+        assert.ok(summary.length <= 500);
+        assert.ok(summary.includes(cause), summary);
+        assert.match(summary, /Builder reported:/);
+        assert.doesNotMatch(summary, /Local verification passed|--max-workers|41 ECS tests passed/);
+        assert.deepEqual(receipt, before);
+    }
+});
+
 test("repeated CI updates retain failed and deferred local reasons without changing the compact marker schema", () => {
     const parsed = parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42");
     for (const status of ["failed", "deferred"]) {
@@ -675,6 +692,48 @@ test("exhausted observer returns final CI failures and never exceeds its two-rep
     assert.ok(result.evidence.some((line) => line.includes("Unresolved reference")));
     assert.ok(result.actionableFindings.length);
     assert.equal(result.continuation.workflow, "pr-observer");
+});
+
+test("repair messages distinguish an unchanged pushed head from a real source commit", async () => {
+    for (const disposition of ["unchanged", "changed", "unconfirmed"]) {
+        const changed = disposition === "changed";
+        const originalHead = "a".repeat(40);
+        const pushedHead = changed ? "b".repeat(40) : originalHead;
+        const repair = { verdict: "pass", summary: changed ? "Fixed the reported test." : "No source changes are warranted.", evidence: [] };
+        const context = ctx([repair, passedReview], { maxIterations: 1, pushRepairs: true });
+        const logs = [];
+        const commands = [];
+        context.log = (text) => logs.push(text);
+        context.step = async (key, producer) => {
+            const result = await producer();
+            return /-push-repair-\d+$/.test(key)
+                ? { ...result, pushedSha: disposition === "unconfirmed" ? "" : pushedHead } : result;
+        };
+        let reads = 0;
+        const result = await runPrObserver(context, {
+            exec: (command, args) => { commands.push({ command, args }); return ""; },
+            fetchPrSnapshot: () => ++reads === 1
+                ? snapshot({ headRefOid: originalHead, prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["FooTest.kt:12 Unresolved reference"] }] }] })
+                : snapshot({ headRefOid: pushedHead }),
+        });
+        const milestones = logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
+        const assessed = milestones.find((item) => /-authored$/.test(item.id));
+        const pushed = milestones.find((item) => /-pushed$/.test(item.id));
+        assert.doesNotMatch(assessed.summary, /Repair authored/);
+        assert.ok(commands.some(({ command, args }) => command === "git" && args.includes("push")));
+        assert.equal(context.calls.length, 2);
+        assert.equal(result.ci.headSha, pushedHead);
+        if (changed) {
+            assert.match(pushed.summary, /Repair pushed/);
+            assert.doesNotMatch(pushed.summary, /unchanged/);
+        } else if (disposition === "unchanged") {
+            assert.match(pushed.summary, /Push completed.*source head is unchanged/);
+            assert.doesNotMatch(pushed.title + pushed.summary, /Repair pushed|repair .* pushed/i);
+        } else {
+            assert.match(pushed.summary, /resulting source head could not be confirmed/);
+            assert.doesNotMatch(pushed.summary, /Repair pushed|source head is unchanged/);
+        }
+    }
 });
 
 test("pending CI returns explicit continuation without spending classifier agents", async () => {

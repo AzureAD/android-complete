@@ -132,9 +132,12 @@ Given an approved coding task or PBI specification:
 - The observer updates the PR status/verification markers from its final snapshot, guarding
   against a concurrently changed head or description. Write failures are explicit.
 - Failed/deferred local-verification summaries retain a diagnostic excerpt of at most
-  500 characters; full evidence remains in the workflow verification receipt. Repeated
-  CI updates preserve that local reason in the managed narrative without expanding the
-  compact PR marker schema. Disabling source repairs is reported as disabled repairs,
+  500 characters. Recorded stopping/failure/defer causes take priority over long command
+  narration, including a recorded 12-minute cap. Terminal evidence uses the same cause
+  priority and bound, including when the local receipt predates a repaired head; full
+  evidence remains unchanged in the workflow verification receipt. Repeated CI updates
+  preserve that local reason without expanding the compact PR marker schema.
+  Disabling source repairs is reported as disabled repairs,
   not as a spent budget or proof of a CI failure.
 - ADO creation descriptions are budgeted to 3,500 UTF-16 characters, preserving required
   work-item/telemetry and JSON status markers and reserving room for final status updates.
@@ -228,7 +231,7 @@ The same owning-session delivery path now relays explicit durable milestone rece
 - Local verification completed, blocked, or deferred (with the actual verification state).
 - Independent source-review rounds completed or returned findings.
 - Each PR published, immediately with its link, even when another target later fails.
-- PR handed to pending CI; tactical repair authored, reviewed, and pushed; observation ended.
+- PR handed to CI; tactical work assessed and reviewed, push completed; observation ended.
 
 Entering a phase, routine tool logs, or `BUILD SUCCESSFUL` text alone never creates a
 completed-phase notice. Source review and publication updates explicitly do not claim
@@ -249,6 +252,9 @@ are separate facts, but do not require a repeated disclaimer at every milestone.
 | Source review passed | Independent source review passed; PR preparation is next. |
 | Published with observation enabled | PR published. CI observation is next. |
 | CI state observed | CI checks are queued. / CI checks are running. / Waiting for CI results for the current PR head. |
+| Tactical assessment complete | Tactical assessment complete; local verification and independent review are next. |
+| Push confirmed with unchanged source head | Push completed; the source head is unchanged. CI observation continues. |
+| New source commit confirmed | Repair pushed; waiting for CI results for that commit. |
 | External blocker | CI provider is unavailable; the provider or pipeline owner must resolve it before retrying. |
 | Verified handoff | CI and observed PR checks passed; human review and merge approval are still required. |
 
@@ -260,6 +266,10 @@ The same durable identity/outbox and cancellation rules apply to these receipts.
 Delayed/replayed receipts are historical evidence, not proof work is still active.
 Final handoffs name the next responsible owner and preserve diagnostics; continuation
 arguments alone never claim an observer is running.
+Tactical assessments may accept a no-change disposition. They do not automatically
+mean source was authored; a completed push only claims a new repair commit when the
+returned head differs from the observed pre-repair head. A no-op push still records
+the actual push action, and an unavailable resulting head stays explicit.
 
 Milestones are journaled by stable identity and pushed directly from the executing
 workflow to its owning-session outbox. They do not wait for an ephemeral run-updated
