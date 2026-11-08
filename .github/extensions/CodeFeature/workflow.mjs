@@ -2615,6 +2615,18 @@ export function formatPrBody(
     return fitAdoDescription(compactBody, { maximum: 3500, truncateNarrative: true });
 }
 
+export function isLocalSdkConfiguration(filePath) {
+    return typeof filePath === "string" && /(?:^|[\\/])local\.properties$/i.test(filePath);
+}
+
+export function assertNoStagedLocalSdkConfiguration(repoRoot, exec = defaultExec) {
+    const staged = exec("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXB"], { cwd: repoRoot }) || "";
+    const localFiles = staged.split(/\0|\r?\n/).filter(isLocalSdkConfiguration);
+    if (localFiles.length) {
+        throw new Error(`Local SDK configuration is staged for publication: ${localFiles.join(", ")}. Preserve it locally and remove it from the index before continuing.`);
+    }
+}
+
 export function discoverChangedFilesFromGit(
     repoRoot,
     exec = defaultExec,
@@ -2655,7 +2667,7 @@ export function discoverChangedFilesFromGit(
             const status = lineMatch[1];
             const rawPath = lineMatch[2].trim().replace(/^"(.*)"$/, "$1");
             const relPath = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop().trim() : rawPath;
-            if (!isSafeRelativeFilePath(relPath) || /(?:^|[\\/])local\.properties$/i.test(relPath)) continue;
+            if (!isSafeRelativeFilePath(relPath)) continue;
             if (!allowPipelineEdits && isProtectedPipelineOrQualityPath(relPath)) continue;
             const fullPath = path.resolve(repoRoot, relPath);
             const action = status.includes("D")
@@ -2663,6 +2675,7 @@ export function discoverChangedFilesFromGit(
                 : status.includes("?") || status.includes("A")
                     ? "create"
                     : "modify";
+            if (isLocalSdkConfiguration(relPath) && action !== "delete") continue;
             if (action !== "delete") {
                 try {
                     if (!existsSync(fullPath) || !lstatSync(fullPath).isFile()) continue;
@@ -3079,6 +3092,10 @@ export function validateImplementation(implementation, task, { workspaceRoot = "
                         errors.push(
                             `Target ${expectedTarget.id} modified protected CI pipeline or static-analysis config (${file.path}) without explicit authorization; fix the source/test code instead of modifying pipelines or quality configs.`,
                         );
+                        continue;
+                    }
+                    if (isLocalSdkConfiguration(file.path) && file.action !== "delete") {
+                        errors.push(`Target ${expectedTarget.id} cannot publish local SDK configuration (${file.path}); only removal of a tracked file is allowed.`);
                         continue;
                     }
                     const existsOnDisk = nonempty(repoRoot) && existsSync(path.resolve(repoRoot, file.path));
@@ -3614,12 +3631,16 @@ export function publishTargetPullRequest({
         exec("git", ["checkout", "-B", branch], { cwd: repoRoot, env: gitEnv });
     }
     for (const file of targetImpl.files) {
+        if (isLocalSdkConfiguration(file.path) && file.action !== "delete") {
+            throw new Error(`Cannot publish local SDK configuration (${file.path}); preserve it locally.`);
+        }
         if (file.action === "delete") {
             exec("git", ["rm", "--ignore-unmatch", "--", file.path], { cwd: repoRoot, env: gitEnv });
         } else {
             exec("git", ["add", "--", file.path], { cwd: repoRoot, env: gitEnv });
         }
     }
+    assertNoStagedLocalSdkConfiguration(repoRoot, exec);
     if (sourceBinding) verifyPublicationSource(repoRoot, targetImpl, sourceBinding, exec, { staged: true });
     let shouldCommit = true;
     if (existsSync(path.join(repoRoot, ".git"))) {
@@ -3987,6 +4008,7 @@ function publicationTree(repoRoot, targetImpl, exec, indexTree) {
 }
 
 function capturePublicationSource(repoRoot, target, targetImpl, exec) {
+    assertNoStagedLocalSdkConfiguration(repoRoot, exec);
     const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
     const indexTree = exec("git", ["write-tree"], { cwd: repoRoot });
     const base = exec("git", ["merge-base", head, `origin/${target.baseBranch}`], { cwd: repoRoot });

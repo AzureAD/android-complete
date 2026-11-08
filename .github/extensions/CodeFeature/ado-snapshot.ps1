@@ -20,13 +20,24 @@ $artifact = [uri]::EscapeDataString("vstfs:///CodeReview/CodeReviewId/$($pr.repo
 $policyRows = (Invoke-RestMethod -Uri ("$projectBase/_apis/policy/evaluations?artifactId=$artifact&api-version=7.1-preview.1") -Headers $headers -Method Get).value
 $buildRows = (Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds?branchName=refs/pull/$($inputData.prNumber)/merge&`$top=50&queryOrder=queueTimeDescending&api-version=7.0") -Headers $headers -Method Get).value
 $diagnosticErrors = @()
+function Get-PositiveBuildId($Value) {
+    $text = [string]$Value
+    $id = 0L
+    if ($text -match '^[0-9]+$' -and [long]::TryParse($text, [ref]$id) -and $id -gt 0 -and $id -le 9007199254740991L) {
+        return $id
+    }
+    return $null
+}
 $buildsById = @{}
-foreach ($build in @($buildRows)) { if ($build.id) { $buildsById[[string]$build.id] = $build } }
+foreach ($build in @($buildRows)) {
+    $id = Get-PositiveBuildId $build.id
+    if ($id) { $buildsById[[string]$id] = $build }
+}
 foreach ($policy in @($policyRows)) {
-    $buildId = [string]$policy.context.buildId
-    if ($buildId -and -not $buildsById.ContainsKey($buildId)) {
+    $buildId = Get-PositiveBuildId $policy.context.buildId
+    if ($buildId -and -not $buildsById.ContainsKey([string]$buildId)) {
         try {
-            $buildsById[$buildId] = Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds/$buildId`?api-version=7.0") -Headers $headers -Method Get
+            $buildsById[[string]$buildId] = Invoke-RestMethod -Uri ("$projectBase/_apis/build/builds/$buildId`?api-version=7.0") -Headers $headers -Method Get
         } catch { $diagnosticErrors += "Build $buildId metadata unavailable: $($_.Exception.Message)" }
     }
 }
@@ -55,11 +66,12 @@ function Get-LogText($Url) {
 }
 
 $policies = @($policyRows | ForEach-Object {
-    $build = $buildsById[[string]$_.context.buildId]
+    $buildId = Get-PositiveBuildId $_.context.buildId
+    $build = if ($buildId) { $buildsById[[string]$buildId] } else { $null }
     @{
         evaluationId = $_.evaluationId; name = $_.configuration.type.displayName; typeId = $_.configuration.type.id
         status = $_.status; blocking = $_.configuration.isBlocking
-        buildIsNotCurrent = $_.context.buildIsNotCurrent; buildId = $_.context.buildId
+        buildIsNotCurrent = $_.context.buildIsNotCurrent; buildId = $buildId
         buildSourceHeadSha = if ($build) { Get-BuildSourceHead $build } else { '' }
         buildDefinitionId = if ($build) { $build.definition.id } else { $null }
     }
@@ -91,7 +103,7 @@ $latestBuilds = @($currentBuilds | Group-Object { $_.definition.id } | ForEach-O
                 # Include plugin/feed configuration errors as well as compiler and test failures.
                 $excerpt = @($logText -split "`r?`n" | Where-Object {
                     $_ -notmatch '\tat\s|\sw:\s' -and
-                    $_ -match 'FAILED|What went wrong|\.kt:\d+|\.java:\d+|Execution failed|weighted issues|Caused by:|Exception|UnknownHostException|error:|fetch-pack:|Plugin \[|could not resolve|could not be resolved|could not find|was not found|\b(?:401|403)\b|unauthorized|forbidden|HTTP|maven|https://.*(?:pkgs|packaging)'
+                    $_ -match 'FAILED|What went wrong|\.kt:\d+|\.java:\d+|Execution failed|weighted issues|Caused by:|Exception|UnknownHostException|error:|fetch-pack:|Connection reset|ECONNRESET|ETIMEDOUT|curl \d+|Plugin \[|could not resolve|could not be resolved|could not find|was not found|\b(?:401|403)\b|unauthorized|forbidden|HTTP|maven|https://.*(?:pkgs|packaging)'
                 } | Select-Object -Last 25)
                 $runIds = @([regex]::Matches($logText, '(?i)(?:run id:\s*|test run[^0-9]{0,20}|[?&]runId=)(\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
                 foreach ($runId in $runIds) {

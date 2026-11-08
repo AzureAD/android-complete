@@ -29,6 +29,7 @@ const {
     BUILDER_AGENT,
     REVIEWER_AGENT,
     buildNormalizedProcessEnv,
+    assertNoStagedLocalSdkConfiguration,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
     isDefinitiveCodeOrTestFailure,
@@ -231,7 +232,7 @@ export function verifyCheckoutRemoteMatchesPr(repoRoot, parsedPr, exec = default
         remoteUrl = "";
     }
     if (!nonempty(remoteUrl)) {
-        if (exec === defaultExec && hasDotGit) {
+        if (hasDotGit) {
             return {
                 ok: false,
                 reason: `Could not verify origin remote URL in ${repoRoot} for ${parsedPr.prUrl}.`,
@@ -887,7 +888,7 @@ export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = 
         "  $stageRetried = $false",
         "  try {",
         "    $tl = Invoke-RestMethod -Uri \"$projectBase/_apis/build/builds/$bid/timeline?api-version=7.0\" -Headers $headers -Method Get",
-        "    $stages = @($tl.records | Where-Object { $_.type -eq 'Stage' -and ($_.result -eq 'failed' -or $_.state -eq 'completed') -and $_.identifier })",
+        "    $stages = @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -in @('failed','canceled','cancelled') -and $_.identifier })",
         "    foreach ($st in $stages) {",
         "      try {",
         "        Invoke-RestMethod -Uri \"$projectBase/_apis/build/builds/$bid/stages/$($st.identifier)?api-version=7.0-preview.1\" -Headers $headers -Method Patch -Body '{\"state\":1,\"forceRetryAllJobs\":false}' | Out-Null",
@@ -912,8 +913,9 @@ export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = 
     ].join("; ");
     try {
         const res = exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
-        return /true/i.test(res);
-    } catch {
+        return JSON.parse(res) === true;
+    } catch (error) {
+        if (["AbortError", "ConnectionError", "ResponseError"].includes(error?.name)) throw error;
         return false;
     }
 }
@@ -1108,6 +1110,22 @@ function environmentHandoff(snapshot, prUrl, iterations) {
 function hasTaskDiagnostics(task) {
     return [...(task.issues || []), ...(task.excerpt || []),
         ...(task.failedTests || []).flatMap((test) => [test.errorMessage, test.testName])].some(nonempty);
+}
+
+function checkoutTransportFailures(snapshot) {
+    const builds = (snapshot?.prBuilds || []).filter((build) =>
+        !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")) &&
+        ["failed", "partiallysucceeded", "canceled", "cancelled"].includes(String(build.result || "").toLowerCase()));
+    const tasks = builds.flatMap((build) => build.failedTasks || []);
+    if (!tasks.length || !nonempty(snapshot?.headRefOid) || builds.some((build) => !positiveInt(Number(build.id)) ||
+        !(build.failedTasks || []).length || (build.diagnosticErrors || []).length)) return null;
+    const evidence = tasks.map((task) => [task.name, ...(task.issues || []), ...(task.excerpt || [])].join("\n"));
+    if (tasks.some((task) => (task.failedTests || []).length) ||
+        isDefinitiveCodeOrTestFailure(evidence.join("\n")) ||
+        !evidence.every((text, index) =>
+            (/checkout|get sources/i.test(String(tasks[index].name || "")) || /git fetch|git clone|fetch-pack/i.test(text)) &&
+            /Connection reset|ECONNRESET|ETIMEDOUT|Could not resolve host|unable to access.*(?:timeout|timed out)|curl.*(?:56|28)/i.test(text))) return null;
+    return { builds, evidence };
 }
 
 export function refreshStaleAdoBuildPolicies(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
@@ -1355,6 +1373,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
     const builderGuides = resolveRoleSkillGuides("builder", [target]);
     const reviewerGuides = resolveRoleSkillGuides("reviewer", [target]);
     const attemptedRepairIdentities = new Set();
+    const retriedCheckoutHeads = new Set();
     let expectedHeadSha = null;
 
     for (let iteration = 0; iteration <= maxIterations; iteration++) {
@@ -1479,6 +1498,55 @@ async function runObserverLoop(ctx, dependencies = {}) {
             const failedTasks = (snapshot?.prBuilds || [])
                 .filter((build) => !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")))
                 .flatMap((build) => build.failedTasks || []).filter(hasTaskDiagnostics);
+            const transport = parsedPr.provider === "ado" && checkoutTransportFailures(snapshot);
+            if (transport) {
+                ctx.signal?.throwIfAborted();
+                const handoff = (reason) => ({
+                    status: "needs-owner-decision", blockerKind: "ci-infrastructure", prUrl: parsedPr.prUrl,
+                    summary: `${reason} No source repair was dispatched; the pipeline owner must inspect checkout connectivity.`,
+                    evidence: transport.evidence, iterations: iteration,
+                });
+                if (!pushRepairs || totalPollsUsed >= maxCiPollAttempts) {
+                    return handoff("CI checkout failed before compilation/tests; automatic retry or observation was not enabled.");
+                }
+                if (retriedCheckoutHeads.has(snapshot.headRefOid)) {
+                    return handoff("CI checkout is still failing after the single transport retry for this source head.");
+                }
+                const retryKey = createHash("sha256").update(snapshot.headRefOid).digest("hex").slice(0, 16);
+                const buildIds = transport.builds.map((build) => Number(build.id)).sort((a, b) => a - b);
+                const receipt = await step(`retry-checkout-${retryKey}`, async () => {
+                    ctx.signal?.throwIfAborted();
+                    const retried = await (dependencies.retryFailedBuilds || retryFailedAdoBuildStages)(parsedPr, {
+                        ...snapshot, prBuilds: transport.builds,
+                    }, { workspaceRoot, exec });
+                    return { retried: retried === true, buildIds };
+                });
+                ctx.signal?.throwIfAborted();
+                if (receipt?.retried !== true) return handoff("CI checkout retry could not be confirmed.");
+                if (JSON.stringify(receipt.buildIds) !== JSON.stringify(buildIds)) {
+                    return handoff("CI checkout failed in another build after the single transport retry for this source head.");
+                }
+                retriedCheckoutHeads.add(snapshot.headRefOid);
+                await recordMilestone(ctx, {
+                    id: `${prefix}-checkout-retry-${retryKey}`,
+                    title: "CI checkout retry requested",
+                    outcome: "deferred",
+                    summary: "CI checkout failed before compilation/tests. A remote retry was requested; the source repair allowance is unchanged.",
+                    prUrl: parsedPr.prUrl,
+                });
+                totalPollsUsed++;
+                pollSeq++;
+                await sleep(ciPollIntervalMs);
+                ctx.signal?.throwIfAborted();
+                snapshot = await step(`snapshot-${iteration}-checkout-retry-${pollSeq}`,
+                    async () => fetchSnapshot(parsedPr), { volatile: true });
+                observation = {
+                    verdict: "waiting-for-ci", repairKind: "none",
+                    summary: "CI checkout retry was requested; current-head validation still needs observation.",
+                    evidence: transport.evidence, actionableFindings: [],
+                };
+                continue;
+            }
             if (failedTasks.length > 0) {
                 observation = {
                     verdict: "repair",
@@ -1835,7 +1903,6 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, {
                     allowPipelineEdits: false,
                 });
-                const isRealGitCheckout = exec === defaultExec && existsSync(path.join(repoRoot, ".git"));
                 if (discovered.files.length > 0) {
                     for (const file of discovered.files) {
                         if (file.action === "delete") {
@@ -1844,19 +1911,7 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                             exec("git", ["add", "--", file.path], { cwd: repoRoot, env: gitEnv });
                         }
                     }
-                    exec(
-                        "git",
-                        [
-                            "commit",
-                            "-m",
-                            repairResult.prTitle || `Address PR #${parsedPr.prNumber} ${observation.repairKind}`,
-                            "-m",
-                            "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
-                        ],
-                        { cwd: repoRoot, env: gitEnv },
-                    );
-                } else if (!isRealGitCheckout) {
-                    exec("git", ["add", "-A"], { cwd: repoRoot, env: gitEnv });
+                    assertNoStagedLocalSdkConfiguration(repoRoot, exec);
                     exec(
                         "git",
                         [
@@ -1882,12 +1937,10 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                     : ["push", "origin", `HEAD:${headBranch}`];
                 exec("git", pushArgs, { cwd: repoRoot, env: gitEnv });
                 let pushedSha = "";
-                if (exec === defaultExec) {
-                    try {
-                        pushedSha = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
-                    } catch {
-                        pushedSha = "";
-                    }
+                try {
+                    pushedSha = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env: gitEnv });
+                } catch {
+                    pushedSha = "";
                 }
                 const changedFilePaths = discovered.files.map((f) => f.path);
                 if (

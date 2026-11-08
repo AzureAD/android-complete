@@ -105,6 +105,13 @@ Given an approved coding task or PBI specification:
   Publication checks the binding before staging, before committing, and before pushing
   an explicit commit SHA. A retry may reuse the single commit made from that exact
   reviewed tree; unrelated commits or index changes require a new source review.
+- Initial publication and tactical repair stage explicit allowed files, never a
+  `git add -A` fallback selected by executor identity. No-change repair assessments
+  create no commit. Root/nested `local.properties` additions and edits remain local;
+  tracked deletions are allowed so an approved cleanup reaches the commit. An already
+  staged SDK configuration addition/edit blocks publication explicitly without
+  discarding the caller's index or local file. Returned push-head evidence uses the
+  supplied executor in both standalone and embedded observation.
 
 ### Verification and delivery receipts
 
@@ -117,7 +124,9 @@ Given an approved coding task or PBI specification:
 - `verification[].ci` records status, observed PR source head, and concrete check/build
   evidence. ADO builds are bound to `system.pullRequest.sourceCommitId` in the build
   parameters, with the exact current merge commit as a fallback only when source parameters
-  are absent. Policy-referenced builds missing from the latest-build list are fetched.
+  are absent. Policy-referenced builds missing from the latest-build list are fetched
+  only for positive integer IDs. Zero, absent or malformed IDs cannot cause a build-zero
+  lookup and leave required validation pending/unknown, never passed.
   Rejected/canceling validation for an older source cannot fail the new source, even if a
   provider's `buildIsNotCurrent` flag is false. A head/merge change during collection
   requires a fresh snapshot; stale policies, partial success and absent results cannot pass.
@@ -150,6 +159,14 @@ Given an approved coding task or PBI specification:
 - Pure CI waiting and concrete failed tasks are handled deterministically before invoking
   a classifier. At most two tactical repairs occur; exhaustion retains exact remaining
   diagnostics and a continuation rather than an empty success-shaped packet.
+- A current-head checkout-only connection reset/timeout with readable diagnostics
+  requests one durable remote retry per source head before dispatching repair agents.
+  It uses the existing CI observation bound, not a source-repair slot or new allowance.
+  Only failed/canceled stages are retried; successful stages are untouched. Disabled
+  pushes or an absent wait allowance produce an explicit pipeline-owner handoff.
+  Unconfirmed retries and repeated failures also hand off, rather than looping.
+  Mixed compiler/test failures still use source repair; unreadable or stale diagnostics
+  cannot authorize a transport retry. Actual tool cancellation propagates.
 - Pending checks never bypass merge-conflict or actionable-review classification,
   including when feedback first appears during a CI poll. GitHub/GHE snapshots collect
   inline threads and Azure build diagnostics through the supplied executor, whether

@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { milestoneFromProgress } from "./milestones.mjs";
 import {
-    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, parseAllowedGradleVerificationCommand, runCodeFeature, runLocalVerificationGate, validateImplementation,
+    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, discoverChangedFilesFromGit, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, parseAllowedGradleVerificationCommand, runCodeFeature, runLocalVerificationGate, validateImplementation,
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
@@ -734,6 +734,210 @@ test("repair messages distinguish an unchanged pushed head from a real source co
             assert.doesNotMatch(pushed.summary, /Repair pushed|source head is unchanged/);
         }
     }
+});
+
+test("embedded observer stages only repair files, preserves local SDK config and publishes its deletion", async () => {
+    for (const kind of ["no-change", "source", "delete-config", "staged-config"]) {
+        const root = mkdtempSync(path.join(os.tmpdir(), "observer-explicit-staging-"));
+        const source = path.join(root, "source");
+        const repo = path.join(root, "common");
+        try {
+            mkdirSync(source);
+            const git = (...args) => execFileSync("git", args, { cwd: source, encoding: "utf8", stdio: "pipe" }).trim();
+            git("init", "--quiet");
+            git("config", "user.name", "Workflow Fixture");
+            git("config", "user.email", "fixture@example.invalid");
+            writeFileSync(path.join(source, "Foo.kt"), "class Foo\n");
+            writeFileSync(path.join(source, "local.properties"), "sdk.dir=fixture-sdk\n");
+            writeFileSync(path.join(source, "README"), "baseline\n");
+            git("add", "Foo.kt", "README", ...(kind === "delete-config" ? ["local.properties"] : []));
+            git("commit", "--quiet", "-m", "baseline");
+            git("update-ref", "refs/remotes/origin/dev", "HEAD");
+            git("remote", "add", "origin", "https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git");
+            git("worktree", "add", "--quiet", "-b", "feature", repo, "HEAD");
+            const original = git("rev-parse", "HEAD");
+            writeFileSync(path.join(repo, "local.properties"), "sdk.dir=fixture-sdk\n");
+            mkdirSync(path.join(repo, "nested"));
+            writeFileSync(path.join(repo, "nested", "local.properties"), "sdk.dir=fixture-sdk\n");
+            if (kind === "staged-config") execFileSync("git", ["add", "local.properties"], { cwd: repo });
+            const commands = [];
+            const exec = (command, args, options) => {
+                commands.push({ command, args });
+                if (command === "gh") return "";
+                if (command === "git" && args.includes("push")) return "";
+                return execFileSync(command, args, { ...options, encoding: "utf8", stdio: "pipe" }).trim();
+            };
+            let reads = 0;
+            const context = ctx([{ verdict: "pass", summary: "Tactical assessment complete.", evidence: [] }, passedReview], { workspaceRoot: root, pushRepairs: true });
+            const agent = context.agent;
+            context.agent = async (prompt, options) => {
+                if (options.agent === BUILDER_AGENT) {
+                    if (kind === "source" || kind === "staged-config") writeFileSync(path.join(repo, "Foo.kt"), "class Foo { val fixed = true }\n");
+                    if (kind === "delete-config") {
+                        rmSync(path.join(repo, "local.properties"));
+                        writeFileSync(path.join(repo, ".gitignore"), "/local.properties\n");
+                    }
+                }
+                return agent.call(context, prompt, options);
+            };
+            const run = runPrObserver(context, {
+                exec,
+                fetchPrSnapshot: () => snapshot({
+                    headRefOid: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(),
+                    ...(++reads === 1 ? { prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["Foo.kt:12: error: Unresolved reference: fixture"] }] }] } : {}),
+                }),
+            });
+            if (kind === "staged-config") {
+                await assert.rejects(run, /local SDK configuration.*staged/i);
+                assert.equal(commands.filter((item) => item.command === "git" && item.args.includes("push")).length, 0);
+                assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), original);
+                assert.match(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: repo, encoding: "utf8" }), /local.properties/);
+            } else {
+                const result = await run;
+                const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+                assert.equal(context.calls.length, 2);
+                assert.equal(result.headSha, head);
+                assert.equal(commands.some((item) => item.command === "git" && item.args.includes("-A")), false);
+                if (kind === "no-change") {
+                    assert.equal(head, original);
+                    assert.equal(commands.some((item) => item.command === "git" && item.args[0] === "commit"), false);
+                } else {
+                    assert.notEqual(head, original);
+                    const delta = execFileSync("git", ["diff", "--name-status", original, head], { cwd: repo, encoding: "utf8" });
+                    assert.equal(delta.includes("nested/local.properties"), false);
+                    if (kind === "delete-config") assert.match(delta, /D\s+local.properties/);
+                    else assert.doesNotMatch(delta, /local.properties/);
+                }
+            }
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+});
+
+test("SDK discovery permits tracked deletions but never additions or modifications", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "sdk-discovery-policy-"));
+    try {
+        mkdirSync(path.join(root, ".git"));
+        mkdirSync(path.join(root, "nested"));
+        writeFileSync(path.join(root, "local.properties"), "sdk.dir=fixture\n");
+        writeFileSync(path.join(root, "nested", "local.properties"), "sdk.dir=fixture\n");
+        for (const status of ["??", " A", " M", " D", "D "]) {
+            const result = discoverChangedFilesFromGit(root, () => `${status} local.properties\n${status} nested/local.properties`, { allowPipelineEdits: true });
+            assert.equal(result.files.length, status.includes("D") ? 2 : 0, status);
+            assert.ok(result.files.every((file) => file.action === "delete"));
+        }
+        const value = implementation();
+        value.targets[0].files.push({ path: "local.properties", action: "create", content: "sdk.dir=fixture", summary: "Local SDK" });
+        assert.ok(validateImplementation(value, task).some((line) => /local SDK configuration/i.test(line)));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("checkout transport recovery keeps the source-repair allowance and needs no repair agents", async () => {
+    const current = "a".repeat(40);
+    const failed = snapshot({
+        provider: "ado",
+        prBuilds: [{ id: 77, sourceHeadSha: current, definition: "Android Authenticator PR Checks", status: "completed", result: "failed",
+            failedTasks: [{ name: "Checkout", issues: ["Git fetch failed"], excerpt: ["curl 56 Connection reset by peer", "fatal: fetch-pack: invalid index-pack output"] }] }],
+    });
+    const pending = snapshot({ provider: "ado", prBuilds: [{ id: 78, sourceHeadSha: current, status: "inProgress" }] });
+    for (const recover of [true, false]) {
+        const context = ctx([], { maxCiPollAttempts: 2, ciPollIntervalMs: 0 });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        let reads = 0;
+        let retries = 0;
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => {},
+            retryFailedBuilds: () => { retries++; return true; },
+            fetchPrSnapshot: () => recover && ++reads > 1 ? pending : failed,
+        });
+        assert.equal(retries, 1);
+        assert.equal(context.calls.length, 0);
+        assert.equal(result.repairAttempts, 0);
+        if (recover) {
+            assert.equal(result.status, "waiting-for-ci");
+            assert.equal(result.continuation.args.maxIterations, 2);
+        } else {
+            assert.equal(result.blockerKind, "ci-infrastructure");
+            assert.match(result.summary, /checkout.*retry|retry.*checkout/i);
+        }
+    }
+});
+
+test("checkout retry cannot hide a compiler defect, unconfirmed retry or disabled mutation", async () => {
+    const base = snapshot({ provider: "ado", prBuilds: [{ id: 77, sourceHeadSha: "a".repeat(40), definition: "Checks", status: "completed", result: "failed",
+        failedTasks: [{ name: "Checkout", excerpt: ["curl 56 Connection reset by peer"] }] }] });
+    for (const kind of ["compiler", "retry-failed", "readonly", "no-wait"]) {
+        const failed = structuredClone(base);
+        if (kind === "compiler") failed.prBuilds[0].failedTasks.push({ name: "Compile", excerpt: ["Unresolved reference: launch"] });
+        const context = ctx([], { maxCiPollAttempts: kind === "no-wait" ? 0 : 1, ciPollIntervalMs: 0, pushRepairs: kind !== "readonly" });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        context.args.maxIterations = 0;
+        let retries = 0;
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => {},
+            retryFailedBuilds: () => { retries++; return false; },
+            fetchPrSnapshot: () => failed,
+        });
+        assert.equal(context.calls.length, 0);
+        assert.notEqual(result.ci.status, "passed");
+        assert.equal(retries, kind === "retry-failed" ? 1 : 0);
+        assert.equal(result.status, kind === "compiler" ? "max-iterations-reached" : "needs-owner-decision");
+    }
+});
+
+test("cancellation during checkout recovery propagates without a success notice or follow-up read", async () => {
+    const controller = new AbortController();
+    const context = ctx([], { maxCiPollAttempts: 1 });
+    context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+    context.signal = controller.signal;
+    const logs = [];
+    context.log = (line) => logs.push(line);
+    let reads = 0;
+    await assert.rejects(runPrObserver(context, {
+        exec: () => "",
+        fetchPrSnapshot: () => {
+            reads++;
+            return snapshot({ provider: "ado", prBuilds: [{ id: 77, sourceHeadSha: "a".repeat(40), status: "completed", result: "failed",
+                failedTasks: [{ name: "Checkout", excerpt: ["Connection reset by peer"] }] }] });
+        },
+        retryFailedBuilds: () => { controller.abort(); return true; },
+    }), { name: "AbortError" });
+    assert.equal(reads, 1);
+    assert.equal(context.calls.length, 0);
+    assert.equal(logs.some((line) => /CI checkout retry requested/.test(line)), false);
+});
+
+test("journal replay cannot request another checkout retry for a different build on the same source head", async () => {
+    const journal = new Map();
+    let retries = 0;
+    const make = () => {
+        const context = ctx([], { maxCiPollAttempts: 1, ciPollIntervalMs: 0 });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        context.step = async (key, producer, options) => {
+            if (options?.volatile) return producer();
+            if (!journal.has(key)) journal.set(key, structuredClone(await producer()));
+            return structuredClone(journal.get(key));
+        };
+        return context;
+    };
+    const buildSnapshot = (id, failed = true) => snapshot({ provider: "ado", prBuilds: [{
+        id, sourceHeadSha: "a".repeat(40), status: failed ? "completed" : "inProgress", result: failed ? "failed" : null,
+        failedTasks: failed ? [{ name: "Checkout", excerpt: ["Connection reset by peer"] }] : [],
+    }] });
+    let reads = 0;
+    const dependency = {
+        exec: () => "", sleep: async () => {},
+        retryFailedBuilds: () => { retries++; return true; },
+    };
+    const first = await runPrObserver(make(), {
+        ...dependency, fetchPrSnapshot: () => ++reads === 1 ? buildSnapshot(77) : buildSnapshot(78, false),
+    });
+    assert.equal(first.status, "waiting-for-ci");
+    const replay = await runPrObserver(make(), {
+        ...dependency, fetchPrSnapshot: () => buildSnapshot(78),
+    });
+    assert.equal(retries, 1);
+    assert.equal(replay.blockerKind, "ci-infrastructure");
+    assert.equal(replay.repairAttempts, 0);
 });
 
 test("pending CI returns explicit continuation without spending classifier agents", async () => {
