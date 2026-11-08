@@ -110,7 +110,9 @@ Given an approved coding task or PBI specification:
   create no commit. Root/nested `local.properties` additions and edits remain local;
   tracked deletions are allowed so an approved cleanup reaches the commit. An already
   staged SDK configuration addition/edit blocks publication explicitly without
-  discarding the caller's index or local file. Returned push-head evidence uses the
+  discarding the caller's index or local file, including a no-change assessment whose
+  only indexed change is that SDK file. The index is checked before discovery and
+  again after staging allowed repair files. Returned push-head evidence uses the
   supplied executor in both standalone and embedded observation.
 
 ### Verification and delivery receipts
@@ -162,7 +164,12 @@ Given an approved coding task or PBI specification:
 - A current-head checkout-only connection reset/timeout with readable diagnostics
   requests one durable remote retry per source head before dispatching repair agents.
   It uses the existing CI observation bound, not a source-repair slot or new allowance.
-  Only failed/canceled stages are retried; successful stages are untouched. Disabled
+  Checkout recovery is stage-only: only failed/canceled stages are retried, successful
+  stages are untouched, and missing stage identifiers or any failed stage PATCH leave
+  the retry unconfirmed for a pipeline-owner handoff. This caller never falls back to
+  requeuing a whole build policy; the legacy fallback remains separate.
+  Failures from all current-head non-review builds, including unfinished builds, are
+  inspected before recovery, while retry targets remain restricted to failed builds. Disabled
   pushes or an absent wait allowance produce an explicit pipeline-owner handoff.
   Unconfirmed retries and repeated failures also hand off, rather than looping.
   Mixed compiler/test failures still use source repair; unreadable or stale diagnostics
@@ -361,7 +368,9 @@ workflow failures, change terminal outcomes, or claim that a message was rendere
 `code_feature_workflow_pause` exposes the documented SDK pause from the joined owner
 session, outside the workflow body. It checks run identity, workflow name and state,
 applies normal tool permission gating, and confirms the settled envelope and subsequent
-live-agent evidence. It cannot select another session, resume, replace, requeue, merge
+live-agent evidence. Confirmation requires an explicit numeric zero live-agent count;
+missing, null or malformed counts are unconfirmed, not a successful stop receipt.
+It cannot select another session, resume, replace, requeue, merge
 or change limits. Already-settled attempts are read without applying a control.
 Use it only for a requested stop or an authorized stop-on-error policy. User-initiated
 pause receipts do not fabricate prerequisite questions. A failed or unconfirmed pause

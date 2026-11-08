@@ -289,8 +289,8 @@ export function createWorkflowPauseTool(getSession) {
             if (outcome?.runId !== runId || !settledStatuses.has(outcome.status)) throw new Error("SDK pause did not return a settled owning-session outcome");
             const observed = await session.workflow.getRunDetail(runId);
             if (observed?.runId !== runId || observed.workflowName !== before.workflowName ||
-                observed.status !== outcome.status || observed.liveAgentCount > 0) {
-                throw new Error("Workflow stop is not confirmed: the run changed or still has live agents");
+                observed.status !== outcome.status || observed.liveAgentCount !== 0) {
+                throw new Error("Workflow stop is not confirmed: matching settled state and explicit zero live agents are required");
             }
             return JSON.stringify({
                 runId, workflowName: before.workflowName, status: outcome.status, attempt: outcome.attempt ?? null,

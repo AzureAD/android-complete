@@ -865,7 +865,7 @@ export function isTransientCiInfrastructureFailure(textValue) {
     );
 }
 
-export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
+export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec, stageOnly = false } = {}) {
     if (parsedPr?.provider !== "ado") return false;
     const prBuilds = Array.isArray(snapshot?.prBuilds) ? snapshot.prBuilds : [];
     const failedBuildIds = prBuilds
@@ -883,20 +883,26 @@ export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = 
         "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
         "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
         `$projectBase = '${orgUrl}/${projectEnc}'`,
+        `$stageOnly = ${stageOnly === true ? "$true" : "$false"}`,
         "$retried = $false",
+        "$retryUnconfirmed = $false",
         `foreach ($bid in @(${failedBuildIds.join(",")})) {`,
         "  $stageRetried = $false",
+        "  $stageRetryFailed = $false",
         "  try {",
         "    $tl = Invoke-RestMethod -Uri \"$projectBase/_apis/build/builds/$bid/timeline?api-version=7.0\" -Headers $headers -Method Get",
-        "    $stages = @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -in @('failed','canceled','cancelled') -and $_.identifier })",
+        "    $failedStages = @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -in @('failed','canceled','cancelled') })",
+        "    $stages = @($failedStages | Where-Object { $_.identifier })",
+        "    if ($failedStages.Count -ne $stages.Count) { $stageRetryFailed = $true }",
         "    foreach ($st in $stages) {",
         "      try {",
         "        Invoke-RestMethod -Uri \"$projectBase/_apis/build/builds/$bid/stages/$($st.identifier)?api-version=7.0-preview.1\" -Headers $headers -Method Patch -Body '{\"state\":1,\"forceRetryAllJobs\":false}' | Out-Null",
         "        $retried = $true; $stageRetried = $true",
-        "      } catch {}",
+        "      } catch { $stageRetryFailed = $true }",
         "    }",
-        "  } catch {}",
-        "  if (-not $stageRetried) {",
+        "  } catch { $stageRetryFailed = $true }",
+        "  if (-not $stageRetried -or $stageRetryFailed) { $retryUnconfirmed = $true }",
+        "  if (-not $stageRetried -and -not $stageOnly) {",
         "    try {",
         `      $pr = Invoke-RestMethod -Uri "$projectBase/_apis/git/repositories/${repoEnc}/pullRequests/${parsedPr.prNumber}?api-version=7.0" -Headers $headers -Method Get`,
         "      $projId = $pr.repository.project.id",
@@ -909,7 +915,7 @@ export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = 
         "    } catch {}",
         "  }",
         "}",
-        "[Console]::Out.Write(($retried | ConvertTo-Json))",
+        "[Console]::Out.Write((($retried -and (-not $stageOnly -or -not $retryUnconfirmed)) | ConvertTo-Json))",
     ].join("; ");
     try {
         const res = exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
@@ -1113,12 +1119,14 @@ function hasTaskDiagnostics(task) {
 }
 
 function checkoutTransportFailures(snapshot) {
-    const builds = (snapshot?.prBuilds || []).filter((build) =>
-        !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")) &&
+    const validationBuilds = (snapshot?.prBuilds || []).filter((build) =>
+        !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")));
+    const builds = validationBuilds.filter((build) =>
         ["failed", "partiallysucceeded", "canceled", "cancelled"].includes(String(build.result || "").toLowerCase()));
-    const tasks = builds.flatMap((build) => build.failedTasks || []);
-    if (!tasks.length || !nonempty(snapshot?.headRefOid) || builds.some((build) => !positiveInt(Number(build.id)) ||
-        !(build.failedTasks || []).length || (build.diagnosticErrors || []).length)) return null;
+    const tasks = validationBuilds.flatMap((build) => build.failedTasks || []);
+    if (!builds.length || !tasks.length || !nonempty(snapshot?.headRefOid) ||
+        validationBuilds.some((build) => (build.diagnosticErrors || []).length) ||
+        builds.some((build) => !positiveInt(Number(build.id)) || !(build.failedTasks || []).length)) return null;
     const evidence = tasks.map((task) => [task.name, ...(task.issues || []), ...(task.excerpt || [])].join("\n"));
     if (tasks.some((task) => (task.failedTests || []).length) ||
         isDefinitiveCodeOrTestFailure(evidence.join("\n")) ||
@@ -1518,7 +1526,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
                     ctx.signal?.throwIfAborted();
                     const retried = await (dependencies.retryFailedBuilds || retryFailedAdoBuildStages)(parsedPr, {
                         ...snapshot, prBuilds: transport.builds,
-                    }, { workspaceRoot, exec });
+                    }, { workspaceRoot, exec, stageOnly: true });
                     return { retried: retried === true, buildIds };
                 });
                 ctx.signal?.throwIfAborted();
@@ -1900,6 +1908,7 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
                     }
                 }
                 const gitEnv = buildNormalizedProcessEnv(process.env, tokenOverrides);
+                assertNoStagedLocalSdkConfiguration(repoRoot, exec);
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, {
                     allowPipelineEdits: false,
                 });

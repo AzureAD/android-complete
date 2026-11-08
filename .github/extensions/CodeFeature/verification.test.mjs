@@ -737,7 +737,7 @@ test("repair messages distinguish an unchanged pushed head from a real source co
 });
 
 test("embedded observer stages only repair files, preserves local SDK config and publishes its deletion", async () => {
-    for (const kind of ["no-change", "source", "delete-config", "staged-config"]) {
+    for (const kind of ["no-change", "source", "delete-config", "staged-config", "staged-only-addition", "staged-only-edit"]) {
         const root = mkdtempSync(path.join(os.tmpdir(), "observer-explicit-staging-"));
         const source = path.join(root, "source");
         const repo = path.join(root, "common");
@@ -750,16 +750,18 @@ test("embedded observer stages only repair files, preserves local SDK config and
             writeFileSync(path.join(source, "Foo.kt"), "class Foo\n");
             writeFileSync(path.join(source, "local.properties"), "sdk.dir=fixture-sdk\n");
             writeFileSync(path.join(source, "README"), "baseline\n");
-            git("add", "Foo.kt", "README", ...(kind === "delete-config" ? ["local.properties"] : []));
+            git("add", "Foo.kt", "README", ...(["delete-config", "staged-only-edit"].includes(kind) ? ["local.properties"] : []));
             git("commit", "--quiet", "-m", "baseline");
             git("update-ref", "refs/remotes/origin/dev", "HEAD");
             git("remote", "add", "origin", "https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git");
             git("worktree", "add", "--quiet", "-b", "feature", repo, "HEAD");
             const original = git("rev-parse", "HEAD");
-            writeFileSync(path.join(repo, "local.properties"), "sdk.dir=fixture-sdk\n");
+            const localContent = kind === "staged-only-edit" ? "sdk.dir=updated-fixture-sdk\n" : "sdk.dir=fixture-sdk\n";
+            writeFileSync(path.join(repo, "local.properties"), localContent);
             mkdirSync(path.join(repo, "nested"));
             writeFileSync(path.join(repo, "nested", "local.properties"), "sdk.dir=fixture-sdk\n");
-            if (kind === "staged-config") execFileSync("git", ["add", "local.properties"], { cwd: repo });
+            if (kind.startsWith("staged-")) execFileSync("git", ["add", "local.properties"], { cwd: repo });
+            const initialIndex = execFileSync("git", ["write-tree"], { cwd: repo, encoding: "utf8" }).trim();
             const commands = [];
             const exec = (command, args, options) => {
                 commands.push({ command, args });
@@ -787,10 +789,13 @@ test("embedded observer stages only repair files, preserves local SDK config and
                     ...(++reads === 1 ? { prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["Foo.kt:12: error: Unresolved reference: fixture"] }] }] } : {}),
                 }),
             });
-            if (kind === "staged-config") {
+            if (kind.startsWith("staged-")) {
                 await assert.rejects(run, /local SDK configuration.*staged/i);
                 assert.equal(commands.filter((item) => item.command === "git" && item.args.includes("push")).length, 0);
+                assert.equal(commands.filter((item) => item.command === "git" && item.args[0] === "commit").length, 0);
                 assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), original);
+                assert.equal(execFileSync("git", ["write-tree"], { cwd: repo, encoding: "utf8" }).trim(), initialIndex);
+                assert.equal(readFileSync(path.join(repo, "local.properties"), "utf8"), localContent);
                 assert.match(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: repo, encoding: "utf8" }), /local.properties/);
             } else {
                 const result = await run;
@@ -882,6 +887,61 @@ test("checkout retry cannot hide a compiler defect, unconfirmed retry or disable
         assert.equal(retries, kind === "retry-failed" ? 1 : 0);
         assert.equal(result.status, kind === "compiler" ? "max-iterations-reached" : "needs-owner-decision");
     }
+});
+
+test("unfinished current-head source failures prevent checkout-only recovery", async () => {
+    for (const failure of [
+        { name: "Compile", excerpt: ["Unresolved reference: launchForResult"] },
+        { name: "Unit tests", failedTests: [{ testName: "FooTest", errorMessage: "Expected tenant A but received B" }] },
+    ]) {
+        const context = ctx([], { maxCiPollAttempts: 1, ciPollIntervalMs: 0 });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        context.args.maxIterations = 0;
+        let retries = 0;
+        const observed = snapshot({ provider: "ado", prBuilds: [
+            { id: 77, sourceHeadSha: "a".repeat(40), definition: "Checks", status: "completed", result: "failed",
+                failedTasks: [{ name: "Checkout", excerpt: ["curl 56 Connection reset by peer"] }] },
+            { id: 78, sourceHeadSha: "a".repeat(40), definition: "Checks", status: "inProgress", result: null, failedTasks: [failure] },
+        ] });
+        const result = await runPrObserver(context, {
+            exec: () => "", fetchPrSnapshot: () => observed,
+            retryFailedBuilds: () => { retries++; return true; },
+        });
+        assert.equal(retries, 0);
+        assert.equal(context.calls.length, 0);
+        assert.equal(result.status, "max-iterations-reached");
+        assert.equal(result.ci.status, "failed");
+        assert.ok(result.actionableFindings.some((finding) => finding.includes(failure.name)));
+    }
+});
+
+test("checkout retries target only failed current-head builds, not unfinished, advisory or stale builds", async () => {
+    const head = "a".repeat(40);
+    const context = ctx([], { maxCiPollAttempts: 1, ciPollIntervalMs: 0 });
+    context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+    const observed = snapshot({ provider: "ado", prBuilds: [
+        { id: 77, sourceHeadSha: head, definition: "Checks", status: "completed", result: "failed",
+            failedTasks: [{ name: "Checkout", excerpt: ["curl 56 Connection reset by peer"] }] },
+        { id: 78, sourceHeadSha: head, definition: "Checks", status: "inProgress", result: null, failedTasks: [] },
+        { id: 79, sourceHeadSha: head, definition: "AI PR Review", status: "inProgress", result: null,
+            failedTasks: [{ name: "Compile", excerpt: ["Unresolved reference: advisoryFixture"] }] },
+        { id: 80, sourceHeadSha: "b".repeat(40), definition: "Checks", status: "inProgress", result: null,
+            failedTasks: [{ name: "Compile", excerpt: ["Unresolved reference: staleFixture"] }] },
+    ] });
+    let retries = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {}, fetchPrSnapshot: () => observed,
+        retryFailedBuilds: (_pr, supplied, options) => {
+            retries++;
+            assert.deepEqual(supplied.prBuilds.map((build) => build.id), [77]);
+            assert.equal(options.stageOnly, true);
+            return true;
+        },
+    });
+    assert.equal(retries, 1);
+    assert.equal(context.calls.length, 0);
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(result.blockerKind, "ci-infrastructure");
 });
 
 test("cancellation during checkout recovery propagates without a success notice or follow-up read", async () => {

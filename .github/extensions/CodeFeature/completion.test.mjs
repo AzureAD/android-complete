@@ -1760,6 +1760,25 @@ test("pause preserves SDK errors and refuses unsupported APIs or unconfirmed sto
     await assert.rejects(tool.handler({ runId: "active" }), /stop is not confirmed/);
 });
 
+test("pause confirmation requires explicit numeric zero live agents, including already-settled reads", async () => {
+    for (const beforeStatus of ["running", "paused"]) {
+        for (const liveAgentCount of [undefined, null, "0", false, -1, 0.5, 1, NaN, Infinity, [], {}]) {
+            const session = new FakeSession();
+            const consumed = { activeMs: 123, subagents: 1, nanoAiu: 456 };
+            let reads = 0, pauses = 0;
+            session.workflow.getRunDetail = async (runId) => ({
+                runId, workflowName: "code-feature", status: ++reads === 1 ? beforeStatus : "paused",
+                liveAgentCount, consumed,
+            });
+            session.workflow.pause = async (runId) => { pauses++; return { runId, status: "paused" }; };
+            session.workflow.getRun = async (runId) => ({ runId, status: "paused" });
+            await assert.rejects(createWorkflowPauseTool(() => session).handler({ runId: "active" }), /stop is not confirmed/);
+            assert.equal(pauses, beforeStatus === "running" ? 1 : 0);
+            assert.deepEqual(consumed, { activeMs: 123, subagents: 1, nanoAiu: 456 });
+        }
+    }
+});
+
 test("user-requested pause is a stopped attempt, not an invented prerequisite question", async () => {
     const run = completed({ status: "paused", result: undefined, pauseInfo: { type: "user" } });
     const prompt = formatWorkflowCompletion("code-feature", run);

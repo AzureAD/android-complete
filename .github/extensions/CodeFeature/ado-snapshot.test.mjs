@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -151,6 +151,66 @@ test("native retry touches failed stages only and requires an actual boolean ack
         assert.throws(() => retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, {
             exec: () => { throw abort; },
         }), (error) => error === abort);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("checkout recovery is stage-only when identifiers or stage PATCH acknowledgements are unavailable", windowsOnly, async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "ado-stage-only-"));
+    try {
+        for (const scenario of ["missing-identifier", "patch-failed", "partial-stage-failure"]) {
+            for (const stageOnly of [true, false]) {
+                const writes = path.join(root, `${scenario}-${stageOnly}.jsonl`);
+                const scriptExec = (command, args) => {
+                    assert.equal(command, "powershell");
+                    const setup = [
+                        "$global:LASTEXITCODE = 0",
+                        "function az { 'fixture-token' }",
+                        "function Invoke-RestMethod { param($Uri,$Headers,$Method='Get',$Body)",
+                        `if ($Method -eq 'Patch') { Add-Content -LiteralPath '${writes.replace(/'/g, "''")}' -Value $Uri; if ($Uri -match '/stages/failed\\?' -and '${scenario}' -ne 'missing-identifier') { throw 'Fixture stage PATCH denied' }; return @{} }`,
+                        "if ($Uri -match '/timeline\\?') { return @{records=@(" +
+                            "@{type='Stage';state='completed';result='succeeded';identifier='successful'}," +
+                            `@{type='Stage';state='completed';result='failed';identifier=${scenario === "missing-identifier" ? "''" : "'failed'"} }` +
+                            (scenario === "partial-stage-failure" ? ",@{type='Stage';state='completed';result='failed';identifier='accepted'}" : "") + ")} }",
+                        "if ($Uri -match '/pullRequests/42\\?') { return @{repository=@{project=@{id='fixture-project'}}} }",
+                        "if ($Uri -match '/policy/evaluations\\?') { return @{value=@(@{evaluationId='fixture';context=@{buildId=77}})} }",
+                        "throw \"Unexpected retry request: $Uri\"",
+                        "}",
+                        args[args.indexOf("-Command") + 1],
+                    ].join("\n");
+                    const file = path.join(root, "fixture.ps1");
+                    writeFileSync(file, setup);
+                    return execFileSync("powershell", ["-NoProfile", "-File", file], { encoding: "utf8", stdio: "pipe", timeout: 30_000 });
+                };
+                const acknowledged = retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, { exec: scriptExec, stageOnly });
+                assert.equal(acknowledged, !stageOnly);
+                const requests = existsSync(writes) ? readFileSync(writes, "utf8").trim().split(/\r?\n/) : [];
+                assert.equal(requests.some((uri) => /\/policy\/evaluations\//.test(uri)), !stageOnly && scenario !== "partial-stage-failure");
+                assert.equal(requests.some((uri) => /\/stages\/successful\?/.test(uri)), false);
+            }
+        }
+        const observed = executeSnapshot(fixture({
+            builds: [build(77, current, "completed", "failed")], policies: [policy(77, "rejected")],
+            timeline: { records: [{ type: "Task", name: "Checkout", result: "failed",
+                log: { url: "https://dev.azure.com/msazure/One/_apis/build/builds/77/logs/123" } }] },
+            log: ["curl 56 Connection reset by peer"],
+        }));
+        let retries = 0;
+        const result = await runPrObserver({
+            args: { prUrl, options: { maxCiPollAttempts: 1, publishStatus: false } },
+            step: async (_key, producer) => producer(),
+            agent: async () => { throw new Error("Unconfirmed stage retry must hand off, not repair source"); },
+        }, {
+            exec: () => "", fetchPrSnapshot: () => observed,
+            retryFailedBuilds: (_pr, _snapshot, options) => {
+                retries++;
+                assert.equal(options.stageOnly, true);
+                return false;
+            },
+        });
+        assert.equal(retries, 1);
+        assert.equal(result.blockerKind, "ci-infrastructure");
+        assert.match(result.summary, /retry could not be confirmed/);
+        assert.equal(result.repairAttempts, 0);
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
