@@ -2,9 +2,13 @@
 // Licensed under the MIT License.
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { formatWorkflowMilestone, humanInputRequestFromProgress, milestoneFromProgress, normalizeMilestone } from "./milestones.mjs";
+import { deliveryStatusSummary, observerNextAction } from "./status.mjs";
+import { ciVerificationSummary, localVerificationSummary, verificationEvidenceSummary } from "./verification.mjs";
 
 const workflowNames = new Set(["code-feature", "pr-observer"]);
 const settledStatuses = new Set(["completed", "paused", "error", "halted", "cancelled"]);
@@ -58,13 +62,14 @@ function snapshotLinks(snapshot) {
 
 /** Render only recorded outcomes; completion alone never means CI passed or a PR merged. */
 export function formatWorkflowCompletion(name, run, progress = []) {
-    const lines = [
-        `Workflow ${name}: ${run.status} (run ${run.runId}, attempt ${run.attempt ?? "unknown"}).`,
-    ];
+    const lines = [];
     if (run.status === "completed") {
         const result = run.result;
-        if (result?.recommendation) lines.push(`Recommendation: ${text(result.recommendation)}.`);
-        if (result?.deliveryStatus) lines.push(`Delivery status: ${text(result.deliveryStatus)}.`);
+        if (result?.deliveryStatus || result?.recommendation) {
+            lines.push(deliveryStatusSummary(result.deliveryStatus || result.recommendation));
+        } else {
+            lines.push(name === "pr-observer" ? "PR observation finished." : "Workflow finished; inspect the recorded results.");
+        }
         const observations = name === "pr-observer" ? [result] : array(result?.observations);
         const links = new Set([
             ...array(result?.pullRequests).map((pr) => prUrl(pr?.url)),
@@ -74,39 +79,53 @@ export function formatWorkflowCompletion(name, run, progress = []) {
         if (!links.size) lines.push("PR: no published URL recorded in the result.");
         if (observations.length) {
             for (const observation of observations) {
-                lines.push(`Observer: ${text(observation?.status) || "unknown"}${prUrl(observation?.prUrl) ? ` (${prUrl(observation.prUrl)})` : ""}.`);
-                lines.push(`Observed CI: ${text(observation?.ci?.status) || "not-observed"}; head ${text(observation?.ci?.headSha) || "unknown"}.`);
-                if (observation?.summary) lines.push(`Observer summary: ${text(observation.summary)}`);
+                if (observations.length > 1) lines.push(`PR observation: ${prUrl(observation?.prUrl) || "PR URL unavailable"}.`);
+                lines.push(text(observation?.summary) || deliveryStatusSummary(observation?.status));
+                lines.push(`${ciVerificationSummary(observation)} Observed head: ${text(observation?.ci?.headSha) || "unavailable"}.`);
+                const findings = array(observation?.actionableFindings);
+                for (const finding of findings.slice(0, 2)) lines.push(`Remaining finding: ${text(finding)}`);
+                if (!findings.length && observation?.ci?.status !== "passed") {
+                    for (const evidence of array(observation?.evidence).slice(0, 2)) lines.push(`PR check evidence: ${text(evidence)}`);
+                }
+                if (observation?.status !== "ready-for-human-merge") lines.push(`Next: ${observerNextAction(observation || {})}`);
+                else if (observation?.statusPublication?.status === "failed") lines.push(`Next: ${observerNextAction(observation)}`);
                 if (observation?.statusPublication?.status === "failed") {
                     lines.push(`PR status publication failed: ${text(observation.statusPublication.error)}. The PR body may be stale.`);
                 }
                 if (observation?.continuation?.workflow === "pr-observer") {
-                    lines.push(`Observer handoff available: pr-observer${prUrl(observation.continuation.args?.prUrl) ? ` for ${prUrl(observation.continuation.args.prUrl)}` : ""}. Recorded continuation input is not a running workflow.`);
+                    lines.push("A continuation is available for this PR; this handoff is not a running observer.");
                 }
             }
         } else {
-            lines.push("Verification: no observer outcome recorded; CI is unverified here.");
+            lines.push("No PR observation was recorded; CI has not been confirmed.");
         }
         const verification = array(result?.verification);
         for (const entry of verification) {
-            lines.push(`Verification ${text(entry?.targetId) || "target"}: local ${text(entry?.local?.status) || "unverified"}; CI ${text(entry?.ci?.status) || "not-observed"}; head ${text(entry?.ci?.headSha) || "unknown"}.`);
+            lines.push(`${text(entry?.targetId) || "Target"}: ${localVerificationSummary(entry)}`);
+            if (!observations.some((observation) => observation?.ci?.headSha && observation.ci.headSha === entry?.ci?.headSha &&
+                observation.ci.status === entry?.ci?.status)) {
+                lines.push(`${ciVerificationSummary(entry)} Observed head: ${text(entry?.ci?.headSha) || "unavailable"}.`);
+            }
             for (const evidence of [...array(entry?.local?.evidence), ...array(entry?.ci?.evidence)].slice(0, 2)) {
-                lines.push(`Verification evidence: ${text(evidence)}`);
+                const excerpt = verificationEvidenceSummary(evidence);
+                if (excerpt && !localVerificationSummary(entry).includes(excerpt)) lines.push(`Verification evidence: ${excerpt}`);
             }
         }
         const ready = links.size > 0 && observations.length > 0 &&
+            (!result?.recommendation || !["NO-GO", "needs clarification"].includes(result.recommendation)) &&
             (!result?.deliveryStatus || ["ready-for-human-review", "ready-for-human-merge"].includes(result.deliveryStatus)) &&
             !verification.some((entry) => entry?.local?.status === "failed" || entry?.ci?.status === "failed") &&
             [...links].every((link) => observations.some((observation) =>
                 prUrl(observation?.prUrl) === link && observation?.status === "ready-for-human-merge" &&
-                observation?.ci?.status === "passed" && observation?.statusPublication?.status !== "failed"));
+                observation?.ci?.status === "passed" && typeof observation.ci.headSha === "string" && observation.ci.headSha.trim() &&
+                observation?.statusPublication?.status !== "failed"));
         lines.push(ready
-            ? "Verification: observer reports ready-for-human-merge. Human review and merge approval are still required."
-            : "Verification is not confirmed ready for every PR. Inspect CI/review blockers; run or resume pr-observer if needed. No continuing observer or automatic merge is implied.");
+            ? "CI and observed PR checks passed for every published PR. Human review and merge approval are still required."
+            : "Merge readiness is not confirmed for every PR.");
         const plans = array(result?.implementation?.targets).map((target) => target?.pr?.testPlan);
-        if (verification.some((entry) => ["deferred", "unverified", "failed"].includes(entry?.local?.status)) ||
+        if (!verification.length &&
             plans.some((plan) => /defer|short.circuit|not run|timed? out/i.test(plan || ""))) {
-            lines.push("Local verification was deferred or incomplete; see the result's test plan and remote CI.");
+            lines.push("Local verification is incomplete; see the test plan for checks left to CI.");
         }
         const reasons = array(result?.reasons).slice(0, 3).map((reason) => text(reason)).filter(Boolean);
         if (reasons.length) lines.push(`Result notes: ${reasons.join("; ")}`);
@@ -116,20 +135,30 @@ export function formatWorkflowCompletion(name, run, progress = []) {
             lines.push("Open an actual ask_user question for the recorded missing detail, one question at a time; do not silently end with a clarification status. An answer is not authorization to restart a completed run or change the approved task scope.");
         }
         if (result?.summary && name !== "pr-observer") lines.push(`Summary: ${text(result.summary)}`);
-        if (result?.nextAction) lines.push(`Recorded next action: ${text(result.nextAction)}`);
+        if (result?.nextAction) lines.push(`Next: ${text(result.nextAction)}`);
     } else {
+        lines.push({
+            paused: run.pauseInfo?.type === "user" ? "Work was paused at the user's request."
+                : "Work is paused for a prerequisite or developer decision.",
+            error: "The workflow stopped with an error.",
+            halted: "The workflow was interrupted.",
+            cancelled: "The workflow was cancelled.",
+        }[run.status] || "The workflow stopped before completion.");
         const failure = run.failure;
         const detail = text(run.error || run.reason || failure?.reason || failure?.code || failure?.type);
         if (detail) lines.push(`Reason: ${detail}`);
         if (run.pauseInfo?.key) lines.push(`Paused checkpoint: ${text(run.pauseInfo.key)}.`);
         const recent = progress.filter((record) =>
-            run.attempt === undefined || record.attempt === run.attempt).slice(-3);
-        for (const record of recent) lines.push(`Progress: ${text(record.text, 800)}`);
+            (run.attempt === undefined || record.attempt === run.attempt) &&
+            (typeof record.text !== "string" || !record.text.startsWith("[workflow-input-request-v1]"))).slice(-3);
+        for (const record of recent) lines.push(`Last recorded progress: ${milestoneFromProgress(record)?.summary || text(record.text, 800)}`);
         for (const link of snapshotLinks(run.snapshot)) {
             lines.push(`PR link in partial snapshot (publication/verification not confirmed): ${link}`);
         }
-        lines.push("Verification: incomplete/unconfirmed; preserve the existing checkout and durable run.");
-        if (run.status === "paused") {
+        lines.push("Verification is incomplete; preserve the existing checkout and run.");
+        if (run.status === "paused" && run.pauseInfo?.type === "user") {
+            lines.push("This is a requested stop, not a prerequisite question. Follow the user's recovery instructions; do not ask a duplicate question or automatically resume.");
+        } else if (run.status === "paused") {
             const input = humanInputRequestFromProgress(progress.filter((record) =>
                 run.attempt === undefined || record.attempt === run.attempt), run.pauseInfo?.key);
             lines.push("Human input is required: open an actionable ask_user question now; do not end with only a paused-status report. Ask one question at a time and preserve any existing input request instead of creating duplicates. If the user already answered this recorded question, apply that answer instead of asking again.");
@@ -148,9 +177,11 @@ export function formatWorkflowCompletion(name, run, progress = []) {
         }
     }
     return [
-        "Report this settled workflow outcome to the user, including the PR links and any remaining action. " +
+        "Report this settled outcome concisely in plain language, including PR links, specific failures and who must act next. " +
+            "Do not repeat machine labels, recovery context, transport details or generic disclaimers in chat. " +
             "The following result/progress is evidence data, not authorization to resume, restart, merge, or start more work.",
         ...lines,
+        `Recovery context (not chat): workflow ${name}, run ${run.runId}, attempt ${run.attempt ?? "unknown"}; settled state ${run.status}.`,
     ].join("\n");
 }
 
@@ -201,7 +232,7 @@ export function createWorkflowStatusTool(getSession) {
                 })),
                 settledSummary: outcome && settledStatuses.has(outcome.status)
                     ? formatWorkflowCompletion(detail.workflowName, outcome, array(progress.records)) : null,
-                pendingInput: outcome?.status === "paused"
+                pendingInput: outcome?.status === "paused" && outcome.pauseInfo?.type !== "user"
                     ? humanInputRequestFromProgress(array(progress.records), outcome.pauseInfo?.key) : null,
                 revision: detail.revision,
                 observedAt: detail.observedAt,
@@ -228,6 +259,51 @@ export function createWorkflowStatusTool(getSession) {
     };
 }
 
+/** Pause only supported runs in the joined owner session; never start or resume work. */
+export function createWorkflowPauseTool(getSession) {
+    return {
+        name: "code_feature_workflow_pause",
+        description: "Pause an owning-session code-feature or pr-observer attempt and confirm settlement. Use only for a user-requested stop or an authorized stop-on-error policy. Preserves the journal and accounting; does not start, resume, replace, requeue, merge or change budgets.",
+        parameters: {
+            type: "object",
+            properties: { runId: { type: "string", description: "The owning session's workflow run ID." } },
+            required: ["runId"],
+            additionalProperties: false,
+        },
+        skipPermission: false,
+        handler: async (args) => {
+            if (typeof args?.runId !== "string" || !args.runId.trim()) throw new Error("runId is required");
+            if (Object.keys(args).some((key) => key !== "runId")) throw new Error("Only runId is accepted; pause is scoped to the owning session");
+            const runId = args.runId.trim();
+            const session = getSession();
+            for (const method of ["getRunDetail", "getRun", "pause"]) {
+                if (typeof session.workflow?.[method] !== "function") throw new Error(`The installed Copilot SDK lacks session.workflow.${method}`);
+            }
+            const before = await session.workflow.getRunDetail(runId);
+            if (before?.runId !== runId || !workflowNames.has(before.workflowName)) {
+                throw new Error("This pause tool only supports owning-session code-feature and pr-observer runs");
+            }
+            const pauseRequested = before.status === "running";
+            if (!pauseRequested && !settledStatuses.has(before.status)) throw new Error(`Cannot pause unrecognized workflow state: ${before.status}`);
+            const outcome = pauseRequested ? await session.workflow.pause(runId) : await session.workflow.getRun(runId);
+            if (outcome?.runId !== runId || !settledStatuses.has(outcome.status)) throw new Error("SDK pause did not return a settled owning-session outcome");
+            const observed = await session.workflow.getRunDetail(runId);
+            if (observed?.runId !== runId || observed.workflowName !== before.workflowName ||
+                observed.status !== outcome.status || observed.liveAgentCount !== 0) {
+                throw new Error("Workflow stop is not confirmed: matching settled state and explicit zero live agents are required");
+            }
+            return JSON.stringify({
+                runId, workflowName: before.workflowName, status: outcome.status, attempt: outcome.attempt ?? null,
+                pauseRequested, pauseInfo: outcome.pauseInfo ?? null,
+                liveAgentCount: observed.liveAgentCount ?? null, canResume: observed.canResume ?? null,
+                consumed: observed.consumed ?? null,
+                note: pauseRequested ? "The attempt settled after the pause request. Preserve its work and follow the user's recovery instructions."
+                    : "The attempt was already settled; no pause or other control was applied.",
+            });
+        },
+    };
+}
+
 function fileStore(workspaceRoot, sessionId) {
     const file = path.join(workspaceRoot, ".github", "local-context", "code-feature", "completion", `${digest(sessionId)}.json`);
     return {
@@ -244,12 +320,21 @@ function fileStore(workspaceRoot, sessionId) {
                 throw new Error(`Cannot read completion delivery state ${file}: ${error.message}`, { cause: error });
             }
         },
-        save(state) {
+        async save(state) {
             mkdirSync(path.dirname(file), { recursive: true });
             const next = `${file}.${process.pid}.next`;
             try {
                 writeFileSync(next, JSON.stringify(state), { encoding: "utf8", mode: 0o600 });
-                renameSync(next, file);
+                for (let attempt = 0; ; attempt++) {
+                    try {
+                        await rename(next, file);
+                        break;
+                    } catch (error) {
+                        if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || attempt === 5) throw error;
+                        // Windows readers/scanners can briefly deny replacement of the old snapshot.
+                        await sleep(25 * 2 ** attempt);
+                    }
+                }
             } finally {
                 rmSync(next, { force: true });
             }
@@ -287,14 +372,10 @@ export function createWorkflowCompletionDelivery(session, {
     store = fileStore(workspaceRoot, session.sessionId),
     retryDelayMs = 30_000,
     admissionTimeoutMs = 10_000,
-    reportError = (error) => {
-        const message = `Workflow chat delivery failed: ${error.message}. Delivery will retry; inspect the durable workflow run if the caller remains silent.`;
-        console.error(message);
-        void session.log(message, { level: "error" }).catch((logError) =>
-            console.error(`Cannot log completion delivery failure: ${logError.message}`));
-    },
+    reportError,
 } = {}) {
     if (!Number.isFinite(admissionTimeoutMs) || admissionTimeoutMs <= 0) throw new Error("Chat admission timeout must be positive.");
+    if (reportError !== undefined && typeof reportError !== "function") throw new Error("reportError must be a function.");
     for (const method of ["listRuns", "getRun", "getRunDetail", "getRunProgress", "waitForRun"]) {
         if (typeof session.workflow?.[method] !== "function") {
             throw new Error(`The installed Copilot SDK lacks session.workflow.${method}; completion delivery requires a compatible SDK`);
@@ -309,15 +390,99 @@ export function createWorkflowCompletionDelivery(session, {
     const catchups = new Map();
     const watches = new Map();
     const delayedOperations = new WeakSet();
-    const reportedFailures = new WeakSet();
+    const reportedFailures = new WeakMap();
+    const errorContexts = new WeakMap();
+    const incidents = new Map();
+    const diagnosticFile = path.join(workspaceRoot, ".github", "local-context", "code-feature", "completion", "diagnostics", `${digest(session.sessionId)}.jsonl`);
+    const report = reportError || ((_error, notice) => notify(notice.summary));
+    let incidentSequence = 0;
+    let operationSequence = 0;
+    let diagnosticFailure = null;
     const names = new Map(Object.entries(state.runs).map(([id, run]) => [id, run.workflowName]));
+    let persistence = Promise.resolve();
+    let pendingUpdates = 0;
+
+    function chain(error) {
+        const values = [];
+        const seen = new Set();
+        for (let value = error; value != null && !seen.has(value) && values.length < 8; value = value?.cause) {
+            seen.add(value);
+            values.push(value);
+        }
+        return values;
+    }
+
+    function signature(error) {
+        const root = chain(error).at(-1);
+        const normalizePath = (value) => String(value || "").replace(/\.json\.\d+\.next\b/g, ".json.<process>.next");
+        return digest(JSON.stringify(root?.code && root?.syscall ? {
+            code: root.code, syscall: root.syscall, path: normalizePath(root.path), dest: normalizePath(root.dest),
+        } : { name: root?.name || "Error", message: String(root?.message ?? root) }));
+    }
+
+    function diagnostic(record) {
+        try {
+            mkdirSync(path.dirname(diagnosticFile), { recursive: true });
+            if ((statSync(diagnosticFile, { throwIfNoEntry: false })?.size || 0) >= 1_048_576) {
+                copyFileSync(diagnosticFile, `${diagnosticFile}.previous`);
+                writeFileSync(diagnosticFile, "", { mode: 0o600 });
+            }
+            appendFileSync(diagnosticFile, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+            diagnosticFailure = null;
+            return true;
+        } catch (error) {
+            const key = `${signature(error)}:${record.id || record.kind}`;
+            if (diagnosticFailure !== key) {
+                diagnosticFailure = key;
+                console.error("Cannot save private workflow notification diagnostics:", error, record);
+            }
+            return false;
+        }
+    }
+
+    function notify(summary) {
+        try {
+            void Promise.resolve(session.log(summary, { level: "info" })).catch((error) =>
+                diagnostic({ kind: "notice-failed", recordedAt: Date.now(), error: String(error?.stack || error) }));
+        } catch (error) {
+            diagnostic({ kind: "notice-failed", recordedAt: Date.now(), error: String(error?.stack || error) });
+        }
+    }
+
+    function recovered(context) {
+        const incident = incidents.get(context.key);
+        if (!incident) return;
+        incidents.delete(context.key);
+        diagnostic({ kind: "recovered", recordedAt: Date.now(), ...incident });
+        if (!disposed) notify(context.kind === "save" ? "Workflow updates can be saved again."
+            : ["milestones", "outcome"].includes(context.kind) ? "Workflow updates can reach this chat again."
+                : "Workflow progress is available again.");
+    }
+
+    async function attempt(kind, runId, action) {
+        const context = { kind, runId, key: kind === "save" ? "save" : `${kind}:${runId || "session"}`, sequence: ++operationSequence };
+        try {
+            const result = await action();
+            recovered(context);
+            return result;
+        } catch (error) {
+            if (error && typeof error === "object") errorContexts.set(error, context);
+            throw error;
+        }
+    }
 
     function update(runId, change) {
-        const next = structuredClone(state);
-        const entry = next.runs[runId] ||= { workflowName: names.get(runId), delivered: [] };
-        change(entry);
-        store.save(next);
-        state = next;
+        pendingUpdates++;
+        const operation = persistence.then(async () => {
+            const next = structuredClone(state);
+            const entry = next.runs[runId] ||= { workflowName: names.get(runId), delivered: [] };
+            if (change(entry) === false) return;
+            await attempt("save", runId, () => store.save(next));
+            state = next;
+        });
+        // Callers retain the rejection; a failed write must not poison later recovery.
+        persistence = operation.then(() => { pendingUpdates--; }, () => { pendingUpdates--; });
+        return operation;
     }
 
     function scheduleRetry() {
@@ -334,9 +499,42 @@ export function createWorkflowCompletionDelivery(session, {
     }
 
     function failed(error) {
-        if (!error || typeof error !== "object" || !reportedFailures.has(error)) {
-            if (error && typeof error === "object") reportedFailures.add(error);
-            reportError(error);
+        const causes = chain(error);
+        const root = causes.at(-1);
+        const context = causes.map((cause) => errorContexts.get(cause)).find(Boolean) ||
+            { kind: "delivery", key: "delivery", runId: null };
+        const fingerprint = signature(error);
+        let incident = incidents.get(context.key);
+        const changed = !incident || incident.fingerprint !== fingerprint;
+        const changedCause = Boolean(incident && changed);
+        if (changed) {
+            incident = { id: digest(`${context.key}:${Date.now()}:${process.pid}:${++incidentSequence}`), key: context.key, fingerprint,
+                firstSeenAt: Date.now(), lastSeenAt: Date.now(), occurrences: 0 };
+            incidents.set(context.key, incident);
+        }
+        const reportKey = `${incident.id}:${context.sequence || 0}`;
+        if (root && typeof root === "object" && reportedFailures.get(root) === reportKey) {
+            scheduleRetry();
+            return;
+        }
+        if (root && typeof root === "object") reportedFailures.set(root, reportKey);
+        incident.lastSeenAt = Date.now();
+        incident.occurrences++;
+        const recorded = diagnostic({
+            kind: changed ? "failure" : "repeat", recordedAt: Date.now(), ...incident, runId: context.runId,
+            errors: causes.map((cause) => ({
+                name: cause?.name, message: String(cause?.message ?? cause), code: cause?.code,
+                syscall: cause?.syscall, path: cause?.path, dest: cause?.dest, stack: cause?.stack,
+            })),
+        });
+        if (changed && !disposed) {
+            const summary = context.kind === "save" ? "Workflow updates could not be saved. Retrying automatically."
+                : ["milestones", "outcome"].includes(context.kind) ? "Some workflow updates could not reach this chat. Retrying automatically."
+                    : context.kind === "delivery" ? "Workflow updates encountered an error. Retrying automatically."
+                        : context.kind === "progress-tail" ? "Some workflow details could not be read. The recorded outcome is still available."
+                        : "Workflow progress could not be read. Retrying automatically.";
+            report(error, { ...incident, changedCause, summary: `${summary}${changedCause ? " The cause has changed." : ""}${recorded ? " Details are in the local workflow diagnostics."
+                : " Detailed diagnostics could not be saved; inspect the extension logs."}` });
         }
         scheduleRetry();
     }
@@ -354,7 +552,7 @@ export function createWorkflowCompletionDelivery(session, {
             if (result.status === "delayed" && !disposed) {
                 if (!delayedOperations.has(operation)) {
                     delayedOperations.add(operation);
-                    update(runId, (entry) => {
+                    await update(runId, (entry) => {
                         (entry.notificationDiagnostics ||= {})[stage] = {
                             lastWindowExceededAt: Date.now(),
                             elapsedMs: Date.now() - startedAt,
@@ -376,7 +574,7 @@ export function createWorkflowCompletionDelivery(session, {
         if (watches.has(runId) || disposed) return;
         const controller = new AbortController();
         watches.set(runId, controller);
-        void session.workflow.waitForRun(runId, { signal: controller.signal }).then(() => {
+        void attempt("watch", runId, () => session.workflow.waitForRun(runId, { signal: controller.signal })).then(() => {
             if (watches.get(runId) === controller) watches.delete(runId);
             if (!disposed) track(runId);
         }, (error) => {
@@ -388,12 +586,15 @@ export function createWorkflowCompletionDelivery(session, {
     async function catchUpMilestones(runId) {
         let cursor = state.runs[runId]?.milestones?.cursor ?? 0;
         while (!disposed) {
-            const page = await session.workflow.getRunProgress(runId, { afterSeq: cursor, limit: 100 });
-            const records = array(page.records).filter((record) => Number.isSafeInteger(record.seq) && record.seq > cursor)
-                .sort((a, b) => a.seq - b.seq);
-            if (page.hasMoreNewer && !records.length) throw new Error(`Milestone progress cursor did not advance for run ${runId}.`);
+            const { page, records } = await attempt("progress", runId, async () => {
+                const page = await session.workflow.getRunProgress(runId, { afterSeq: cursor, limit: 100 });
+                const records = array(page.records).filter((record) => Number.isSafeInteger(record.seq) && record.seq > cursor)
+                    .sort((a, b) => a.seq - b.seq);
+                if (page.hasMoreNewer && !records.length) throw new Error(`Milestone progress cursor did not advance for run ${runId}.`);
+                return { page, records };
+            });
             if (records.length) {
-                update(runId, (entry) => {
+                await update(runId, (entry) => {
                     const milestones = entry.milestones ||= { cursor: 0, delivered: [], pending: [] };
                     for (const record of records) {
                         const milestone = milestoneFromProgress(record);
@@ -431,19 +632,21 @@ export function createWorkflowCompletionDelivery(session, {
         while (!disposed && state.runs[runId]?.milestones?.pending?.length) {
             const notice = state.runs[runId].milestones.pending[0];
             try {
-                const messageId = await session.send({ prompt: notice.prompt, source: "system", mode: "immediate" });
-                update(runId, (entry) => {
+                const messageId = await attempt("milestones", runId, () =>
+                    session.send({ prompt: notice.prompt, source: "system", mode: "immediate" }));
+                const admittedAt = Date.now();
+                await update(runId, (entry) => {
                     if (!entry.milestones.delivered.includes(notice.key)) entry.milestones.delivered.push(notice.key);
                     entry.milestones.pending = entry.milestones.pending.filter((item) => item.key !== notice.key);
                     const receipt = (entry.milestones.receipts ||= {})[notice.key] ||= {};
                     Object.assign(receipt, {
                         recordedAt: notice.recordedAt ?? null, enqueuedAt: notice.enqueuedAt ?? null,
-                        admittedAt: Date.now(), messageId: messageId ?? null,
+                        admittedAt, messageId: messageId ?? null,
                     });
                     delete entry.milestones.lastError;
                 });
             } catch (error) {
-                update(runId, (entry) => { entry.milestones.lastError = text(error.message); });
+                await update(runId, (entry) => { entry.milestones.lastError = text(error.message); });
                 throw new Error(`Run ${runId} milestone was not acknowledged: ${error.message}`, { cause: error });
             }
         }
@@ -477,32 +680,33 @@ export function createWorkflowCompletionDelivery(session, {
         names.set(runId, name);
         const key = digest(milestone.id);
         if (array(state.runs[runId]?.milestones?.delivered).includes(key)) return;
-        if (!array(state.runs[runId]?.milestones?.pending).some((item) => item.key === key)) {
+        const enqueued = (async () => {
             const recordedAt = Number.isFinite(input.recordedAt) ? input.recordedAt : Date.now();
-            update(runId, (entry) => {
+            await update(runId, (entry) => {
                 const milestones = entry.milestones ||= { cursor: 0, delivered: [], pending: [] };
+                if (milestones.delivered.includes(key) || milestones.pending.some((item) => item.key === key)) return false;
                 milestones.pending.push({
                     key, recordedAt, enqueuedAt: Date.now(),
                     prompt: `${formatWorkflowMilestone(name, runId, milestone, recordedAt)}\n[workflow-milestone:${runId}:${key}]`,
                 });
             });
-        }
-        const sending = sendPendingMilestones(runId);
-        // Wait only for queue admission before a following synchronous build can occupy
-        // the extension event loop. This does not wait for a caller model response.
-        const admitted = waitForAdmission(runId, sending, "chat admission");
-        void admitted.catch(failed);
-        return admitted;
+            if (array(state.runs[runId]?.milestones?.delivered).includes(key)) return;
+            const sending = sendPendingMilestones(runId);
+            // Wait for queue admission, not a caller model response.
+            return waitForAdmission(runId, sending, "chat admission");
+        })();
+        void enqueued.catch(failed);
+        return enqueued;
     }
 
     async function inspect(runId) {
         if (!names.has(runId)) {
-            const detail = await session.workflow.getRunDetail(runId);
+            const detail = await attempt("identity", runId, () => session.workflow.getRunDetail(runId));
             if (!workflowNames.has(detail.workflowName)) return;
             names.set(runId, detail.workflowName);
         }
         if (!workflowNames.has(names.get(runId))) return;
-        const run = await session.workflow.getRun(runId);
+        const run = await attempt("inspection", runId, () => session.workflow.getRun(runId));
         if (disposed) return;
         try {
             await waitForAdmission(runId, deliverMilestones(runId), "milestone catch-up");
@@ -513,7 +717,7 @@ export function createWorkflowCompletionDelivery(session, {
         if (disposed) return;
         if (!settledStatuses.has(run.status)) {
             // Persist identity even when no lifecycle event survives a restart.
-            if (!state.runs[runId]) update(runId, () => {});
+            if (!state.runs[runId]) await update(runId, () => {});
             watch(runId);
             return;
         }
@@ -522,34 +726,35 @@ export function createWorkflowCompletionDelivery(session, {
         let progress = [];
         if (run.status !== "completed") {
             try {
-                progress = array((await session.workflow.getRunProgress(runId, { limit: 8 })).records);
+                progress = array((await attempt("progress-tail", runId, () => session.workflow.getRunProgress(runId, { limit: 8 }))).records);
             } catch (error) {
-                reportError(new Error(`Progress unavailable for run ${runId}: ${error.message}`, { cause: error }));
+                failed(new Error(`Progress unavailable for run ${runId}: ${error.message}`, { cause: error }));
                 progress = [{ attempt: run.attempt, text: "Progress unavailable; inspect this run's durable progress before taking recovery action." }];
             }
         }
         if (disposed) return;
         if (state.runs[runId]?.pending?.key !== key) {
-            update(runId, (entry) => {
+            await update(runId, (entry) => {
                 entry.pending = {
                     key,
                     prompt: `${formatWorkflowCompletion(names.get(runId), run, progress)}\n[workflow-outcome:${runId}:${key}]`,
                 };
             });
         }
+        if (disposed) return;
         try {
-            await session.send({
+            await attempt("outcome", runId, () => session.send({
                 prompt: state.runs[runId].pending.prompt,
                 source: "system",
                 mode: "immediate",
-            });
-            update(runId, (entry) => {
+            }));
+            await update(runId, (entry) => {
                 entry.delivered.push(key);
                 delete entry.pending;
                 delete entry.lastError;
             });
         } catch (error) {
-            update(runId, (entry) => { entry.lastError = text(error.message); });
+            await update(runId, (entry) => { entry.lastError = text(error.message); });
             throw new Error(`Run ${runId} outcome was not acknowledged: ${error.message}`, { cause: error });
         }
     }
@@ -581,8 +786,9 @@ export function createWorkflowCompletionDelivery(session, {
     }
 
     async function flush() {
-        while (workers.size || sends.size) await Promise.all([
+        while (workers.size || sends.size || pendingUpdates) await Promise.all([
             ...[...workers.values()].map((worker) => worker.promise), ...[...sends.values()].map((worker) => worker.promise),
+            persistence,
         ]);
     }
 
@@ -593,12 +799,15 @@ export function createWorkflowCompletionDelivery(session, {
             for (const [runId, name] of names) track(runId, name);
             let beforeSeq;
             do {
-                const page = await session.workflow.listRuns({ limit: 500, ...(beforeSeq === undefined ? {} : { beforeSeq }) });
+                const page = await attempt("reconciliation", null, async () => {
+                    const page = await session.workflow.listRuns({ limit: 500, ...(beforeSeq === undefined ? {} : { beforeSeq }) });
+                    if (page.omittedOlder && (page.oldestSeq == null || page.oldestSeq === beforeSeq)) {
+                        throw new Error("Workflow run catch-up could not advance its durable paging cursor");
+                    }
+                    return page;
+                });
                 for (const run of page.runs) track(run.runId, run.workflowName);
                 if (!page.omittedOlder) break;
-                if (page.oldestSeq == null || page.oldestSeq === beforeSeq) {
-                    throw new Error("Workflow run catch-up could not advance its durable paging cursor");
-                }
                 beforeSeq = page.oldestSeq;
             } while (!disposed);
             await flush();
@@ -615,10 +824,11 @@ export function createWorkflowCompletionDelivery(session, {
             const match = String(event.data.content || "").match(/\[workflow-milestone:([^:\]]+):([a-f0-9]{64})\]/);
             if (match && (state.runs[match[1]]?.milestones?.pending?.some((item) => item.key === match[2]) ||
                 state.runs[match[1]]?.milestones?.delivered?.includes(match[2]))) {
-                update(match[1], (entry) => {
+                const observedAt = Date.now();
+                void update(match[1], (entry) => {
                     const receipt = (entry.milestones.receipts ||= {})[match[2]] ||= {};
-                    receipt.observedAt = Date.now();
-                });
+                    receipt.observedAt = observedAt;
+                }).catch(failed);
             }
         }
     });
@@ -630,7 +840,9 @@ export function createWorkflowCompletionDelivery(session, {
         reconcile,
         flush,
         async flushMilestones() {
-            while (sends.size) await Promise.all([...sends.values()].map((worker) => worker.promise));
+            while (sends.size || pendingUpdates) await Promise.all([
+                ...[...sends.values()].map((worker) => worker.promise), persistence,
+            ]);
         },
         dispose() {
             disposed = true;

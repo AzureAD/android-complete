@@ -79,6 +79,9 @@ const workflow = globalThis.fixtureConfig.workflows.find(item => item.meta.name 
 assert.ok(workflow);
 const waiter = globalThis.fixtureConfig.tools.find(item => item.name === "code_feature_workflow_wait");
 assert.ok(waiter,"The production extension must expose attached supervision");
+const pauseTool = globalThis.fixtureConfig.tools.find(item => item.name === "code_feature_workflow_pause");
+assert.ok(pauseTool,"The production extension must expose owner-scoped pause control");
+assert.equal(pauseTool.skipPermission,false,"Pause retains normal permission gating");
 const task = {
     title:"Fixture", revision:"v1", workItemId:12345,
     approval:{approvedRevision:"v1", approvedBy:"fixture", reference:"fixture"},
@@ -133,13 +136,15 @@ returned = true;
 assert.equal(result.deliveryStatus,"prepared-for-review");
 assert.equal(uiQuestions,0);
 assert.equal(process.env.JAVA_HOME,originalJavaHome);
-assert.equal(messages.length,unavailableOutbox ? 0 : 6);
+assert.equal(messages.length,unavailableOutbox ? 0 : 7);
 assert.ok(messages.every(message=>message.source==="system"&&message.mode==="immediate"&&message.prompt.includes("[workflow-milestone:")));
 if(!unavailableOutbox){
 assert.ok(messages[0].prompt.includes("Build toolchain selected"));
 assert.ok(messages[0].prompt.includes(jdk));
 assert.ok(messages.at(-1).prompt.includes("Pull request packet prepared"));
-assert.ok(messages.some(message=>message.prompt.includes("Local verification: common")&&message.prompt.includes("deferred")));
+assert.ok(messages.some(message=>message.prompt.includes("Local verification: common")&&message.prompt.includes("Local verification has not been confirmed")));
+assert.ok(messages[1].prompt.includes("Evidence complete; implementation is next."));
+assert.ok(messages[2].prompt.includes("Implementation in progress."));
 }else{
 assert.ok(logs.some(message=>message.includes("completion delivery could not start")));
 }
@@ -157,7 +162,7 @@ console.log(JSON.stringify({milestones:messages.length,jdkQuestions:uiQuestions,
             file, root, fileURLToPath(new URL("./extension.mjs", import.meta.url)), unavailableOutbox ? "unavailable" : "available",
         ], { cwd: root, encoding: "utf8", stdio: "pipe", timeout: 30_000 });
         const result = JSON.parse(output.trim());
-        assert.deepEqual(result, { milestones: unavailableOutbox ? 0 : 6, jdkQuestions: 0, globalJavaHomeUnchanged: true, deliveryStatus: "prepared-for-review" });
+        assert.deepEqual(result, { milestones: unavailableOutbox ? 0 : 7, jdkQuestions: 0, globalJavaHomeUnchanged: true, deliveryStatus: "prepared-for-review" });
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
 }

@@ -10,13 +10,13 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { milestoneFromProgress } from "./milestones.mjs";
 import {
-    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, parseAllowedGradleVerificationCommand, runCodeFeature, runLocalVerificationGate, validateImplementation,
+    buildAdoPullRequestPublicationScript, collectBuildReceiptOnDisk, discoverChangedFilesFromGit, ensureIsolatedTargetWorktree, formatPrBody, isBuilderShortCircuitedToCi, normalizeImplementationResponse, parseAllowedGradleVerificationCommand, runCodeFeature, runLocalVerificationGate, validateImplementation,
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
-    ciEvidenceFromSnapshot, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
+    ciEvidenceFromSnapshot, ciWaitingSummary, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
-import { deliveryOutcome, pendingVerification, verificationFromGate } from "./verification.mjs";
+import { ciVerificationSummary, deliveryOutcome, localVerificationSummary, pendingVerification, verificationFromGate, verificationSummary } from "./verification.mjs";
 import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, renderVerificationBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
 
 const task = {
@@ -61,6 +61,93 @@ const implementation = () => ({
     }],
     traceability: [{ requirementId: "R1", targetIds: ["common"], filePaths: ["FooTest.kt"], testLocations: ["FooTest"], verification: "Source reviewed only" }],
     assumptions: [], openDecisions: [], blockingUnknowns: [],
+});
+
+test("verification wording separates failed, deferred, unconfirmed and executed checks without raw labels", () => {
+    const cases = [
+        ["passed", "Local verification passed."],
+        ["failed", "Local verification failed."],
+        ["deferred", "Local verification is incomplete; remaining checks need CI."],
+        ["unverified", "Local verification has not been confirmed."],
+    ];
+    for (const [status, expected] of cases) {
+        const verification = { local: { status, evidence: ["Successful command: compile", "Specific task diagnostic."] }, ci: { status: "not-observed" } };
+        assert.ok(localVerificationSummary(verification).startsWith(expected));
+        if (["failed", "deferred"].includes(status)) assert.match(localVerificationSummary(verification), /Specific task diagnostic/);
+        else assert.doesNotMatch(localVerificationSummary(verification), /Specific task diagnostic/);
+        assert.match(verificationSummary(verification), /CI has not been checked yet/);
+    }
+    assert.equal(ciVerificationSummary({ ci: { status: "pending" } }), "Waiting for CI results for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "failed", headSha: "abc123" } }), "CI failed for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "unknown" } }), "CI results for the current PR head could not be confirmed.");
+    assert.equal(ciVerificationSummary({ ci: { status: "passed", headSha: "abc123" } }), "CI passed for the current PR head.");
+    assert.equal(ciVerificationSummary({ ci: { status: "passed" } }), "CI reports a pass, but its PR head has not been confirmed.");
+    assert.equal(ciVerificationSummary({ ci: { status: "failed" } }), "CI reports a failure, but its PR head has not been confirmed.");
+});
+
+test("local diagnostic summaries are bounded without changing full failed or deferred receipts", () => {
+    for (const status of ["failed", "deferred"]) {
+        const reason = `SDK location not found. ${"Full build diagnostic. ".repeat(10_000)}`;
+        const receipt = { local: { status, evidence: ["Successful command: compile", reason] } };
+        const summary = localVerificationSummary(receipt);
+        assert.ok(summary.length <= 500);
+        assert.match(summary, /SDK location not found/);
+        assert.ok(summary.endsWith("..."));
+        assert.equal(receipt.local.evidence[1], reason);
+    }
+});
+
+test("long command narration cannot hide the recorded verification stopping or failure cause", () => {
+    for (const [status, cause] of [
+        ["deferred", "Stopped the running verification shell at the 12-minute cap with zero retries; local verification was short-circuited to remote CI."],
+        ["failed", "Execution failed for task :app:compileProductionDebugKotlin: unresolved reference in the changed file."],
+    ]) {
+        const narration = `Builder reported: Authored five focused Kotlin test classes. Attempted the combined Gradle command with ${"--no-daemon --max-workers=2 :app:compileProductionDebugKotlin ".repeat(100)}. Completed evidence: 41 ECS tests passed. ${cause} Remaining checks need CI.`;
+        const receipt = { local: { status, commands: [], evidence: [narration] }, ci: { status: "not-observed" } };
+        const before = structuredClone(receipt);
+        const summary = localVerificationSummary(receipt);
+        assert.ok(summary.length <= 500);
+        assert.ok(summary.includes(cause), summary);
+        assert.match(summary, /Builder reported:/);
+        assert.doesNotMatch(summary, /Local verification passed|--max-workers|41 ECS tests passed/);
+        assert.deepEqual(receipt, before);
+    }
+});
+
+test("repeated CI updates retain failed and deferred local reasons without changing the compact marker schema", () => {
+    const parsed = parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42");
+    for (const status of ["failed", "deferred"]) {
+        const verification = {
+            local: { status, headSha: "a".repeat(40), evidence: ["SDK location not found. Device verification needs authorized CI."] },
+            ci: { status: "not-observed", headSha: null },
+        };
+        let description = `## Validation & Testing\n${verificationSummary(verification)}\nHuman details.\n${renderVerificationBlock(verification)}`;
+        for (const ciStatus of ["pending", "passed", "failed", "passed"]) {
+            const ci = { status: ciStatus, headSha: "a".repeat(40) };
+            description = publishObserverStatus(parsed, snapshot({ description }), "status", { exec: () => "", ci });
+            const line = description.split("\n").find((value) => value.startsWith("Local verification"));
+            assert.equal(line, verificationSummary({ ...verification, ci }));
+            assert.match(description, /Human details\./);
+            const marker = parseMarkerBlock(description, verificationMarkers);
+            assert.deepEqual(Object.keys(marker.local).sort(), ["headSha", "status"]);
+            assert.equal(marker.local.status, status);
+            assert.equal(marker.ci.status, ciStatus);
+        }
+        assert.deepEqual(verification.local.evidence, ["SDK location not found. Device verification needs authorized CI."]);
+    }
+});
+
+test("CI waiting wording claims running or queued only from the actual current-head snapshot", () => {
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "queued" }] })), "CI checks are queued.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "in_progress" }] })), "CI checks are running.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ status: "queued" }, { status: "in_progress" }] })), "CI has running and queued checks.");
+    assert.equal(ciWaitingSummary(snapshot({ statusCheckRollup: [{ state: "pending" }] })), "Waiting for CI results for the current PR head.");
+    assert.equal(ciWaitingSummary(snapshot({ snapshotHeadChanged: true })), "The PR head changed; waiting for fresh CI results.");
+    assert.match(ciWaitingSummary(snapshot(), "b".repeat(40)), /Waiting for the CI provider to recognize pushed commit b+/);
+    assert.equal(ciWaitingSummary(snapshot({
+        provider: "ado", statusCheckRollup: [],
+        prBuilds: [{ status: "inProgress", sourceHeadSha: "b".repeat(40) }],
+    })), "Waiting for CI results for the current PR head.", "An old build cannot establish current activity");
 });
 
 test("builder timeout, failure, and planned commands never become successful verification receipts", () => {
@@ -126,10 +213,18 @@ test("final managed narrative and JSON show the same current verification state"
         parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42"),
         snapshot({ description }), "status", { exec: () => "" },
     );
-    assert.match(updated, /Local verification: unverified\. Current-head CI: passed\./);
+    assert.match(updated, /Local verification has not been confirmed\. CI passed for the current PR head\./);
     assert.match(updated, /Human details stay unchanged\./);
     assert.equal(parseMarkerBlock(updated, verificationMarkers).ci.status, "passed");
     assert.equal(updated.split(/\r?\n/).filter((line) => line === wi).length, 1);
+    const failed = publishObserverStatus(
+        parsePullRequestUrl("https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42"),
+        snapshot({ description: updated }), "status", { exec: () => "", ci: { status: "failed", headSha: "a".repeat(40) } },
+    );
+    assert.match(failed, /CI failed for the current PR head\./);
+    assert.doesNotMatch(failed, /CI passed for the current PR head/);
+    assert.match(failed, /Human details stay unchanged\./);
+    assert.equal(parseMarkerBlock(failed, verificationMarkers).ci.status, "failed");
 });
 
 test("a local pass for a previous source head is not promoted to the repaired current head", () => {
@@ -599,6 +694,312 @@ test("exhausted observer returns final CI failures and never exceeds its two-rep
     assert.equal(result.continuation.workflow, "pr-observer");
 });
 
+test("repair messages distinguish an unchanged pushed head from a real source commit", async () => {
+    for (const disposition of ["unchanged", "changed", "unconfirmed"]) {
+        const changed = disposition === "changed";
+        const originalHead = "a".repeat(40);
+        const pushedHead = changed ? "b".repeat(40) : originalHead;
+        const repair = { verdict: "pass", summary: changed ? "Fixed the reported test." : "No source changes are warranted.", evidence: [] };
+        const context = ctx([repair, passedReview], { maxIterations: 1, pushRepairs: true });
+        const logs = [];
+        const commands = [];
+        context.log = (text) => logs.push(text);
+        context.step = async (key, producer) => {
+            const result = await producer();
+            return /-push-repair-\d+$/.test(key)
+                ? { ...result, pushedSha: disposition === "unconfirmed" ? "" : pushedHead } : result;
+        };
+        let reads = 0;
+        const result = await runPrObserver(context, {
+            exec: (command, args) => { commands.push({ command, args }); return ""; },
+            fetchPrSnapshot: () => ++reads === 1
+                ? snapshot({ headRefOid: originalHead, prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["FooTest.kt:12 Unresolved reference"] }] }] })
+                : snapshot({ headRefOid: pushedHead }),
+        });
+        const milestones = logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
+        const assessed = milestones.find((item) => /-authored$/.test(item.id));
+        const pushed = milestones.find((item) => /-pushed$/.test(item.id));
+        assert.doesNotMatch(assessed.summary, /Repair authored/);
+        assert.ok(commands.some(({ command, args }) => command === "git" && args.includes("push")));
+        assert.equal(context.calls.length, 2);
+        assert.equal(result.ci.headSha, pushedHead);
+        if (changed) {
+            assert.match(pushed.summary, /Repair pushed/);
+            assert.doesNotMatch(pushed.summary, /unchanged/);
+        } else if (disposition === "unchanged") {
+            assert.match(pushed.summary, /Push completed.*source head is unchanged/);
+            assert.doesNotMatch(pushed.title + pushed.summary, /Repair pushed|repair .* pushed/i);
+        } else {
+            assert.match(pushed.summary, /resulting source head could not be confirmed/);
+            assert.doesNotMatch(pushed.summary, /Repair pushed|source head is unchanged/);
+        }
+    }
+});
+
+test("embedded observer stages only repair files, preserves local SDK config and publishes its deletion", async () => {
+    for (const kind of ["no-change", "source", "delete-config", "staged-config", "staged-only-addition", "staged-only-edit"]) {
+        const root = mkdtempSync(path.join(os.tmpdir(), "observer-explicit-staging-"));
+        const source = path.join(root, "source");
+        const repo = path.join(root, "common");
+        try {
+            mkdirSync(source);
+            const git = (...args) => execFileSync("git", args, { cwd: source, encoding: "utf8", stdio: "pipe" }).trim();
+            git("init", "--quiet");
+            git("config", "user.name", "Workflow Fixture");
+            git("config", "user.email", "fixture@example.invalid");
+            writeFileSync(path.join(source, "Foo.kt"), "class Foo\n");
+            writeFileSync(path.join(source, "local.properties"), "sdk.dir=fixture-sdk\n");
+            writeFileSync(path.join(source, "README"), "baseline\n");
+            git("add", "Foo.kt", "README", ...(["delete-config", "staged-only-edit"].includes(kind) ? ["local.properties"] : []));
+            git("commit", "--quiet", "-m", "baseline");
+            git("update-ref", "refs/remotes/origin/dev", "HEAD");
+            git("remote", "add", "origin", "https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git");
+            git("worktree", "add", "--quiet", "-b", "feature", repo, "HEAD");
+            const original = git("rev-parse", "HEAD");
+            const localContent = kind === "staged-only-edit" ? "sdk.dir=updated-fixture-sdk\n" : "sdk.dir=fixture-sdk\n";
+            writeFileSync(path.join(repo, "local.properties"), localContent);
+            mkdirSync(path.join(repo, "nested"));
+            writeFileSync(path.join(repo, "nested", "local.properties"), "sdk.dir=fixture-sdk\n");
+            if (kind.startsWith("staged-")) execFileSync("git", ["add", "local.properties"], { cwd: repo });
+            const initialIndex = execFileSync("git", ["write-tree"], { cwd: repo, encoding: "utf8" }).trim();
+            const commands = [];
+            const exec = (command, args, options) => {
+                commands.push({ command, args });
+                if (command === "gh") return "";
+                if (command === "git" && args.includes("push")) return "";
+                return execFileSync(command, args, { ...options, encoding: "utf8", stdio: "pipe" }).trim();
+            };
+            let reads = 0;
+            const context = ctx([{ verdict: "pass", summary: "Tactical assessment complete.", evidence: [] }, passedReview], { workspaceRoot: root, pushRepairs: true });
+            const agent = context.agent;
+            context.agent = async (prompt, options) => {
+                if (options.agent === BUILDER_AGENT) {
+                    if (kind === "source" || kind === "staged-config") writeFileSync(path.join(repo, "Foo.kt"), "class Foo { val fixed = true }\n");
+                    if (kind === "delete-config") {
+                        rmSync(path.join(repo, "local.properties"));
+                        writeFileSync(path.join(repo, ".gitignore"), "/local.properties\n");
+                    }
+                }
+                return agent.call(context, prompt, options);
+            };
+            const run = runPrObserver(context, {
+                exec,
+                fetchPrSnapshot: () => snapshot({
+                    headRefOid: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(),
+                    ...(++reads === 1 ? { prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["Foo.kt:12: error: Unresolved reference: fixture"] }] }] } : {}),
+                }),
+            });
+            if (kind.startsWith("staged-")) {
+                await assert.rejects(run, /local SDK configuration.*staged/i);
+                assert.equal(commands.filter((item) => item.command === "git" && item.args.includes("push")).length, 0);
+                assert.equal(commands.filter((item) => item.command === "git" && item.args[0] === "commit").length, 0);
+                assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), original);
+                assert.equal(execFileSync("git", ["write-tree"], { cwd: repo, encoding: "utf8" }).trim(), initialIndex);
+                assert.equal(readFileSync(path.join(repo, "local.properties"), "utf8"), localContent);
+                assert.match(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: repo, encoding: "utf8" }), /local.properties/);
+            } else {
+                const result = await run;
+                const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+                assert.equal(context.calls.length, 2);
+                assert.equal(result.headSha, head);
+                assert.equal(commands.some((item) => item.command === "git" && item.args.includes("-A")), false);
+                if (kind === "no-change") {
+                    assert.equal(head, original);
+                    assert.equal(commands.some((item) => item.command === "git" && item.args[0] === "commit"), false);
+                } else {
+                    assert.notEqual(head, original);
+                    const delta = execFileSync("git", ["diff", "--name-status", original, head], { cwd: repo, encoding: "utf8" });
+                    assert.equal(delta.includes("nested/local.properties"), false);
+                    if (kind === "delete-config") assert.match(delta, /D\s+local.properties/);
+                    else assert.doesNotMatch(delta, /local.properties/);
+                }
+            }
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+});
+
+test("SDK discovery permits tracked deletions but never additions or modifications", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "sdk-discovery-policy-"));
+    try {
+        mkdirSync(path.join(root, ".git"));
+        mkdirSync(path.join(root, "nested"));
+        writeFileSync(path.join(root, "local.properties"), "sdk.dir=fixture\n");
+        writeFileSync(path.join(root, "nested", "local.properties"), "sdk.dir=fixture\n");
+        for (const status of ["??", " A", " M", " D", "D "]) {
+            const result = discoverChangedFilesFromGit(root, () => `${status} local.properties\n${status} nested/local.properties`, { allowPipelineEdits: true });
+            assert.equal(result.files.length, status.includes("D") ? 2 : 0, status);
+            assert.ok(result.files.every((file) => file.action === "delete"));
+        }
+        const value = implementation();
+        value.targets[0].files.push({ path: "local.properties", action: "create", content: "sdk.dir=fixture", summary: "Local SDK" });
+        assert.ok(validateImplementation(value, task).some((line) => /local SDK configuration/i.test(line)));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("checkout transport recovery keeps the source-repair allowance and needs no repair agents", async () => {
+    const current = "a".repeat(40);
+    const failed = snapshot({
+        provider: "ado",
+        prBuilds: [{ id: 77, sourceHeadSha: current, definition: "Android Authenticator PR Checks", status: "completed", result: "failed",
+            failedTasks: [{ name: "Checkout", issues: ["Git fetch failed"], excerpt: ["curl 56 Connection reset by peer", "fatal: fetch-pack: invalid index-pack output"] }] }],
+    });
+    const pending = snapshot({ provider: "ado", prBuilds: [{ id: 78, sourceHeadSha: current, status: "inProgress" }] });
+    for (const recover of [true, false]) {
+        const context = ctx([], { maxCiPollAttempts: 2, ciPollIntervalMs: 0 });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        let reads = 0;
+        let retries = 0;
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => {},
+            retryFailedBuilds: () => { retries++; return true; },
+            fetchPrSnapshot: () => recover && ++reads > 1 ? pending : failed,
+        });
+        assert.equal(retries, 1);
+        assert.equal(context.calls.length, 0);
+        assert.equal(result.repairAttempts, 0);
+        if (recover) {
+            assert.equal(result.status, "waiting-for-ci");
+            assert.equal(result.continuation.args.maxIterations, 2);
+        } else {
+            assert.equal(result.blockerKind, "ci-infrastructure");
+            assert.match(result.summary, /checkout.*retry|retry.*checkout/i);
+        }
+    }
+});
+
+test("checkout retry cannot hide a compiler defect, unconfirmed retry or disabled mutation", async () => {
+    const base = snapshot({ provider: "ado", prBuilds: [{ id: 77, sourceHeadSha: "a".repeat(40), definition: "Checks", status: "completed", result: "failed",
+        failedTasks: [{ name: "Checkout", excerpt: ["curl 56 Connection reset by peer"] }] }] });
+    for (const kind of ["compiler", "retry-failed", "readonly", "no-wait"]) {
+        const failed = structuredClone(base);
+        if (kind === "compiler") failed.prBuilds[0].failedTasks.push({ name: "Compile", excerpt: ["Unresolved reference: launch"] });
+        const context = ctx([], { maxCiPollAttempts: kind === "no-wait" ? 0 : 1, ciPollIntervalMs: 0, pushRepairs: kind !== "readonly" });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        context.args.maxIterations = 0;
+        let retries = 0;
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => {},
+            retryFailedBuilds: () => { retries++; return false; },
+            fetchPrSnapshot: () => failed,
+        });
+        assert.equal(context.calls.length, 0);
+        assert.notEqual(result.ci.status, "passed");
+        assert.equal(retries, kind === "retry-failed" ? 1 : 0);
+        assert.equal(result.status, kind === "compiler" ? "max-iterations-reached" : "needs-owner-decision");
+    }
+});
+
+test("unfinished current-head source failures prevent checkout-only recovery", async () => {
+    for (const failure of [
+        { name: "Compile", excerpt: ["Unresolved reference: launchForResult"] },
+        { name: "Unit tests", failedTests: [{ testName: "FooTest", errorMessage: "Expected tenant A but received B" }] },
+    ]) {
+        const context = ctx([], { maxCiPollAttempts: 1, ciPollIntervalMs: 0 });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        context.args.maxIterations = 0;
+        let retries = 0;
+        const observed = snapshot({ provider: "ado", prBuilds: [
+            { id: 77, sourceHeadSha: "a".repeat(40), definition: "Checks", status: "completed", result: "failed",
+                failedTasks: [{ name: "Checkout", excerpt: ["curl 56 Connection reset by peer"] }] },
+            { id: 78, sourceHeadSha: "a".repeat(40), definition: "Checks", status: "inProgress", result: null, failedTasks: [failure] },
+        ] });
+        const result = await runPrObserver(context, {
+            exec: () => "", fetchPrSnapshot: () => observed,
+            retryFailedBuilds: () => { retries++; return true; },
+        });
+        assert.equal(retries, 0);
+        assert.equal(context.calls.length, 0);
+        assert.equal(result.status, "max-iterations-reached");
+        assert.equal(result.ci.status, "failed");
+        assert.ok(result.actionableFindings.some((finding) => finding.includes(failure.name)));
+    }
+});
+
+test("checkout retries target only failed current-head builds, not unfinished, advisory or stale builds", async () => {
+    const head = "a".repeat(40);
+    const context = ctx([], { maxCiPollAttempts: 1, ciPollIntervalMs: 0 });
+    context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+    const observed = snapshot({ provider: "ado", prBuilds: [
+        { id: 77, sourceHeadSha: head, definition: "Checks", status: "completed", result: "failed",
+            failedTasks: [{ name: "Checkout", excerpt: ["curl 56 Connection reset by peer"] }] },
+        { id: 78, sourceHeadSha: head, definition: "Checks", status: "inProgress", result: null, failedTasks: [] },
+        { id: 79, sourceHeadSha: head, definition: "AI PR Review", status: "inProgress", result: null,
+            failedTasks: [{ name: "Compile", excerpt: ["Unresolved reference: advisoryFixture"] }] },
+        { id: 80, sourceHeadSha: "b".repeat(40), definition: "Checks", status: "inProgress", result: null,
+            failedTasks: [{ name: "Compile", excerpt: ["Unresolved reference: staleFixture"] }] },
+    ] });
+    let retries = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {}, fetchPrSnapshot: () => observed,
+        retryFailedBuilds: (_pr, supplied, options) => {
+            retries++;
+            assert.deepEqual(supplied.prBuilds.map((build) => build.id), [77]);
+            assert.equal(options.stageOnly, true);
+            return true;
+        },
+    });
+    assert.equal(retries, 1);
+    assert.equal(context.calls.length, 0);
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(result.blockerKind, "ci-infrastructure");
+});
+
+test("cancellation during checkout recovery propagates without a success notice or follow-up read", async () => {
+    const controller = new AbortController();
+    const context = ctx([], { maxCiPollAttempts: 1 });
+    context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+    context.signal = controller.signal;
+    const logs = [];
+    context.log = (line) => logs.push(line);
+    let reads = 0;
+    await assert.rejects(runPrObserver(context, {
+        exec: () => "",
+        fetchPrSnapshot: () => {
+            reads++;
+            return snapshot({ provider: "ado", prBuilds: [{ id: 77, sourceHeadSha: "a".repeat(40), status: "completed", result: "failed",
+                failedTasks: [{ name: "Checkout", excerpt: ["Connection reset by peer"] }] }] });
+        },
+        retryFailedBuilds: () => { controller.abort(); return true; },
+    }), { name: "AbortError" });
+    assert.equal(reads, 1);
+    assert.equal(context.calls.length, 0);
+    assert.equal(logs.some((line) => /CI checkout retry requested/.test(line)), false);
+});
+
+test("journal replay cannot request another checkout retry for a different build on the same source head", async () => {
+    const journal = new Map();
+    let retries = 0;
+    const make = () => {
+        const context = ctx([], { maxCiPollAttempts: 1, ciPollIntervalMs: 0 });
+        context.args.prUrl = "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/42";
+        context.step = async (key, producer, options) => {
+            if (options?.volatile) return producer();
+            if (!journal.has(key)) journal.set(key, structuredClone(await producer()));
+            return structuredClone(journal.get(key));
+        };
+        return context;
+    };
+    const buildSnapshot = (id, failed = true) => snapshot({ provider: "ado", prBuilds: [{
+        id, sourceHeadSha: "a".repeat(40), status: failed ? "completed" : "inProgress", result: failed ? "failed" : null,
+        failedTasks: failed ? [{ name: "Checkout", excerpt: ["Connection reset by peer"] }] : [],
+    }] });
+    let reads = 0;
+    const dependency = {
+        exec: () => "", sleep: async () => {},
+        retryFailedBuilds: () => { retries++; return true; },
+    };
+    const first = await runPrObserver(make(), {
+        ...dependency, fetchPrSnapshot: () => ++reads === 1 ? buildSnapshot(77) : buildSnapshot(78, false),
+    });
+    assert.equal(first.status, "waiting-for-ci");
+    const replay = await runPrObserver(make(), {
+        ...dependency, fetchPrSnapshot: () => buildSnapshot(78),
+    });
+    assert.equal(retries, 1);
+    assert.equal(replay.blockerKind, "ci-infrastructure");
+    assert.equal(replay.repairAttempts, 0);
+});
+
 test("pending CI returns explicit continuation without spending classifier agents", async () => {
     const context = ctx();
     const logs = [];
@@ -613,7 +1014,44 @@ test("pending CI returns explicit continuation without spending classifier agent
     const milestone = logs.map((text) => milestoneFromProgress({ kind: "log", text })).find((item) => item?.title === "PR observation");
     assert.equal(milestone.title, "PR observation");
     assert.equal(milestone.outcome, "deferred");
-    assert.match(milestone.summary, /Current-head CI: pending/);
+    assert.match(milestone.summary, /Waiting for CI results for the current PR head/);
+    assert.match(milestone.summary, /Continue observing this PR with the remaining repair allowance/);
+    assert.doesNotMatch(milestone.summary, /pending|not merge approval|success is not established/);
+});
+
+test("live CI handoff messages preserve queued versus running without spending agents or repeating each poll", async () => {
+    for (const [state, expected] of [["QUEUED", "CI checks are queued."], ["IN_PROGRESS", "CI checks are running."], ["PENDING", "Waiting for CI results for the current PR head."]]) {
+        const context = ctx([], { maxCiPollAttempts: 2, ciPollIntervalMs: 0 });
+        const logs = [];
+        context.log = (text) => logs.push(text);
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => {},
+            fetchPrSnapshot: () => snapshot({ statusCheckRollup: [{ name: "CI", status: state }] }),
+        });
+        const waits = logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter((item) => item?.title === "Waiting for CI");
+        assert.equal(waits.length, 1, "One durable wait update per head, not one per poll");
+        assert.ok(waits[0].summary.startsWith(expected));
+        assert.equal(result.summary, expected);
+        assert.equal(result.ci.status, "pending");
+        assert.equal(result.status, "waiting-for-ci");
+        assert.equal(context.calls.length, 0);
+    }
+});
+
+test("external blocker milestones name who can act and keep the actual CI diagnostic", async () => {
+    const context = ctx();
+    const logs = [];
+    context.log = (text) => logs.push(text);
+    const diagnostic = "Hosted image unavailable: provider unable to process this request during brownout.";
+    const result = await runPrObserver(context, {
+        exec: () => "",
+        fetchPrSnapshot: () => snapshot({ prBuilds: [{ id: 7, status: "completed", result: "canceled", infrastructureIssues: [diagnostic] }] }),
+    });
+    const milestone = logs.map((text) => milestoneFromProgress({ kind: "log", text })).find((item) => item?.title === "PR observation");
+    assert.match(milestone.summary, /CI provider or pipeline owner must resolve/);
+    assert.equal(milestone.outcome, "blocked");
+    assert.ok(result.evidence.includes(diagnostic));
+    assert.equal(context.calls.length, 0);
 });
 
 test("pending CI never bypasses merge conflicts or actionable review feedback before or after a poll", async () => {
@@ -637,6 +1075,168 @@ test("pending CI never bypasses merge conflicts or actionable review feedback be
             assert.equal(result.status, "needs-owner-decision");
         }
     }
+});
+
+const classifiedWait = {
+    verdict: "waiting-for-ci", repairKind: "none", summary: "Review feedback has no blocking findings; CI is still running.",
+    evidence: ["Existing feedback was classified."], actionableFindings: [],
+};
+const reviewedWaitingSnapshot = () => snapshot({
+    statusCheckRollup: [{ name: "CI", state: "PENDING" }, { name: "Advisory", state: "SUCCESS" }],
+    prBuilds: [{ id: 91, status: "inProgress", sourceHeadSha: "a".repeat(40) }],
+    inlineReviewComments: [{ id: 7, body: "Consider simplifying this optional helper.", path: "Foo.kt", line: 12 }],
+    activeReviewThreads: [{ id: 8, status: "active", comments: [{ id: 9, content: "Optional style suggestion." }] }],
+    reviews: [{ id: 10, author: { login: "reviewer" }, state: "COMMENTED", body: "Optional observations." }],
+    comments: [{ id: 11, author: { login: "reviewer" }, body: "Existing nonblocking note." }],
+    policyEvaluations: [{ evaluationId: 12, status: "queued", blocking: true, minimumApproverCount: 1 }],
+});
+
+test("unchanged classified feedback uses one observer across sixty CI waits, including the final bound", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 60, ciPollIntervalMs: 0 });
+    let reads = 0, sleeps = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => { sleeps++; },
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            value.collectedAt = ++reads;
+            value.inlineReviewComments[0].updatedAt = String(reads);
+            value.prBuilds[0].startTime = String(reads);
+            if (reads % 2) value.statusCheckRollup.reverse();
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1, "Already-classified feedback must not spend an agent on every CI wait");
+    assert.equal(sleeps, 60);
+    assert.equal(reads, 61);
+    assert.equal(result.status, "waiting-for-ci");
+    assert.equal(result.ci.status, "pending");
+    assert.equal(result.summary, classifiedWait.summary);
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(result.continuation.args.maxIterations, 2, "Waiting must not consume or reset the tactical repair allowance");
+});
+
+test("zero source-repair allowance is described as disabled repairs, not exhausted budget or failed CI", async () => {
+    const context = ctx([{
+        verdict: "repair", repairKind: "review-comment", summary: "A review finding needs source verification.",
+        evidence: [], actionableFindings: ["Verify the unresolved review finding."],
+    }]);
+    context.args.maxIterations = 0;
+    const logs = [];
+    context.log = (value) => logs.push(value);
+    const result = await runPrObserver(context, { exec: () => "", fetchPrSnapshot: reviewedWaitingSnapshot });
+    assert.equal(result.status, "max-iterations-reached", "The raw protocol remains unchanged");
+    assert.equal(result.repairAttempts, 0);
+    assert.equal(context.calls.length, 1);
+    assert.match(result.summary, /Source repairs are disabled for this run/);
+    assert.doesNotMatch(result.summary, /budget exhausted|remaining failures/);
+    const milestones = logs.map((value) => milestoneFromProgress({ kind: "log", text: value })).filter(Boolean);
+    assert.ok(milestones.some((value) => /Source repairs are disabled for this run/.test(value.summary)));
+    assert.ok(milestones.every((value) => !/repair allowance is used up/i.test(value.summary)));
+});
+
+test("reused waiting decisions are invalidated by edited feedback, policies, diagnostics and source identity", async () => {
+    const changes = [
+        ["inline body", (value) => { value.inlineReviewComments[0].body = "Fix cancellation before merging."; }],
+        ["thread body", (value) => { value.activeReviewThreads[0].comments[0].content = "Fix a newly identified defect."; }],
+        ["review body", (value) => { value.reviews[0].body = "New required review finding."; }],
+        ["review state", (value) => { value.reviews[0].state = "CHANGES_REQUESTED"; }],
+        ["top-level body", (value) => { value.comments[0].body = "New required source correction."; }],
+        ["policy", (value) => { value.policyEvaluations[0].minimumApproverCount = 2; }],
+        ["source head", (value) => { value.headRefOid = "b".repeat(40); }],
+        ["merge head", (value) => { value.mergeHeadSha = "b".repeat(40); }],
+        ["build binding", (value) => { value.prBuilds[0].sourceHeadSha = "b".repeat(40); }],
+        ["CI description", (value) => { value.statusCheckRollup[0].description = "New provider diagnostic."; }],
+        ["merge conflict", (value) => { value.mergeStateStatus = "DIRTY"; }],
+        ["PR narrative", (value) => { value.body = "New owner instructions about the change."; }],
+    ];
+    for (const [label, change] of changes) {
+        const context = ctx([structuredClone(classifiedWait), {
+            verdict: "needs-owner-decision", repairKind: "none", summary: "New evidence needs an owner decision.",
+            evidence: [], actionableFindings: [],
+        }], { maxCiPollAttempts: 4, ciPollIntervalMs: 0 });
+        context.args.maxIterations = 0;
+        let reads = 0, sleeps = 0;
+        const result = await runPrObserver(context, {
+            exec: () => "", sleep: async () => { sleeps++; },
+            fetchPrSnapshot: () => {
+                const value = reviewedWaitingSnapshot();
+                if (++reads >= 3) change(value);
+                return value;
+            },
+        });
+        assert.equal(context.calls.length, 2, label);
+        assert.equal(sleeps, 2, label);
+        assert.equal(result.status, "needs-owner-decision", label);
+    }
+});
+
+test("new failed tasks interrupt a reused CI wait without another classifier or a repair-budget reset", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 5, ciPollIntervalMs: 0 });
+    context.args.maxIterations = 0;
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) {
+                value.prBuilds[0].status = "completed";
+                value.prBuilds[0].result = "failed";
+                value.prBuilds[0].failedTasks = [{ name: "Unit tests", failedTests: [{ testName: "CancellationTest", errorMessage: "New exact-head regression" }] }];
+                value.statusCheckRollup[0].state = "FAILURE";
+            }
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1);
+    assert.equal(result.status, "max-iterations-reached");
+    assert.equal(result.ci.status, "failed");
+    assert.equal(result.repairAttempts, 0);
+    assert.ok(result.actionableFindings.some((finding) => finding.includes("New exact-head regression")));
+    assert.equal(result.continuation.args.maxIterations, 0);
+});
+
+test("CI completion replaces an earlier waiting classification with a fresh terminal decision", async () => {
+    const context = ctx([structuredClone(classifiedWait), {
+        verdict: "ready", repairKind: "none", summary: "Current CI and source checks passed.",
+        evidence: ["Exact-head CI succeeded."], actionableFindings: [],
+    }], { maxCiPollAttempts: 4, ciPollIntervalMs: 0 });
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) {
+                value.statusCheckRollup[0].state = "SUCCESS";
+                value.prBuilds[0].status = "completed";
+                value.prBuilds[0].result = "succeeded";
+                value.policyEvaluations = [];
+            }
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 2);
+    assert.equal(result.status, "ready-for-human-merge");
+    assert.equal(result.ci.status, "passed");
+    assert.equal(result.ci.headSha, "a".repeat(40));
+    assert.equal(result.humanMergeOnly, true);
+});
+
+test("a stale snapshot invalidates classified waiting and explicitly waits for fresh head evidence", async () => {
+    const context = ctx([structuredClone(classifiedWait)], { maxCiPollAttempts: 3, ciPollIntervalMs: 0 });
+    let reads = 0;
+    const result = await runPrObserver(context, {
+        exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => {
+            const value = reviewedWaitingSnapshot();
+            if (++reads >= 3) value.snapshotHeadChanged = true;
+            return value;
+        },
+    });
+    assert.equal(context.calls.length, 1);
+    assert.equal(result.status, "waiting-for-ci");
+    assert.match(result.summary, /PR head changed; waiting for fresh CI results/);
+    assert.notEqual(result.summary, classifiedWait.summary);
+    assert.notEqual(result.ci.status, "passed");
 });
 
 test("GitHub and GHE observers enrich readable Azure build diagnostics through the supplied executor", async () => {

@@ -14,6 +14,44 @@ export const currentStatuses = Object.freeze({
 
 export const currentStatusValues = Object.freeze(Object.values(currentStatuses));
 
+export function deliveryStatusSummary(status) {
+    const summary = {
+        "prepared-for-review": "Source review complete; the PR packet is prepared but has not been published.",
+        "published-for-observation": "PR published; CI observation is next.",
+        observing: "PR checks are being inspected.",
+        "ready-for-human-review": "Implementation handed off for human review.",
+        "ready-for-human-merge": "PR handed off for human review and merge approval.",
+        "needs-owner-decision": "A developer decision or prerequisite is needed.",
+        "waiting-for-ci": "Waiting for CI results.",
+        "ci-not-observed": "PR published; CI has not been checked yet.",
+        "ci-failed": "CI failed; the reported failures need attention.",
+        "awaiting-human-review": "Required human review or repository approvals remain.",
+        "infrastructure-blocked": "CI is blocked by its provider or build environment.",
+        "max-iterations-reached": "Unresolved findings need a developer decision.",
+        "NO-GO": "Work stopped with unresolved issues.",
+        "needs clarification": "A developer answer is needed before work can continue.",
+        "GO to PR Review": "Source review complete; inspect publication and verification results before review.",
+    }[status];
+    return typeof summary === "string" ? summary : "The run finished without a recognized delivery outcome; inspect its recorded result.";
+}
+
+export function observerNextAction(result) {
+    if (result.statusPublication?.status === "failed") return "The developer must restore the PR status update; the published description may be stale.";
+    if (result.blockerKind === "ci-infrastructure") return "The CI provider or pipeline owner must resolve the environment blocker before retrying.";
+    if (result.blockerKind === "ci-dependencies") return "The feed or pipeline owner must check dependency access and configuration before retrying.";
+    if (result.blockerKind === "ci-diagnostics") return "Inspect the failing build's diagnostics before assigning a source repair.";
+    if (result.status === currentStatuses.observationExhausted) return result.repairAttempts === 0
+        ? "A developer must review the remaining findings and decide how to continue."
+        : "A developer must review the remaining findings and decide how to continue; the repair allowance is used up.";
+    if (result.status === currentStatuses.needsOwnerDecision) return "The developer must resolve the recorded blocker or scope decision.";
+    if (result.ci?.status === "failed") return "Resolve the reported CI failures before merge.";
+    if (result.status === currentStatuses.waitingForCi) return "Continue observing this PR with the remaining repair allowance.";
+    if ([currentStatuses.readyForHumanMerge, currentStatuses.awaitingHumanReview].includes(result.status)) {
+        return "A human reviewer must complete the required review, approvals, and merge decision.";
+    }
+    return "Inspect the recorded PR checks and remaining findings before proceeding.";
+}
+
 export const currentStatusOwners = Object.freeze({
     codeFeature: "code-feature",
     observer: "pr-observer",
