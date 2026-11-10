@@ -506,12 +506,12 @@ def get_build_status(org, project, build_id, timeout=60):
 
 def get_stages(org, project, build_id, timeout=60):
     """Return (ok, stages, detail). `stages` is an ORDER-sorted list of
-    {name, state, result} from the build's timeline (Stage records only)."""
+    {name, state, result, attempt} from the build's timeline (Stage records only)."""
     ok, recs, detail = _pp.get_timeline(org, project, build_id, timeout)
     if not ok:
         return (False, None, detail)
     stages = [{"name": r.get("name"), "state": r.get("state"), "result": r.get("result"),
-               "order": r.get("order") or 0}
+               "attempt": r.get("attempt"), "order": r.get("order") or 0}
               for r in recs if r.get("type") == "Stage"]
     stages.sort(key=lambda s: s["order"])
     return (True, stages, "")
@@ -525,8 +525,25 @@ def stage_completion(stages):
     never_ran = stages still pending/in-progress OR skipped/canceled (the abort
     signal). failed/yellow are reported but do NOT block.
     """
+    by_stage = {}
+    for stage in stages or []:
+        # Re-running a stage can leave multiple timeline entries with the same
+        # logical stage name. Use the highest attempt so previous canceled/skipped
+        # attempts do not incorrectly mark the release as incomplete.
+        key = stage.get("name")
+        attempt = stage.get("attempt")
+        try:
+            attempt_rank = int(attempt)
+        except (TypeError, ValueError):
+            attempt_rank = 0
+        current = by_stage.get(key)
+        current_rank = current[0] if current else -1
+        if current is None or attempt_rank >= current_rank:
+            by_stage[key] = (attempt_rank, stage)
+
+    effective_stages = [item[1] for item in by_stage.values()]
     never, failed, yellow = [], [], []
-    for s in stages or []:
+    for s in effective_stages:
         res = s.get("result")
         if s.get("state") != "completed" or res not in RAN_RESULTS:
             never.append(s.get("name"))
@@ -534,7 +551,7 @@ def stage_completion(stages):
             failed.append(s.get("name"))
         elif res == "succeededWithIssues":
             yellow.append(s.get("name"))
-    total = len(stages or [])
+    total = len(effective_stages)
     return {"total": total, "ran": total - len(never), "never_ran": never,
             "failed": failed, "yellow": yellow, "complete": not never and total > 0}
 

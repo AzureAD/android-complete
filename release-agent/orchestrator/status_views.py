@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 from orchestrator import evidence_store, schedule
+from orchestrator.release_contract import HoldKind, LifecycleStatus
 from orchestrator.revision import revision_checked
 
 
@@ -284,7 +285,8 @@ class StatusViewMixin:
                 "may_return_to_user": True, "permission_to_execute": False,
                 "permission_to_send": False, "instruction": report["blocked_message"],
             }
-            return report
+            from orchestrator.dispatch import decorate_handoff_contract
+            return decorate_handoff_contract(report)
         selection = self.scheduling()
         from orchestrator.revision import mismatch_reason, revision_id
         revision_problem = mismatch_reason(self)
@@ -297,9 +299,9 @@ class StatusViewMixin:
         current_step = current_hold.step_id if current_hold else None
 
         gate = action = None
-        if current_hold and current_hold.kind in ("gate", "denied"):
+        if current_hold and current_hold.kind in (HoldKind.GATE.value, HoldKind.DENIED.value):
             gate = self._hold_view(current_phase_name, current_step_name, selection)
-        elif projected_status == "awaiting_action" and current_hold:
+        elif projected_status == LifecycleStatus.AWAITING_ACTION.value and current_hold:
             # A scout step is the SKILL's work (run via step-action), not a USER action —
             # never surface it as `action` (which the digest reads as "Action needed now").
             phase = next((p for p in self.config["phases"]
@@ -331,11 +333,13 @@ class StatusViewMixin:
         # until its wall-clock time arrives, so the every-hour worker doesn't fire it early
         # — its dedicated cron automation runs it at the pinned time.
         scout_pending = list(selection.scout_pending)
-        from orchestrator.dispatch import phase_plan, startup_plan, with_startup, startup_checklist
+        from orchestrator.dispatch import (
+            phase_plan, startup_plan, with_startup, startup_checklist, decorate_handoff_contract,
+        )
         startup = startup_plan(self, selection)
         work_dispatch = with_startup(phase_plan(self, selection, chk), startup)
         chk = startup_checklist(chk, work_dispatch)
-        return {
+        report = {
             "release_id": self.state.release_id,
             "status": projected_status,
             "workflow_revision": revision_id(self.state.workflow_revision),
@@ -382,3 +386,4 @@ class StatusViewMixin:
             ],
             "updated_at": self.state.updated_at,
         }
+        return decorate_handoff_contract(report)

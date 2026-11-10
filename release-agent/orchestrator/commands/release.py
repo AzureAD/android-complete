@@ -7,6 +7,7 @@ import os
 from orchestrator.state import ReleaseState
 from orchestrator import discovery, render, schedule
 from orchestrator import cli_common as C
+from orchestrator.dispatch import decorate_handoff_contract
 from tools import checks
 
 
@@ -161,6 +162,7 @@ def cmd_status(args):
     if getattr(args, "handoff", False):
         from orchestrator.dispatch import handoff_plan
         rep["work_dispatch"] = handoff_plan(rep["work_dispatch"], holds)
+    rep = decorate_handoff_contract(rep)
     code = 2 if getattr(args, "handoff", False) and not rep["work_dispatch"]["may_return_to_user"] else 0
     if getattr(args, "json", False):
         print(_json.dumps(rep, indent=2))
@@ -179,7 +181,7 @@ def cmd_next(args):
     if getattr(args, "json", False):
         # Advance, then emit the same report as `status --json` (carries scout_pending) so a
         # caller can advance + read the pending scout steps in ONE call.
-        print(_json.dumps(orch.status_report(), indent=2))
+        print(_json.dumps(decorate_handoff_contract(orch.status_report()), indent=2))
         return 0
     C.emit(args.runs_root, args.release, C.advance_block(actions, orch), kind="advance",
            log_text=C.advance_log_summary(actions))

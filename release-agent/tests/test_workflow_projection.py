@@ -351,6 +351,39 @@ def test_denied_gate_projects_blocked_until_a_reconsider_transition_exists():
     assert projection.release_status() == "blocked"
 
 
+def test_blocked_reserved_step_projects_blocked_focus_not_reservation():
+    config = {
+        "phases": [
+            {
+                "id": "parallel",
+                "name": "Parallel",
+                "execution": "parallel",
+                "steps": [
+                    {
+                        "id": "external",
+                        "name": "External",
+                        "kind": "external",
+                        "owner": "agent",
+                        "source": "scout",
+                    }
+                ],
+            }
+        ]
+    }
+    state = ReleaseState(release_id="2026-09")
+    state.set_step(
+        "parallel",
+        "external",
+        StepState(status="blocked", execution={"id": "exec-1"}, note="identity mismatch"),
+    )
+    projection = _projection(config, state)
+    hold = projection.current_hold()
+    assert hold is not None
+    assert hold.kind == "action"
+    assert hold.reason == "blocked"
+    assert hold.step_id == "external"
+
+
 def test_gate_decision_is_rejected_while_release_is_suspended(tmp_path):
     import yaml
 

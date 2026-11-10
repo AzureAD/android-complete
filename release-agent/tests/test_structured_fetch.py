@@ -113,6 +113,20 @@ def test_failed_or_unstructured_fetch_never_becomes_a_success_envelope(launcher,
         F.read(str(profile), "owner@example.test", "/groups")
 
 
+def test_prefixed_banners_do_not_break_structured_fetch_json(launcher, monkeypatch):
+    profile, _ = launcher
+
+    def run(argv, **kwargs):
+        if "--help" in argv:
+            return process("fetch --urls")
+        return process("Scout WorkIQ v1.2\nConnected profile: owner@example.test\n{\"value\":[]}")
+
+    monkeypatch.setattr(F.subprocess, "run", run)
+    result = F.read(str(profile), "owner@example.test", "/groups")
+    assert result["tool"] == F.FETCH_TOOL
+    assert result["result"] == {"value": []}
+
+
 def test_native_route_replaces_only_fetch_capability_not_other_required_tools(launcher):
     profile, _ = launcher
     discovered = F.discover_cli(str(profile))

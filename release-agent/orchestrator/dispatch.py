@@ -1,6 +1,8 @@
 """Read-only host dispatch and handoff policy for every workflow phase."""
 from __future__ import annotations
 
+from orchestrator.release_contract import DispatchAction, LifecycleStatus
+
 
 def _held_resume_command(release: str, step, execution: dict | None) -> str:
     execution = execution or {}
@@ -27,13 +29,18 @@ def phase_plan(orch, selection, readiness):
         "handoff_command": f"status --release {release} --handoff --json --no-pipeline-check",
         "permission_to_execute": False, "permission_to_send": False,
     }
-    if selection.suspension in ("workflow_revision", "halted", "cancelled", "denied"):
-        return {**base, "next_action": "resolve_release_hold", "continue_automatically": False,
+    if selection.suspension in (
+        LifecycleStatus.WORKFLOW_REVISION.value,
+        LifecycleStatus.HALTED.value,
+        LifecycleStatus.CANCELLED.value,
+        "denied",
+    ):
+        return {**base, "next_action": DispatchAction.RESOLVE_RELEASE_HOLD.value, "continue_automatically": False,
                 "may_return_to_user": True,
                 "instruction": f"Release hold ({selection.suspension}); no new phase work is authorized."}
     if not readiness["signed"]:
         plan = readiness["dispatch"]
-        return {**base, "next_action": "readiness", "readiness_dispatch": plan,
+        return {**base, "next_action": DispatchAction.READINESS.value, "readiness_dispatch": plan,
                 "continue_automatically": plan["continue_automatically"],
                 "may_return_to_user": plan["may_return_to_user"], "instruction": plan["instruction"]}
     pending, held, seen = [], [], set()
@@ -81,9 +88,13 @@ def phase_plan(orch, selection, readiness):
                     "resume_command": _held_resume_command(release, step, execution),
                     "instruction": "Preserve ownership and use the owning recovery/poll/input protocol; no automatic replay.",
                 })
-    action = ("run_phase_work" if pending else "resolve_phase_hold" if held else
-              "complete" if selection.frontier is None else
-              "scheduled" if selection.status == "scheduled" else "owner_or_wait")
+    action = (
+        DispatchAction.RUN_PHASE_WORK.value if pending else
+        DispatchAction.RESOLVE_PHASE_HOLD.value if held else
+        DispatchAction.COMPLETE.value if selection.frontier is None else
+        DispatchAction.SCHEDULED.value if selection.status == LifecycleStatus.SCHEDULED.value
+        else DispatchAction.OWNER_OR_WAIT.value
+    )
     return {
         **base, "pending_work": pending, "held_work": held,
         "next_action": action, "continue_automatically": bool(pending),
@@ -100,7 +111,10 @@ def phase_plan(orch, selection, readiness):
 
 def handoff_plan(plan, holds):
     """Transient host-reported input boundaries, never completion or provider proof."""
-    if holds and plan["next_action"] not in ("run_phase_work", "provision_startup_automation"):
+    if holds and plan["next_action"] not in (
+        DispatchAction.RUN_PHASE_WORK.value,
+        DispatchAction.PROVISION_STARTUP_AUTOMATION.value,
+    ):
         raise ValueError("--hold-step only applies to currently queued phase tasks")
     reasons = {}
     queued = {item["key"]: item for item in plan["pending_work"]}
@@ -117,12 +131,132 @@ def handoff_plan(plan, holds):
                 for key, reason in reasons.items()]
     return {
         **plan, "pending_work": remaining, "deferred_work": deferred,
-        "next_action": "run_phase_work" if remaining else "resolve_host_input",
+        "next_action": (
+            DispatchAction.RUN_PHASE_WORK.value
+            if remaining
+            else DispatchAction.RESOLVE_HOST_INPUT.value
+        ),
         "continue_automatically": bool(remaining), "may_return_to_user": not remaining,
         "instruction": plan["instruction"] if remaining else
         "Independent work is exhausted. Show these exact host-reported input/consent/recovery needs. "
         "Deferred tasks remain incomplete; this handoff grants no write, send, retry or approval permission.",
     }
+
+
+def owner_prompt_payload(report: dict) -> dict | None:
+    """Structured owner prompt derived from a status snapshot."""
+    plan = report.get("work_dispatch") or {}
+    if plan.get("pending_work") or not plan.get("may_return_to_user", True):
+        return None
+    if plan.get("next_action") != DispatchAction.OWNER_OR_WAIT.value:
+        return None
+    if plan.get("held_work") or plan.get("deferred_work"):
+        return None
+
+    gate = report.get("gate")
+    if gate and gate.get("kind") != "denied":
+        return {
+            "ready": True,
+            "kind": "gate_decision",
+            "phase": gate.get("phase"),
+            "step": gate.get("step"),
+            "question": (
+                f"Decide gate '{gate.get('step_name')}' for release {report.get('release_id')}."
+            ),
+            "answers": [
+                {
+                    "title": "Approve gate",
+                    "description": "Continue release progression past this gate.",
+                    "action": "approve",
+                },
+                {
+                    "title": "Deny gate",
+                    "description": "Stop progression and keep the release on hold.",
+                    "action": "deny",
+                },
+                {
+                    "title": "Keep on hold",
+                    "description": "Leave this gate unchanged for now.",
+                    "action": "hold",
+                },
+            ],
+            "recommendedIndex": 2,
+        }
+
+    action = report.get("action")
+    if not action:
+        return None
+    if action.get("reason") == "blocked":
+        return {
+            "ready": True,
+            "kind": "blocked_step",
+            "phase": action.get("phase"),
+            "step": action.get("step"),
+            "question": (
+                f"How should Scout handle blocked step '{action.get('step_name')}' "
+                f"for release {report.get('release_id')}?"
+            ),
+            "answers": [
+                {
+                    "title": "Fixed — rerun",
+                    "description": "Rerun the owning check after a real fix.",
+                    "action": "rerun",
+                },
+                {
+                    "title": "Override",
+                    "description": "Skip with an explicit owner reason.",
+                    "action": "override",
+                },
+                {
+                    "title": "Keep blocked",
+                    "description": "Leave this blocked hold in place.",
+                    "action": "hold",
+                },
+            ],
+            "recommendedIndex": 2,
+        }
+    if action.get("execution"):
+        return None
+    return {
+        "ready": True,
+        "kind": "owner_action",
+        "phase": action.get("phase"),
+        "step": action.get("step"),
+        "question": (
+            f"Did you complete '{action.get('step_name')}' for release {report.get('release_id')}?"
+        ),
+        "answers": [
+            {
+                "title": "Completed",
+                "description": "Mark the step done and continue.",
+                "action": "done",
+            },
+            {
+                "title": "Not yet",
+                "description": "Keep this owner action on hold.",
+                "action": "hold",
+            },
+            {
+                "title": "Need help",
+                "description": "Show guidance for this step before deciding.",
+                "action": "help",
+            },
+        ],
+        "recommendedIndex": 1,
+    }
+
+
+def decorate_handoff_contract(report: dict) -> dict:
+    """Attach machine-readable handoff cues to a status snapshot."""
+    plan = report.get("work_dispatch") or {}
+    report["handoff_ready"] = bool(plan.get("may_return_to_user"))
+    report["must_continue_automatic_work"] = not report["handoff_ready"]
+    owner_prompt = owner_prompt_payload(report)
+    if owner_prompt:
+        report["owner_prompt"] = owner_prompt
+    else:
+        report.pop("owner_prompt", None)
+    return report
 
 
 def startup_plan(orch, selection):
@@ -182,7 +316,7 @@ def with_startup(plan, startup):
     if startup is None:
         return plan
     base = {**plan, "startup_automation": startup}
-    if plan["next_action"] == "resolve_release_hold" or startup["complete"]:
+    if plan["next_action"] == DispatchAction.RESOLVE_RELEASE_HOLD.value or startup["complete"]:
         return base
     tasks = [{
         "key": f"automation:{item['slug']}", "kind": "automation", "name": item["name"],
@@ -203,13 +337,16 @@ def with_startup(plan, startup):
                 "fresh exhaustive Scout list/details, then reconcile-create --ensure --claim with the exact spec. "
                 "Preserve existing ownership for unknown create/delete outcomes and acknowledge only the owning result."),
         })
-    entry = plan["next_action"] == "readiness"
+    entry = plan["next_action"] == DispatchAction.READINESS.value
     queued = tasks
     entry_checks = entry and plan["continue_automatically"]
     return {
         **base, "pending_work": queued, "phase_work_waiting": plan["pending_work"],
-        "next_action": "provision_startup_automation" if tasks else
-        "readiness" if entry_checks else "recover_startup_automation",
+        "next_action": (
+            DispatchAction.PROVISION_STARTUP_AUTOMATION.value if tasks else
+            DispatchAction.READINESS.value if entry_checks else
+            DispatchAction.RECOVER_STARTUP_AUTOMATION.value
+        ),
         "continue_automatically": bool(queued) or entry_checks,
         "may_return_to_user": not queued and (plan["may_return_to_user"] if entry else True),
         "instruction": (

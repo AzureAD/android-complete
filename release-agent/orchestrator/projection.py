@@ -6,6 +6,7 @@ from datetime import date, datetime, time
 from typing import Callable, Iterable, Optional
 
 from orchestrator import schedule
+from orchestrator.release_contract import HoldKind, lifecycle_status
 from orchestrator.state import ReleaseState
 from orchestrator.workflow import PhaseDefinition, StepDefinition, StepKind, WorkflowDefinition
 
@@ -238,7 +239,7 @@ class StateProjection:
             ]
             phase_due = next(item.due for item in phases if item.definition == frontier)
             if not phase_due:
-                focus = HoldProjection("scheduled", frontier.id, outstanding[0].definition.id)
+                focus = HoldProjection(HoldKind.SCHEDULED.value, frontier.id, outstanding[0].definition.id)
             else:
                 eligible = [item for item in outstanding if item.prerequisites_met]
                 ready = [item for item in eligible if item.time_ready and not item.reserved]
@@ -259,7 +260,7 @@ class StateProjection:
                     if (hold := self._step_hold(item.definition)) is not None
                 ]
                 actions.extend(
-                    HoldProjection("scout", frontier.id, item.definition.id, "scout",
+                    HoldProjection(HoldKind.SCOUT.value, frontier.id, item.definition.id, "scout",
                                    "compound_continuation")
                     for item in eligible
                     if item.time_ready and item.reserved and item.definition.write_command
@@ -268,26 +269,29 @@ class StateProjection:
                 # Focus is for presentation, NOT a dispatch veto: pending gates
                 # and human holds must not starve independent automatic work.
                 focus = (
-                    next((hold for hold in actions if hold.kind == "gate"), None)
+                    next((hold for hold in actions if hold.kind == HoldKind.GATE.value), None)
                     or next((hold for hold in actions if hold.owner == "human"), None)
                     or next(iter(actions), None)
                 )
                 if focus is None and not ready:
+                    blocked = next((item for item in eligible if item.status == "blocked"), None)
                     in_flight = next((item for item in eligible if item.status == "in_flight"), None)
                     reserved = next((item for item in eligible if item.reserved), None)
                     timed = next((item for item in eligible if not item.time_ready), None)
-                    if in_flight:
+                    if blocked:
+                        focus = self._step_hold(blocked.definition)
+                    elif in_flight:
                         focus = self._step_hold(in_flight.definition)
                     elif reserved:
                         focus = HoldProjection(
-                            "waiting", frontier.id, reserved.definition.id, reason="reservation"
+                            HoldKind.WAITING.value, frontier.id, reserved.definition.id, reason="reservation"
                         )
                     elif timed:
-                        focus = HoldProjection("scheduled", frontier.id, timed.definition.id)
+                        focus = HoldProjection(HoldKind.SCHEDULED.value, frontier.id, timed.definition.id)
                     else:
-                        focus = HoldProjection("waiting", frontier.id, reason="prerequisite")
+                        focus = HoldProjection(HoldKind.WAITING.value, frontier.id, reason="prerequisite")
                 if focus is None and not runnable:
-                    focus = HoldProjection("waiting", frontier.id, reason="attempted")
+                    focus = HoldProjection(HoldKind.WAITING.value, frontier.id, reason="attempted")
             # A persisted denial is a release stop, not a new-work time window.
             # Moving the clock or leaving stale predecessors must not hide it.
             denied = next(
@@ -306,17 +310,11 @@ class StateProjection:
             actions = []
             if suspension == "workflow_revision":
                 focus = None
-        if suspension:
-            status = "blocked" if suspension in ("denied", "workflow_revision") else suspension
-        elif frontier is None:
-            status = "complete"
-        elif focus:
-            status = {
-                "scheduled": "scheduled", "gate": "holding_gate", "denied": "blocked",
-                "in_flight": "running",
-            }.get(focus.kind, "awaiting_action")
-        else:
-            status = "running"
+        status = lifecycle_status(
+            suspension=suspension,
+            frontier_exists=frontier is not None,
+            focus_kind=focus.kind if focus else None,
+        )
         return SchedulingResult(
             frontier, suspension, status, phases, steps, tuple(runnable),
             tuple(actions), focus, attempted,
@@ -338,27 +336,27 @@ class StateProjection:
         record = self.state.get_step(step.phase_id, step.id)
         if record.status == "in_flight":
             return HoldProjection(
-                "in_flight", step.phase_id, step.id, "scout",
+                HoldKind.IN_FLIGHT.value, step.phase_id, step.id, "scout",
                 "underlying work running")
         if step.is_gate:
             decision = self.latest_gate_decision(step)
             if decision and decision.get("decision") == "denied":
                 return HoldProjection(
-                    "denied",
+                    HoldKind.DENIED.value,
                     step.phase_id,
                     step.id,
                     "human",
                     decision.get("comment") or "Gate denied.",
                 )
-            return HoldProjection("gate", step.phase_id, step.id, "human")
+            return HoldProjection(HoldKind.GATE.value, step.phase_id, step.id, "human")
         if record.status == "blocked":
-            return HoldProjection("action", step.phase_id, step.id, "human", "blocked")
+            return HoldProjection(HoldKind.ACTION.value, step.phase_id, step.id, "human", "blocked")
         if self.is_mocked(step):
             return None
         if step.kind in (StepKind.HUMAN_ACTION, StepKind.ATTESTATION):
-            return HoldProjection("action", step.phase_id, step.id, "human")
+            return HoldProjection(HoldKind.ACTION.value, step.phase_id, step.id, "human")
         if step.kind == StepKind.EXTERNAL:
-            return HoldProjection("scout", step.phase_id, step.id, "scout")
+            return HoldProjection(HoldKind.SCOUT.value, step.phase_id, step.id, "scout")
         return None
 
     def _execution(self, step: StepDefinition) -> dict:

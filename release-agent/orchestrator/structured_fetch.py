@@ -17,6 +17,35 @@ FETCH_TOOL = "workiq.fetch"
 FETCH_ALIASES = {FETCH_TOOL, "workiq-fetch", "workiq:fetch", "mcp__workiq__fetch"}
 
 
+def _parse_structured_payload(stdout):
+    text = stdout.strip()
+    if not text:
+        raise ValueError("WorkIQ fetch returned empty output; no structured result was produced")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Some launcher/build variants prepend non-JSON banner lines before the
+        # payload. Accept only a complete trailing JSON value; never synthesize.
+        decoder = json.JSONDecoder()
+        candidate = None
+        for index, char in enumerate(text):
+            if char not in "{[":
+                continue
+            try:
+                value, end = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if text[index + end:].strip():
+                continue
+            candidate = value
+            break
+        if candidate is None:
+            raise ValueError(
+                "WorkIQ fetch did not return structured JSON; do not use a synthesis response"
+            ) from None
+        return candidate
+
+
 def _command(path):
     path = Path(path).expanduser().resolve()
     if not path.is_file():
@@ -124,10 +153,7 @@ def read(scout_root, owner, path, *, preferred=None):
         raise ValueError(
             f"WorkIQ fetch failed (exit {result.returncode}{reported}); inspect the tool's authentication/access "
             "diagnostic. No account, transport or resource fallback was attempted.")
-    try:
-        value = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise ValueError("WorkIQ fetch did not return structured JSON; do not use a synthesis response") from exc
+    value = _parse_structured_payload(result.stdout)
     envelope = {
         "version": 1, "tool": FETCH_TOOL, "arguments": {"entityUrls": [path]},
         "account": owner, "observed_at": datetime.now(timezone.utc).isoformat(),

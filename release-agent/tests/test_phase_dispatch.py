@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from orchestrator import cli, cli_common as C, render
-from orchestrator.dispatch import handoff_plan
+from orchestrator.dispatch import handoff_plan, decorate_handoff_contract
 from orchestrator.outcomes import Done, NeedsSkill
 from orchestrator.state import ReleaseState, StepState
 from tests._context import fresh_orchestrator as Orchestrator
@@ -209,7 +209,7 @@ def test_persisted_test6_guard_refuses_cg_handoff_before_independent_tasks(tmp_p
         assert {item["step"] for item in plan["pending_work"]} == {"notice", "flight_reminder", "lockdown"}
         assert not plan["may_return_to_user"]
     else:
-        assert "Scout work remains" in output and "Scout queue" in output
+        assert "Scout work remains" in output and "Next actions before owner handoff:" in output
         assert "Mark it done when complete" not in output
     assert path.read_bytes() == before
 
@@ -285,3 +285,42 @@ def test_guarded_integrity_hold_has_no_dispatch_or_provider_permission(tmp_path)
     assert report["work_dispatch"]["may_return_to_user"]
     assert not report["work_dispatch"]["pending_work"]
     assert not report["work_dispatch"]["permission_to_execute"] and not calls
+
+
+def test_owner_prompt_payload_surfaces_gate_decision_when_queue_is_empty(tmp_path):
+    orch, _ = engine(tmp_path, "phase", execution="sequential")
+    report = orch.status_report()
+    prompt = report.get("owner_prompt")
+    assert prompt and prompt["ready"] and prompt["kind"] == "gate_decision"
+    assert [item["action"] for item in prompt["answers"]] == ["approve", "deny", "hold"]
+
+
+def test_handoff_contract_exposes_continue_signal_and_gate_prompt(tmp_path):
+    # Active queue => must_continue_automatic_work=True, no owner prompt yet.
+    orch, _ = engine(tmp_path, "phase", execution="parallel")
+    queued = decorate_handoff_contract(orch.status_report())
+    assert queued["must_continue_automatic_work"] and not queued["handoff_ready"]
+    assert "owner_prompt" not in queued
+
+    # Empty queue + gate hold => owner_prompt is present.
+    gate_report = decorate_handoff_contract(
+        engine(tmp_path, "phase2", execution="sequential")[0].status_report()
+    )
+    assert gate_report["handoff_ready"] and not gate_report["must_continue_automatic_work"]
+    assert gate_report["owner_prompt"]["kind"] == "gate_decision"
+
+
+def test_owner_prompt_suppressed_when_non_owner_held_work_exists(tmp_path):
+    orch, _ = engine(tmp_path, "phase", execution="parallel")
+    orch.state.set_step("phase", "scan", StepState(status="done", note="observed"))
+    orch.state.set_step("phase", "gather", StepState(status="done", note="observed"))
+    orch.state.set_step("phase", "dependent", StepState(status="skipped", note="not required"))
+    orch.state.set_step("phase", "gather", StepState(
+        status="in_flight",
+        execution={"id": "gather-exec-1", "owner": "owner@example.com", "started_at": "2026-10-21T00:00:00Z"},
+        note="awaiting completion",
+    ))
+    report = decorate_handoff_contract(orch.status_report())
+    assert report["work_dispatch"]["next_action"] == "resolve_phase_hold"
+    assert report["handoff_ready"]
+    assert "owner_prompt" not in report

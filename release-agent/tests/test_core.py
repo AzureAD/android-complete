@@ -1078,6 +1078,26 @@ def test_stage_completion_rule():
     assert not P.stage_completion([])["complete"]
 
 
+def test_stage_completion_uses_latest_stage_attempt():
+    """A rerun stage should be evaluated from its latest attempt, not stale attempts."""
+    from tools import pipelines as P
+
+    stages = [
+        {"name": "Unit Tests", "state": "completed", "result": "canceled", "attempt": 1},
+        {"name": "Unit Tests", "state": "completed", "result": "succeeded", "attempt": 2},
+        {"name": "UI Tests", "state": "completed", "result": "failed", "attempt": 1},
+        {"name": "UI Tests", "state": "completed", "result": "succeededWithIssues", "attempt": 2},
+    ]
+
+    completion = P.stage_completion(stages)
+    assert completion["total"] == 2
+    assert completion["ran"] == 2
+    assert completion["complete"] is True
+    assert completion["never_ran"] == []
+    assert completion["failed"] == []
+    assert completion["yellow"] == ["UI Tests"]
+
+
 
 
 def test_active_phase_report_steps_carry_links():
