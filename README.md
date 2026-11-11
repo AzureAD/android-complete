@@ -3,6 +3,13 @@
 
 This repository contains a build gradle and git alias commands for building ADAL, MSAL, Authentication Broker, Common and test apps.  This project is intended for use by developers building and verifying integration primarily between ADAL, MSAL and the Android Authentication Broker.
 
+## Development and verification
+
+Start with [AGENTS.md](AGENTS.md) for repository boundaries, setup, and build/test
+commands. After provisioning the independent checkouts, SDK, and feed access,
+run `pwsh -File .\scripts\verify.ps1` on Windows for core local-debug builds,
+unit tests, and lint. Device/UI and optional-project checks are separate.
+
 ## AI-Driven Feature Development
 
 This repo supports an AI-driven development pipeline powered by GitHub Copilot agents. Design, plan, create work items, dispatch to coding agents, and monitor PRs — all from VS Code.
