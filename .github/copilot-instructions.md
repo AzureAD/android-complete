@@ -1,5 +1,9 @@
 # GitHub Copilot Custom Instructions for Android Multi-Repo Project
 
+Start with the root [AGENTS.md](../AGENTS.md) for workspace setup, repository
+boundaries, and actionable build/test verification. The guidance below remains
+the source for domain architecture and coding conventions.
+
 These instructions guide GitHub Copilot to provide suggestions and responses aligned with our Android project's conventions, architecture, and coding style, specifically addressing our multi-repository setup and language transition.
 
 ---
