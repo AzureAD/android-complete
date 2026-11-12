@@ -108,12 +108,34 @@ function compactFeatureForChat(feature: unknown): unknown {
         : null;
     if (factory && Array.isArray(factory.executions)) {
         for (const exec of factory.executions) {
-            if (exec && typeof exec === "object" && !Array.isArray(exec) && "trace" in exec) {
-                const traceArr = Array.isArray((exec as { trace?: unknown }).trace) ? (exec as { trace: unknown[] }).trace : [];
-                delete (exec as Record<string, unknown>).trace;
-                (exec as Record<string, unknown>).traceCount = traceArr.length;
+            if (!exec || typeof exec !== "object" || Array.isArray(exec)) continue;
+            const rec = exec as Record<string, unknown>;
+            if ("trace" in rec) {
+                const traceArr = Array.isArray(rec.trace) ? rec.trace : [];
+                delete rec.trace;
+                rec.traceCount = traceArr.length;
+            }
+            if (rec.outcome && typeof rec.outcome === "object" && !Array.isArray(rec.outcome)) {
+                const outcome = rec.outcome as Record<string, unknown>;
+                if (outcome.packet && typeof outcome.packet === "object" && !Array.isArray(outcome.packet)) {
+                    const packet = outcome.packet as Record<string, unknown>;
+                    outcome.packet = {
+                        summarizedForChat: true,
+                        ...(packet.recommendation !== undefined ? { recommendation: packet.recommendation } : {}),
+                        ...(Array.isArray(packet.reasons) ? { reasons: packet.reasons } : {}),
+                    };
+                }
             }
         }
+    }
+    if (factory && Array.isArray(factory.progress) && factory.progress.length > 15) {
+        factory.progress = factory.progress.slice(-15);
+    }
+    if (factory && Array.isArray(factory.events) && factory.events.length > 20) {
+        factory.events = factory.events.slice(-20);
+    }
+    if (Array.isArray(cloned.activity) && cloned.activity.length > 20) {
+        cloned.activity = cloned.activity.slice(-20);
     }
     if (factory && Array.isArray(factory.artifacts)) {
         for (const art of factory.artifacts) {
