@@ -1051,7 +1051,7 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
 }
 
 export function isLocalBuildEnvError(textValue) {
-    return /ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible|local.*build.*environment|short-circuited to CI|deferred to CI|Bluebird|MCP-SETUP/i.test(
+    return /ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible|does not contain a Gradle build|Project with path ':common' could not be found|local.*build.*environment|short-circuited to CI|deferred to CI|Bluebird|MCP-SETUP/i.test(
         String(textValue || ""),
     );
 }
@@ -1100,7 +1100,41 @@ const CREDENTIAL_ENV_KEYS_TO_STRIP = Object.freeze([
     "AZURE_ACCESS_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
 ]);
+
+const GITHUB_CLI_AUTH_KEYS = Object.freeze([
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "GH_HOST",
+]);
+
+export function buildGitHubKeyringEnv(baseEnv = process.env) {
+    return buildNormalizedProcessEnv(baseEnv, {}, { stripKeys: GITHUB_CLI_AUTH_KEYS });
+}
+
+export function buildGitHubTokenOverrides(hostname, token = "") {
+    if (!nonempty(token)) {
+        return {
+            GH_TOKEN: undefined,
+            GITHUB_TOKEN: undefined,
+            GH_ENTERPRISE_TOKEN: undefined,
+            GITHUB_ENTERPRISE_TOKEN: undefined,
+            GH_HOST: undefined,
+        };
+    }
+    const isGhe = String(hostname).toLowerCase() !== "github.com";
+    return {
+        GH_HOST: hostname,
+        GH_TOKEN: token,
+        GITHUB_TOKEN: token,
+        GH_ENTERPRISE_TOKEN: isGhe ? token : undefined,
+        GITHUB_ENTERPRISE_TOKEN: isGhe ? token : undefined,
+    };
+}
 
 export function buildNormalizedProcessEnv(
     baseEnv = process.env,
@@ -1334,12 +1368,29 @@ export function selectWorkflowJavaHome(targets, env, { explicit = false } = {}) 
     return { javaHome: home, javaMajorVersion: readJavaMajorVersion(home), replacedInheritedHome: !explicit && previous !== home };
 }
 
-function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd()) {
+function expandWindowsEnvVars(rawValue, envSource = process.env) {
     if (!nonempty(rawValue)) return "";
-    const unescaped = String(rawValue)
-        .trim()
-        .replace(/\\:/g, ":")
-        .replace(/\\\\/g, "\\");
+    return String(rawValue).replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (match, varName) => {
+        const keyUpper = String(varName).toUpperCase();
+        for (const bag of [envSource, process.env]) {
+            if (!record(bag)) continue;
+            for (const [k, v] of Object.entries(bag)) {
+                if (k.toUpperCase() === keyUpper && nonempty(v)) return String(v);
+            }
+        }
+        return match;
+    });
+}
+
+function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd(), envSource = process.env) {
+    if (!nonempty(rawValue)) return "";
+    const unescaped = expandWindowsEnvVars(
+        String(rawValue)
+            .trim()
+            .replace(/\\:/g, ":")
+            .replace(/\\\\/g, "\\"),
+        envSource,
+    );
     const resolved = path.isAbsolute(unescaped) || /^[A-Za-z]:[\\/]/.test(unescaped)
         ? unescaped
         : path.resolve(baseDir, unescaped);
@@ -1362,8 +1413,8 @@ export function runTargetEnvironmentPreflight(workspaceRoot, target, env = proce
     const androidHomeVal = env?.ANDROID_HOME !== undefined ? env.ANDROID_HOME : process.env.ANDROID_HOME;
     const androidSdkRootVal = env?.ANDROID_SDK_ROOT !== undefined ? env.ANDROID_SDK_ROOT : process.env.ANDROID_SDK_ROOT;
     let sdkConfigured =
-        nonempty(resolveConfiguredSdkDir(androidHomeVal, buildRoot)) ||
-        nonempty(resolveConfiguredSdkDir(androidSdkRootVal, buildRoot));
+        nonempty(resolveConfiguredSdkDir(androidHomeVal, buildRoot, env)) ||
+        nonempty(resolveConfiguredSdkDir(androidSdkRootVal, buildRoot, env));
     if (!sdkConfigured && existsSync(localPropsPath)) {
         try {
             const propsText = readFileSync(localPropsPath, "utf8");
@@ -1743,9 +1794,21 @@ export function runLocalVerificationGate({
 
     const preflight = runTargetEnvironmentPreflight(path.dirname(repoRoot), target, environment);
     const resolvedJavaHome = preflight.javaHome || resolveTargetJavaHome(target, environment);
+    const resolvedSdkDir =
+        resolveConfiguredSdkDir(environment?.ANDROID_HOME, repoRoot, environment) ||
+        resolveConfiguredSdkDir(environment?.ANDROID_SDK_ROOT, repoRoot, environment) ||
+        (nonempty(environment?.LOCALAPPDATA)
+            ? resolveConfiguredSdkDir(path.join(String(environment.LOCALAPPDATA), "Android", "Sdk"), repoRoot, environment)
+            : "");
+    const sdkOverrides = nonempty(resolvedSdkDir)
+        ? { ANDROID_HOME: resolvedSdkDir, ANDROID_SDK_ROOT: resolvedSdkDir }
+        : {};
     const env = buildNormalizedProcessEnv(
         environment,
-        nonempty(resolvedJavaHome) ? { JAVA_HOME: resolvedJavaHome } : {},
+        {
+            ...(nonempty(resolvedJavaHome) ? { JAVA_HOME: resolvedJavaHome } : {}),
+            ...sdkOverrides,
+        },
         {
             stripKeys: CREDENTIAL_ENV_KEYS_TO_STRIP,
             prependPathDirs: nonempty(resolvedJavaHome) ? [path.join(resolvedJavaHome, "bin")] : [],
@@ -1778,7 +1841,16 @@ export function runLocalVerificationGate({
             outcomes.deferred.push({ command, reason: deferred.reason });
         }
         const strippedExec = parsed.executable.replace(/^PhoneFactor[\\/]/i, "");
-        const execCwd =
+        const workspaceParent = path.dirname(repoRoot);
+        const missingNestedCommon =
+            (existsSync(path.join(repoRoot, ".gitmodules")) || existsSync(path.join(repoRoot, "settings.gradle"))) &&
+            existsSync(path.join(repoRoot, "common")) &&
+            !existsSync(path.join(repoRoot, "common", "build.gradle")) &&
+            !existsSync(path.join(repoRoot, "common", "common", "build.gradle")) &&
+            existsSync(path.join(workspaceParent, "settings.gradle")) &&
+            (existsSync(path.join(workspaceParent, "gradlew.bat")) || existsSync(path.join(workspaceParent, "gradlew"))) &&
+            existsSync(path.join(workspaceParent, "common", "common", "build.gradle"));
+        let execCwd =
             !existsSync(path.resolve(repoRoot, parsed.executable)) &&
             !existsSync(path.resolve(repoRoot, `${ strippedExec }.bat`)) &&
             (existsSync(path.resolve(repoRoot, "PhoneFactor", strippedExec)) ||
@@ -1787,6 +1859,22 @@ export function runLocalVerificationGate({
                 existsSync(path.resolve(repoRoot, "PhoneFactor", "gradlew")))
                 ? path.join(repoRoot, "PhoneFactor")
                 : repoRoot;
+        if (missingNestedCommon && execCwd === repoRoot) {
+            const taskTokens = [];
+            for (let idx = 0; idx < parsed.args.length; idx++) {
+                const token = parsed.args[idx];
+                if (token === "--tests" || token === "-x") { idx++; continue; }
+                if (!token.startsWith("-")) taskTokens.push(token);
+            }
+            const jvmOnly = taskTokens.length > 0 &&
+                taskTokens.every((task) => /^:?(?:broker4j|common4j)(?::|$)/.test(task)) &&
+                (existsSync(path.join(workspaceParent, "java-complete", "gradlew.bat")) ||
+                    existsSync(path.join(workspaceParent, "java-complete", "gradlew")));
+            execCwd = jvmOnly ? path.join(workspaceParent, "java-complete") : workspaceParent;
+        }
+        if (exec === defaultExec && (existsSync(path.join(execCwd, "settings.gradle")) || existsSync(path.join(execCwd, "settings.gradle.kts")))) {
+            try { ensureAndroidLocalProperties(repoRoot, execCwd); } catch {}
+        }
         const cmdStartMs = Date.now();
         log?.(`Running local verification command in ${path.basename(execCwd)}: ${parsed.command}`);
         try {
@@ -3441,7 +3529,7 @@ function* gitHubAccountProbes(target, workspaceRoot) {
         }
     }
     try {
-        const statusOutput = yield ["gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot }];
+        const statusOutput = yield ["gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot, env: buildGitHubKeyringEnv() }];
         const match = statusOutput.match(/Logged in to [^\s]+ account ([^\s(]+)/i);
         if (match && nonempty(match[1])) return match[1].trim();
     } catch {
@@ -3564,15 +3652,17 @@ export function publishTargetPullRequest({
     let token = "";
     if (nonempty(account)) {
         try {
-            token = exec("gh", ["auth", "token", "--hostname", target.hostname, "--user", account], { cwd: repoRoot });
+            token = exec("gh", ["auth", "token", "--hostname", target.hostname, "--user", account], {
+                cwd: repoRoot,
+                env: buildGitHubKeyringEnv(),
+            });
         } catch {
             token = "";
         }
     }
     const gitEnv = nonempty(token)
         ? buildNormalizedProcessEnv(process.env, {
-            GH_TOKEN: token,
-            GITHUB_TOKEN: token,
+            ...buildGitHubTokenOverrides(target.hostname, token),
             GIT_CONFIG_PARAMETERS: "",
             GIT_CONFIG_COUNT: "",
         })
@@ -4007,7 +4097,7 @@ function publicationTree(repoRoot, targetImpl, exec, indexTree) {
     } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-function capturePublicationSource(repoRoot, target, targetImpl, exec) {
+export function capturePublicationSource(repoRoot, target, targetImpl, exec = defaultExec) {
     assertNoStagedLocalSdkConfiguration(repoRoot, exec);
     const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
     const indexTree = exec("git", ["write-tree"], { cwd: repoRoot });
@@ -4019,7 +4109,7 @@ function capturePublicationSource(repoRoot, target, targetImpl, exec) {
     return { head, indexTree, base, tree };
 }
 
-function verifyPublicationSource(repoRoot, targetImpl, binding, exec, { staged = false, committed = false } = {}) {
+export function verifyPublicationSource(repoRoot, targetImpl, binding, exec = defaultExec, { staged = false, committed = false } = {}) {
     const changed = () => { throw new Error(`Reviewed implementation changed for ${targetImpl.targetId}; publication requires a new source review.`); };
     if (!binding?.head || !binding.indexTree || !binding.base || !binding.tree) changed();
     const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
@@ -4039,20 +4129,34 @@ function verifyPublicationSource(repoRoot, targetImpl, binding, exec, { staged =
     return head;
 }
 
-async function prepareCodeFeature(ctx, dependencies = {}) {
+export function renderPublicationDiff(repoRoot, binding, exec = defaultExec) {
+    if (!binding?.base || !binding.tree) throw new Error("A complete reviewed Git tree is required.");
+    const diff = exec("git", ["--no-pager", "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+        binding.base, binding.tree, "--"], { cwd: repoRoot });
+    if (!nonempty(diff)) throw new Error("The publication tree has no changes relative to the approved base.");
+    return diff;
+}
+
+export async function prepareCodeFeature(ctx, dependencies = {}) {
+    // Application adapters may own file writes/restoration, but never bypass the coding or review gates.
+    const implementationHost = dependencies.implementationHost;
+    if (implementationHost && !["prepareTarget", "applyFiles", "restoreFiles"].every((key) => typeof implementationHost[key] === "function")) {
+        throw new Error("An implementation host must own target preparation, file application, and restoration.");
+    }
     const rawOptions = record(ctx.args?.options) ? ctx.args.options : {};
-    const maxFixes = positiveInt(rawOptions.maxFixIterations)
+    const maxFixes = Number.isSafeInteger(rawOptions.maxFixIterations) && rawOptions.maxFixIterations >= 0
         ? Math.min(rawOptions.maxFixIterations, MAX_FIX_ITERATIONS)
         : MAX_FIX_ITERATIONS;
     const isInteractiveSession = Boolean(ctx?.session?.ui);
     const createPullRequests = rawOptions.createPullRequests !== undefined
         ? rawOptions.createPullRequests === true
         : isInteractiveSession;
-    const effectiveCreatePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
+    const effectiveCreatePrs = implementationHost ? false : isInteractiveSession && rawOptions.allowLocalOnly !== true
         ? true
         : createPullRequests;
     const draftPullRequest = rawOptions.draftPullRequest === true;
-    const applyToWorkspace = rawOptions.applyToWorkspace === true || effectiveCreatePrs;
+    const applyToWorkspace = Boolean(implementationHost) || rawOptions.applyToWorkspace === true || effectiveCreatePrs;
+    const bindPublication = Boolean(implementationHost) || effectiveCreatePrs;
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
     const workflowEnv = { ...(dependencies.environment || process.env) };
@@ -4075,7 +4179,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
         exec,
         fetchWorkItem: dependencies.fetchWorkItem,
         fetchDesignDoc: dependencies.fetchDesignDoc,
-        linkSubrepos: manageWorkspace,
+        linkSubrepos: manageWorkspace && !implementationHost,
     });
     if (
         nonempty(resolvedArgs?.resolutionError) &&
@@ -4114,7 +4218,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
                     exec,
                     fetchWorkItem: dependencies.fetchWorkItem,
                     fetchDesignDoc: dependencies.fetchDesignDoc,
-                    linkSubrepos: manageWorkspace,
+                    linkSubrepos: manageWorkspace && !implementationHost,
                 });
             }
         }
@@ -4179,7 +4283,9 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
         const startedAt = Date.now();
         ctx.log?.(`${new Date().toISOString()} Starting ${label}.`);
         const roleBoundaries = agentName === BUILDER_AGENT
-            ? builderBoundaries
+            ? implementationHost
+                ? `You are a read-only structured implementation author. The application, not the worker, owns file writes, verification and publication. ${commonBoundaries}`
+                : builderBoundaries
             : agentName === REVIEWER_AGENT
                 ? reviewerBoundaries
                 : readerBoundaries;
@@ -4210,6 +4316,10 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
 
     if (manageWorkspace) {
         for (const target of task.targets) {
+            if (implementationHost) {
+                await implementationHost.prepareTarget(target);
+                continue;
+            }
             try {
                 ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
             } catch {
@@ -4284,7 +4394,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
 
     phase("Validate task and gather evidence");
     const needsSpecExtraction = task.needsExtraction === true;
-    const evidenceGuides = resolveRoleSkillGuides("evidence", task.targets);
+    const evidenceGuides = implementationHost?.guides?.evidence || resolveRoleSkillGuides("evidence", task.targets);
     const maxIntakeRounds = positiveInt(rawOptions.maxIntakeRounds)
         ? Math.min(rawOptions.maxIntakeRounds, MAX_INTAKE_ROUNDS)
         : MAX_INTAKE_ROUNDS;
@@ -4293,7 +4403,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
         : Boolean(ctx?.session?.ui?.elicitation);
     const requireBriefApproval = rawOptions.requireBriefApproval === true || typeof dependencies.askBriefApproval === "function";
     const useSlimSchemas = rawOptions.slimSchemas !== undefined
-        ? rawOptions.slimSchemas === true
+        ? rawOptions.slimSchemas === true && !implementationHost
         : (Boolean(ctx?.session) && task.inputMode !== "structured");
 
     const captureTargetSnapshots = () => {
@@ -4579,6 +4689,10 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
 
     if (manageWorkspace) {
         for (const target of task.targets) {
+            if (implementationHost) {
+                await implementationHost.prepareTarget(target);
+                continue;
+            }
             try {
                 ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
             } catch {
@@ -4600,7 +4714,7 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
     });
 
     const backupsByTarget = new Map();
-    if (applyToWorkspace && manageWorkspace) {
+    if (applyToWorkspace && manageWorkspace && !implementationHost) {
         for (const target of task.targets) {
             const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
             const targetBackups = new Map();
@@ -4611,8 +4725,8 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
 
     const isLocalBuildEnvBlocker = isLocalBuildEnvError;
 
-    const builderGuides = resolveRoleSkillGuides("builder", task.targets);
-    const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
+    const builderGuides = implementationHost?.guides?.builder || resolveRoleSkillGuides("builder", task.targets);
+    const reviewerGuides = implementationHost?.guides?.reviewer || resolveRoleSkillGuides("reviewer", task.targets);
     const executionEnvironments = manageWorkspace
         ? task.targets.map((target) => runTargetEnvironmentPreflight(workspaceRoot, target, workflowEnv))
         : [];
@@ -4621,7 +4735,14 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
     const pbiScopeInstruction = Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
         ? `\nSCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—implement and test ONLY the specified PBI scope, and do NOT implement or require work explicitly deferred to other PBIs.`
         : "";
-    const builderTask = `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
+    const builderTask = implementationHost
+        ? `You are a read-only structured implementation author. Inspect source with your scoped read tools and return the COMPLETE implementation schema, including full contents for every written file, real test changes, PR metadata and requirement traceability.
+The application applies your proposed changes and runs verification. Do not edit files, invoke a shell, publish, launch agents, or change approvals.
+Follow the supplied coding standards and approved task exactly.${pbiScopeInstruction}
+Use DATA.inspectedFiles and executionEnvironments; do not repeat broad discovery. Each revision includes every file changed in prior revisions.
+Distinguish authored tests from executed verification. Preserve existing behavior, compatibility, flight-off isolation, and privacy.
+Report material ambiguity in blockingUnknowns; never invent missing approval or waive a finding.`
+        : `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
 Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
 Preserve all approved requirements and acceptance criteria verbatim.${pbiScopeInstruction}
 DATA.inspectedFiles already pre-loads the exact repo-relative file paths and numbered source excerpts identified by Stage 1 (code-evidence). Do NOT re-run broad glob/grep discovery across the repository for files and symbols already provided in DATA.inspectedFiles—view only additional lines if needed, apply your surgical edits, and run ONE combined Gradle verification command.
@@ -4650,6 +4771,10 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
     const restoreAll = () => {
         if (!applyToWorkspace) return;
         for (const target of task.targets) {
+            if (implementationHost) {
+                implementationHost.restoreFiles(target);
+                continue;
+            }
             const backups = backupsByTarget.get(target.id);
             if (backups) {
                 const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
@@ -4793,7 +4918,8 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             (applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits);
                         if (applyToWorkspace) {
                             try {
-                                applyTargetFiles(repoRoot, targetImpl.files, backups);
+                                if (implementationHost) implementationHost.applyFiles(target, targetImpl.files);
+                                else applyTargetFiles(repoRoot, targetImpl.files, backups);
                             } catch (error) {
                                 validationErrors.push(
                                     `Target ${target.id} workspace verification failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -4801,7 +4927,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             }
                         }
                         if (validationErrors.length === 0 && shouldRunLocalGate) {
-                            const gate = await step(`local-verification-v2-${round}-${target.id}-${targetContentFingerprint(target, targetImpl)}`, () => runLocalVerificationGate({
+                            const gate = await step(`local-verification-v2-${round}-${target.id}-${targetContentFingerprint(target, targetImpl)}`, () => (dependencies.verifyLocal || runLocalVerificationGate)({
                                 repoRoot,
                                 target,
                                 targetImpl,
@@ -4862,7 +4988,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                     const sourceBindings = task.targets.map((target) => {
                         const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
                         const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
-                        const publicationSource = effectiveCreatePrs
+                        const publicationSource = bindPublication
                             ? capturePublicationSource(repoRoot, target, targetImpl, exec) : null;
                         if (publicationSource) {
                             diffsByTarget[target.id] = exec("git", [
@@ -4936,6 +5062,13 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                     if (reviewDrift.length > 0) {
                         restoreAll();
                         return packet("NO-GO", reviewDrift);
+                    }
+                    if (bindPublication) {
+                        for (const target of task.targets) {
+                            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+                            const binding = sourceBindings.find((item) => item.targetId === target.id);
+                            verifyPublicationSource(path.resolve(workspaceRoot, target.localPath || "."), targetImpl, binding.publicationSource, exec);
+                        }
                     }
 
                     if (!validateReview(review, task)) {

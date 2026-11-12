@@ -63,3 +63,4 @@ out/
 plugins/buildsystem/bin
 
 .github/local-context/
+.software-factory-repairs/

@@ -12,8 +12,11 @@ ES modules are required by the extension runtime (the Android Kotlin-first rule
 still applies to application code).
 
 API reference: [official Dynamic Workflow documentation](https://github.com/github/copilot-sdk/blob/main/nodejs/docs/workflows.md).
-The existing `.github/skills/design-author/SKILL.md` informs the design content;
-this workflow does **not** execute that skill's ADO publishing steps.
+The Android design standards live in
+`.github/skills/design-author/references/design-standards.md`.
+For the feature lifecycle, use Software Factory, which imports this algorithm.
+This low-level design-only workflow is not an alternate feature orchestrator
+and must not be used as a fallback for a failed Factory execution.
 
 ## Input and use
 

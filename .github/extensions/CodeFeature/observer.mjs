@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 const revisionedModuleUrl = (name) => {
     const url = new URL(name, import.meta.url);
@@ -28,6 +29,8 @@ const {
 const {
     BUILDER_AGENT,
     REVIEWER_AGENT,
+    buildGitHubKeyringEnv,
+    buildGitHubTokenOverrides,
     buildNormalizedProcessEnv,
     assertNoStagedLocalSdkConfiguration,
     discoverChangedFilesFromGit,
@@ -172,7 +175,7 @@ const ALLOWED_ADO_PR_REPOS = Object.freeze({
     }),
 });
 
-export function parsePullRequestUrl(prUrl) {
+export function parsePullRequestUrl(prUrl, trustedRepository = null) {
     if (!nonempty(prUrl)) return null;
     const trimmed = prUrl.trim();
     const adoMatch = trimmed.match(
@@ -184,7 +187,11 @@ export function parsePullRequestUrl(prUrl) {
         const rawRepoName = decodeURIComponent(adoMatch[5]);
         const prNumber = Number(adoMatch[6]);
         const adoKey = `${rawOrg.toLowerCase()}/${rawProject.toLowerCase()}/${rawRepoName.toLowerCase()}`;
-        const allowedAdo = ALLOWED_ADO_PR_REPOS[adoKey];
+        const trustedAdo = trustedRepository?.provider === "ado" && trustedRepository.hostname === "dev.azure.com" &&
+            String(trustedRepository.slug || "").toLowerCase() === adoKey && adoMatch[1]
+            ? { org: rawOrg, project: rawProject, repoName: rawRepoName,
+                repository: trustedRepository.repository, localPath: trustedRepository.localPath } : null;
+        const allowedAdo = trustedRepository ? trustedAdo : ALLOWED_ADO_PR_REPOS[adoKey];
         if (!allowedAdo) return null;
         const hostname = adoMatch[1] ? "dev.azure.com" : `${allowedAdo.org}.visualstudio.com`;
         const orgUrl = adoMatch[1] ? `https://dev.azure.com/${allowedAdo.org}` : `https://${allowedAdo.org}.visualstudio.com`;
@@ -207,7 +214,10 @@ export function parsePullRequestUrl(prUrl) {
     if (!match) return null;
     const [, rawHostname, rawSlug, numStr] = match;
     const ghKey = `${rawHostname.toLowerCase()}/${rawSlug.toLowerCase()}`;
-    const allowedGh = ALLOWED_GITHUB_PR_REPOS[ghKey];
+    const trustedGh = trustedRepository?.provider === "github" &&
+        `${trustedRepository.hostname}/${trustedRepository.slug}`.toLowerCase() === ghKey
+        ? trustedRepository : null;
+    const allowedGh = trustedRepository ? trustedGh : ALLOWED_GITHUB_PR_REPOS[ghKey];
     if (!allowedGh) return null;
     return {
         provider: "github",
@@ -279,6 +289,10 @@ function pathsReferToSameFile(a, b) {
     return normA === normB || normA.endsWith(`/${normB}`) || normB.endsWith(`/${normA}`);
 }
 
+/**
+ * @param {{ threads?: Record<string, unknown>[], observation?: Record<string, unknown> | null,
+ * repairResult?: Record<string, unknown> | null, changedFiles?: string[] }} [input]
+ */
 export function selectAddressedReviewThreads({
     threads = [],
     observation = null,
@@ -389,8 +403,8 @@ export function selectAddressedReviewThreads({
     });
 }
 
-export function buildAdoSnapshotScript(parsedPr) {
-    const allowed = parsePullRequestUrl(parsedPr?.prUrl);
+export function buildAdoSnapshotScript(parsedPr, trustedRepository = null) {
+    const allowed = parsePullRequestUrl(parsedPr?.prUrl, trustedRepository);
     if (allowed?.provider !== "ado") throw new Error("An allowlisted ADO PR is required.");
     const config = Buffer.from(JSON.stringify({
         orgUrl: allowed.orgUrl, project: allowed.project, repoName: allowed.repoName,
@@ -400,31 +414,33 @@ export function buildAdoSnapshotScript(parsedPr) {
     return `$snapshotInputBase64 = '${config}'\n${source}`;
 }
 
-export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
+export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd(), exec = defaultExec, trustedRepository = null } = {}) {
     if (parsedPr?.provider === "ado") {
-        return scopeAdoSnapshot(JSON.parse(exec("powershell", ["-NoProfile", "-Command", buildAdoSnapshotScript(parsedPr)], { cwd: workspaceRoot })));
+        return scopeAdoSnapshot(JSON.parse(exec("powershell", ["-NoProfile", "-Command", buildAdoSnapshotScript(parsedPr, trustedRepository)], { cwd: workspaceRoot })));
     }
 
     const account = resolveGitHubAccount(
-        { hostname: parsedPr.hostname, account: "" },
+        { hostname: parsedPr.hostname, account: trustedRepository?.account || "" },
         workspaceRoot,
         exec,
     );
-    const tokenOverrides = {
-        GH_TOKEN: undefined,
-        GITHUB_TOKEN: undefined,
-    };
+    let resolvedToken = "";
     if (nonempty(account)) {
         try {
-            const token = exec("gh", ["auth", "token", "--user", account, "-h", parsedPr.hostname], { cwd: workspaceRoot });
+            const token = exec("gh", ["auth", "token", "--user", account, "-h", parsedPr.hostname], {
+                cwd: workspaceRoot,
+                env: buildGitHubKeyringEnv(),
+            });
             if (nonempty(token)) {
-                tokenOverrides.GH_TOKEN = token;
-                tokenOverrides.GITHUB_TOKEN = token;
+                resolvedToken = token;
             }
-        } catch {
-            // Fall back to ambient gh auth.
+        } catch (error) {
+            if (trustedRepository) throw error;
+            // Fall back to ambient gh auth for standalone observer runs.
         }
     }
+    const tokenOverrides = buildGitHubTokenOverrides(parsedPr.hostname, resolvedToken);
+    if (trustedRepository && !nonempty(tokenOverrides.GH_TOKEN)) throw new Error("The configured GitHub account could not be authenticated.");
     const gitEnv = buildNormalizedProcessEnv(process.env, tokenOverrides);
     const repoArg = parsedPr.hostname === "github.com"
         ? parsedPr.slug
@@ -454,7 +470,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
         try {
             const [owner, repoName] = String(parsedPr.slug || "").split("/");
             if (nonempty(owner) && nonempty(repoName)) {
-                const gqlQuery = "query($owner: String!, $name: String!, $prNumber: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $prNumber) { reviewThreads(first: 50) { nodes { id isResolved path line comments(first: 10) { nodes { databaseId author { login } body } } } } } } }";
+                const gqlQuery = "query($owner: String!, $name: String!, $prNumber: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $prNumber) { reviewThreads(first: 100) { pageInfo { hasNextPage } nodes { id isResolved path line comments(first: 100) { pageInfo { hasNextPage } nodes { databaseId author { login } body } } } } } } }";
                 const rawGql = exec(
                     "gh",
                     [
@@ -474,8 +490,11 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
                     { cwd: workspaceRoot, env: gitEnv },
                 );
                 const parsedGql = JSON.parse(rawGql);
-                const threadNodes = parsedGql?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+                const threads = parsedGql?.data?.repository?.pullRequest?.reviewThreads;
+                const threadNodes = threads?.nodes;
+                parsedSnapshot.reviewThreadsComplete = Array.isArray(threadNodes) && threads?.pageInfo?.hasNextPage === false;
                 if (Array.isArray(threadNodes)) {
+                    parsedSnapshot.unresolvedReviewThreadCount = threadNodes.filter((t) => record(t) && t.isResolved !== true).length;
                     const unresolved = threadNodes
                         .filter((t) => record(t) && t.isResolved === false)
                         .map((t) => {
@@ -487,6 +506,8 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
                                 line: t.line,
                                 author: firstComment?.author?.login,
                                 body: firstComment?.body,
+                                comments: t.comments?.nodes || [],
+                                commentsComplete: t.comments?.pageInfo?.hasNextPage === false,
                             };
                         })
                         .filter((c) => nonempty(c.body));
@@ -496,6 +517,7 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
                 }
             }
         } catch {
+            parsedSnapshot.reviewThreadsComplete = false;
             (parsedSnapshot.diagnosticErrors ||= []).push("GitHub inline review thread diagnostics unavailable.");
         }
 
@@ -865,7 +887,47 @@ export function isTransientCiInfrastructureFailure(textValue) {
     );
 }
 
-export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec, stageOnly = false } = {}) {
+function adoObserverTransport(parsedPr, workspaceRoot, exec) {
+    const request = (suffix, method = "Get", payload = null) => {
+        const base = `${parsedPr.orgUrl || `https://${parsedPr.hostname}`}/${encodeURIComponent(parsedPr.project)}/_apis/`;
+        const uri = (base + suffix).replace(/'/g, "''");
+        const body = Buffer.from(JSON.stringify(payload || {})).toString("base64");
+        const script = [
+            "$ErrorActionPreference = 'Stop'",
+            "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
+            "if ($LASTEXITCODE -ne 0 -or -not $token) { throw 'Azure DevOps authentication failed for observer recovery.' }",
+            "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
+            `$result = Invoke-RestMethod -Uri '${uri}' -Headers $headers -Method ${method}` +
+                (method === "Get" ? "" : ` -Body ([Convert]::FromBase64String('${body}'))`),
+            method === "Get" ? "[Console]::Out.Write(($result | ConvertTo-Json -Depth 30 -Compress))" : "[Console]::Out.Write('true')",
+        ].join("; ");
+        return JSON.parse(exec("powershell", ["-NoProfile", "-Command", script], { cwd: workspaceRoot }));
+    };
+    return {
+        timeline: async (id) => request(`build/builds/${id}/timeline?api-version=7.0`).records,
+        policies: async () => {
+            const pr = request(`git/repositories/${encodeURIComponent(parsedPr.repoName)}/pullRequests/${parsedPr.prNumber}?api-version=7.0`);
+            const artifact = encodeURIComponent(`vstfs:///CodeReview/CodeReviewId/${pr.repository.project.id}/${parsedPr.prNumber}`);
+            return request(`policy/evaluations?artifactId=${artifact}&api-version=7.1-preview.1`).value;
+        },
+        retryStage: async (id, stage) => request(`build/builds/${id}/stages/${encodeURIComponent(stage.identifier)}?api-version=7.0-preview.1`,
+            "Patch", { state: 1, forceRetryAllJobs: false }) === true,
+        requeuePolicy: async (policy) => request(`policy/evaluations/${policy.evaluationId}?api-version=7.1-preview.1`, "Patch") === true,
+    };
+}
+
+/**
+ * The transport owns authentication, admission and durable effects; selection and fallback stay shared.
+ * @param {{provider: string}} parsedPr
+ * @param {{prBuilds?: unknown[]}} snapshot
+ * @param {{ workspaceRoot?: string, exec?: typeof defaultExec, stageOnly?: boolean, transport?: {
+ * timeline(id: number): Promise<Record<string, unknown>[]>,
+ * policies(): Promise<Record<string, unknown>[]>,
+ * retryStage(id: number, stage: Record<string, unknown>): Promise<boolean>,
+ * requeuePolicy(policy: Record<string, unknown>): Promise<boolean>
+ * } }} options
+ */
+export async function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec, stageOnly = false, transport } = {}) {
     if (parsedPr?.provider !== "ado") return false;
     const prBuilds = Array.isArray(snapshot?.prBuilds) ? snapshot.prBuilds : [];
     const failedBuildIds = prBuilds
@@ -875,55 +937,38 @@ export function retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot = 
         .filter(positiveInt);
     if (failedBuildIds.length === 0) return false;
 
-    const orgUrl = (parsedPr.orgUrl || `https://${parsedPr.hostname}`).replace(/\/+$/, "").replace(/'/g, "''");
-    const projectEnc = encodeURIComponent(parsedPr.project);
-    const repoEnc = encodeURIComponent(parsedPr.repoName);
-    const psScript = [
-        "$ErrorActionPreference = 'Stop'",
-        "$token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv",
-        "$headers = @{ Authorization = \"Bearer $token\"; 'Content-Type' = 'application/json' }",
-        `$projectBase = '${orgUrl}/${projectEnc}'`,
-        `$stageOnly = ${stageOnly === true ? "$true" : "$false"}`,
-        "$retried = $false",
-        "$retryUnconfirmed = $false",
-        `foreach ($bid in @(${failedBuildIds.join(",")})) {`,
-        "  $stageRetried = $false",
-        "  $stageRetryFailed = $false",
-        "  try {",
-        "    $tl = Invoke-RestMethod -Uri \"$projectBase/_apis/build/builds/$bid/timeline?api-version=7.0\" -Headers $headers -Method Get",
-        "    $failedStages = @($tl.records | Where-Object { $_.type -eq 'Stage' -and $_.result -in @('failed','canceled','cancelled') })",
-        "    $stages = @($failedStages | Where-Object { $_.identifier })",
-        "    if ($failedStages.Count -ne $stages.Count) { $stageRetryFailed = $true }",
-        "    foreach ($st in $stages) {",
-        "      try {",
-        "        Invoke-RestMethod -Uri \"$projectBase/_apis/build/builds/$bid/stages/$($st.identifier)?api-version=7.0-preview.1\" -Headers $headers -Method Patch -Body '{\"state\":1,\"forceRetryAllJobs\":false}' | Out-Null",
-        "        $retried = $true; $stageRetried = $true",
-        "      } catch { $stageRetryFailed = $true }",
-        "    }",
-        "  } catch { $stageRetryFailed = $true }",
-        "  if (-not $stageRetried -or $stageRetryFailed) { $retryUnconfirmed = $true }",
-        "  if (-not $stageRetried -and -not $stageOnly) {",
-        "    try {",
-        `      $pr = Invoke-RestMethod -Uri "$projectBase/_apis/git/repositories/${repoEnc}/pullRequests/${parsedPr.prNumber}?api-version=7.0" -Headers $headers -Method Get`,
-        "      $projId = $pr.repository.project.id",
-        `      $artId = [uri]::EscapeDataString("vstfs:///CodeReview/CodeReviewId/$projId/${parsedPr.prNumber}")`,
-        "      $evals = (Invoke-RestMethod -Uri \"$projectBase/_apis/policy/evaluations?artifactId=$artId&api-version=7.1-preview.1\" -Headers $headers -Method Get).value",
-        "      foreach ($ev in @($evals | Where-Object { $_.context.buildId -eq $bid })) {",
-        "        Invoke-RestMethod -Method Patch -Uri \"$projectBase/_apis/policy/evaluations/$($ev.evaluationId)?api-version=7.1-preview.1\" -Headers $headers -Body '{}' | Out-Null",
-        "        $retried = $true",
-        "      }",
-        "    } catch {}",
-        "  }",
-        "}",
-        "[Console]::Out.Write((($retried -and (-not $stageOnly -or -not $retryUnconfirmed)) | ConvertTo-Json))",
-    ].join("; ");
-    try {
-        const res = exec("powershell", ["-NoProfile", "-Command", psScript], { cwd: workspaceRoot });
-        return JSON.parse(res) === true;
-    } catch (error) {
-        if (["AbortError", "ConnectionError", "ResponseError"].includes(error?.name)) throw error;
-        return false;
+    const api = transport || adoObserverTransport(parsedPr, workspaceRoot, exec);
+    const rethrow = (error) => {
+        if (transport || ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name)) throw error;
+    };
+    let retried = false;
+    let unconfirmed = false;
+    for (const id of failedBuildIds) {
+        let stageRetried = false;
+        let stageFailed = false;
+        try {
+            const records = await api.timeline(id);
+            if (!Array.isArray(records)) throw new Error("ADO omitted the build timeline.");
+            const stages = records.filter((stage) => stage.type === "Stage" && ["failed", "canceled", "cancelled"].includes(stage.result));
+            for (const stage of stages) {
+                if (!nonempty(stage.identifier)) { stageFailed = true; continue; }
+                try {
+                    if (await api.retryStage(id, stage) === true) { retried = true; stageRetried = true; }
+                    else stageFailed = true;
+                } catch (error) { rethrow(error); stageFailed = true; }
+            }
+        } catch (error) { rethrow(error); stageFailed = true; }
+        if (!stageRetried || stageFailed) unconfirmed = true;
+        if (!stageRetried && !stageOnly) {
+            try {
+                const policies = await api.policies();
+                for (const policy of policies.filter((policy) => record(policy.context) && Number(policy.context.buildId) === id)) {
+                    if (await api.requeuePolicy(policy) === true) retried = true;
+                }
+            } catch (error) { rethrow(error); }
+        }
     }
+    return retried && (!stageOnly || !unconfirmed);
 }
 
 export function computeRepairIdentity({ observation, snapshot, worktreeSnap }) {
@@ -1136,14 +1181,20 @@ function checkoutTransportFailures(snapshot) {
     return { builds, evidence };
 }
 
-export function refreshStaleAdoBuildPolicies(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
-    if (parsedPr?.provider !== "ado") return [];
-    const stale = (snapshot.policyEvaluations || []).filter((policy) =>
+/** @param {{policyEvaluations?: unknown[], prBuilds?: unknown[]}} snapshot
+ * @returns {Record<string, unknown>[]} */
+export function staleAdoBuildPolicies(snapshot) {
+    return (snapshot.policyEvaluations || []).filter((policy) =>
         policy.blocking && policy.buildId && policy.buildIsNotCurrent &&
         ["approved", "rejected"].includes(policy.status) &&
         !(snapshot.prBuilds || []).some((build) => policy.buildDefinitionId && build.definitionId === policy.buildDefinitionId &&
             ["inprogress", "notstarted", "cancelling", "postponed"].includes(String(build.status || "").toLowerCase())) &&
         /^[a-f0-9-]{36}$/i.test(policy.evaluationId || ""));
+}
+
+export function refreshStaleAdoBuildPolicies(parsedPr, snapshot, { workspaceRoot = process.cwd(), exec = defaultExec } = {}) {
+    if (parsedPr?.provider !== "ado") return [];
+    const stale = staleAdoBuildPolicies(snapshot);
     if (!stale.length) return [];
     const base = `${parsedPr.orgUrl}/${encodeURIComponent(parsedPr.project)}/_apis/policy/evaluations`;
     const script = [
@@ -1157,7 +1208,7 @@ export function refreshStaleAdoBuildPolicies(parsedPr, snapshot, { workspaceRoot
     return stale.map((policy) => policy.evaluationId);
 }
 
-export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspaceRoot = process.cwd(), exec = defaultExec, ci = ciEvidenceFromSnapshot(snapshot) } = {}) {
+export function renderObserverDescription(parsedPr, snapshot, statusBlock, ci = ciEvidenceFromSnapshot(snapshot)) {
     if (!/^[a-f0-9]{40,64}$/i.test(snapshot?.headRefOid || "")) {
         throw new Error("Cannot publish observer status without a full observed PR commit SHA.");
     }
@@ -1200,8 +1251,13 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
             testCoverageJustification: `Tests authored/updated; local verification ${previousVerification.local?.status || "unverified"}; current-head CI ${ci.status}. See verification receipt and remaining checks.`,
         }));
     }
+    return parsedPr.provider === "ado" ? fitAdoDescription(body) : body;
+}
+
+export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspaceRoot = process.cwd(), exec = defaultExec, ci = ciEvidenceFromSnapshot(snapshot) } = {}) {
+    const originalBody = snapshot.description ?? snapshot.body;
+    const body = renderObserverDescription(parsedPr, snapshot, statusBlock, ci);
     if (parsedPr.provider === "ado") {
-        body = fitAdoDescription(body);
         const base = `${parsedPr.orgUrl}/${encodeURIComponent(parsedPr.project)}/_apis/git/repositories/${encodeURIComponent(parsedPr.repoName)}/pullRequests/${parsedPr.prNumber}?api-version=7.0`;
         const b64 = (value) => Buffer.from(value, "utf8").toString("base64");
         const script = [
@@ -1219,12 +1275,13 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
         exec("powershell", ["-NoProfile", "-Command", script], { cwd: workspaceRoot });
     } else {
         const account = resolveGitHubAccount({ hostname: parsedPr.hostname }, workspaceRoot, exec);
-        const overrides = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined };
-        if (account) {
-            const token = exec("gh", ["auth", "token", "--hostname", parsedPr.hostname, "--user", account], { cwd: workspaceRoot });
-            overrides.GH_TOKEN = token;
-            overrides.GITHUB_TOKEN = token;
-        }
+        const token = account
+            ? exec("gh", ["auth", "token", "--hostname", parsedPr.hostname, "--user", account], {
+                cwd: workspaceRoot,
+                env: buildGitHubKeyringEnv(),
+            })
+            : "";
+        const overrides = buildGitHubTokenOverrides(parsedPr.hostname, token);
         const env = buildNormalizedProcessEnv(process.env, overrides);
         const endpoint = `repos/${parsedPr.slug}/pulls/${parsedPr.prNumber}`;
         const live = JSON.parse(exec("gh", ["api", "--hostname", parsedPr.hostname, endpoint], { cwd: workspaceRoot, env }));
@@ -1237,18 +1294,24 @@ export function publishObserverStatus(parsedPr, snapshot, statusBlock, { workspa
 }
 
 export async function runPrObserver(ctx, dependencies = {}) {
+    ctx.signal?.throwIfAborted();
     let snapshot = null;
     let repairAttempts = 0;
     const workspaceRoot = ctx.args?.options?.workspaceRoot || process.cwd();
     const environment = { ...(dependencies.environment || process.env) };
+    const trustedRepository = dependencies.observeOnly || dependencies.repairHost ? dependencies.trustedRepository : null;
+    if ((dependencies.observeOnly || dependencies.repairHost) && !record(trustedRepository)) {
+        throw new Error("Managed observation requires the exact trusted repository target.");
+    }
+    const parseTarget = (url) => parsePullRequestUrl(url, trustedRepository);
     const approvedJavaHome = ctx.args?.options?.javaHome;
     if (approvedJavaHome !== undefined) {
         if (!nonempty(approvedJavaHome)) throw new Error("options.javaHome must be a non-empty approved JDK installation path.");
         environment.JAVA_HOME = approvedJavaHome;
-        const target = parsePullRequestUrl(ctx.args?.prUrl);
+        const target = parseTarget(ctx.args?.prUrl);
         if (target && !resolveTargetJavaHome(target, environment)) throw new Error("Approved observer JDK does not satisfy the target's toolchain requirements.");
     } else {
-        const target = parsePullRequestUrl(ctx.args?.prUrl);
+        const target = parseTarget(ctx.args?.prUrl);
         const selected = target && resolveTargetJavaHome(target, environment, { allowConfiguredFallback: true });
         if (selected) {
             environment.JAVA_HOME = selected;
@@ -1260,18 +1323,24 @@ export async function runPrObserver(ctx, dependencies = {}) {
             });
         }
     }
-    const fetch = dependencies.fetchPrSnapshot || ((pr) => fetchPullRequestSnapshot(pr, { workspaceRoot, exec: dependencies.exec || defaultExec }));
+    const fetch = dependencies.fetchPrSnapshot || ((pr) => fetchPullRequestSnapshot(pr, { workspaceRoot, exec: dependencies.exec || defaultExec, trustedRepository }));
     const result = await runObserverLoop(ctx, {
         ...dependencies,
         environment,
         onRepairAttempt: () => { repairAttempts++; dependencies.onRepairAttempt?.(); },
         fetchPrSnapshot: async (pr) => { snapshot = scopeAdoSnapshot(await fetch(pr)); return snapshot; },
     });
+    ctx.signal?.throwIfAborted();
     if (!snapshot) return result;
     const ci = ciEvidenceFromSnapshot(snapshot);
     if (result.expectedHeadSha && snapshot.headRefOid !== result.expectedHeadSha) {
         ci.status = "pending";
         ci.evidence.push(`Awaiting validation of pushed head ${result.expectedHeadSha}; provider reports ${snapshot.headRefOid}.`);
+    }
+    if (result.blockerKind === "pr-identity") {
+        ci.status = "unknown";
+        ci.headSha = null;
+        ci.evidence = ["Pull request identity changed; CI for the reviewed head is unconfirmed."];
     }
     result.ci = ci;
     result.repairAttempts = repairAttempts;
@@ -1284,12 +1353,15 @@ export async function runPrObserver(ctx, dependencies = {}) {
         result.status = ci.status === "failed" ? currentStatuses.ciFailed : currentStatuses.waitingForCi;
         result.summary = ciVerificationSummary({ ci });
     }
+    if (dependencies.observeOnly && ci.status === "failed") {
+        result.status = currentStatuses.ciFailed;
+    }
     if (ci.status === "passed" && result.remainingPolicies.length && result.status === currentStatuses.readyForHumanMerge) {
         result.status = currentStatuses.awaitingHumanReview;
         result.summary = "Current-head CI passed; required human review/policy actions remain.";
     }
     const waiting = [currentStatuses.waitingForCi, currentStatuses.observationExhausted].includes(result.status);
-    result.continuation = waiting ? {
+    result.continuation = waiting && !dependencies.observeOnly && !dependencies.repairHost ? {
         workflow: "pr-observer",
         args: {
             ...ctx.args,
@@ -1298,19 +1370,23 @@ export async function runPrObserver(ctx, dependencies = {}) {
         },
         reason: result.summary,
     } : null;
+    const nextAction = waiting && (dependencies.observeOnly || dependencies.repairHost)
+        ? dependencies.repairHost ? "Continue through the owning workflow with its recorded remaining repair allowance."
+            : "Continue read-only observation through the owning workflow; no repair or publication is authorized."
+        : observerNextAction(result);
     result.statusBlock = renderCurrentStatusBlock({
         status: result.status,
         owner: waiting ? currentStatusOwners.observer : currentStatusOwners.human,
         runId: ctx.runId || "local",
-        repository: parsePullRequestUrl(ctx.args?.prUrl)?.repository || "",
+        repository: parseTarget(ctx.args?.prUrl)?.repository || "",
         prUrl: ctx.args.prUrl,
         summary: result.summary,
-        nextAction: observerNextAction(result),
+        nextAction,
     });
     const publish = dependencies.publishStatus || publishObserverStatus;
-    if (ctx.args?.options?.publishStatus !== false) {
+    if (!dependencies.observeOnly && ctx.args?.options?.publishStatus !== false) {
         try {
-            await publish(parsePullRequestUrl(ctx.args.prUrl), snapshot, result.statusBlock, { workspaceRoot, exec: dependencies.exec || defaultExec, ci });
+            await publish(parseTarget(ctx.args.prUrl), snapshot, result.statusBlock, { workspaceRoot, exec: dependencies.exec || defaultExec, ci });
             result.statusPublication = { status: "updated" };
         } catch (error) {
             if (ctx.signal?.aborted || ["AbortError", "ConnectionError", "ResponseError"].includes(error?.name)) throw error;
@@ -1325,7 +1401,7 @@ export async function runPrObserver(ctx, dependencies = {}) {
         outcome: result.statusPublication?.status === "failed" ? "blocked" : result.ci.status === "passed" &&
             ["ready-for-human-merge", "awaiting-human-review"].includes(result.status) ? "completed" :
             result.status === "waiting-for-ci" ? "deferred" : "blocked",
-        summary: `${result.summary || deliveryStatusSummary(result.status)} ${observerNextAction(result)}${result.statusPublication?.status === "failed" ? ` PR status update failed: ${result.statusPublication.error}; its description may be stale.` : ""}`,
+        summary: `${result.summary || deliveryStatusSummary(result.status)} ${result.statusPublication?.status === "failed" ? observerNextAction(result) : nextAction}${result.statusPublication?.status === "failed" ? ` PR status update failed: ${result.statusPublication.error}; its description may be stale.` : ""}`,
         prUrl: result.prUrl,
     });
     return result;
@@ -1334,7 +1410,8 @@ export async function runPrObserver(ctx, dependencies = {}) {
 async function runObserverLoop(ctx, dependencies = {}) {
     const args = record(ctx?.args) ? ctx.args : {};
     const rawOptions = record(args.options) ? args.options : {};
-    const parsedPr = parsePullRequestUrl(args.prUrl);
+    const repairHost = dependencies.repairHost;
+    const parsedPr = parsePullRequestUrl(args.prUrl, dependencies.observeOnly || repairHost ? dependencies.trustedRepository : null);
     if (!parsedPr) {
         return {
             status: "needs-owner-decision",
@@ -1345,18 +1422,23 @@ async function runObserverLoop(ctx, dependencies = {}) {
         };
     }
 
-    const maxIterations = repairLimit(args);
+    const maxIterations = dependencies.observeOnly ? 0 : repairLimit(args);
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
     const fetchSnapshot = dependencies.fetchPrSnapshot || ((pr) => fetchPullRequestSnapshot(pr, { workspaceRoot, exec }));
-    const sleep = dependencies.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const sleep = async (ms) => {
+        ctx.signal?.throwIfAborted();
+        if (dependencies.sleep) await dependencies.sleep(ms);
+        else await delay(ms, undefined, { signal: ctx.signal });
+        ctx.signal?.throwIfAborted();
+    };
     const ciPollIntervalMs = Number.isFinite(rawOptions.ciPollIntervalMs) && rawOptions.ciPollIntervalMs >= 0
         ? Number(rawOptions.ciPollIntervalMs)
         : DEFAULT_CI_POLL_INTERVAL_MS;
     const maxCiPollAttempts = Number.isSafeInteger(rawOptions.maxCiPollAttempts) && rawOptions.maxCiPollAttempts >= 0
         ? Number(rawOptions.maxCiPollAttempts)
         : DEFAULT_MAX_CI_POLL_ATTEMPTS;
-    const pushRepairs = rawOptions.pushRepairs !== false;
+    const pushRepairs = !dependencies.observeOnly && rawOptions.pushRepairs !== false;
     const pauseOnBlocker = rawOptions.pauseOnBlocker !== undefined
         ? rawOptions.pauseOnBlocker === true && typeof ctx?.pause === "function"
         : typeof ctx?.pause === "function";
@@ -1372,23 +1454,57 @@ async function runObserverLoop(ctx, dependencies = {}) {
         localPath: parsedPr.localPath,
         hostname: parsedPr.hostname,
         slug: parsedPr.slug,
-        baseBranch: "dev",
-        account: "",
+        baseBranch: dependencies.trustedRepository?.baseBranch || "dev",
+        account: dependencies.trustedRepository?.account || "",
         verificationCommands: Array.isArray(args.verificationCommands) ? args.verificationCommands : [],
     };
-    const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
+    let repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
     const selectedJavaHome = resolveTargetJavaHome(target, dependencies.environment || process.env);
-    const builderGuides = resolveRoleSkillGuides("builder", [target]);
-    const reviewerGuides = resolveRoleSkillGuides("reviewer", [target]);
+    const builderGuides = repairHost?.guides?.builder || resolveRoleSkillGuides("builder", [target]);
+    const reviewerGuides = repairHost?.guides?.reviewer || resolveRoleSkillGuides("reviewer", [target]);
     const attemptedRepairIdentities = new Set();
     const retriedCheckoutHeads = new Set();
-    let expectedHeadSha = null;
+    let expectedHeadSha = repairHost ? repairHost.expectedHead() : null;
+    const snapshotProblem = (value) => {
+        if (!dependencies.observeOnly && !repairHost) return null;
+        if (!["open", "active"].includes(String(value?.state || "").toLowerCase())) {
+            return "The pull request is not open; inspect its current state before continuing.";
+        }
+        if (Number(value?.number) !== parsedPr.prNumber ||
+            (dependencies.trustedRepository.baseBranch && value?.baseRefName !== dependencies.trustedRepository.baseBranch) ||
+            (repairHost ? !repairHost.acceptedHead(value?.headRefOid)
+                : dependencies.trustedRepository.headSha && value?.headRefOid !== dependencies.trustedRepository.headSha) ||
+            (dependencies.trustedRepository.headBranch && value?.headRefName !== dependencies.trustedRepository.headBranch)) {
+            return "The pull request identity, base, or reviewed head changed; inspect it before continuing.";
+        }
+        if (value?.url) {
+            const snapshotPr = parsePullRequestUrl(value.url, dependencies.trustedRepository);
+            if (!snapshotPr || snapshotPr.prNumber !== parsedPr.prNumber) {
+                return "The observed pull request URL does not match the approved target.";
+            }
+        }
+        return null;
+    };
+    const unresolvedOrUnknownReview = (value) => (dependencies.observeOnly || repairHost) && (
+        (parsedPr.provider !== "ado" && value?.reviewThreadsComplete !== true) ||
+        Number(value?.unresolvedReviewThreadCount || 0) > 0 ||
+        (Array.isArray(value?.activeReviewThreads) && value.activeReviewThreads.length > 0)
+    );
 
-    for (let iteration = 0; iteration <= maxIterations; iteration++) {
+    const firstIteration = repairHost ? repairHost.firstIteration : 0;
+    if (!Number.isSafeInteger(firstIteration) || firstIteration < 0 || firstIteration > maxIterations) {
+        throw new Error("Invalid persisted observer repair position.");
+    }
+    for (let iteration = firstIteration; iteration <= maxIterations; iteration++) {
         phase("Observe");
         log(`Observing ${parsedPr.prUrl} (iteration ${Math.min(iteration + 1, maxIterations)}/${maxIterations})`);
 
         let snapshot = await step(`snapshot-${iteration}`, async () => fetchSnapshot(parsedPr), { volatile: true });
+        let problem = snapshotProblem(snapshot);
+        if (problem) {
+            return { status: "needs-owner-decision", blockerKind: "pr-identity", prUrl: parsedPr.prUrl,
+                summary: problem, evidence: [], iterations: 0 };
+        }
         let totalPollsUsed = 0;
         let pollSeq = 0;
         let buildResetCount = 0;
@@ -1405,10 +1521,9 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 const blocked = environmentHandoff(snapshot, parsedPr.prUrl, iteration);
                 if (blocked) return blocked;
             }
-            if (parsedPr.provider === "ado") {
+            if (parsedPr.provider === "ado" && !dependencies.observeOnly && (!repairHost || dependencies.refreshStaleBuilds)) {
                 const staleKey = createHash("sha256").update(JSON.stringify([
-                    snapshot.headRefOid, (snapshot.policyEvaluations || []).filter((policy) =>
-                        policy.blocking && policy.buildId && policy.buildIsNotCurrent).map((policy) => policy.evaluationId),
+                    snapshot.headRefOid, staleAdoBuildPolicies(snapshot).map((policy) => [policy.evaluationId, policy.buildId]),
                 ])).digest("hex").slice(0, 16);
                 const refreshed = await step(`refresh-stale-build-${staleKey}`, () =>
                     (dependencies.refreshStaleBuilds || refreshStaleAdoBuildPolicies)(parsedPr, snapshot, { workspaceRoot, exec }));
@@ -1442,6 +1557,8 @@ async function runObserverLoop(ctx, dependencies = {}) {
                     async () => fetchSnapshot(parsedPr),
                     { volatile: true },
                 );
+                problem = snapshotProblem(snapshot);
+                if (problem) return { status: "needs-owner-decision", blockerKind: "pr-identity", prUrl: parsedPr.prUrl, summary: problem, evidence: [], iterations: iteration };
                 const nextBuildIdsKey = getBuildIdsKey(snapshot);
                 if (nonempty(nextBuildIdsKey) && nextBuildIdsKey !== activeBuildIdsKey && buildResetCount < MAX_OBSERVER_ITERATIONS) {
                     activeBuildIdsKey = nextBuildIdsKey;
@@ -1486,7 +1603,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 break;
             }
 
-            if (isSnapshotReadyForHumanMerge(snapshot)) {
+            if (isSnapshotReadyForHumanMerge(snapshot) && !unresolvedOrUnknownReview(snapshot)) {
                 const passedBuilds = (Array.isArray(snapshot.prBuilds) ? snapshot.prBuilds : [])
                     .map((b) => `${b.definition || "build"} (${b.buildNumber || b.id}): ${b.result || "succeeded"}`);
                 observation = {
@@ -1514,7 +1631,7 @@ async function runObserverLoop(ctx, dependencies = {}) {
                     summary: `${reason} No source repair was dispatched; the pipeline owner must inspect checkout connectivity.`,
                     evidence: transport.evidence, iterations: iteration,
                 });
-                if (!pushRepairs || totalPollsUsed >= maxCiPollAttempts) {
+                if (!pushRepairs || (repairHost && !dependencies.retryFailedBuilds) || totalPollsUsed >= maxCiPollAttempts) {
                     return handoff("CI checkout failed before compilation/tests; automatic retry or observation was not enabled.");
                 }
                 if (retriedCheckoutHeads.has(snapshot.headRefOid)) {
@@ -1548,6 +1665,8 @@ async function runObserverLoop(ctx, dependencies = {}) {
                 ctx.signal?.throwIfAborted();
                 snapshot = await step(`snapshot-${iteration}-checkout-retry-${pollSeq}`,
                     async () => fetchSnapshot(parsedPr), { volatile: true });
+                problem = snapshotProblem(snapshot);
+                if (problem) return { status: "needs-owner-decision", blockerKind: "pr-identity", prUrl: parsedPr.prUrl, summary: problem, evidence: [], iterations: iteration };
                 observation = {
                     verdict: "waiting-for-ci", repairKind: "none",
                     summary: "CI checkout retry was requested; current-head validation still needs observation.",
@@ -1578,11 +1697,21 @@ async function runObserverLoop(ctx, dependencies = {}) {
             }
             if (ciEvidenceFromSnapshot(snapshot).status === "passed" &&
                 !/dirty|conflict/i.test(String(snapshot.mergeStateStatus || "")) &&
-                !hasActionableReviewOrCommentFeedback(snapshot)) {
+                !hasActionableReviewOrCommentFeedback(snapshot) && !unresolvedOrUnknownReview(snapshot)) {
                 return {
                     status: currentStatuses.awaitingHumanReview,
                     prUrl: parsedPr.prUrl,
                     summary: "Current-head CI passed; repository review/merge policies require human action.",
+                    evidence: ciEvidenceFromSnapshot(snapshot).evidence,
+                    iterations: iteration,
+                };
+            }
+
+            if (dependencies.observeOnly) {
+                return {
+                    status: "needs-owner-decision",
+                    prUrl: parsedPr.prUrl,
+                    summary: "The PR has unresolved feedback, conflicts, or unverified checks. Human review is required; no repairs were attempted.",
                     evidence: ciEvidenceFromSnapshot(snapshot).evidence,
                     iterations: iteration,
                 };
@@ -1749,6 +1878,9 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
             break;
         }
         phase("Repair");
+        if (repairHost) {
+            repoRoot = await repairHost.prepare({ iteration, snapshot, observation, parsedPr });
+        } else {
         try {
             let currentBranch = "";
             try {
@@ -1762,8 +1894,9 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
         } catch {
             // Best-effort worktree preparation in mock/test environments.
         }
+        }
 
-        const remoteCheck = verifyCheckoutRemoteMatchesPr(repoRoot, parsedPr, exec);
+        const remoteCheck = repairHost ? { ok: true } : verifyCheckoutRemoteMatchesPr(repoRoot, parsedPr, exec);
         if (!remoteCheck.ok) {
             if (pauseOnBlocker) {
                 await pauseForHelp(ctx, `${prefix}-remote-mismatch-${iteration}`, remoteCheck.reason);
@@ -1782,7 +1915,7 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
         const repairResult = await step(`repair-${iteration}`, async () => {
             ctx.signal?.throwIfAborted();
             const execution = ctx.agent(
-                `Read and follow these repository skill guides: ${builderGuides.join(", ")}.
+                `${repairHost ? "You are a read-only structured repair author. Return complete file contents in the supplied schema; the application applies files and performs all Git/verification/provider operations. Do not execute commands or mutate files yourself.\n" : ""}Read and follow these repository skill guides: ${builderGuides.join(", ")}.
 Apply a surgical tactical fix in ${target.repository} for the reported PR findings (${observation.repairKind}):
 ${(observation.actionableFindings || []).map((f) => `- ${f}`).join("\n")}
 Follow Android Auth PR maintenance rules:
@@ -1791,11 +1924,11 @@ Follow Android Auth PR maintenance rules:
 - When verifying a CI test failure locally, run ONLY the targeted failing test class(es) with --tests "<ClassName>" --max-workers=2 (never run the unfiltered full-repo unitTestReport -Pcoverage task locally on Windows, where unrelated native SQLite/Room tests fail outside the macOS CI runner). Once the targeted test class(es) pass locally, return verdict "pass" so the fix is reviewed and pushed to CI.
 ${nonempty(selectedJavaHome) ? `- Use JAVA_HOME ${selectedJavaHome} for local verification in this workflow run.` : ""}
 - When merging origin/${target.baseBranch}, if a release was cut on ${target.baseBranch}, ensure this PR's CHANGELOG.md / changes.txt entry remains under the active vNext section; if ${target.baseBranch} deleted an adjacent retired flight enum entry, keep the retired flight deleted.
-Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, snapshot })}`,
+Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, snapshot, ...(repairHost ? { repositoryRoot: repoRoot } : {}) })}`,
                 {
                     label: `Tactical repair (round ${iteration + 1})`,
                     agent: BUILDER_AGENT,
-                    schema: slimResultSchema,
+                    schema: repairHost?.builderSchema || slimResultSchema,
                 },
             );
             const [result] = await Promise.all([execution, recordMilestone(ctx, {
@@ -1807,6 +1940,9 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
             })]);
             return result;
         });
+        if (repairHost && record(repairResult) && repairResult.verdict !== "blocked") {
+            await repairHost.apply({ iteration, repairResult, snapshot });
+        }
 
         if (!record(repairResult) || repairResult.verdict === "blocked") {
             const blockerSummary = repairResult?.summary || "Tactical repair blocked.";
@@ -1815,9 +1951,9 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
                 ...(Array.isArray( repairResult?.evidence) ? repairResult.evidence : []),
                 ...(Array.isArray(observation?.evidence) ? observation.evidence : []),
             ].join("\n");
-            if (isTransientCiInfrastructureFailure(combinedInfraText) && iteration + 1 < maxIterations) {
+            if ((!repairHost || dependencies.retryFailedBuilds) && isTransientCiInfrastructureFailure(combinedInfraText) && iteration + 1 < maxIterations) {
                 log(`Detected transient CI infrastructure/network failure on PR #${parsedPr.prNumber}; waiting/retrying CI stage automatically without pausing...`);
-                retryFailedAdoBuildStages(parsedPr, snapshot, { workspaceRoot, exec });
+                await (dependencies.retryFailedBuilds || retryFailedAdoBuildStages)(parsedPr, snapshot, { workspaceRoot, exec, stageOnly: false, iteration });
                 await sleep(ciPollIntervalMs);
                 continue;
             }
@@ -1841,7 +1977,7 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
             prUrl: parsedPr.prUrl,
         });
 
-        const revertedProtected = revertUnauthorizedProtectedFiles(repoRoot, {
+        const revertedProtected = repairHost ? [] : revertUnauthorizedProtectedFiles(repoRoot, {
             allowPipelineEdits: false,
             exec,
         });
@@ -1853,7 +1989,7 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
             target.verificationCommands.length > 0 &&
             (rawOptions.runLocalVerification === true || repairResult.verdict !== "pass")
         ) {
-            const gate = runLocalVerificationGate({
+            const gate = await (repairHost?.verify || runLocalVerificationGate)({
                 repoRoot,
                 target,
                 targetImpl: null,
@@ -1863,25 +1999,29 @@ Do not broaden scope or push directly.\nDATA:\n${JSON.stringify({ pr: parsedPr, 
             });
             if (gate.errors.length > 0) {
                 log(`Local verification failed during tactical repair: ${gate.errors.join("; ")}`);
+                if (repairHost) await repairHost.finishAttempt(iteration, "verification-failed");
                 continue;
             }
         }
 
         phase("Verify & Push");
+        const reviewContext = repairHost ? await repairHost.reviewContext(iteration) : null;
         const reviewResult = await step(`review-repair-${iteration}`, () => ctx.agent(
             `Read and apply these repository code-review guides: ${reviewerGuides.join(", ")}.
 Independently verify that the local tactical code/test repair in the worktree resolves the code/test defects in actionableFindings without regressions.
-IMPORTANT: Git commit, git push, PR title/description metadata updates, and remote CI pipeline re-runs (such as Compare Jacoco Coverage or Validate PBI) are executed by the deterministic push-repair step immediately AFTER your review returns verdict "pass". Never return verdict "repair" or raise findings because changes are uncommitted/unpushed in the worktree or because remote CI checks have not re-run yet—return verdict "pass" with findings=[] as soon as the local code and unit-test changes are sound.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, repairResult })}`,
+IMPORTANT: Git commit, git push, PR title/description metadata updates, and remote CI pipeline re-runs (such as Compare Jacoco Coverage or Validate PBI) are executed by the deterministic push-repair step immediately AFTER your review returns verdict "pass". Never return verdict "repair" or raise findings because changes are uncommitted/unpushed in the worktree or because remote CI checks have not re-run yet—return verdict "pass" with findings=[] as soon as the local code and unit-test changes are sound.\nDATA:\n${JSON.stringify({ pr: parsedPr, observation, repairResult, ...(reviewContext ? { reviewContext } : {}) })}`,
             {
                 label: `Verify tactical repair (round ${iteration + 1})`,
                 agent: REVIEWER_AGENT,
                 schema: slimReviewSchema,
             },
         ));
+        if (repairHost) await repairHost.verifyReview({ iteration, reviewResult });
 
         if (!record(reviewResult) || reviewResult.verdict !== "pass" ||
             (Array.isArray(reviewResult.findings) && reviewResult.findings.length > 0)) {
             log(`Tactical repair review requested further changes in iteration ${iteration + 1}.`);
+            if (repairHost) await repairHost.finishAttempt(iteration, "review-failed");
             continue;
         }
         await recordMilestone(ctx, {
@@ -1894,19 +2034,23 @@ IMPORTANT: Git commit, git push, PR title/description metadata updates, and remo
 
         if (pushRepairs) {
             const pushed = await step(`push-repair-${iteration}`, async () => {
+                if (repairHost) return repairHost.push({ iteration, snapshot, observation, repairResult, reviewResult });
                 const account = resolveGitHubAccount(target, workspaceRoot, exec);
-                const tokenOverrides = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined };
+                let resolvedPushToken = "";
                 if (nonempty(account)) {
                     try {
-                        const token = exec("gh", ["auth", "token", "--user", account, "-h", target.hostname], { cwd: workspaceRoot });
+                        const token = exec("gh", ["auth", "token", "--user", account, "-h", target.hostname], {
+                            cwd: workspaceRoot,
+                            env: buildGitHubKeyringEnv(),
+                        });
                         if (nonempty(token)) {
-                            tokenOverrides.GH_TOKEN = token;
-                            tokenOverrides.GITHUB_TOKEN = token;
+                            resolvedPushToken = token;
                         }
                     } catch {
                         // Fall back to ambient auth.
                     }
                 }
+                const tokenOverrides = buildGitHubTokenOverrides(target.hostname, resolvedPushToken);
                 const gitEnv = buildNormalizedProcessEnv(process.env, tokenOverrides);
                 assertNoStagedLocalSdkConfiguration(repoRoot, exec);
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, {

@@ -653,6 +653,61 @@ test("mixed local compile and deferred lint/device tasks cannot produce a passed
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("workspace verification expands Windows %LOCALAPPDATA% SDK paths and routes sibling-Common Gradle tasks when nested common submodule is uninitialized", () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "sibling-common-workspace-"));
+    try {
+        const sdkDir = path.join(workspace, "fake-localappdata", "Android", "Sdk");
+        const brokerDir = path.join(workspace, "broker");
+        const emptyNestedCommon = path.join(brokerDir, "common");
+        const siblingCommonModule = path.join(workspace, "common", "common");
+        const javaCompleteDir = path.join(workspace, "java-complete");
+        mkdirSync(sdkDir, { recursive: true });
+        mkdirSync(emptyNestedCommon, { recursive: true });
+        mkdirSync(siblingCommonModule, { recursive: true });
+        mkdirSync(javaCompleteDir, { recursive: true });
+        writeFileSync(path.join(workspace, "settings.gradle"), "include(':AADAuthenticator', ':common')\n");
+        writeFileSync(path.join(workspace, "gradlew.bat"), "");
+        writeFileSync(path.join(workspace, "gradlew"), "");
+        writeFileSync(path.join(siblingCommonModule, "build.gradle"), "");
+        writeFileSync(path.join(javaCompleteDir, "gradlew.bat"), "");
+        writeFileSync(path.join(javaCompleteDir, "gradlew"), "");
+        writeFileSync(path.join(brokerDir, ".gitmodules"), '[submodule "common"]\n\tpath = common\n');
+        writeFileSync(path.join(brokerDir, "settings.gradle"), "include(':AADAuthenticator', ':common', ':broker4j')\n");
+        writeFileSync(path.join(brokerDir, "gradlew.bat"), "");
+        writeFileSync(path.join(brokerDir, "gradlew"), "");
+
+        const recorded = [];
+        const gate = runLocalVerificationGate({
+            repoRoot: brokerDir,
+            target: {
+                id: "broker-throttling",
+                repository: "broker",
+                localPath: "broker",
+                verificationCommands: [
+                    ".\\gradlew.bat :AADAuthenticator:testLocalDebugUnitTest",
+                    ".\\gradlew.bat :broker4j:test",
+                ],
+            },
+            environment: {
+                ...process.env,
+                LOCALAPPDATA: path.join(workspace, "fake-localappdata"),
+                ANDROID_HOME: "%LOCALAPPDATA%\\Android\\Sdk",
+            },
+            exec: (_cmd, args, opts) => {
+                recorded.push({ cwd: opts.cwd, args, androidHome: opts.env.ANDROID_HOME });
+                return "";
+            },
+        });
+        assert.deepEqual(gate.errors, []);
+        assert.equal(recorded.length, 2);
+        assert.equal(recorded[0].cwd, workspace);
+        assert.equal(recorded[1].cwd, javaCompleteDir);
+        assert.equal(recorded[0].androidHome, sdkDir);
+    } finally {
+        rmSync(workspace, { recursive: true, force: true });
+    }
+});
+
 test("delivery status never promotes pending, failed, unknown, exhausted, or unpublished CI to GO", () => {
     const prs = [{ url: prUrl }];
     assert.equal(deliveryOutcome(prs, []), "ci-not-observed");
@@ -677,63 +732,79 @@ test("CI evidence requires successful current-head checks and retains precise fa
     assert.equal(ciEvidenceFromSnapshot(snapshot({ prBuilds: [{ status: "completed", result: "partiallySucceeded" }] })).status, "failed");
 });
 
+function mockedObserverGit(command, args) {
+    if (command === "git" && args[0] === "remote" && args[1] === "get-url") {
+        return "https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git";
+    }
+    if (command === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return "feature";
+    return "";
+}
+
 test("exhausted observer returns final CI failures and never exceeds its two-repair ceiling", async () => {
-    const repair = { verdict: "pass", summary: "Fixed test", evidence: ["FooTest.kt"] };
-    const context = ctx([repair, passedReview, repair, passedReview], { pushRepairs: false });
-    let reads = 0;
-    const result = await runPrObserver(context, {
-        exec: () => "",
-        fetchPrSnapshot: () => snapshot({ headRefOid: String(++reads).repeat(40), prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["FooTest.kt:12 Unresolved reference"] }] }] }),
-    });
-    assert.equal(result.status, "max-iterations-reached");
-    assert.equal(result.iterations, 2);
-    assert.equal(context.calls.filter((call) => call.opts.agent === BUILDER_AGENT).length, 2);
-    assert.equal(result.ci.status, "failed");
-    assert.ok(result.evidence.some((line) => line.includes("Unresolved reference")));
-    assert.ok(result.actionableFindings.length);
-    assert.equal(result.continuation.workflow, "pr-observer");
+    const root = mkdtempSync(path.join(os.tmpdir(), "observer-ceiling-"));
+    try {
+        mkdirSync(path.join(root, "common", ".git"), { recursive: true });
+        const repair = { verdict: "pass", summary: "Fixed test", evidence: ["FooTest.kt"] };
+        const context = ctx([repair, passedReview, repair, passedReview], { workspaceRoot: root, pushRepairs: false });
+        let reads = 0;
+        const result = await runPrObserver(context, {
+            exec: mockedObserverGit,
+            fetchPrSnapshot: () => snapshot({ headRefOid: String(++reads).repeat(40), prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["FooTest.kt:12 Unresolved reference"] }] }] }),
+        });
+        assert.equal(result.status, "max-iterations-reached");
+        assert.equal(result.iterations, 2);
+        assert.equal(context.calls.filter((call) => call.opts.agent === BUILDER_AGENT).length, 2);
+        assert.equal(result.ci.status, "failed");
+        assert.ok(result.evidence.some((line) => line.includes("Unresolved reference")));
+        assert.ok(result.actionableFindings.length);
+        assert.equal(result.continuation.workflow, "pr-observer");
+    } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("repair messages distinguish an unchanged pushed head from a real source commit", async () => {
-    for (const disposition of ["unchanged", "changed", "unconfirmed"]) {
-        const changed = disposition === "changed";
-        const originalHead = "a".repeat(40);
-        const pushedHead = changed ? "b".repeat(40) : originalHead;
-        const repair = { verdict: "pass", summary: changed ? "Fixed the reported test." : "No source changes are warranted.", evidence: [] };
-        const context = ctx([repair, passedReview], { maxIterations: 1, pushRepairs: true });
-        const logs = [];
-        const commands = [];
-        context.log = (text) => logs.push(text);
-        context.step = async (key, producer) => {
-            const result = await producer();
-            return /-push-repair-\d+$/.test(key)
-                ? { ...result, pushedSha: disposition === "unconfirmed" ? "" : pushedHead } : result;
-        };
-        let reads = 0;
-        const result = await runPrObserver(context, {
-            exec: (command, args) => { commands.push({ command, args }); return ""; },
-            fetchPrSnapshot: () => ++reads === 1
-                ? snapshot({ headRefOid: originalHead, prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["FooTest.kt:12 Unresolved reference"] }] }] })
-                : snapshot({ headRefOid: pushedHead }),
-        });
-        const milestones = logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
-        const assessed = milestones.find((item) => /-authored$/.test(item.id));
-        const pushed = milestones.find((item) => /-pushed$/.test(item.id));
-        assert.doesNotMatch(assessed.summary, /Repair authored/);
-        assert.ok(commands.some(({ command, args }) => command === "git" && args.includes("push")));
-        assert.equal(context.calls.length, 2);
-        assert.equal(result.ci.headSha, pushedHead);
-        if (changed) {
-            assert.match(pushed.summary, /Repair pushed/);
-            assert.doesNotMatch(pushed.summary, /unchanged/);
-        } else if (disposition === "unchanged") {
-            assert.match(pushed.summary, /Push completed.*source head is unchanged/);
-            assert.doesNotMatch(pushed.title + pushed.summary, /Repair pushed|repair .* pushed/i);
-        } else {
-            assert.match(pushed.summary, /resulting source head could not be confirmed/);
-            assert.doesNotMatch(pushed.summary, /Repair pushed|source head is unchanged/);
+    const root = mkdtempSync(path.join(os.tmpdir(), "observer-milestones-"));
+    try {
+        mkdirSync(path.join(root, "common", ".git"), { recursive: true });
+        for (const disposition of ["unchanged", "changed", "unconfirmed"]) {
+            const changed = disposition === "changed";
+            const originalHead = "a".repeat(40);
+            const pushedHead = changed ? "b".repeat(40) : originalHead;
+            const repair = { verdict: "pass", summary: changed ? "Fixed the reported test." : "No source changes are warranted.", evidence: [] };
+            const context = ctx([repair, passedReview], { workspaceRoot: root, maxIterations: 1, pushRepairs: true });
+            const logs = [];
+            const commands = [];
+            context.log = (text) => logs.push(text);
+            context.step = async (key, producer) => {
+                const result = await producer();
+                return /-push-repair-\d+$/.test(key)
+                    ? { ...result, pushedSha: disposition === "unconfirmed" ? "" : pushedHead } : result;
+            };
+            let reads = 0;
+            const result = await runPrObserver(context, {
+                exec: (command, args) => { commands.push({ command, args }); return mockedObserverGit(command, args); },
+                fetchPrSnapshot: () => ++reads === 1
+                    ? snapshot({ headRefOid: originalHead, prBuilds: [{ id: 77, status: "completed", result: "failed", failedTasks: [{ name: "Compile", excerpt: ["FooTest.kt:12 Unresolved reference"] }] }] })
+                    : snapshot({ headRefOid: pushedHead }),
+            });
+            const milestones = logs.map((text) => milestoneFromProgress({ kind: "log", text })).filter(Boolean);
+            const assessed = milestones.find((item) => /-authored$/.test(item.id));
+            const pushed = milestones.find((item) => /-pushed$/.test(item.id));
+            assert.doesNotMatch(assessed.summary, /Repair authored/);
+            assert.ok(commands.some(({ command, args }) => command === "git" && args.includes("push")));
+            assert.equal(context.calls.length, 2);
+            assert.equal(result.ci.headSha, pushedHead);
+            if (changed) {
+                assert.match(pushed.summary, /Repair pushed/);
+                assert.doesNotMatch(pushed.summary, /unchanged/);
+            } else if (disposition === "unchanged") {
+                assert.match(pushed.summary, /Push completed.*source head is unchanged/);
+                assert.doesNotMatch(pushed.title + pushed.summary, /Repair pushed|repair .* pushed/i);
+            } else {
+                assert.match(pushed.summary, /resulting source head could not be confirmed/);
+                assert.doesNotMatch(pushed.summary, /Repair pushed|source head is unchanged/);
+            }
         }
-    }
+    } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("embedded observer stages only repair files, preserves local SDK config and publishes its deletion", async () => {

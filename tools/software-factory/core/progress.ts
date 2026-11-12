@@ -1,0 +1,228 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+
+import { exactKeys, FactoryError, object, text, type Feature } from "./contracts.ts";
+import type { ChatProgress, Execution, FactoryFeature, FactoryState, GatePreview, Json, ProgressInput, Stage, WorkflowKind } from "./lifecycle-contracts.ts";
+
+export const workflowLabels: Record<WorkflowKind, string> = {
+    intake: "Draft success criteria", design: "Create design", plan: "Create implementation plan",
+    implement: "Implement and review code", lifecycle: "Retired delivery workflow", monitor: "Check delivery", check: "Runtime check",
+};
+export const stageLabels = ["Define success", "Design", "Plan", "Backlog", "Implementation", "Verify & finish"];
+export interface ActivityEntry { id: string; createdAt: string; title: string; detail: string; source: string }
+export interface AvailableGate extends Partial<GatePreview> { stage: Stage; available: boolean; reason?: string }
+export interface NextStep {
+    stage: number; title: string; description: string;
+    action?: { label: string; target?: "edit" | "suggestions" | "runs"; command?: Record<string, unknown> };
+    run?: Execution; gate?: AvailableGate; failed?: boolean; report?: ChatProgress;
+}
+
+function record(value: Json | undefined) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+export function parseProgress(input: unknown): ProgressInput {
+    const value = object(input, "Progress update");
+    exactKeys(value, ["stage", "status", "summary", "expectedOutput", "nextStep", "question"], "Progress update");
+    const stages: ProgressInput["stage"][] = ["intake", "research", "design", "plan", "delivery", "monitor"];
+    const statuses: ProgressInput["status"][] = ["working", "waiting_for_user", "blocked", "idle"];
+    const stage = stages.find((entry) => entry === value.stage);
+    const status = statuses.find((entry) => entry === value.status);
+    if (!stage || !status) throw new FactoryError("invalid_progress", "Choose a known stage and descriptive working/waiting/blocked/idle status.");
+    const bounded = (input: unknown, label: string) => {
+        const content = text(input, label);
+        if (content.length > 2000) throw new FactoryError("invalid_progress", `${label} must be concise (at most 2000 characters).`);
+        return content;
+    };
+    const progress: ProgressInput = {
+        stage, status, summary: bounded(value.summary, "Current work"),
+        expectedOutput: bounded(value.expectedOutput, "Expected output"), nextStep: bounded(value.nextStep, "Next step"),
+    };
+    if (status === "waiting_for_user") {
+        const question = object(value.question, "Question and rationale");
+        exactKeys(question, ["text", "whyNeeded", "recommendation"], "Question");
+        progress.question = {
+            text: bounded(question.text, "Question"), whyNeeded: bounded(question.whyNeeded, "Why this needs the user"),
+            recommendation: bounded(question.recommendation, "Recommendation"),
+        };
+    } else if (value.question !== undefined) throw new FactoryError("invalid_progress", "Only a waiting-for-user update may contain a current question.");
+    return progress;
+}
+
+export function currentChatProgress(feature: Feature, state: FactoryState): ChatProgress | null {
+    const progress = state.progress.filter((entry) => entry.requirementsRevision === feature.current.id).at(-1);
+    if (!progress || state.cancelled || state.completed?.revision === feature.current.id ||
+        progress.auditSequence !== feature.audit.at(-1)?.sequence || progress.decisionId !== (state.decisions.at(-1)?.id || null)) return null;
+    return progress;
+}
+
+export function featureActivity(feature: Feature, state: FactoryState): ActivityEntry[] {
+    const channel = (kind?: string) => kind === "chat" ? "Copilot chat" : kind === "web" ? "Web UI" : "Workflow";
+    const entries = feature.audit.map((event) => {
+        const revision = feature.history.find((entry) => entry.id === event.revisionId);
+        const title = event.kind === "feature_created" ? "Feature captured" : event.kind === "requirements_revised" ? "Brief and criteria updated" : "Approved for design";
+        return { id: `audit:${event.sequence}`, createdAt: event.createdAt, title, source: channel(event.actor.channel),
+            detail: revision ? [`Revision ${revision.number}`, revision.description || "", ...revision.requirements.map((entry) => entry.text),
+                ...revision.blockingUnknowns.map((question) => `Open question: ${question}`)].filter(Boolean).join("\n") : "" };
+    });
+    for (const progress of state.progress) {
+        entries.push({ id: progress.id, createdAt: progress.createdAt,
+            title: `${progress.stage === "research" ? "Research" : workflowLabels[progress.stage === "delivery" ? "implement" : progress.stage]}: ${progress.status.replaceAll("_", " ")}`,
+            source: channel(progress.actor.channel),
+            detail: [progress.summary, `Expected output: ${progress.expectedOutput}`, `Next: ${progress.nextStep}`,
+                ...(progress.question ? [`Question: ${progress.question.text}`, `Why: ${progress.question.whyNeeded}`, `Recommendation: ${progress.question.recommendation}`] : [])].join("\n") });
+    }
+    for (const event of state.events) {
+        const execution = state.executions.find((entry) => entry.id === event.reference);
+        const decision = state.decisions.find((entry) => entry.id === event.reference);
+        const artifact = state.artifacts.find((entry) => entry.id === event.reference);
+        const status = event.kind === "workflow_requested" ? "requested" : event.message?.match(/^\w+: (\w+) - /)?.[1];
+        entries.push({
+            id: event.id, createdAt: event.createdAt,
+            title: execution ? `${workflowLabels[execution.kind]}${status ? `: ${status === "error" ? "failed" : status}` : ""}` : artifact ? `${artifact.kind === "intake" ? "Draft suggestions" : artifact.kind} saved`
+                : event.kind.replaceAll("_", " "),
+            source: channel(event.actor?.channel || decision?.actor.channel || execution?.requestedBy?.channel ||
+                (execution?.parentSessionId ? "chat" : undefined)),
+            detail: event.message || (execution ? `Workflow requested${execution.error ? `\n${execution.error}` : ""}.` : ""),
+        });
+    }
+    for (const execution of state.executions) {
+        if (state.events.some((event) => event.reference === execution.id && event.kind === "workflow_progress")) continue;
+        if (execution.status === "starting") continue;
+        entries.push({ id: `run:${execution.id}`, createdAt: execution.updatedAt, title: `${workflowLabels[execution.kind]}: ${execution.status}`,
+            detail: execution.error || execution.phase, source: channel(execution.requestedBy?.channel || (execution.parentSessionId ? "chat" : undefined)) });
+    }
+    return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextStep {
+    const state = feature.factory;
+    const command = (kind: string, extra: Record<string, unknown> = {}) => ({ kind, featureId: feature.id, ...extra });
+    const start = (workflow: WorkflowKind, label: string) => ({ label, command: command("start_workflow", { workflow }) });
+    const currentRuns = state.executions.filter((run) => run.requirementsRevision === feature.current.id && run.status !== "superseded");
+    const active = currentRuns.findLast((run) => ["starting", "running", "paused"].includes(run.status));
+    const latest = currentRuns.at(-1);
+    const report = feature.currentProgress;
+    const stage = feature.currentArtifacts.plan ? state.operations.some((op) => op.kind === "dispatch" && op.status === "completed") ? 4 : 2
+        : feature.currentArtifacts.design || feature.status === "ready_for_design" ? 1 : 0;
+    if (feature.recovery) return {
+        stage, title: "Shared completion needs reconciliation", description: feature.recovery.message, failed: true,
+        action: { label: "Review shared completion recovery", command: feature.recovery.command },
+    };
+    if (feature.configurationMismatch) return {
+        stage, title: "Shared source scope needs review", description: feature.configurationMismatch.message, failed: true,
+        action: { label: "Review shared reference sources", command: feature.configurationMismatch.command },
+    };
+    if (state.cancelled) return { stage, title: "Feature cancelled", description: "History is preserved. Remote work was not cancelled or deleted." };
+    if (feature.shared?.lock && !active) return { stage, title: "Shared operation needs attention",
+        description: `${feature.shared.lock.actor.displayName} owns ${feature.shared.lock.kind}. Inspect that run or operation before explicitly releasing its claim. No automatic takeover is allowed.` };
+    if (feature.lifecycleStatus === "completed") return { stage: 5, title: "Feature delivered", description: "Delivery evidence and the completion decision are saved." };
+    if (active && ["starting", "running"].includes(active.status)) return {
+        stage: active.kind === "intake" ? 0 : stage, title: /owning Factory runtime/.test(active.phase) ? "Waiting for the owning runtime"
+            : /owning Copilot chat/.test(active.phase) || feature.sessionOwnerOnline === false ? "Waiting for the owning chat"
+            : active.kind === "intake" ? "Factory is drafting your criteria" : "Work in progress",
+        description: feature.sessionOwnerOnline === false
+            ? `The original chat controller is offline. Reconnect that chat to inspect/continue its run. Last saved phase: ${active.phase}. No replacement was started.`
+            : `${active.requestedBy?.channel === "chat" || active.parentSessionId ? "Started in Copilot chat. " : ""}${active.phase}. Updates appear here automatically.`,
+        run: active, action: { label: "View run details", target: "runs" },
+    };
+    if (!active && report && report.status !== "idle" && (!latest || report.createdAt > latest.updatedAt)) {
+        const reportStage = { intake: 0, research: 0, design: 1, plan: 2, delivery: 4, monitor: 5 }[report.stage];
+        return { stage: reportStage, title: report.status === "waiting_for_user" ? "Chat is waiting for your decision"
+            : report.status === "blocked" ? "Chat reported a blocker" : `Chat update: ${report.stage === "research" ? "research and scope" : report.stage}`,
+            description: report.summary, report };
+    }
+    if (latest?.status === "error" && !active) return {
+        stage: latest.kind === "intake" ? 0 : stage, title: `${workflowLabels[latest.kind]} failed`,
+        description: latest.error || "The workflow failed. No success is assumed.", failed: true, run: latest,
+        action: latest.runtimeId ? { label: "Inspect and recover run", target: "runs" } : start(latest.kind, "Try again"),
+    };
+    if (feature.status !== "ready_for_design") {
+        if (feature.currentArtifacts.intake) return { stage: 0, title: "Review Factory's suggestions", description: "Edit the proposed checklist, then save your chosen criteria. Approval stays separate.",
+            action: { label: "Review and edit suggestions", target: "suggestions" } };
+        if (feature.current.blockingUnknowns.length) return { stage: 0, title: "Review the remaining scope decisions", description: "Only genuine scope choices should block design. Engineering work belongs in design tasks for the agents to resolve.",
+            action: { label: "Review scope decisions", target: "edit" } };
+        if (!feature.current.requirements.length) return { stage: 0, title: "Let's define what done looks like", description: "Factory can propose a short checklist from your brief, or you can write it yourself. AI drafting asks for confirmation first.",
+            action: start("intake", "Draft success criteria with Factory") };
+        if (!feature.shared) return { stage: 0, title: "Publish this draft for team review", description: "Choose an ADO Feature above. Publishing creates a shared successor; local historical approvals are not transferred." };
+        return { stage: 0, title: "Review your brief and success criteria", description: "Check the saved scope below, then approve it for design. Approval does not start AI work." };
+    }
+    const order: Stage[] = ["design", "plan", "backlog", "dispatch", "complete"];
+    if (active?.status === "paused") {
+        const gate = order.map((name) => gates.find((entry) => entry.stage === name)).find((entry) =>
+            entry?.available && !entry.approved && active.phase.toLowerCase().includes(entry.stage));
+        if (gate) return { stage: order.indexOf(gate.stage) + 1, title: `Review ${gate.stage === "complete" ? "completion" : gate.stage} before continuing`,
+            description: gate.ready ? "Review the full output and the exact action below. Approval does not resume the run automatically." : gate.blockers?.join(" ") || gate.reason || "This step is blocked.",
+            gate, run: active };
+        return { stage, title: "Ready to continue", description: "This run is paused. Continuing uses its original native journal and asks for execution consent.",
+            run: active, action: { label: "Continue workflow", command: command("control_run", { executionId: active.id, action: "resume" }) } };
+    }
+    if (!feature.currentArtifacts.design) return { stage: 1, title: "Ready, not running.", description: "Your criteria are approved. Start design when you are ready; it uses Copilot usage.", action: start("design", "Run guarded design") };
+    const design = gates.find((entry) => entry.stage === "design");
+    if (design?.available && !design.approved) {
+        return {
+            stage: 1,
+            title: design.ready ? "Review the design" : "Design needs another pass",
+            description: design.ready ? "Read the design and independent findings before deciding." : (design.blockers?.join(" ") || "Resolve the reported design gaps and run guarded design again."),
+            gate: design,
+            ...(!design.ready ? { action: start("design", "Run guarded design") } : {}),
+        };
+    }
+    if (!feature.currentArtifacts.plan) return { stage: 2, title: "Turn the design into a plan", description: "Factory will propose repository-specific work items and end for human review. No backlog is created.", action: start("plan", "Create implementation plan") };
+    const backlog = gates.find((entry) => entry.stage === "backlog" && entry.approved && entry.ready);
+    const plan = state.artifacts.find((entry) => entry.id === feature.currentArtifacts.plan);
+    const planned = plan?.content && typeof plan.content === "object" && !Array.isArray(plan.content) ? plan.content.items : null;
+    if (backlog && Array.isArray(planned) && state.operations.filter((op) => op.planId === plan!.id && op.kind === "links" && op.status === "completed").length < planned.length) {
+        return { stage: 3, title: "Create the approved backlog", description: "Create and verify the approved ADO items and dependency links. No agent or coding task starts.",
+            action: { label: "Create approved backlog", command: command("create_backlog") } };
+    }
+    const gate = order.slice(1).map((name) => gates.find((entry) => entry.stage === name)).find((entry) => entry?.available && !entry.approved && (entry.ready || ["plan", "backlog"].includes(entry.stage)));
+    if (gate) return { stage: order.indexOf(gate.stage) + 1, title: gate.ready ? `Review ${gate.stage === "complete" ? "completion" : gate.stage}` : `Resolve ${gate.stage} blockers`,
+        description: gate.ready ? "Inspect the exact scope before approving. Remote changes need their own approval." : gate.blockers?.join(" ") || gate.reason || "This step needs your input.", gate };
+    const wave = gates.find((entry) => entry.stage === "dispatch" && entry.approved && entry.ready);
+    if (wave) return { stage: 4, title: "Dispatch the approved work", description: "This creates coding tasks for the approved dependency-ready wave. No PR is merged automatically.",
+        action: { label: "Dispatch approved work", command: command("dispatch_work") } };
+    const dispatch = state.decisions.filter((entry) => entry.stage === "dispatch" && entry.targetId === plan?.id).at(-1);
+    const scope = record(dispatch?.scope);
+    const delivery = record(scope?.delivery);
+    if (dispatch?.approved && delivery?.mode === "local") {
+        const implementation = state.artifacts.findLast((artifact) => artifact.kind === "implementation" &&
+            artifact.parentId === plan?.id && artifact.requirementsRevision === feature.current.id &&
+            artifact.configurationId === scope?.configurationId);
+        const items = record(implementation?.content)?.items;
+        if (Array.isArray(items) && items.some((entry) => {
+            const item = record(entry);
+            return item?.mode === "local" && ["waiting-for-ci", "awaiting-human-review"].includes(String(item.observerStatus));
+        })) return {
+            stage: 4, title: "Published PRs await CI or human review",
+            description: "Source review and publication are saved. Continue these same PRs under the saved dispatch authority, including remaining autonomous observer repairs where approved. The original implementation and PR creation are not restarted.",
+            action: { label: "Refresh published PRs", command: command("start_workflow", { workflow: "implement", mode: "local" }) },
+        };
+    }
+    if (dispatch?.approved && delivery?.mode === "remote" && Array.isArray(scope?.eligible) && scope.eligible.length) {
+        const ids = scope.eligible.map((entry) => record(entry)?.id);
+        const dispatched = ids.every((id) => typeof id === "string" && state.operations.some((operation) =>
+            operation.planId === plan?.id && operation.itemId === id && operation.kind === "dispatch" &&
+            operation.status === "completed" && operation.dispatchMode === "remote"));
+        if (dispatched) {
+            const savedItems = state.artifacts.filter((artifact) => artifact.kind === "implementation" &&
+                artifact.parentId === plan?.id && artifact.requirementsRevision === feature.current.id &&
+                artifact.configurationId === scope.configurationId)
+                .flatMap((artifact) => {
+                    const items = record(artifact.content)?.items;
+                    return Array.isArray(items) ? items.map(record).filter((item) => item !== null) : [];
+                });
+            const statuses = ids.map((id) => savedItems.findLast((item) => item.itemId === id && item.mode === "remote")?.status);
+            if (statuses.includes("review_limit_reached")) return {
+                stage: 4, title: "Remote review needs attention",
+                description: "The current PR was not reviewed before the round limit. Inspect the saved history and decide how to proceed; no review starts automatically.",
+                action: { label: "Inspect review history", target: "runs" },
+            };
+            if (statuses.some((status) => status !== "review_passed")) return {
+                stage: 4, title: "Review available remote PRs",
+                description: "When PRs or updated heads are available, separately confirm an independent review. It can use Copilot credits and post feedback.",
+                action: { label: "Review remote PRs", command: command("start_workflow", { workflow: "implement", mode: "remote" }) },
+            };
+        }
+    }
+    return { stage: 4, title: "Track implementation and delivery", description: "Check work items, PRs and acceptance criteria. Missing evidence stays visible; nothing merges automatically.", action: start("monitor", "Check delivery status") };
+}

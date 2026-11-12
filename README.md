@@ -12,12 +12,22 @@ unit tests, and lint. Device/UI and optional-project checks are separate.
 
 ## AI-Driven Feature Development
 
-This repo supports an AI-driven development pipeline powered by GitHub Copilot agents. Design, plan, create work items, dispatch to coding agents, and monitor PRs — all from VS Code.
+Software Factory supports AI-driven feature development through native Copilot
+Dynamic Workflows from Copilot app chat, Copilot CLI chat, or an optional local UI.
 
-**Get started**: See the [AI Driven Development Guide](AI%20Driven%20Development%20Guide.md) for full instructions, or run:
+**Get started**: See [Software Factory](tools/software-factory/README.md), or install
+the shared core without the optional frontend:
 ```powershell
-.\scripts\setup-ai-orchestrator.ps1
+.\tools\software-factory\install.ps1
 ```
+
+The shared core covers requirements, guarded design, reviewed planning, separate
+backlog/dispatch approvals, provider operations, monitoring, and native recovery.
+See the [implementation plan](docs/software-factory-implementation-plan.md).
+See the [migration guide](AI%20Driven%20Development%20Guide.md) for retired
+Feature Orchestrator entry points. The Software Factory guide includes the new
+VS Code MCP adapter setup and its host-acceptance limits; the retired extension
+is not a fallback.
 
 ## Pre-requisites
 

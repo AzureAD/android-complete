@@ -37,6 +37,8 @@ import {
     applyPrerequisiteAnswers,
     applyTargetFiles,
     buildAdoPullRequestPublicationScript,
+    buildGitHubKeyringEnv,
+    buildGitHubTokenOverrides,
     buildInspectedFilesContext,
     buildNormalizedProcessEnv,
     capturePreBuilderBaselineBackups,
@@ -264,6 +266,17 @@ test("missing, stale, or incomplete task approval requires clarification without
         assert.equal(ctx.calls.length, 0);
         assert.equal(result.pullRequests.length, 0);
     }
+});
+
+test("an explicit zero correction allowance never silently grants two fix rounds", async () => {
+    const rejected = review();
+    rejected.criteria[0].pass = false;
+    const ctx = context([evidence(), implementation(), rejected], task(), { maxFixIterations: 0 });
+    const result = await runCodeFeature(ctx);
+    assert.equal(result.recommendation, "NO-GO");
+    assert.equal(result.fixIterations, 0);
+    assert.equal(result.maxFixIterations, 0);
+    assert.equal(ctx.calls.filter((call) => call.options.agent === BUILDER_AGENT).length, 1);
 });
 
 function assertWorkflowJson(value, location = "$") {
@@ -1970,6 +1983,35 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
             },
         });
         assert.equal(readFileSync(path.join(tempDiffRoot, "Dirty.kt"), "utf8"), "package test\n// human edit\n");
+
+        const keyringEnv = buildGitHubKeyringEnv({
+            SystemRoot: "C:\\Windows",
+            Path: "C:\\Program Files\\Git\\cmd",
+            GH_TOKEN: "ambient-emu-token",
+            GITHUB_TOKEN: "ambient-gh-token",
+            GH_ENTERPRISE_TOKEN: "ambient-ghe-token",
+            GITHUB_ENTERPRISE_TOKEN: "ambient-ghe2-token",
+            GH_HOST: "github.com",
+        });
+        assert.equal(keyringEnv.GH_TOKEN, undefined);
+        assert.equal(keyringEnv.GITHUB_TOKEN, undefined);
+        assert.equal(keyringEnv.GH_ENTERPRISE_TOKEN, undefined);
+        assert.equal(keyringEnv.GITHUB_ENTERPRISE_TOKEN, undefined);
+        assert.equal(keyringEnv.GH_HOST, undefined);
+        assert.deepEqual(buildGitHubTokenOverrides("msft.ghe.com", "ghe-tok"), {
+            GH_HOST: "msft.ghe.com",
+            GH_TOKEN: "ghe-tok",
+            GITHUB_TOKEN: "ghe-tok",
+            GH_ENTERPRISE_TOKEN: "ghe-tok",
+            GITHUB_ENTERPRISE_TOKEN: "ghe-tok",
+        });
+        assert.deepEqual(buildGitHubTokenOverrides("github.com", "gh-tok"), {
+            GH_HOST: "github.com",
+            GH_TOKEN: "gh-tok",
+            GITHUB_TOKEN: "gh-tok",
+            GH_ENTERPRISE_TOKEN: undefined,
+            GITHUB_ENTERPRISE_TOKEN: undefined,
+        });
     } finally {
         rmSync(tempDiffRoot, { recursive: true, force: true });
     }
