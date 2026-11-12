@@ -94,6 +94,51 @@ const progressSchema = {
     },
 };
 
+function compactFeatureForChat(feature: unknown): unknown {
+    if (!feature || typeof feature !== "object" || Array.isArray(feature)) return feature;
+    if (Buffer.byteLength(JSON.stringify(feature), "utf8") <= 16_000) return feature;
+    const cloned = structuredClone(feature) as Record<string, unknown>;
+    const currentIds = new Set(
+        cloned.currentArtifacts && typeof cloned.currentArtifacts === "object" && !Array.isArray(cloned.currentArtifacts)
+            ? Object.values(cloned.currentArtifacts as Record<string, unknown>).filter((v): v is string => typeof v === "string")
+            : [],
+    );
+    const factory = cloned.factory && typeof cloned.factory === "object" && !Array.isArray(cloned.factory)
+        ? cloned.factory as Record<string, unknown>
+        : null;
+    if (factory && Array.isArray(factory.executions)) {
+        for (const exec of factory.executions) {
+            if (exec && typeof exec === "object" && !Array.isArray(exec) && "trace" in exec) {
+                const traceArr = Array.isArray((exec as { trace?: unknown }).trace) ? (exec as { trace: unknown[] }).trace : [];
+                delete (exec as Record<string, unknown>).trace;
+                (exec as Record<string, unknown>).traceCount = traceArr.length;
+            }
+        }
+    }
+    if (factory && Array.isArray(factory.artifacts)) {
+        for (const art of factory.artifacts) {
+            if (!art || typeof art !== "object" || Array.isArray(art)) continue;
+            const rec = art as Record<string, unknown>;
+            const isCurrent = typeof rec.id === "string" && currentIds.has(rec.id);
+            const content = rec.content;
+            if (!content || typeof content !== "object" || Array.isArray(content)) continue;
+            const body = content as Record<string, unknown>;
+            if (!isCurrent) {
+                rec.content = {
+                    summarizedForChat: true,
+                    ...(body.recommendation !== undefined ? { recommendation: body.recommendation } : {}),
+                    ...(Array.isArray(body.reasons) ? { reasons: body.reasons } : {}),
+                };
+            } else {
+                for (const heavyKey of ["evidence", "availableEvidence", "referenceDiscoveries", "reviews", "reviewHistory", "codeFeature"]) {
+                    if (heavyKey in body) delete body[heavyKey];
+                }
+            }
+        }
+    }
+    return cloned;
+}
+
 function schema(properties: Record<string, unknown>) {
     return { type: "object", additionalProperties: false, required: Object.keys(properties), properties };
 }
@@ -375,19 +420,25 @@ export function createChatTools(
             name: "software_factory_list_features",
             description: "List this project's Software Factory features, exact requirements revisions, approvals, and history from the shared registry.",
             parameters: schema({}),
-            handler: async () => ({ project: application().registry.project, features: await application().features() }),
+            handler: async () => ({ project: application().registry.project, features: (await application().features()).map(compactFeatureForChat) }),
         },
         {
             name: "software_factory_get_feature",
             description: "Read the current conversational stage, expected output, pending question/rationale, native runs, requirements, artifacts, history and approvals. Feature IDs, not titles, identify features.",
             parameters: schema({ featureId: string }),
-            handler: (args) => application().feature(text(object(args, "Arguments").featureId, "Feature ID")),
+            handler: async (args) => compactFeatureForChat(await application().feature(text(object(args, "Arguments").featureId, "Feature ID"))),
         },
         {
             name: "software_factory_report_progress",
             description: "Record the current conversational stage, work summary, expected output and next step so chat and dashboard stay understandable. Before asking the user, record waiting_for_user with the question, why it requires a human and your recommendation. Descriptive only: never starts work, changes requirements, approves or advances gates. Use the current revision and a stable retry requestId.",
             parameters: schema({ featureId: string, expectedRevision: string, requestId: string, progress: progressSchema }),
-            handler: (args, invocation) => command({ ...object(args, "Arguments"), kind: "report_progress" }, invocation),
+            handler: async (args, invocation) => {
+                const res = await command({ ...object(args, "Arguments"), kind: "report_progress" }, invocation);
+                if (res && typeof res === "object" && "feature" in res) {
+                    return { ...res, feature: compactFeatureForChat((res as { feature: unknown }).feature) };
+                }
+                return res;
+            },
         },
         {
             name: "software_factory_create_feature",

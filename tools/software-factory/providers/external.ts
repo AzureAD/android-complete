@@ -1087,8 +1087,19 @@ export class ExternalProvider implements Provider {
         for (const [key, repo] of Object.entries(config.referenceRepositories || {})) {
             referenceRepositories.push(await this.verifyRepositoryTarget(key, repo));
         }
-        const boards = config.boards.organization && config.boards.project && config.boards.workItemType
-            ? await this.ado(config.boards.organization, config.boards.project, `wit/workitemtypes/${segment(config.boards.workItemType)}`)
+        const rawBoards = config.boards.organization && config.boards.project && config.boards.workItemType
+            ? object(await this.ado(config.boards.organization, config.boards.project, `wit/workitemtypes/${segment(config.boards.workItemType)}`), "ADO work item type")
+            : null;
+        const boards = rawBoards
+            ? {
+                verified: true,
+                organization: config.boards.organization,
+                project: config.boards.project,
+                workItemType: config.boards.workItemType,
+                ...(typeof rawBoards.name === "string" ? { name: rawBoards.name } : {}),
+                ...(typeof rawBoards.referenceName === "string" ? { referenceName: rawBoards.referenceName } : {}),
+                ...(typeof rawBoards.isDisabled === "boolean" ? { isDisabled: rawBoards.isDisabled } : {}),
+            }
             : { status: "not_configured", reason: "Repository-only design is available; configure board targets before backlog creation." };
         return jsonValue({
             repositories,
