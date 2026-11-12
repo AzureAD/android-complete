@@ -39,6 +39,8 @@ param(
     [string]$SignalPromotionsFile = ""
 )
 
+. (Join-Path $PSScriptRoot "rule-attribution.ps1")
+
 $rawData = Get-Content "$OutputDir\raw_results.json" | ConvertFrom-Json
 $preciseData = Get-Content "$OutputDir\precise.json" | ConvertFrom-Json
 
@@ -127,6 +129,7 @@ foreach ($item in $rawData) {
     $repo = $item.Repo
     $prNum = $item.PRNumber
     $filePath = $item.FilePath
+    $attribution = Get-MemoryStorageReviewMetadata -Body $item.CommentBody
     $replied = $item.HasReply -eq $true
     $verdict = "unknown"
 
@@ -209,6 +212,8 @@ foreach ($item in $rawData) {
         PRNumber        = $prNum
         PRAuthor        = $prAuthor
         CommentId       = $commentId
+        RuleId          = $attribution.RuleId
+        ReviewId        = $item.ReviewId
         FilePath        = $filePath
         Replied         = $replied
         Verdict         = $verdict
@@ -218,7 +223,7 @@ foreach ($item in $rawData) {
 }
 
 # Save final results
-$finalResults | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\final_classification.json" -Encoding utf8
+ConvertTo-Json -InputObject @($finalResults) -Depth 5 | Out-File "$OutputDir\final_classification.json" -Encoding utf8
 
 # ========================================
 # VALIDATE TOTALS  (canonical taxonomy: helpful | declined | incorrect | unresolved | unknown)
@@ -296,6 +301,45 @@ if ($gateErrors.Count -gt 0) {
 }
 Write-Host "Self-consistency gate PASSED (overall = per-repo = per-engineer; all buckets reconcile)." -ForegroundColor Green
 
+# Rule attribution counts distinct posted comments, not unique underlying defects.
+$ruleId = "memory-storage/v1"
+$taggedComments = @($finalResults | Where-Object { $_.RuleId -eq $ruleId } |
+    Group-Object Repo, CommentId | ForEach-Object { $_.Group[0] })
+$screenedReviews = @()
+$summariesFile = Join-Path $OutputDir "review_summaries.json"
+if (Test-Path $summariesFile) {
+    $screenedReviews = @(Get-Content $summariesFile -Raw | ConvertFrom-Json |
+        Where-Object { $_.MemoryStorageScreened -eq $true })
+}
+$rulePRs = @(@($taggedComments) + @($screenedReviews) |
+    Select-Object Repo, PRNumber -Unique | Sort-Object Repo, PRNumber)
+$ruleAttribution = @(
+    foreach ($pr in $rulePRs) {
+        $comments = @($taggedComments | Where-Object { $_.Repo -eq $pr.Repo -and $_.PRNumber -eq $pr.PRNumber })
+        $screens = @($screenedReviews | Where-Object { $_.Repo -eq $pr.Repo -and $_.PRNumber -eq $pr.PRNumber })
+        [PSCustomObject]@{
+            RuleId = $ruleId
+            Repo = $pr.Repo
+            PRNumber = $pr.PRNumber
+            ScreenConfirmed = $screens.Count -gt 0
+            GuidanceRevisions = @($screens | ForEach-Object {
+                if ($_.GuidanceRevision) { $_.GuidanceRevision } else { "unknown" }
+            } | Sort-Object -Unique)
+            TaggedComments = $comments.Count
+            Helpful = @($comments | Where-Object { $_.Verdict -eq "helpful" }).Count
+            Declined = @($comments | Where-Object { $_.Verdict -eq "declined" }).Count
+            Incorrect = @($comments | Where-Object { $_.Verdict -eq "incorrect" }).Count
+            Unresolved = @($comments | Where-Object { $_.Verdict -eq "unresolved" }).Count
+            Unknown = @($comments | Where-Object { $_.Verdict -eq "unknown" }).Count
+            CommentIds = @($comments | ForEach-Object { $_.CommentId })
+            ReviewIds = @($screens | ForEach-Object { $_.ReviewId } | Sort-Object -Unique)
+        }
+    }
+)
+ConvertTo-Json -InputObject $ruleAttribution -Depth 5 |
+    Out-File (Join-Path $OutputDir "rule_attribution.json") -Encoding utf8
+Write-Host "Rule attribution saved to: $OutputDir\rule_attribution.json ($($taggedComments.Count) tagged comments)" -ForegroundColor Cyan
+
 # ========================================
 # PER-ENGINEER STATS
 # ========================================
@@ -344,7 +388,9 @@ foreach ($repoLabel in @("common", "msal", "broker")) {
     $allPRs = Get-Content $prsFile | ConvertFrom-Json
     $humanPRs = ($allPRs | Where-Object { $_.author.login -notin @("app/copilot-swe-agent", "dependabot[bot]", "github-actions[bot]") }).Count
 
-    Write-Host "$($repoLabel.ToUpper()) | $total comments | $prsWithComments/$humanPRs PRs reviewed | Helpful=$helped ($([math]::Round($helped/$total*100,1))%) Incorrect=$notHelped Declined=$declined Unresolved=$unresolvedR | RR=$([math]::Round($replied/$total*100,1))%"
+    $helpfulPct = if ($total -gt 0) { [math]::Round($helped/$total*100,1) } else { 0 }
+    $responsePct = if ($total -gt 0) { [math]::Round($replied/$total*100,1) } else { 0 }
+    Write-Host "$($repoLabel.ToUpper()) | $total comments | $prsWithComments/$humanPRs PRs reviewed | Helpful=$helped ($helpfulPct%) Incorrect=$notHelped Declined=$declined Unresolved=$unresolvedR | RR=$responsePct%"
 }
 
 # ========================================
@@ -355,22 +401,29 @@ Write-Host "================================================================"
 Write-Host "OVERALL RESPONSE BEHAVIOR"
 Write-Host "================================================================"
 Write-Host "Total: $($finalResults.Count)"
-Write-Host "Replied: $totalReplied ($([math]::Round($totalReplied/$finalResults.Count*100,1))%)"
-Write-Host "Ignored: $totalIgnored ($([math]::Round($totalIgnored/$finalResults.Count*100,1))%)"
+$repliedPct = if ($finalResults.Count -gt 0) { [math]::Round($totalReplied/$finalResults.Count*100,1) } else { 0 }
+$ignoredPct = if ($finalResults.Count -gt 0) { [math]::Round($totalIgnored/$finalResults.Count*100,1) } else { 0 }
+Write-Host "Replied: $totalReplied ($repliedPct%)"
+Write-Host "Ignored: $totalIgnored ($ignoredPct%)"
 Write-Host ""
 Write-Host "Of REPLIED ($totalReplied):"
 $repliedHelp = ($finalResults | Where-Object { $_.Replied -and $_.Verdict -eq "helpful" }).Count
 $repliedNot = ($finalResults | Where-Object { $_.Replied -and $_.Verdict -eq "incorrect" }).Count
 $repliedDeclined = ($finalResults | Where-Object { $_.Replied -and $_.Verdict -eq "declined" }).Count
-Write-Host "  Helpful: $repliedHelp ($([math]::Round($repliedHelp/$totalReplied*100,1))%)"
-Write-Host "  Incorrect (Copilot proven wrong): $repliedNot ($([math]::Round($repliedNot/$totalReplied*100,1))%)"
-Write-Host "  Declined (correct/reasonable, engineer declined): $repliedDeclined ($([math]::Round($repliedDeclined/$totalReplied*100,1))%)"
+$repliedHelpPct = if ($totalReplied -gt 0) { [math]::Round($repliedHelp/$totalReplied*100,1) } else { 0 }
+$repliedNotPct = if ($totalReplied -gt 0) { [math]::Round($repliedNot/$totalReplied*100,1) } else { 0 }
+$repliedDeclinedPct = if ($totalReplied -gt 0) { [math]::Round($repliedDeclined/$totalReplied*100,1) } else { 0 }
+Write-Host "  Helpful: $repliedHelp ($repliedHelpPct%)"
+Write-Host "  Incorrect (Copilot proven wrong): $repliedNot ($repliedNotPct%)"
+Write-Host "  Declined (correct/reasonable, engineer declined): $repliedDeclined ($repliedDeclinedPct%)"
 Write-Host ""
 Write-Host "Of IGNORED ($totalIgnored):"
 $ignoredHelp = ($finalResults | Where-Object { -not $_.Replied -and $_.Verdict -eq "helpful" }).Count
 $ignoredUnres = ($finalResults | Where-Object { -not $_.Replied -and $_.Verdict -eq "unresolved" }).Count
-Write-Host "  Helpful (silently applied): $ignoredHelp ($([math]::Round($ignoredHelp/$totalIgnored*100,1))%)"
-Write-Host "  Unresolved (no diff evidence): $ignoredUnres ($([math]::Round($ignoredUnres/$totalIgnored*100,1))%)"
+$ignoredHelpPct = if ($totalIgnored -gt 0) { [math]::Round($ignoredHelp/$totalIgnored*100,1) } else { 0 }
+$ignoredUnresPct = if ($totalIgnored -gt 0) { [math]::Round($ignoredUnres/$totalIgnored*100,1) } else { 0 }
+Write-Host "  Helpful (silently applied): $ignoredHelp ($ignoredHelpPct%)"
+Write-Host "  Unresolved (no diff evidence): $ignoredUnres ($ignoredUnresPct%)"
 
 Write-Host ""
 Write-Host "================================================================"
