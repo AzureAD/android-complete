@@ -20,10 +20,12 @@ does not decide dry-run, the caller does.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import re
 from pathlib import Path
 from urllib.parse import quote
+from tools.executables import decode_cli_output, find_azure_cli
 
 # android-complete root = <root>/release-agent/tools/prs.py -> parents[2]
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,9 +33,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _run(args, cwd=None, timeout=120):
     """Run a command; return (returncode, stdout, stderr). Never raises."""
+    azure_cli = bool(args and args[0] == "az")
+    if azure_cli:
+        executable = find_azure_cli()
+        if executable is None:
+            return 1, "", "az CLI not found"
+        args = [executable, *args[1:]]
     try:
-        p = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
-                           timeout=timeout, encoding="utf-8", errors="replace")
+        options = ({"env": dict(os.environ, PYTHONIOENCODING="utf-8")} if azure_cli else
+                   {"text": True, "encoding": "utf-8", "errors": "replace"})
+        p = subprocess.run(args, cwd=cwd, capture_output=True, timeout=timeout, **options)
+        if azure_cli:
+            return (p.returncode, decode_cli_output(p.stdout or b"", azure_cli=True),
+                    decode_cli_output(p.stderr or b"", azure_cli=True))
         return p.returncode, (p.stdout or ""), (p.stderr or "")
     except Exception as e:  # noqa: BLE001 — surface as a failed command, not a crash
         return 1, "", f"{type(e).__name__}: {e}"

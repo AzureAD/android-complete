@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 from datetime import datetime
 
 import yaml
+from tools.executables import find_azure_cli
 
 
 def scout_mcp_config_path() -> str:
@@ -89,6 +90,11 @@ def check_requirements(req: dict, *, scout_root=None, agency_path=None) -> list:
             ok = os.path.isdir(scout_profile_root(scout_root))
         elif r.get("id") == "agency-cli":
             ok = bool(agency_path) and _shell_ok([agency_path, "--version"])
+        elif r.get("id") in ("azure-cli", "azure-devops-ext"):
+            executable = find_azure_cli()
+            arguments = (["version"] if r["id"] == "azure-cli" else
+                         ["extension", "show", "--name", "azure-devops"])
+            ok = bool(executable) and _shell_ok([executable, *arguments])
         else:
             ok = _shell_ok(r.get("check", ""))
         out.append({

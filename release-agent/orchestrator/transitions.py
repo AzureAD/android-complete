@@ -1425,6 +1425,57 @@ class TransitionKernel:
             return self._reject("External approval requires the current eligible, unowned gate.", phase_id, step_id)
         return None
 
+    def validate_manual_approval_start(self, phase_id, step_id):
+        if rejected := self._invalid():
+            return rejected
+        record = self.state.get_step(phase_id, step_id)
+        previous = record.data.get("last_approval")
+        if "last_approval" not in record.data:
+            return self.validate_approval_start(phase_id, step_id)
+        definition = self.workflow.step(phase_id, step_id)
+        from .revision import revision_id
+        from .manual_approvals import validate_evidence
+        if not isinstance(previous, dict) or previous.get("provenance") != "external_manual":
+            return self._reject("Existing owned approval evidence cannot be replaced by manual import.", phase_id, step_id)
+        validate_evidence(previous)
+        decision = self.projection_factory().latest_gate_decision(definition) if definition else None
+        if (not definition or not definition.is_gate or not definition.approval_command
+                or record.execution or record.status != "done" or not decision
+                or decision.get("decision") != "approved" or previous["step"] != definition.key
+                or previous["release"] != self.state.release_id
+                or previous["workflow_revision"] != revision_id(self.state.workflow_revision)
+                or previous["generation"] != (record.invalidated_at or "initial")):
+            return self._reject("Existing manual receipt is not an exact completed replay; never overwrite it.",
+                                phase_id, step_id)
+        return None
+
+    def record_manual_approval(self, phase_id, step_id, evidence):
+        from .manual_approvals import target_for_definition, validate_evidence
+        from .revision import revision_id
+
+        if rejected := self.validate_manual_approval_start(phase_id, step_id):
+            return rejected
+        record = self.state.get_step(phase_id, step_id)
+        if "last_approval" in record.data:
+            return self._reject("Manual approval is already recorded; preserve its original receipt.", phase_id, step_id)
+        target = validate_evidence(evidence)
+        expected = target_for_definition(
+            self.state, self.workflow.step(phase_id, step_id), target.approval_id)
+        if (evidence["release"] != self.state.release_id or evidence["step"] != f"{phase_id}.{step_id}"
+                or evidence["workflow_revision"] != revision_id(self.state.workflow_revision)
+                or evidence["generation"] != (record.invalidated_at or "initial") or target != expected):
+            return self._reject("Manual approval binding changed; review again.", phase_id, step_id)
+        record.data["last_approval"] = deepcopy(evidence)
+        record.status, record.by, record.completed_at = "done", "human", self.now()
+        target = evidence["target"]
+        record.note = (f"Recorded externally approved ADO approval {target['approval_id']} "
+                       f"on build {target['build_id']}; Scout did not submit it.")
+        self.state.set_step(phase_id, step_id, record)
+        self.state.gate_decisions.append(_gate_dict(GateDecision(
+            step=f"{phase_id}.{step_id}", decision="approved", at=self.now(),
+            by=evidence["recorded_by"], comment=record.note)))
+        return self._accept("ran", record.note, phase_id, step_id)
+
     def validate_approval_owner(self, phase_id, step_id, execution_id, *, active=False):
         if rejected := self._invalid(phase_id, step_id):
             return rejected

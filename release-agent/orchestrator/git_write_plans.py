@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
-from orchestrator import revision
+from orchestrator import integration_resolutions as R, revision
 from orchestrator.write_review import WriteOperation, WritePlan, VerifiedProgress
 from steps.finalize import integ_prs as I, oneauth_common_pr as O
 from steps.lib.mockctx import MISSING
@@ -93,6 +93,19 @@ def _integration_scope(context, args):
         raise ValueError("Unknown, excluded, or empty repository selection")
     selected = [key for key in I.REPO_ORDER if key in requested]
     versions, pbi = I._versions(context), _pbi(context, args)
+    checkout_root = None
+    if getattr(args, "checkout_root", None) is not None:
+        checkout_root = Path(args.checkout_root).expanduser()
+        if not checkout_root.is_absolute():
+            raise ValueError("Checkout root must be an absolute directory")
+        try:
+            checkout_root = checkout_root.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("Checkout root must be an existing directory") from exc
+        if not checkout_root.is_dir():
+            raise ValueError("Checkout root must be an existing directory")
+    resolutions = (R.load(args.resolutions_file, selected, versions)
+                   if getattr(args, "resolutions_file", None) is not None else None)
     targets = []
     for key in selected:
         version = versions.get(key)
@@ -101,15 +114,28 @@ def _integration_scope(context, args):
         cfg = deepcopy(I.CONFIG[key])
         if cfg["tool"] not in ("gh", "ado"):
             raise ValueError("Unsupported PR provider")
-        root = Path(PR.repo_dir(cfg["dir"])).resolve()
+        if checkout_root is None:
+            root = Path(PR.repo_dir(cfg["dir"])).resolve()
+        else:
+            try:
+                root = (checkout_root / key).resolve(strict=True)
+            except OSError as exc:
+                raise ValueError("Selected checkout must exist directly inside checkout root") from exc
+            if root.parent != checkout_root or not root.is_dir():
+                raise ValueError("Selected checkout must be a directory directly inside checkout root")
         target = {"key": key, "root": str(root), "remote": G.remote_url(root),
                   "tool": cfg["tool"]}
         target.update({"gh_repo": cfg["gh_repo"]} if cfg["tool"] == "gh" else {"ado": cfg["ado"]})
         branches = I._branches(context, key, cfg, version)
         targets.append({"target": target, "branches": branches, "labels": cfg.get("labels", [])})
-    return {"repos": selected, "versions": {k: versions[k] for k in selected}, "pbi": pbi,
-            "targets": targets, "owner": getattr(context.release, "owner_email", None),
-            "target_month": getattr(context.release, "target_month", None)}
+    scope = {"repos": selected, "versions": {k: versions[k] for k in selected}, "pbi": pbi,
+             "targets": targets, "owner": getattr(context.release, "owner_email", None),
+             "target_month": getattr(context.release, "target_month", None)}
+    if checkout_root is not None:
+        scope["checkout_root"] = str(checkout_root)
+    if resolutions is not None:
+        scope.update(resolutions=resolutions, resolution_versions=versions)
+    return scope
 
 
 def _operation_key(kind, target, output=None):
@@ -155,13 +181,23 @@ def integration_plan(context, args, progress=None):
             expected_head = tips[head]
             if (kind == "integration" and existing is None
                     and not (progress and progress.manual_push(op_target, tips[head], tips[base]))):
-                ri = G.plan_ri(root, tips[head], tips[base], base)
+                resolution = scope.get("resolutions", {}).get("repos", {}).get(key)
+                if progress and progress.has(_operation_key(
+                        "integration.push", op_target, tips[head])):
+                    resolution = None
+                ri = (G.plan_ri(root, tips[head], tips[base], base, resolution=resolution)
+                      if resolution else G.plan_ri(root, tips[head], tips[base], base))
                 record["ri"] = ri
                 if ri["commit"]:
                     operations.append(WriteOperation(
                         "integration.push", op_target, ri,
                         {"head_tip": tips[head], "base_tip": tips[base], "existing": existing}))
                     expected_head = ri["commit_id"]
+            elif kind == "integration" and key in scope.get("resolutions", {}).get("repos", {}):
+                if not (progress and (
+                        progress.manual_push(op_target, tips[head], tips[base])
+                        or progress.has(_operation_key("integration.push", op_target, tips[head])))):
+                    raise ValueError("Explicit resolutions cannot change an existing integration PR")
             if isinstance(work_item, dict):
                 body = I.pr_body(key, kind, branches, "__REVIEWED_PBI_ID__")
                 pieces = body.split("__REVIEWED_PBI_ID__")
@@ -184,8 +220,11 @@ def integration_plan(context, args, progress=None):
         operations.insert(0, WriteOperation(
             "pbi.create", {"org": pbi["org"], "project": pbi["project"]},
             {"title": pbi["title"], "type": "Product Backlog Item", "output": "pbi.id"}))
-    plan = WritePlan("create-integration-prs",
-                     {"repos": selected, "versions": versions, "pbi": pbi},
+    parameters = {"repos": selected, "versions": versions, "pbi": pbi}
+    for key in ("checkout_root", "resolutions", "resolution_versions"):
+        if key in scope:
+            parameters[key] = scope[key]
+    plan = WritePlan("create-integration-prs", parameters,
                      tuple(operations), {"repos": repos})
     # Check again after every repo has been fully planned, before emitting any review.
     _check_integration(plan.as_dict()["preconditions"]["repos"], set())
@@ -196,7 +235,8 @@ def _check_integration(repos, completed, *, clean=True):
     for repo in repos:
         target = repo["target"]
         if clean:
-            G.clean_repository(target["root"])
+            if str(G.clean_repository(target["root"])) != target["root"]:
+                raise ValueError("Checkout root changed after review")
         if G.remote_url(target["root"]) != target["remote"]:
             raise ValueError("Origin changed after review")
         _remote_matches_provider(target)
@@ -359,7 +399,8 @@ def _check_operation(operation, *, clean=True):
     if operation["kind"] == "pbi.create":
         return
     if clean:
-        G.clean_repository(target["root"])
+        if str(G.clean_repository(target["root"])) != target["root"]:
+            raise ValueError("Checkout root changed after review")
     if G.remote_url(target["root"]) != target["remote"]:
         raise ValueError("Origin changed after review")
     _remote_matches_provider(target)
@@ -374,8 +415,24 @@ def execute_integration(authorization):
     plan = authorization.plan.as_dict()
     progress = authorization.progress
     outputs, results = progress.outputs(), []
-    for operation in plan["operations"]:
+    parameters = plan["parameters"]
+
+    def check_inputs():
         authorization.validate()
+        if "resolutions" in parameters:
+            R.recheck(parameters["resolutions"], parameters["repos"], parameters["resolution_versions"])
+
+    check_inputs()
+    for operation in plan["operations"]:
+        content = operation["content"]
+        if operation["kind"] == "integration.push" and "resolution" in content:
+            target, pre = operation["target"], operation["preconditions"]
+            _check_operation(operation)
+            if G.plan_ri(target["root"], pre["head_tip"], pre["base_tip"], target["base"],
+                         resolution=content["resolution"]) != content:
+                raise ValueError("Resolved integration plan changed after review")
+    for operation in plan["operations"]:
+        check_inputs()
         _check_operation(operation)
         kind, target, content = operation["kind"], operation["target"], operation["content"]
         authorization.validate()
@@ -393,7 +450,7 @@ def execute_integration(authorization):
             op_key = None
             def before_push():
                 nonlocal op_key
-                authorization.validate()
+                check_inputs()
                 _check_operation(operation, clean=False)
                 op_key = _attempt(progress, kind, target, {"commit": content["commit_id"]},
                                   output=content["commit_id"],

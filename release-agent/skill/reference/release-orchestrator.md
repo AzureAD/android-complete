@@ -20,7 +20,7 @@ manual gates, and the branch/PR model so those steps can't drift from reality.
 | 6 | Publish to Maven Central | 5 | MSAL/Common → Maven Central. Verified by `verify_pub`. |
 | 7 | Update Pipeline Variables | 5 | MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version. |
 | 8 | Create Release Integration Branches | 5 | Stage id `CreateReleaseIntegrationBranches`; `integ_prs` opens the checked PR set after the finalization monitor reaches stage 9. |
-| 9 | **Publish GitHub Release Notes** 🚦 | 8 | **2nd manual gate** — `orchestrator_finalization` polls to this gate, captures `Final1` plus the final Authenticator build/version, then `publish_notes_gate` approves it. |
+| 9 | **Publish GitHub Release Notes** 🚦 | 8 | **2nd manual gate** — `orchestrator_finalization` polls to this gate and captures the final MRWP from the highest numbered `Final<N>=<build id>` tag. `N` is the Publish Internal **job attempt**, not the RC number. Invalid/conflicting tags hold; a newer failed/running attempt never falls back to an older successful build. Final Authenticator evidence is captured later by `identify_auth_build`. `publish_notes_gate` requires a separate owner decision. |
 
 Two manual approval gates: **Remove RC Tags** (stage 4) and **Publish GitHub Release Notes**
 (stage 9). `approve-orchestrator-gate` dispatches to whichever gate step is holding.

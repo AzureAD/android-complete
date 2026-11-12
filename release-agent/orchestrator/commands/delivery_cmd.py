@@ -99,6 +99,10 @@ def prepare(args):
         from orchestrator.commands.status_email_cmd import prepare_status_email
         out = prepare_status_email(args, st, orch)
         items = out.get("notifications", [])
+    elif args.source in ("phase-status-email", "ad-hoc-status-email"):
+        from orchestrator.commands.status_email_cmd import prepare_reviewed_status_emails
+        out = prepare_reviewed_status_emails(args, st, orch)
+        items = out.get("notifications", [])
     else:
         out, items = {}, []
     for item in items:
@@ -121,8 +125,29 @@ def cmd_notification(args):
         if getattr(args, "as_of", None):
             raise ValueError("Notification claims/results/finalization require the trusted current clock; --as-of is preview-only")
         st, orch = C.load_orch(args.runs_root, args.release, args.config)
+        if args.operation == "resolve-mismatch":
+            from orchestrator import notification_mismatch as M
+            from orchestrator.locking import file_lock
+            from orchestrator.registry import AutomationRegistry
+            with open(args.observed_file, encoding="utf-8-sig") as fh:
+                observed = json.load(fh)
+            registry = AutomationRegistry(args.runs_root, args.release)
+            with file_lock(registry.lock_path, 30.0):
+                entries = [entry for _, entry in registry._all_unlocked()]
+                if args.approve_hash:
+                    out = M.resolve(
+                        orch, args.id, args.execution_id, observed, args.approve_hash,
+                        by=args.by, reason=args.reason,
+                        confirm_runner_stopped=args.confirm_runner_stopped, registry_entries=entries)
+                    C.save_state(st, args.runs_root, args.release)
+                else:
+                    out = M.preview(orch, args.id, args.execution_id, observed, registry_entries=entries)
+            print(json.dumps(out, indent=2))
+            return 0
         if args.operation == "claim":
-            out = D.claim(orch, args.id, args.hash, args.executor)
+            out = D.claim(
+                orch, args.id, args.hash, args.executor,
+                approved_by=getattr(args, "approved_by", None))
             # Permission leaves this process only AFTER durable persistence succeeds.
             C.save_state(st, args.runs_root, args.release)
         elif args.operation == "result":
@@ -159,14 +184,17 @@ def cmd_notification(args):
 def register(sub):
     parser = sub.add_parser("notification", help="Durable per-channel notification delivery")
     operations = parser.add_subparsers(dest="operation", required=True)
-    for op in ("prepare", "claim", "result", "finalize"):
+    for op in ("prepare", "claim", "result", "finalize", "resolve-mismatch"):
         p = operations.add_parser(op)
         p.add_argument("--release", required=True)
         p.add_argument("--id", required=op != "prepare")
         if op == "prepare":
             p.add_argument("--as-of", default=None, help="Preview clock only; cannot authorize a send")
-            p.add_argument("--source", choices=("pending", "digest", "status-email", "step"),
+            p.add_argument("--source", choices=(
+                "pending", "digest", "status-email", "step",
+                "phase-status-email", "ad-hoc-status-email"),
                            default="pending")
+            p.add_argument("--request-id", help="Stable engineer-request identity for an ad-hoc status draft")
             p.add_argument("--phase", default="preflight")
             p.add_argument("--step")
             p.add_argument("--param", action="append", default=[])
@@ -175,6 +203,7 @@ def register(sub):
         if op == "claim":
             p.add_argument("--hash", required=True)
             p.add_argument("--executor", required=True)
+            p.add_argument("--approved-by", help="Release engineer who explicitly approved this exact draft")
         if op == "result":
             p.add_argument("--execution-id", required=True)
             p.add_argument("--outcome", choices=("sent", "not_sent", "uncertain"), required=True)
@@ -182,4 +211,11 @@ def register(sub):
             p.add_argument("--receipt-file")
             p.add_argument("--owner-review", action="store_true",
                            help="Explicit owner review after original runner stopped; include evidence")
+        if op == "resolve-mismatch":
+            p.add_argument("--execution-id", required=True)
+            p.add_argument("--observed-file", required=True)
+            p.add_argument("--approve-hash")
+            p.add_argument("--by")
+            p.add_argument("--reason")
+            p.add_argument("--confirm-runner-stopped", action="store_true")
         p.set_defaults(func=cmd_notification)

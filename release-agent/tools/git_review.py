@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 from contextlib import contextmanager
 import hashlib
 import os
@@ -186,11 +187,110 @@ def _remove_from_index(root, path, env, oid_length):
          data=("0 " + "0" * oid_length + "\t" + path + "\0").encode("utf-8"))
 
 
-def plan_ri(root, head, base, target):
+_BROKER_PROPERTIES = {"broker_adAccountsVersion", "broker_commonVersion", "broker_msalVersion"}
+
+
+def ri_resolution_spec(value):
+    if (not isinstance(value, dict)
+            or set(value) != {"repo", "root", "head", "base", "ancestor", "paths"}
+            or value["repo"] not in ("msal", "authenticator")):
+        raise ValueError("Unsupported explicit integration resolution")
+    value = deepcopy(value)
+    if not isinstance(value["root"], str):
+        raise ValueError("Resolution checkout root must be a string")
+    root = Path(value["root"])
+    if not root.is_absolute() or str(root.resolve(strict=True)) != str(root):
+        raise ValueError("Resolution checkout root must be absolute and normalized")
+    value["root"] = str(root)
+    for key in ("head", "base", "ancestor"):
+        object_id(value[key])
+    path = "common" if value["repo"] == "msal" else "PhoneFactor/gradle.properties"
+    if not isinstance(value["paths"], dict) or set(value["paths"]) != {path}:
+        raise ValueError("Only the explicitly reviewed integration conflict path is supported")
+    choice = value["paths"][_path(path)]
+    keys = {"take", "ancestor", "head", "base"}
+    if value["repo"] == "authenticator":
+        keys.add("values")
+    if not isinstance(choice, dict) or set(choice) != keys:
+        raise ValueError("Invalid explicit conflict entry")
+    if choice["take"] != ("base" if value["repo"] == "msal" else "head"):
+        raise ValueError("Unsupported integration conflict choice")
+    mode = "160000" if value["repo"] == "msal" else "100644"
+    for side in ("ancestor", "head", "base"):
+        entry = choice[side]
+        if not isinstance(entry, dict) or set(entry) != {"mode", "object_id"} or entry["mode"] != mode:
+            raise ValueError("Resolution must pin supported regular-file/gitlink entries")
+        object_id(entry["object_id"])
+    if value["repo"] == "authenticator":
+        values = choice["values"]
+        if (not isinstance(values, dict) or set(values) != _BROKER_PROPERTIES
+                or any(not isinstance(v, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v)
+                       for v in values.values())):
+            raise ValueError("Resolution must pin the three exact final broker properties")
+    return value
+
+
+def _property_lines(data):
+    values, remainder = {}, []
+    for line in data.splitlines(keepends=True):
+        key, sep, value = line.strip().partition(b"=")
+        key = key.decode("utf-8")
+        if key in _BROKER_PROPERTIES and sep:
+            if key in values:
+                raise ValueError("Duplicate broker version property")
+            values[key] = value.decode("utf-8")
+        else:
+            remainder.append(line)
+    if set(values) != _BROKER_PROPERTIES:
+        raise ValueError("Missing broker version property")
+    return values, remainder
+
+
+def _resolution_proof(root, work, env, head, base, old, upstream, resolution):
+    spec = ri_resolution_spec(resolution)
+    if spec["root"] != str(root) or spec["head"] != head or spec["base"] != base:
+        raise ValueError("Resolution checkout/source tips changed")
+    if _git(work, "merge-base", "--all", head, base, env=env).decode().split() != [spec["ancestor"]]:
+        raise ValueError("Resolution ancestor changed or ambiguous")
+    if _git(root, "rev-parse", "--is-shallow-repository").strip() != b"false":
+        raise ValueError("Explicit resolution requires complete history")
+    ancestor = _tree(work, spec["ancestor"], env)
+    proof = {}
+    for path, choice in spec["paths"].items():
+        entries = {"ancestor": ancestor.get(path), "head": old.get(path), "base": upstream.get(path)}
+        for side, entry in entries.items():
+            expected = choice[side]
+            kind = "commit" if expected["mode"] == "160000" else "blob"
+            if entry != (expected["mode"], kind, expected["object_id"]):
+                raise ValueError("Resolution source tree entry changed: " + path)
+        if spec["repo"] == "authenticator":
+            files = {side: _git(work, "cat-file", "blob", entry[2], env=env)
+                     for side, entry in entries.items()}
+            parsed = {side: _property_lines(data) for side, data in files.items()}
+            if (parsed["head"][0] != choice["values"]
+                    or parsed["base"][0] != {k: v + "-rc2-ecs" for k, v in choice["values"].items()}
+                    or parsed["head"][1] != parsed["ancestor"][1]
+                    or parsed["base"][1] != parsed["ancestor"][1]
+                    or any(parsed["ancestor"][0][k] in (parsed["head"][0][k], parsed["base"][0][k])
+                           for k in _BROKER_PROPERTIES)):
+                raise ValueError("Whole-file resolution would exceed the three approved property changes")
+        def describe(entry):
+            if entry[0] == "160000":
+                return {"mode": "160000", "object_id": entry[2], "kind": "gitlink"}
+            return _file(work, entry, env)
+        proof[path] = {"take": choice["take"],
+                       **{side: describe(entry) for side, entry in entries.items()},
+                       "after": describe(entries[choice["take"]])}
+    return spec, proof
+
+
+def plan_ri(root, head, base, target, *, resolution=None):
     """Exact merged tree, Gradle reverts, file bytes and canonical commit metadata."""
     root = clean_repository(root)
     object_id(head)
     object_id(base)
+    if resolution is not None:
+        resolution = ri_resolution_spec(resolution)
     with scratch(root) as (work, env):
         old = _tree(work, head, env)
         upstream = _tree(work, base, env)
@@ -213,18 +313,28 @@ def plan_ri(root, head, base, target):
                     if not line:
                         break
                     conflicts.append(_path(line))
+                allowed = set(resolution["paths"]) if resolution else set()
                 if not conflicts or any(
                         PurePosixPath(p).name not in ("build.gradle", "build.gradle.kts")
-                        for p in conflicts):
+                        and p not in allowed for p in conflicts):
                     raise ValueError("Merge conflicts require human resolution: " + ", ".join(conflicts))
             parents.append(base)
         else:
             tree = _git(work, "rev-parse", head + "^{tree}", env=env).decode().strip()
         merged = _tree(work, tree, env)
+        spec, proof = None, {}
+        if resolution is not None:
+            spec, proof = _resolution_proof(root, work, env, head, base, old, upstream, resolution)
+            if not set(proof).issubset(conflicts):
+                raise ValueError("Explicit resolution contains a non-conflict path")
         reverts = sorted(p for p in set(merged) | set(upstream)
                          if PurePosixPath(p).name in ("build.gradle", "build.gradle.kts")
                          and merged.get(p) != upstream.get(p))
         _git(work, "read-tree", tree, env=env)
+        for path, choice in proof.items():
+            entry = choice["after"]
+            _git(work, "update-index", "--add", "--cacheinfo",
+                 entry["mode"], entry["object_id"], path, env=env)
         for path in reverts:
             entry = upstream.get(path)
             _file(work, merged.get(path), env)
@@ -236,13 +346,20 @@ def plan_ri(root, head, base, target):
                 _git(work, "update-index", "--add", "--cacheinfo", mode, oid, path, env=env)
         tree = object_id(_git(work, "write-tree", env=env).decode().strip())
         final = _tree(work, tree, env)
-        edits = {p: {"before": _file(work, old.get(p), env),
-                     "after": _file(work, final.get(p), env)}
+        def reviewed_file(path, entry):
+            if path in proof and entry is not None and entry[0] == "160000":
+                return {"mode": "160000", "object_id": entry[2], "kind": "gitlink"}
+            return _file(work, entry, env)
+        edits = {p: {"before": reviewed_file(p, old.get(p)),
+                     "after": reviewed_file(p, final.get(p))}
                  for p in sorted(set(old) | set(final)) if old.get(p) != final.get(p)}
         content = {"tree": tree, "parents": parents, "behind": behind,
                    "merge": "merge-tree" if behind else "none",
-                   "resolved_gradle_conflicts": conflicts, "gradle_reverted": reverts,
+                   "resolved_gradle_conflicts": [p for p in conflicts if p not in proof],
+                   "gradle_reverted": reverts,
                    "edits": edits, "commit": None, "commit_id": head}
+        if spec is not None:
+            content.update(resolution=spec, resolved_conflicts=proof)
         if edits or behind:
             # Dates are derived from the reviewed parents, not the execution wall clock.
             timestamp = max(int(_git(work, "show", "-s", "--format=%ct", p, env=env))
@@ -369,6 +486,13 @@ def push_reviewed(root, remote, name, expected_tip, content, validate):
     if content["parents"][0] != expected_tip or not content["commit"]:
         raise ValueError("Invalid reviewed commit ancestry")
     with scratch(root) as (work, env):
+        if "resolution" in content:
+            spec, proof = _resolution_proof(
+                root, work, env, expected_tip, content["parents"][1],
+                _tree(work, expected_tip, env), _tree(work, content["parents"][1], env),
+                content["resolution"])
+            if proof != content.get("resolved_conflicts"):
+                raise ValueError("Reviewed conflict resolution proof changed")
         _git(work, "read-tree", expected_tip, env=env)
         # Remove replaced paths first, including file/directory transitions.
         for path in content["edits"]:
@@ -378,8 +502,18 @@ def push_reviewed(root, remote, name, expected_tip, content, validate):
             _path(path)
             after = edit["after"]
             if after is not None:
-                oid = _git(work, "hash-object", "-w", "--stdin", env=env,
-                           data=base64.b64decode(after["base64"], validate=True)).decode().strip()
+                if after["mode"] == "160000":
+                    choice = content.get("resolved_conflicts", {}).get(path)
+                    if (not choice or path != "common"
+                            or choice["take"] != "base" or after != choice["after"]
+                            or edit["before"] != choice["head"]):
+                        raise ValueError("Gitlink changes require the exact explicit resolution proof")
+                    oid = object_id(after["object_id"])
+                else:
+                    if after["mode"] not in ("100644", "100755"):
+                        raise ValueError("Unsupported reviewed file mode")
+                    oid = _git(work, "hash-object", "-w", "--stdin", env=env,
+                               data=base64.b64decode(after["base64"], validate=True)).decode().strip()
                 if oid != after["object_id"]:
                     raise ValueError("Reviewed blob mismatch")
                 _git(work, "update-index", "--add", "--cacheinfo",

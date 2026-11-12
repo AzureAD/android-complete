@@ -99,6 +99,38 @@ Other ownership types retain their own evidence requirements:
 There is no universal unlock, expiry-based ownership stealing, automatic workflow
 adoption, or conversion of an unknown provider outcome into an unattempted operation.
 
+## Reviewed integration additions
+
+- **Portable Azure CLI:** provider callers and infrastructure checks share PATH-first
+  discovery with standard Windows MSI fallback locations. No PATH mutation or
+  authentication fallback is performed. Reviewed PR/PBI content is decoded strictly,
+  including the Windows Azure CLI native-encoding case, without replaying commands.
+- **Final publication attempts:** finalization selects the numerically highest
+  `Final<N>=<build id>` tag. Conflicting/malformed tags hold; running/failed newer
+  attempts never fall back to an older success. Build ID AND MRWP pipeline identity
+  are still required.
+- **Externally approved gates:** `record-orchestrator-approval` imports exact,
+  already-approved ADO proof using preview/hash confirmation. It writes no provider
+  state, invents no Scout execution and advances no downstream step.
+- **Owner-reviewed status drafts:** `phase-status-email` and `ad-hoc-status-email`
+  preparation sources use independent notification identities and require explicit
+  owner approval of the full draft before claim. They do not change daily checkpoints,
+  step results or gate decisions; uncertain sends cannot be bypassed with another ID.
+- **Preserving owner content:** `create-payload-wiki --flight-section-file` replaces
+  only the existing feature-flight section using the exact reviewed ETag and content.
+  This mode forbids automatic approval.
+- **Optional Git inputs:** integration PRs accept isolated `--checkout-root` and
+  narrowly pinned `--resolutions-file` choices while retaining the existing
+  `VerifiedProgress` continuation, operation-local drift checks and CAS push fence.
+- **Notification dispositions:** `notification resolve-mismatch` records explicit
+  owner review of a proven daily-email body mismatch without converting uncertainty
+  into a send receipt, allowing resend or advancing a release.
+
+See [commands](skill/reference/commands.md) for exact arguments, input schemas,
+approval requirements and recovery limits. Existing state schema 4/execution
+contract 3, native M365 publication and same-command compound recovery are retained;
+there is no legacy integration recovery command or runtime migration.
+
 ## Layout
 
 ```

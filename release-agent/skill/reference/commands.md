@@ -155,6 +155,11 @@ owners require explicit review/repair, not an automatic reset or migration.
 
 ## External gate approval and recovery
 
+Azure CLI callers and setup checks share executable discovery: use PATH first,
+then standard Windows MSI roots under `ProgramW6432`, `ProgramFiles` and
+`ProgramFiles(x86)`. A stale desktop PATH therefore need not require reinstalling.
+Discovery never changes PATH, installs tools, signs in, or retries provider writes.
+
 The two Phase-4 gates are independent: `finalize.remove_rc_tags_gate` authorizes **Remove RC Tags**
 and the following publish stages; `finalize.publish_notes_gate` authorizes **Publish GitHub
 Release Notes** after integration PRs merge. An approval for one stage never substitutes
@@ -208,6 +213,23 @@ Restore the pinned runtime when needed and inspect exact provider evidence; ther
 automatic reset, forced clear, timeout lease or generic record-step bypass. Do not edit
 the run-state JSON to discard uncertain work. An absent receipt proves only missing
 evidence, not that the provider write never happened.
+
+### Import an approval already made outside Scout
+
+For either `finalize.remove_rc_tags_gate` or `finalize.publish_notes_gate`:
+
+```powershell
+python -m orchestrator.cli record-orchestrator-approval --release <id> --phase finalize --step <gate> --approval-id <exact-approved-uuid> --preview
+python -m orchestrator.cli record-orchestrator-approval --release <id> --phase finalize --step <gate> --approval-id <same-uuid> --review-hash <hash> --recorded-by <importer>
+```
+
+The read-only preview uses the recorded orchestrator build, the exact approved
+provider UUID and its unique timeline ancestry to the selected stage. Review that
+proof and one-gate impact before importing. Completed stage state alone is not
+proof. Import stores `external_manual` provenance, not a fictional Scout submission
+or a claim about who approved in ADO. It does not write to ADO, reserve execution,
+adopt a workflow, or advance downstream work. Existing owned approvals cannot be
+overwritten; exact replay preserves the original receipt.
 
 ## Authenticator Manual / Automated categories
 
@@ -684,6 +706,8 @@ The scheduled finalize/rollout writers run with auto-approval, so they recompute
 the current plan hash at execution time:
 
 - `create-integration-prs --release <id> [--repos common msal broker authenticator]
+  [--checkout-root "<absolute clean-checkout parent>"]
+  [--resolutions-file "<absolute version-1 JSON>"]
   [--pbi <existing-id>] [--pbi-title "<new PBI title>"]` binds selected repositories,
   hosting targets, exact branch tips/RI edits, existing PRs, labels and PBI linkage.
 - `create-oneauth-common-pr --release <id> [--repo-dir "<clean OneAuth checkout>"]`
@@ -692,6 +716,10 @@ the current plan hash at execution time:
   Missing objects/dirty work/conflicts require separate resolution and another preview.
 - `create-payload-wiki --release <id>` includes exact page content, target and
   existing-page ETag.
+  Add `--flight-section-file <UTF-8 markdown>` to replace only the existing
+  **Expected Feature flags rollouts** section. Other content and newline style
+  are preserved. Missing/ambiguous headings and missing pages hold; this mode
+  requires explicit hash review and forbids `--auto-approve`.
 - `start-release-signoff --release <id>` binds the matching pipeline-397224 run,
   the `Release Sign Off` stage identity and the current stage state before setting
   that stage to `pending` (ADO's Run-stage operation).
@@ -749,6 +777,32 @@ Keep necessary checkouts/resolution inputs in durable owner-selected storage, no
 session/temp directory. A failed preview owns nothing. Once execution starts, recover
 the original provider outcome. A compound writer may rebuild the remaining plan after
 verified reconciliation, but must never replay completed or uncertain mutations.
+
+### Optional isolated checkouts and pinned conflict choices
+
+`--checkout-root` must contain the selected `common`, `msal`, `broker` and/or
+`authenticator` directories directly beneath it. The normalized roots, repository
+identities and all reviewed branch tips remain bound. This never clones, fetches,
+changes the original checkouts or relaxes cleanliness checks.
+
+Conflicts hold by default. `--resolutions-file` supports only the reviewed MSAL
+`common` gitlink (`take: "base"`) and Authenticator
+`PhoneFactor/gradle.properties` (`take: "head"`) conflict patterns. The latter must
+prove that only `broker_adAccountsVersion`, `broker_commonVersion` and
+`broker_msalVersion` differ: head has the exact release versions, base those same
+versions with `-rc2-ecs`. Other parent edits cannot be discarded.
+
+The JSON is `{"version":1,"repos":{"<selected-repo>":{...}}}`. Each entry contains
+normalized absolute `root`, exact `head`, `base`, `ancestor` commit IDs, and
+`paths`. Each supported path contains `take` and `ancestor`, `head`, `base` entries,
+each `{"mode":"160000|100644","object_id":"<exact ID>"}`. Authenticator also requires
+`values` containing those three exact release properties. Unknown/duplicate fields,
+unsafe paths, stale pins and unexpected conflicts are rejected.
+
+File bytes, choices and resulting trees are hash-bound and rechecked before
+provider writes. Continue through the SAME checked command and original input
+selections; completed pushes retain verified progress. Do not introduce a separate
+recovery command, reset ownership or change the frozen scope.
 
 ## Bug Bash availability
 
@@ -901,8 +955,8 @@ All commands below require an explicit release and use the existing OS-held stat
 
 | Operation | Command |
 | --- | --- |
-| Persist exact preparation, without send permission | `notification prepare --release <id> --source step\|digest\|status-email\|pending [--phase <phase> --step <step> --param k=v]` |
-| Scout-reviewed reservation for that exact target/payload | `notification claim --release <id> --id <logical-id:channel> --hash <hash> --executor <session>` |
+| Persist exact preparation, without send permission | `notification prepare --release <id> --source step\|digest\|status-email\|phase-status-email\|ad-hoc-status-email\|pending [--phase <phase> --step <step> --param k=v]`; ad-hoc requires `--request-id` |
+| Reserve that exact target/payload | `notification claim --release <id> --id <logical-id:channel> --hash <hash> --executor <session>`; owner-reviewed drafts additionally require `--approved-by <release-owner-email>` |
 | Acknowledge one channel | `notification result --release <id> --id <id> --execution-id <execution> --outcome sent\|not_sent\|uncertain --evidence "<proof>" [--receipt-file <JSON>] [--owner-review]`; `workiq_send_email` sent results require a receipt file with matching `tool`, `descriptor_hash`, `payload_hash`, `target`, and `provider_receipt.transport: "workiq_send_email"` |
 | Retry domain completion, never sending again | `notification finalize --release <id> --id <id>` |
 
@@ -924,7 +978,44 @@ uncertain. Claims never expire. After successful send plus failed acknowledgemen
 the acknowledgement only. Owner-reviewed recovery requires the original runner stopped.
 Exactly-once delivery is impossible without downstream idempotency support.
 
-Schema v1 adds `notification_deliveries`, an empty map for a new release. Each
+### Owner-reviewed phase and ad-hoc status drafts
+
+After each advance, including release completion, prepare `--source phase-status-email`
+before discovering pending work. One draft per included, due, completed phase uses
+`phase-status-email:<phase>:email`. Previously completed phases without receipts
+surface for review, never automatic historical sends. The closing phase exception
+does not reopen or advance a completed release. Skipped and DUMMY work is labeled.
+
+For an explicit engineer request, use `--source ad-hoc-status-email --request-id <id>`
+or preview without saving using `status-email --release <id> --ad-hoc <id>`.
+IDs are 1-80 letters/digits/period/underscore/hyphen, starting with a letter or digit.
+Keep that ID throughout review/recovery; another same-day explicit request may
+have another ID only when no ad-hoc send is claimed or uncertain. These drafts
+can bypass daily time/business-day windows but never readiness, suspension or
+release closure. Neither draft type consumes the daily checkpoint or approves gates.
+
+Show the FULL body, actual recipients, subject and exact hash; obtain explicit
+owner **Send this draft** approval before claim. **Not now** leaves it prepared.
+Unattended workers never self-approve. Snapshot/owner changes or owner-local
+midnight require refreshed review. Positive `not_sent` evidence permits a new
+`:retry:<n>` generation and fresh approval; the failed record remains frozen.
+Claimed/uncertain/sent generations never permit another generation or a resend.
+Routine daily and step-required notices retain their existing policy.
+
+### Proven daily-email body mismatch disposition
+
+`notification resolve-mismatch --release <id> --id <id> --execution-id <original-id>
+--observed-file <JSON>` previews exact body differences and subsequent adoption
+impact. Supply the actual original `tool`, `payload` and successful
+`provider_receipt` with `transport`, `success`, `tool_call_id`, `event_id`, `evidence`.
+All non-body fields must match. After exact owner review and stopping the runner,
+repeat with `--approve-hash <hash> --by <owner> --reason <explanation>
+--confirm-runner-stopped`. This records disposition only: uncertainty, ownership
+and attempts remain, no receipt/completion/daily checkpoint is invented, and
+resends remain forbidden. Only non-step daily emails qualify. Normal current
+execution-contract and workflow checks apply; adoption is still separate.
+
+State schema 4 stores `notification_deliveries`, an empty map for a new release. Each
 release-local `logical-checkpoint:channel` maps to `descriptor`, `prepared_at`, `status`,
 `attempts`, optional `superseded` preparation history, and optional `completion`.
 Never-claimed preparations may refresh on source/payload changes; their previous descriptor
