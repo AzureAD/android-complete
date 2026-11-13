@@ -19,6 +19,53 @@ This repo supports an AI-driven development pipeline powered by GitHub Copilot a
 .\scripts\setup-ai-orchestrator.ps1
 ```
 
+### Shared MCP configuration
+
+The repository declares the same nine integrations for each supported client:
+`mcp-ado-identitydivision`, `azure-mcp-server`, `workiq`, `s360-breeze-mcp`,
+`android-dri-search`, `es-chat`, `m365-user`, `kusto`, and `icm`.
+
+| Client | Repository configuration |
+| --- | --- |
+| GitHub Copilot app / CLI | [`.github/mcp.json`](.github/mcp.json), using `mcpServers` |
+| VS Code | [`.vscode/mcp.json`](.vscode/mcp.json), using `servers` |
+| Agency | [`agency.toml`](agency.toml), using native built-ins and custom servers |
+| Feature Orchestrator plugin | [`feature-orchestrator-plugin/.mcp.json`](feature-orchestrator-plugin/.mcp.json), using `mcpServers` |
+
+Keep these declarations in sync when adding, removing, or changing an integration.
+Agency retains its native ADO, WorkIQ, S360, Kusto, IcM, ES Chat, and M365 User
+integrations; JSON clients use `agency mcp <name>` stdio adapters for the last four.
+These adapters require the [Agency CLI](https://aka.ms/agency) on `PATH`. They are
+not standalone, Agency-free servers. Azure MCP also includes Kusto tools, but is
+not a replacement for the native Kusto tool surface used by the investigation skills.
+Node.js / `npx` is required for the ADO, Azure MCP, and WorkIQ JSON declarations.
+
+Trust the checkout/configuration in the client and complete per-user sign-in and
+service permissions. Shared JSON ADO uses Azure CLI authentication (`az login`
+with an authorized account); VS Code retains its organization prompt and existing
+ADO authentication behavior. Agency manages authentication for its built-ins.
+No tokens, credentials, or authorization headers belong in these files.
+
+The [Copilot CLI discovery documentation](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers#adding-per-repository-mcp-servers)
+lists `.github/mcp.json` and checkout-local `.mcp.json`; it does not read
+`.vscode/mcp.json`. No redundant root `.mcp.json` is checked in here: a local file
+can take precedence over the shared file. The plugin config is loaded only when
+the plugin is installed/enabled and is mirrored so it does not introduce a stale
+ADO alias or organization. Its bundled defaults target this Android workspace;
+configure the bundled ADO definition before using the plugin for another organization.
+Personal/global settings are intentionally not changed. The app's
+`.github/github-app.yml` configures instructions/scripts/automation, not MCP
+server definitions. Bluebird and unrelated user-installed MCPs are not added
+without an approved server definition.
+
+Configuration parity does not guarantee startup or connectivity: missing Agency,
+Node.js, Azure CLI, client trust, sign-in, or service access remains a per-user
+setup requirement. Validate Agency's repository file without contacting services:
+
+```powershell
+agency config check --skip-remotes .\agency.toml
+```
+
 ## Pre-requisites
 
 The android related auth projects pull artifacts from public and private package repositories.  The private artifacts are published using Azure DevOps.  You will need to generate

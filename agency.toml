@@ -2,11 +2,11 @@
 # Docs: https://eng.ms/docs/cloud-ai-platform/github/github-copilot-suite/agency/config
 
 [mcps.builtins]
-ado            = { type = "ado", organization = "IdentityDivision" }
+mcp-ado-identitydivision = { type = "ado", organization = "IdentityDivision" }
 es-chat        = { type = "es-chat" }
 workiq         = { type = "workiq" }
 m365-user      = { type = "m365-user" }
-s360-breeze    = { type = "s360-breeze" }
+s360-breeze-mcp = { type = "s360-breeze" }
 # Kusto — android_spans / android_metrics telemetry + eSTS correlation (used by incident/aria investigator + kusto-analyst skills).
 kusto          = { type = "kusto" }
 # ICM — read/triage IcM tickets (used by incident-investigator + aria-alert-investigator skills).
@@ -16,3 +16,5 @@ icm            = { type = "icm" }
 # Android DRI Search — MSAL/Broker/Authenticator TSGs + past ICM incidents via Azure AI Search.
 # Custom remote MCP (Entra-authenticated); Agency handles the auth/proxy automatically.
 android-dri-search = { type = "http", url = "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp", tools = ["*"] }
+# Azure MCP includes Azure services beyond the native Kusto integration.
+azure-mcp-server = { type = "stdio", command = "npx", args = ["-y", "@azure/mcp@latest", "server", "start"], tools = ["*"] }

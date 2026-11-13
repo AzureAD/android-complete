@@ -49,6 +49,31 @@
     "android-dri-search": {
       "type": "http",
       "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp"
+    },
+
+    // Agency adapters require the Agency CLI on PATH and per-user service access.
+    "es-chat": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "es-chat"]
+    },
+
+    "m365-user": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "m365-user"]
+    },
+
+    "kusto": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "kusto"]
+    },
+
+    "icm": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "icm"]
     }
   }
 }

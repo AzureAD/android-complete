@@ -712,7 +712,10 @@ Tell the user:
 > This writes a `.vscode/mcp.json` file in your workspace."
 
 Check if `.vscode/mcp.json` already exists in the workspace:
-- If it exists, read it and check if an `ado` server is already configured.
+- If it exists, read it and check for an Azure DevOps server by its
+  `@azure-devops/mcp` command arguments, not only the legacy `ado` name.
+  Reuse the existing name (such as `mcp-ado-identitydivision`) and authentication
+  arguments; do not add a duplicate connection.
   If so, verify the org matches — if different, ask whether to update.
 - If it doesn't exist, create it.
 
@@ -745,11 +748,17 @@ NOT a URL. If the user provided a URL in Step 7, it was already normalized to ju
 org name in the config — use that normalized value.
 
 If `.vscode/mcp.json` already exists with other servers, **merge** the `ado` server entry
-into the existing file — do not overwrite other servers.
+into the existing file using the existing ADO name when present — do not overwrite
+other servers. If `.github/mcp.json` or a checkout-local `.mcp.json` already exists,
+keep its corresponding ADO organization synchronized while preserving that
+client's format, authentication arguments, and other servers. Do not copy VS Code's
+`servers`/`inputs` wrapper into a Copilot CLI `mcpServers` file. Installed plugin
+MCP configuration is separate; warn if its bundled organization differs rather
+than silently modifying an installed plugin.
 
 Tell the user:
 > "ADO MCP Server configured in `.vscode/mcp.json`. You may need to restart the MCP server
-> (Command Palette → `MCP: Restart Server` → `ado`) or reload VS Code for it to take effect."
+> (Command Palette → `MCP: Restart Server` → the configured ADO server name) or reload VS Code for it to take effect."
 
 ---
 

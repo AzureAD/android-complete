@@ -23,6 +23,46 @@
       "command": "npx",
       "args": ["-y", "@azure/mcp@latest", "server", "start"],
       "tools": ["*"]
+    },
+    "workiq": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/workiq", "mcp"],
+      "tools": ["*"]
+    },
+    "s360-breeze-mcp": {
+      "type": "http",
+      "url": "https://mcp.vnext.s360.msftcloudes.com/",
+      "tools": ["*"]
+    },
+    "android-dri-search": {
+      "type": "http",
+      "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp",
+      "tools": ["*"]
+    },
+    "es-chat": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "es-chat"],
+      "tools": ["*"]
+    },
+    "m365-user": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "m365-user"],
+      "tools": ["*"]
+    },
+    "kusto": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "kusto"],
+      "tools": ["*"]
+    },
+    "icm": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "icm"],
+      "tools": ["*"]
     }
   }
 }
