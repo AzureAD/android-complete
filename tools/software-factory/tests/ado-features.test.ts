@@ -100,6 +100,39 @@ test("ADO attachment transport verifies historical writers, CAS, restart and ord
     } finally { f.cleanup(); }
 });
 
+test("seedVerified short-circuits cold-start ancestry downloads while still catching restored attachments", async () => {
+    const f = fixture();
+    let attachmentDownloads = 0;
+    const baseServer = transport();
+    const provider = baseServer.provider();
+    try {
+        f.app.lifecycle.configure({ repositories: { common: { provider: "github", hostname: "github.com", slug: "example/common", baseBranch: "dev", account: "local", localPath: "." } },
+            boards: { organization: "example", project: "Engineering", workItemType: "Product Backlog Item", areaPath: "Engineering", iterationPath: "Engineering", assignee: "", parentId: null } }, actor);
+        const identity = await provider.identity(target);
+        const author = { ...actor, ado: identity };
+        const feature = f.app.execute({ kind: "create_feature", requestId: "seeded", input: requirements() }, author);
+        const first = await provider.write(target, null, f.app.shared.snapshot(f.app, feature.id), identity);
+        f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, author,
+            { granted: true, revisionId: feature.current.id, actor: author });
+        const second = await provider.write(target, first, f.app.shared.snapshot(f.app, feature.id), identity);
+
+        const countingProvider = new AdoFeatureProvider(
+            { run: async () => "fixture-token" },
+            async (input, init) => {
+                if (String(input).includes("/attachments") && (!init?.method || init.method === "GET")) attachmentDownloads++;
+                return (provider as unknown as { fetcher: typeof fetch }).fetcher(input, init);
+            },
+        );
+        countingProvider.seedVerified(second);
+        const readBack = await countingProvider.read(target);
+        assert.equal(readBack?.digest, second.digest);
+        assert.equal(attachmentDownloads, 0, "seeded verified record must avoid re-downloading historical attachments");
+
+        baseServer.manualEdit((item) => { item.relations = structuredClone(baseServer.revisions.get(first.revision)!.relations); });
+        await assert.rejects(() => countingProvider.read(target), /historical attachment/);
+    } finally { f.cleanup(); }
+});
+
 test("ADO denied writes and lost responses cannot return a success receipt", async () => {
     for (const mode of ["denied", "lost"] as const) {
         const f = fixture();

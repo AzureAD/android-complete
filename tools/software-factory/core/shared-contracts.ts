@@ -26,6 +26,7 @@ export interface SharedProvider {
     write(target: SharedTarget, expected: SharedRecord | null, snapshot: SharedSnapshot, actor: AdoIdentity): Promise<SharedRecord>;
     list(organization: string, project: string): Promise<SharedTarget[]>;
     createFeature?(target: { organization: string; project: string; areaPath?: string; iterationPath?: string }, title: string, description?: string): Promise<SharedTarget>;
+    seedVerified?(record: SharedRecord): void;
 }
 
 export const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");

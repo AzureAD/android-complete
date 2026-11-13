@@ -131,7 +131,9 @@ export class SharedAuthority {
         const raw = object(JSON.parse(String(row.record_json)), "Cached shared record");
         const snapshot = parseSnapshot(raw.snapshot);
         if (snapshot.feature.id !== featureId || raw.digest !== digest(snapshot) || !Number.isSafeInteger(raw.revision)) throw new FactoryError("shared_corrupt", "Invalid shared cache.", 409);
-        return { snapshot, digest: String(raw.digest), revision: Number(raw.revision), target: sharedTarget(raw.target) };
+        const record = { snapshot, digest: String(raw.digest), revision: Number(raw.revision), target: sharedTarget(raw.target) };
+        this.provider.seedVerified?.(record);
+        return record;
     }
 
     private save(record: SharedRecord): void {

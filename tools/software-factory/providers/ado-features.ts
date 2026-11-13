@@ -74,15 +74,51 @@ export class AdoFeatureProvider implements SharedProvider {
         return { item, fields, relations, relation: snapshots[0] || null };
     }
 
+    seedVerified(record: SharedRecord): void {
+        this.rememberVerified(record.target, record.revision, record);
+    }
+
+    private rememberVerified(target: SharedTarget, revision: number, record: SharedRecord): void {
+        const revKey = `${digest(target)}:${revision}`;
+        const digestKey = `${digest(target)}:digest:${record.digest}`;
+        if (!this.verified.has(revKey) && this.verified.size >= 6) {
+            const oldest = this.verified.keys().next().value;
+            if (oldest !== undefined) this.verified.delete(oldest);
+        }
+        const stored = { ...structuredClone(record), revision };
+        this.verified.set(revKey, stored);
+        this.verified.set(digestKey, stored);
+    }
+
     async read(target: SharedTarget): Promise<SharedRecord | null> {
         return this.load(target);
     }
 
-    private async load(target: SharedTarget, atRevision?: number): Promise<SharedRecord | null> {
-        const key = `${digest(target)}:${atRevision}`;
-        if (atRevision && this.verified.has(key)) return structuredClone(this.verified.get(key)!);
-        const { item, relation } = this.relation(await this.json(target,
+    private async loadStep(target: SharedTarget, atRevision?: number): Promise<{
+        record: SharedRecord;
+        attachmentRevision: number;
+        parentRevision: number | null;
+        parentDigest: string | null;
+        actor: AdoIdentity;
+        alreadyVerifiedAncestry: boolean;
+    } | null> {
+        const targetDigest = digest(target);
+        if (atRevision) {
+            const cachedRev = this.verified.get(`${targetDigest}:${atRevision}`);
+            if (cachedRev) {
+                return {
+                    record: structuredClone(cachedRev),
+                    attachmentRevision: atRevision,
+                    parentRevision: null,
+                    parentDigest: null,
+                    actor: { id: "", displayName: "" },
+                    alreadyVerifiedAncestry: true,
+                };
+            }
+        }
+        const loaded = this.relation(await this.json(target,
             `wit/workitems/${target.workItemId}${atRevision ? `/revisions/${atRevision}` : ""}?$expand=relations`));
+        const { item, relation } = loaded;
         if (!relation) return null;
         const attributes = object(relation.attributes, "Attachment attributes");
         let metadata: Record<string, unknown>;
@@ -96,11 +132,28 @@ export class AdoFeatureProvider implements SharedProvider {
                 throw new FactoryError("shared_history_conflict", "A historical attachment was restored over newer Factory history.", 409);
             }
         }
-        const historical = this.relation(await this.json(target, `wit/workitems/${target.workItemId}/revisions/${revision}?$expand=relations`));
+        const historical = Number(item.rev) === revision
+            ? loaded
+            : this.relation(await this.json(target, `wit/workitems/${target.workItemId}/revisions/${revision}?$expand=relations`));
         const changedBy = object(historical.fields["System.ChangedBy"], "ADO revision author");
         if (changedBy.id !== metadata.actorId || !historical.relation || historical.relation.url !== relation.url ||
             object(historical.relation.attributes, "Historical attachment").comment !== attributes.comment) {
             throw new FactoryError("shared_provenance_changed", "The current attachment does not match its ADO revision and authenticated author.", 409);
+        }
+        const expectedDigest = text(metadata.digest, "Snapshot digest");
+        if (attributes.name !== `${prefix}${expectedDigest}.json`) {
+            throw new FactoryError("shared_corrupt", "Shared attachment content failed its hash check.", 409);
+        }
+        const verifiedMatch = this.verified.get(`${targetDigest}:${revision}`) || this.verified.get(`${targetDigest}:digest:${expectedDigest}`);
+        if (verifiedMatch && verifiedMatch.digest === expectedDigest) {
+            return {
+                record: { target, revision: Number(item.rev), digest: expectedDigest, snapshot: structuredClone(verifiedMatch.snapshot) },
+                attachmentRevision: revision,
+                parentRevision: null,
+                parentDigest: null,
+                actor: { id: String(changedBy.id), displayName: String(changedBy.displayName || changedBy.id) },
+                alreadyVerifiedAncestry: true,
+            };
         }
         const url = new URL(text(relation.url, "Attachment URL"));
         const organizationPath = `/${encode(target.organization)}/`;
@@ -123,17 +176,48 @@ export class AdoFeatureProvider implements SharedProvider {
         }
         const snapshot = parseSnapshot(JSON.parse(Buffer.concat(chunks).toString("utf8")));
         const contentHash = digest(snapshot);
-        if (metadata.digest !== contentHash || attributes.name !== `${prefix}${contentHash}.json`) throw new FactoryError("shared_corrupt", "Shared attachment content failed its hash check.", 409);
-        let parent: SharedRecord | null = null;
+        if (expectedDigest !== contentHash) throw new FactoryError("shared_corrupt", "Shared attachment content failed its hash check.", 409);
+        let parentRevision: number | null = null;
+        let parentDigest: string | null = null;
         if (metadata.parentRevision !== null) {
-            if (!Number.isSafeInteger(metadata.parentRevision) || Number(metadata.parentRevision) < 1 || Number(metadata.parentRevision) >= revision) throw new FactoryError("shared_corrupt", "Invalid snapshot ancestry.", 409);
-            parent = await this.load(target, Number(metadata.parentRevision));
-            if (!parent || parent.digest !== metadata.parentDigest) throw new FactoryError("shared_history_conflict", "Shared snapshot ancestry is missing or changed.", 409);
-        } else if (metadata.parentDigest !== null) throw new FactoryError("shared_corrupt", "Unexpected root ancestry.", 409);
-        validateTransition(parent?.snapshot || null, snapshot, { id: String(changedBy.id), displayName: String(changedBy.displayName || changedBy.id) });
-        const record = { target, revision: Number(item.rev), digest: contentHash, snapshot };
-        this.verified.set(`${digest(target)}:${revision}`, { ...record, revision });
-        return record;
+            if (!Number.isSafeInteger(metadata.parentRevision) || Number(metadata.parentRevision) < 1 || Number(metadata.parentRevision) >= revision) {
+                throw new FactoryError("shared_corrupt", "Invalid snapshot ancestry.", 409);
+            }
+            parentRevision = Number(metadata.parentRevision);
+            parentDigest = text(metadata.parentDigest, "Parent snapshot digest");
+        } else if (metadata.parentDigest !== null) {
+            throw new FactoryError("shared_corrupt", "Unexpected root ancestry.", 409);
+        }
+        return {
+            record: { target, revision: Number(item.rev), digest: contentHash, snapshot },
+            attachmentRevision: revision,
+            parentRevision,
+            parentDigest,
+            actor: { id: String(changedBy.id), displayName: String(changedBy.displayName || changedBy.id) },
+            alreadyVerifiedAncestry: false,
+        };
+    }
+
+    private async load(target: SharedTarget, atRevision?: number): Promise<SharedRecord | null> {
+        const head = await this.loadStep(target, atRevision);
+        if (!head) return null;
+        if (!head.alreadyVerifiedAncestry) {
+            let cursor = head;
+            while (!cursor.alreadyVerifiedAncestry) {
+                if (cursor.parentRevision === null) {
+                    validateTransition(null, cursor.record.snapshot, cursor.actor);
+                    break;
+                }
+                const parent = await this.loadStep(target, cursor.parentRevision);
+                if (!parent || parent.record.digest !== cursor.parentDigest) {
+                    throw new FactoryError("shared_history_conflict", "Shared snapshot ancestry is missing or changed.", 409);
+                }
+                validateTransition(parent.record.snapshot, cursor.record.snapshot, cursor.actor);
+                cursor = parent;
+            }
+        }
+        this.rememberVerified(target, head.attachmentRevision, head.record);
+        return head.record;
     }
 
     async write(target: SharedTarget, expected: SharedRecord | null, snapshot: SharedSnapshot, actor: AdoIdentity): Promise<SharedRecord> {
