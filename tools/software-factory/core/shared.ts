@@ -423,7 +423,7 @@ export class SharedAuthority {
         if (!cached || cached.snapshot.lock?.id !== executionId) return;
         const state = this.app.lifecycle.store.state(featureId);
         const execution = state.executions.find((entry) => entry.id === executionId);
-        if (!execution || execution.status !== "error" || isResumableError(execution)) return;
+        if (!execution || !["error", "cancelled"].includes(execution.status) || isResumableError(execution)) return;
         const hasUncertainOp = (ops: { status: string }[]) =>
             ops.some((op) => op.status === "inflight" || op.status === "reconciliation_required");
         if (hasUncertainOp(state.operations) || hasUncertainOp(cached.snapshot.state.operations)) return;

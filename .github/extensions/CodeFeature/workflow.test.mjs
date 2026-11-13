@@ -58,6 +58,7 @@ import {
     isProtectedPipelineOrQualityPath,
     isSafeRelativeFilePath,
     normalizeEvidenceResponse,
+    normalizeImplementationResponse,
     normalizeReviewResponse,
     normalizeTask,
     parseAdoDesignDocUrl,
@@ -2750,4 +2751,107 @@ ${script}
     assert.throws(() => execFileSync("powershell", [
         "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(failureFixture, "utf16le").toString("base64"),
     ], { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] }), /Creation failed/);
+});
+
+test("normalizeImplementationResponse applies surgical edits with CRLF preservation and carries forward unchanged fix-round files", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "code-feature-surgical-edits-"));
+    try {
+        const repoDir = path.join(tmp, "common");
+        mkdirSync(path.join(repoDir, "src"), { recursive: true });
+        writeFileSync(
+            path.join(repoDir, "src", "AttributeName.java"),
+            "package com.example;\r\npublic enum AttributeName {\r\n    EXISTING_KEY,\r\n}\r\n",
+            "utf8",
+        );
+        const t = task();
+        const round1Raw = {
+            taskRevision: t.revision,
+            targets: [{
+                targetId: t.targets[0].id,
+                repository: t.targets[0].repository,
+                summary: "Add throttle key attribute and parser.",
+                files: [
+                    {
+                        path: "src/AttributeName.java",
+                        action: "modify",
+                        content: "",
+                        edits: [{
+                            oldText: "public enum AttributeName {\n    EXISTING_KEY,\n}",
+                            newText: "public enum AttributeName {\n    EXISTING_KEY,\n    THROTTLE_RETRY_AFTER_MS,\n}",
+                        }],
+                        summary: "Add THROTTLE_RETRY_AFTER_MS.",
+                    },
+                    {
+                        path: "src/RetryAfterParserTest.java",
+                        action: "create",
+                        content: "package com.example;\npublic class RetryAfterParserTest {}\n",
+                        edits: [],
+                        summary: "Add parser unit tests.",
+                    },
+                ],
+                testsAddedOrUpdated: ["src/RetryAfterParserTest.java"],
+                verificationCommandsRun: [],
+                pr: {
+                    title: "Add throttling",
+                    summary: "Summary",
+                    testPlan: "Unit tests",
+                    breakingChanges: "None",
+                    rolloutAndFlag: "Default off",
+                },
+            }],
+            traceability: t.requirements.map((r) => ({
+                requirementId: r.id,
+                targetIds: [t.targets[0].id],
+                filePaths: ["src/AttributeName.java"],
+                testLocations: ["src/RetryAfterParserTest.java"],
+                verification: "Unit test",
+            })),
+            assumptions: [],
+            openDecisions: [],
+            blockingUnknowns: [],
+        };
+
+        const round1 = normalizeImplementationResponse(round1Raw, t, {
+            workspaceRoot: tmp,
+            requireFullOrEditsContent: true,
+        });
+        assert.deepEqual(validateImplementation(round1, t, { workspaceRoot: tmp }), []);
+        const attrFile = round1.targets[0].files.find((f) => f.path === "src/AttributeName.java");
+        assert.equal(
+            attrFile.content,
+            "package com.example;\r\npublic enum AttributeName {\r\n    EXISTING_KEY,\r\n    THROTTLE_RETRY_AFTER_MS,\r\n}\r\n",
+        );
+        assert.equal("edits" in attrFile, false);
+
+        // Round 2 fix omits untouched RetryAfterParserTest.java and patches AttributeName.java on top of round 1.
+        const round2Raw = {
+            ...round1Raw,
+            targets: [{
+                ...round1Raw.targets[0],
+                files: [{
+                    path: "src/AttributeName.java",
+                    action: "modify",
+                    content: "",
+                    edits: [{
+                        oldText: "    THROTTLE_RETRY_AFTER_MS,\n}",
+                        newText: "    THROTTLE_RETRY_AFTER_MS,\n    THROTTLE_CACHE_HIT,\n}",
+                    }],
+                    summary: "Add THROTTLE_CACHE_HIT.",
+                }],
+            }],
+        };
+        const round2 = normalizeImplementationResponse(round2Raw, t, {
+            workspaceRoot: tmp,
+            previousImplementation: round1,
+            requireFullOrEditsContent: true,
+        });
+        assert.deepEqual(validateImplementation(round2, t, { workspaceRoot: tmp }), []);
+        assert.equal(round2.targets[0].files.length, 2, "unchanged files from round 1 must be carried forward");
+        assert.match(
+            round2.targets[0].files.find((f) => f.path === "src/AttributeName.java").content,
+            /THROTTLE_RETRY_AFTER_MS,\r\n    THROTTLE_CACHE_HIT,/,
+        );
+    } finally {
+        rmSync(tmp, { recursive: true, force: true });
+    }
 });

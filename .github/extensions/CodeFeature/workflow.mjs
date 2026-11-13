@@ -167,6 +167,17 @@ const fileChangeSchema = object({
     summary: text,
 });
 
+const hostFileChangeSchema = object({
+    path: text,
+    action: { type: "string", enum: ["create", "modify", "delete"] },
+    content: text,
+    edits: list(object({
+        oldText: text,
+        newText: text,
+    })),
+    summary: text,
+});
+
 const targetImplementationSchema = object({
     targetId: text,
     repository: text,
@@ -183,9 +194,40 @@ const targetImplementationSchema = object({
     }),
 });
 
+const hostTargetImplementationSchema = object({
+    targetId: text,
+    repository: text,
+    summary: text,
+    files: list(hostFileChangeSchema),
+    testsAddedOrUpdated: texts,
+    verificationCommandsRun: texts,
+    pr: object({
+        title: text,
+        summary: text,
+        testPlan: text,
+        breakingChanges: text,
+        rolloutAndFlag: text,
+    }),
+});
+
 const implementationSchema = object({
     taskRevision: text,
     targets: list(targetImplementationSchema),
+    traceability: list(object({
+        requirementId: text,
+        targetIds: texts,
+        filePaths: texts,
+        testLocations: texts,
+        verification: text,
+    })),
+    assumptions: texts,
+    openDecisions: texts,
+    blockingUnknowns: texts,
+});
+
+const hostImplementationSchema = object({
+    taskRevision: text,
+    targets: list(hostTargetImplementationSchema),
     traceability: list(object({
         requirementId: text,
         targetIds: texts,
@@ -2962,7 +3004,42 @@ export function buildInspectedFilesContext(workspaceRoot, task, evidence) {
     return results;
 }
 
-export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot = "", exec = defaultExec } = {}) {
+function applySurgicalFileEdits(baseContent, edits) {
+    const hasCrlf = baseContent.includes("\r\n");
+    let working = baseContent.replace(/\r\n/g, "\n");
+    for (let i = 0; i < edits.length; i++) {
+        const hunk = edits[i];
+        if (!record(hunk) || typeof hunk.oldText !== "string" || typeof hunk.newText !== "string") {
+            return { error: `Edit hunk #${i + 1} must provide string oldText and newText.` };
+        }
+        const oldLf = hunk.oldText.replace(/\r\n/g, "\n");
+        const newLf = hunk.newText.replace(/\r\n/g, "\n");
+        if (!oldLf) {
+            return { error: `Edit hunk #${i + 1} has empty oldText; provide unique surrounding context lines or use action "create" with full content.` };
+        }
+        if (oldLf === newLf) continue;
+        let idx = working.indexOf(oldLf);
+        let matchLen = oldLf.length;
+        if (idx === -1 && oldLf.trim().length >= 20) {
+            const trimmed = oldLf.trim();
+            const trimIdx = working.indexOf(trimmed);
+            if (trimIdx !== -1 && working.indexOf(trimmed, trimIdx + 1) === -1) {
+                idx = trimIdx;
+                matchLen = trimmed.length;
+            }
+        }
+        if (idx === -1) {
+            return { error: `Edit hunk #${i + 1} oldText did not match baseline file content.` };
+        }
+        if (working.indexOf(working.slice(idx, idx + matchLen), idx + 1) !== -1) {
+            return { error: `Edit hunk #${i + 1} oldText matched multiple locations; include more surrounding context lines.` };
+        }
+        working = working.slice(0, idx) + newLf + working.slice(idx + matchLen);
+    }
+    return { content: hasCrlf ? working.replace(/\n/g, "\r\n") : working };
+}
+
+export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot = "", exec = defaultExec, previousImplementation = null, requireFullOrEditsContent = false } = {}) {
     if (!record(rawImpl) || !record(task)) return rawImpl;
     if (Array.isArray(rawImpl.targets)) {
         for (const expectedTarget of task.targets || []) {
@@ -2970,6 +3047,65 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
             const actual = rawImpl.targets.find((t) => t?.targetId === expectedTarget.id) ||
                 (rawImpl.targets.length === 1 ? rawImpl.targets[0] : null);
             if (record(actual)) actual.verification = pendingVerification("Builder-reported commands have not been independently attested.");
+            const defaultLocalPath = REPOSITORY_DEFAULTS[normalizeRepositoryKey(expectedTarget.repository)]?.localPath || ".";
+            const repoRoot = nonempty(workspaceRoot) ? path.resolve(workspaceRoot, expectedTarget.localPath || defaultLocalPath) : "";
+            const priorTarget = record(previousImplementation) && Array.isArray(previousImplementation.targets)
+                ? previousImplementation.targets.find((t) => t?.targetId === expectedTarget.id) ||
+                    (previousImplementation.targets.length === 1 ? previousImplementation.targets[0] : null)
+                : null;
+            if (record(actual) && Array.isArray(actual.files)) {
+                for (const file of actual.files) {
+                    if (!record(file) || typeof file.path !== "string") continue;
+                    file.path = file.path.trim().replace(/\\/g, "/");
+                    const priorFile = record(priorTarget) && Array.isArray(priorTarget.files)
+                        ? priorTarget.files.find((pf) => pf?.path === file.path)
+                        : null;
+                    const hasEdits = Array.isArray(file.edits) && file.edits.length > 0;
+                    if (file.action !== "delete" && hasEdits && !nonempty(file.content)) {
+                        let baseContent = null;
+                        if (record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
+                            baseContent = priorFile.content;
+                        } else if (nonempty(repoRoot) && isSafeRelativeFilePath(file.path)) {
+                            const diskPath = path.resolve(repoRoot, file.path);
+                            const relCheck = path.relative(repoRoot, diskPath);
+                            if (!relCheck.startsWith("..") && !path.isAbsolute(relCheck) && existsSync(diskPath)) {
+                                baseContent = readFileSync(diskPath, "utf8");
+                            }
+                        }
+                        if (baseContent === null) {
+                            file._editError = `Baseline file ${file.path} was not found on disk or in previousImplementation; use action "create" with full content for new files.`;
+                        } else {
+                            const applied = applySurgicalFileEdits(baseContent, file.edits);
+                            if (applied.error) {
+                                file._editError = applied.error;
+                            } else {
+                                file.content = applied.content;
+                            }
+                        }
+                    } else if (file.action === "modify" && !nonempty(file.content) && !hasEdits) {
+                        if (record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
+                            file.content = priorFile.content;
+                        } else if (requireFullOrEditsContent) {
+                            file._editError = `Modified file ${file.path} must provide either surgical edits[] or full content.`;
+                        }
+                    }
+                    if ("edits" in file) delete file.edits;
+                }
+                if (record(priorTarget) && Array.isArray(priorTarget.files)) {
+                    for (const pf of priorTarget.files) {
+                        if (record(pf) && nonempty(pf.path) && !actual.files.some((f) => f?.path === pf.path)) {
+                            actual.files.push(JSON.parse(JSON.stringify(pf)));
+                        }
+                    }
+                }
+                if (record(priorTarget) && Array.isArray(priorTarget.testsAddedOrUpdated) && Array.isArray(actual.testsAddedOrUpdated)) {
+                    for (const pt of priorTarget.testsAddedOrUpdated) {
+                        if (nonempty(pt) && !actual.testsAddedOrUpdated.includes(pt)) {
+                            actual.testsAddedOrUpdated.push(pt);
+                        }
+                    }
+                }
+            }
             if (record(actual) && (!Array.isArray(actual.files) || actual.files.length === 0) && nonempty(workspaceRoot)) {
                 const repoRoot = path.resolve(workspaceRoot, expectedTarget.localPath || ".");
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits, baseBranch: expectedTarget.baseBranch });
@@ -3184,6 +3320,10 @@ export function validateImplementation(implementation, task, { workspaceRoot = "
                     }
                     if (isLocalSdkConfiguration(file.path) && file.action !== "delete") {
                         errors.push(`Target ${expectedTarget.id} cannot publish local SDK configuration (${file.path}); only removal of a tracked file is allowed.`);
+                        continue;
+                    }
+                    if (nonempty(file._editError)) {
+                        errors.push(`Target ${expectedTarget.id} file ${file.path}: ${file._editError}`);
                         continue;
                     }
                     const existsOnDisk = nonempty(repoRoot) && existsSync(path.resolve(repoRoot, file.path));
@@ -4273,8 +4413,13 @@ export async function prepareCodeFeature(ctx, dependencies = {}) {
     const approvedSnapshot = JSON.stringify(task);
     const prefix = `code-feature-v1-${createHash("sha256").update(approvedSnapshot).digest("hex")}`;
     const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
-    const normalizeBuild = (raw, stage) => step(`normalized-${stage}-v2`, () =>
-        normalizeImplementationResponse(raw ?? null, task, { workspaceRoot, exec }));
+    const normalizeBuild = (raw, stage, priorImpl = null) => step(`normalized-${stage}-v2`, () =>
+        normalizeImplementationResponse(raw ?? null, task, {
+            workspaceRoot,
+            exec,
+            previousImplementation: priorImpl,
+            requireFullOrEditsContent: Boolean(implementationHost),
+        }));
     const targetContentFingerprint = (target, targetImpl) => implementationContentFingerprint(workspaceRoot, target, targetImpl);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
@@ -4735,11 +4880,21 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
     const pbiScopeInstruction = Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
         ? `\nSCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—implement and test ONLY the specified PBI scope, and do NOT implement or require work explicitly deferred to other PBIs.`
         : "";
+    const builderSchema = useSlimSchemas
+        ? slimResultSchema
+        : implementationHost
+            ? hostImplementationSchema
+            : implementationSchema;
     const builderTask = implementationHost
-        ? `You are a read-only structured implementation author. Inspect source with your scoped read tools and return the COMPLETE implementation schema, including full contents for every written file, real test changes, PR metadata and requirement traceability.
-The application applies your proposed changes and runs verification. Do not edit files, invoke a shell, publish, launch agents, or change approvals.
+        ? `You are a read-only structured implementation author. Inspect source with your scoped read tools and return the structured implementation schema, including real unit tests, PR metadata, and requirement traceability.
+CRITICAL OUTPUT-BUDGET RULES (to stay well within the 65K output-token ceiling):
+- For EXISTING modified files (action: "modify"), ALWAYS set content: "" and provide surgical edits: [{ oldText, newText }] hunks with 2-5 lines of unique surrounding context per hunk. NEVER re-emit hundreds of unchanged lines of an existing file in content.
+- For NEW files (action: "create"), set edits: [] and provide the complete file in content.
+- For DELETED files (action: "delete"), set content: "" and edits: [].
+- On fix revisions (round > 1), include ONLY files newly created or modified in this revision; unchanged files from previousImplementation are carried forward automatically, and edits[] on previously touched files apply against previousImplementation.
+The application applies your proposed changes and runs verification. Do not edit files on disk, invoke a shell, publish, launch agents, or change approvals.
 Follow the supplied coding standards and approved task exactly.${pbiScopeInstruction}
-Use DATA.inspectedFiles and executionEnvironments; do not repeat broad discovery. Each revision includes every file changed in prior revisions.
+Use DATA.inspectedFiles and executionEnvironments; do not repeat broad discovery.
 Distinguish authored tests from executed verification. Preserve existing behavior, compatibility, flight-off isolation, and privacy.
 Report material ambiguity in blockingUnknowns; never invent missing approval or waive a finding.`
         : `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
@@ -4762,7 +4917,7 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
         "Code builder (round 1)",
         BUILDER_AGENT,
         builderTask,
-        useSlimSchemas ? slimResultSchema : implementationSchema,
+        builderSchema,
         { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, executionEnvironments, skillGuides: builderGuides },
         rawOptions.builderModel,
     ));
@@ -4849,11 +5004,11 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 `Code builder (post-clarification round ${round + 1})`,
                                 BUILDER_AGENT,
                                 builderTask,
-                                useSlimSchemas ? slimResultSchema : implementationSchema,
+                                builderSchema,
                                 { round: round + 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, skillGuides: builderGuides },
                                 rawOptions.builderModel,
                             ));
-                            implementation = await normalizeBuild(latestRawBuilderOutput, `post-clarification-${round}`);
+                            implementation = await normalizeBuild(latestRawBuilderOutput, `post-clarification-${round}`, implementation);
                         } else if (pauseOnBlocker) {
                             const recoveredImpl = await recoverWorktree(round, implementation.blockingUnknowns.join("\n"));
                             if (recoveredImpl) {
@@ -5178,7 +5333,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
 Resolve every validation error and reviewer finding in history autonomously without asking the user or returning verdict "blocked":
 - For any valid code or unit-test defect (including entry-tap admission or lifecycle callback release across branches when requested by the reviewer), implement the code and unit-test fix directly.
 - If a reviewer finding conflicts with flight-off preservation, the approved design doc, or headless local environment limits (such as no attached adb device for androidTest), keep the safe behavior, record the exact technical justification in summary and evidence, and return verdict "pass" so the independent reviewer can verify the disposition.`,
-                useSlimSchemas ? slimResultSchema : implementationSchema,
+                builderSchema,
                 {
                     round: fixes + 1,
                     fixIteration: fixes,
@@ -5195,7 +5350,7 @@ Resolve every validation error and reviewer finding in history autonomously with
                 rawOptions.builderModel,
             ));
             latestRawBuilderOutput = rawFixImpl;
-            implementation = await normalizeBuild(rawFixImpl, `fix-${fixes}`);
+            implementation = await normalizeBuild(rawFixImpl, `fix-${fixes}`, implementation);
         }
     } catch (error) {
         if (!isWorkflowControlError(ctx, error)) restoreAll();

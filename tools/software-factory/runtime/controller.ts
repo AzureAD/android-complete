@@ -344,6 +344,9 @@ export class NativeRuntime {
         const execution = this.factory.store.execution(featureId, executionId);
         if (action === "cancel" && execution.status === "starting" && !execution.runtimeId) {
             this.factory.store.updateExecution(featureId, executionId, { status: "cancelled", phase: "Cancelled before native admission" });
+            if (this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                await this.shared?.releaseFailedRun(featureId, executionId).catch(() => {});
+            }
             return { executionId, status: "cancelled", agentsStarted: 0 };
         }
         if (action === "refresh") {
@@ -467,6 +470,11 @@ export class NativeRuntime {
                                 this.settle(feature.id, execution.id, result);
                                 this.markControl(feature.id, control.id);
                                 await this.observeUsage(feature.id, execution.id, session, result.runId);
+                                if (control.action === "cancel" &&
+                                    this.factory.store.execution(feature.id, execution.id).status === "cancelled" &&
+                                    this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                    await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                                }
                             }
                         } catch (error) {
                             this.markControl(feature.id, control.id, error instanceof Error ? error.message : "Native control failed.");
