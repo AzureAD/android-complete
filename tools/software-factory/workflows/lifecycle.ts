@@ -11,7 +11,8 @@ import {
     parseCodeReview, parseCodeReviewFindings, parseIntakeProposal, parseMonitor, parsePlan, sourceRepositories, strings,
     type CodeImplementationFile, type CodeReviewRoundSummary, type Json, type PullRequest, type WorkflowKind,
 } from "../core/lifecycle-contracts.ts";
-import { runDesignFeature, workflowDefinition as guardedDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
+import { hash } from "../core/lifecycle-store.ts";
+import { runDesignFeature, validateEvidence, workflowDefinition as guardedDesign } from "../../../.github/extensions/DevDesignDoc/workflow.mjs";
 import {
     verifyPublicationSource, parseAllowedGradleVerificationCommand,
 } from "../../../.github/extensions/CodeFeature/workflow.mjs";
@@ -243,13 +244,54 @@ export async function designRun(ctx: Context, dependencies?: { provider: Provide
         const stage0 = factory.stage0(featureId);
         const sourceManifest = buildDesignSourceManifest(factory, execution);
         const feedback = factory.store.state(featureId).feedback.filter((item) => item.stage === "design" && item.revision === execution.requirementsRevision);
+        const currentAnalysisHash = hash(analysisConfiguration(factory.store.configuration()?.value || null));
+        const priorDesignArtifact = factory.store.state(featureId).artifacts
+            .filter((item) => item.kind === "design" && item.requirementsRevision === execution.requirementsRevision && item.analysisHash === currentAnalysisHash)
+            .at(-1);
+        let reusableEvidence: Json | null = null;
+        let priorDesignContext: { priorDesign: Json; priorReviewFindings: Json } | null = null;
+        if (priorDesignArtifact && priorDesignArtifact.content && typeof priorDesignArtifact.content === "object" && !Array.isArray(priorDesignArtifact.content)) {
+            const priorPacket = priorDesignArtifact.content as Record<string, Json>;
+            if (JSON.stringify(priorPacket.sourceManifest) === JSON.stringify(sourceManifest)) {
+                const candidateRaw = priorPacket.availableEvidence ?? priorPacket.evidence;
+                if (candidateRaw && typeof candidateRaw === "object" && !Array.isArray(candidateRaw)) {
+                    const { referenceDiscoveries: _omitted, ...candidateEvidence } = candidateRaw as Record<string, Json>;
+                    if (validateEvidence(candidateEvidence, stage0, sourceManifest).length === 0) {
+                        reusableEvidence = candidateEvidence;
+                    }
+                }
+                if (priorPacket.design && typeof priorPacket.design === "object" && !Array.isArray(priorPacket.design)) {
+                    const reviewsArr = Array.isArray(priorPacket.reviews) ? priorPacket.reviews : [];
+                    const lastReviewEntry = reviewsArr.at(-1);
+                    const lastFindings = lastReviewEntry && typeof lastReviewEntry === "object" && !Array.isArray(lastReviewEntry) &&
+                        "review" in lastReviewEntry && lastReviewEntry.review && typeof lastReviewEntry.review === "object" && !Array.isArray(lastReviewEntry.review) &&
+                        Array.isArray((lastReviewEntry.review as Record<string, Json>).findings)
+                        ? (lastReviewEntry.review as Record<string, Json>).findings!
+                        : [];
+                    priorDesignContext = { priorDesign: priorPacket.design, priorReviewFindings: lastFindings };
+                }
+            }
+        }
         const packet: unknown = await runDesignFeature({
             ...ctx, args: { stage0, sourceManifest },
-            step: (key: string, producer: () => Promise<Json>) => ctx.step(`${executionId}:${key}`, producer),
+            step: (key: string, producer: () => Promise<Json>) => ctx.step(`${executionId}:${key}`, async () => {
+                if (reusableEvidence !== null && key.endsWith("-evidence")) {
+                    factory.assertFresh(featureId, executionId);
+                    phase("Reusing verified repository evidence");
+                    return structuredClone(reusableEvidence);
+                }
+                return producer();
+            }),
             agent: (prompt: string, options: { label: string; schema: Record<string, Json> }) => {
                 factory.assertFresh(featureId, executionId);
                 phase(options.label);
-                return agent(`${prompt}\nREVISION FEEDBACK (DATA):\n${JSON.stringify(feedback)}\n` +
+                const priorBaselinePrompt = options.label === "Design author" && priorDesignContext
+                    ? `\nPRIOR DESIGN BASELINE AND UNRESOLVED REVIEW FINDINGS (DATA):\n${JSON.stringify(priorDesignContext)}\n` +
+                      "A prior guarded design iteration on this exact Stage 0 revision and pinned sourceManifest already verified the baseline architecture. " +
+                      "Preserve all verified sections, traceability, and passing changes from priorDesign without regressing them, update evidenceDigest to the supplied evidenceDigest, " +
+                      "and surgically resolve every finding in priorReviewFindings and REVISION FEEDBACK.\n"
+                    : "";
+                return agent(`${prompt}${priorBaselinePrompt}\nREVISION FEEDBACK (DATA):\n${JSON.stringify(feedback)}\n` +
                     `FEATURE BRIEF (DATA):\n${JSON.stringify(factory.store.registry.get(featureId).current.description || "")}\n` +
                     `APPROVED DESIGN OBLIGATIONS (DATA):\n${JSON.stringify(stage0.designTasks || [])}\n` +
                     "Resolve these engineering obligations in the design with concrete choices, evidence, compatibility checks and tests. " +
