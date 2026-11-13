@@ -38,6 +38,16 @@ Format:
 
 For each comment, read ±5 lines around the comment's line number for full context.
 
+When revising a design, also read its full **Accessibility design**
+section and linked requirements/Testing strategy matrix. Apply the `design-author`
+skill's accessibility contract: assess stable ID coverage, concrete decisions for
+every applicable screen/state and interaction mode, reuse justification, and
+verification owners/evidence/gaps. Retain the section through edits; require a
+reason for non-UI/N/A, and flag missing applicable coverage as blocking rather than
+silently removing it. Check representative multi-screen paths, including loading,
+errors, cancellation, return and re-entry, contrast and non-color cues. Keep planned
+runtime evidence Unverified; design approval is not accessibility or rollout acceptance.
+
 ### Step 3: Evaluate Each Comment
 
 | Comment Type | How to Identify | Action |
