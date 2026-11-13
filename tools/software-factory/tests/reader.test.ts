@@ -49,11 +49,12 @@ test("workers get only scoped native read tools; host denial is never replaced w
         const read = tools[0]!;
         assert.equal(await read.handler(scope), "native result");
         assert.equal(calls[0]?.name, "view");
+        assert.equal(await read.handler({ ...scope, view_range: [1, 1500] }), "native result");
         denied = true;
         await assert.rejects(() => read.handler(scope), /Managed\/content policy denied/);
-        assert.equal(calls.length, 2, "A denied native read must not fall back or retry.");
+        assert.equal(calls.length, 3, "A denied native read must not fall back or retry.");
         await assert.rejects(() => read.handler({ ...scope, path: f.options.database }), /approved source/);
-        await assert.rejects(() => read.handler({ ...scope, view_range: [1, 301] }), /at most 300/);
+        await assert.rejects(() => read.handler({ ...scope, view_range: [1, 2001] }), /at most 2000/);
         await assert.rejects(() => read.handler({ ...scope, forceReadLargeFiles: true }), /Unknown|Unsupported|Unexpected/i);
         await assert.rejects(() => tools[1]!.handler({ ...scope, path: f.workspace, pattern: "..\\*" }), /relative glob/);
         const outside = path.join(f.directory, "outside");
@@ -65,7 +66,7 @@ test("workers get only scoped native read tools; host denial is never replaced w
         session.sessionId = execution.sessionId;
         offered = [];
         await assert.rejects(() => read.handler(scope), /does not offer the native/);
-        assert.equal(calls.length, 2);
+        assert.equal(calls.length, 3);
     } finally { f.cleanup(); }
 });
 
@@ -307,6 +308,7 @@ test("workers consume domain guidance, never phase-entry skills or mode-switchin
     ] as const) {
         const prompt = readerAgents.find((candidate) => candidate.name === name)!.prompt!;
         for (const file of workerGuidance[role]) assert.ok(prompt.includes(file), `${name} must load ${file}`);
+        assert.match(prompt, /PRELOADED DOMAIN GUIDANCE/, `${name} must inline guidance to avoid multi-turn startup reads`);
         assert.doesNotMatch(prompt, /\/SKILL\.md|Factory mode|standalone mode/i);
     }
     for (const file of workerGuidanceFiles) {

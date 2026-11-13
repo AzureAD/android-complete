@@ -1,13 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
-import { realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CopilotSession, CustomAgentConfig, WorkflowAgentOptions, WorkflowContext } from "@github/copilot-sdk";
 import type { Application } from "../core/application.ts";
 import { exactKeys, FactoryError, object, text } from "../core/contracts.ts";
 import { jsonValue } from "../core/lifecycle-contracts.ts";
 import { workerGuidance } from "./guidance.ts";
-import { sourceInventory, sourceReceipt } from "./sources.ts";
+import { fastFileReadToken, sourceInventory, sourceReceipt } from "./sources.ts";
+
+const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+export const MAX_WORKER_VIEW_LINES = 2000;
+const MAX_WORKER_OUTPUT_CHARS = 80_000;
 
 export const FACTORY_READER = "software-factory-reader";
 export const FACTORY_RESEARCHER = "software-factory-researcher";
@@ -49,9 +54,20 @@ export const readerAgent: CustomAgentConfig = {
         "If a host/managed policy denies a read or a required tool is unavailable, report the blocker; do not retry alternate paths to bypass it.",
 };
 
+function preloadGuidance(role: keyof typeof workerGuidance): string {
+    const sections: string[] = [];
+    for (const relativePath of workerGuidance[role]) {
+        const absolute = path.join(repositoryRoot, relativePath);
+        if (existsSync(absolute)) {
+            sections.push(`--- PRELOADED DOMAIN GUIDANCE (${relativePath}) ---\n${readFileSync(absolute, "utf8").trim()}`);
+        }
+    }
+    return sections.length ? `\n\n${sections.join("\n\n")}` : "";
+}
+
 function specialistPrompt(role: keyof typeof workerGuidance, task: string) {
-    return `${readerAgent.prompt} Before doing the assigned task, read these required domain guidance files with your ` +
-        `scoped tools: ${workerGuidance[role].join(", ")}. A missing required guide is a blocker; do not silently skip it. ${task}`;
+    return `${readerAgent.prompt} The required domain guidance files (${workerGuidance[role].join(", ")}) are already preloaded verbatim below; ` +
+        `apply them directly without calling software_factory_read to re-read them. ${task}${preloadGuidance(role)}`;
 }
 
 export const readerAgents: CustomAgentConfig[] = [readerAgent, {
@@ -62,6 +78,7 @@ export const readerAgents: CustomAgentConfig[] = [readerAgent, {
     ...readerAgent, name: FACTORY_DESIGN_AUTHOR, displayName: "Software Factory design author",
     prompt: specialistPrompt("design", "Apply Android design coverage, alternatives, compatibility, security, telemetry, " +
         "testing, and cross-repository standards to the supplied approved requirements, evidence and repository mappings. " +
+        "Synthesize directly from the supplied verified evidence, pinned references, and review findings in DATA; only invoke scoped read/search tools when verifying a specific missing line needed to resolve a finding. " +
         "Report unresolved decisions and missing evidence in the schema."),
 }, {
     ...readerAgent, name: FACTORY_DESIGN_REVIEWER, displayName: "Software Factory independent design reviewer",
@@ -70,8 +87,8 @@ export const readerAgents: CustomAgentConfig[] = [readerAgent, {
 }, {
     ...readerAgent, name: FACTORY_PLANNER, displayName: "Software Factory feature planner",
     prompt: specialistPrompt("plan", "The DATA packet is the authoritative approved design, requirements, configuration and evidence. " +
-        "Do not require a separate local design/research artifact or another approval. Apply repository targeting, dependency, " +
-        "self-contained-description, acceptance-criterion and test-planning contracts."),
+        "Do not require a separate local design/research artifact or another approval. Synthesize directly from DATA, calling scoped read/find tools only to confirm exact target file or test paths when needed. " +
+        "Apply repository targeting, dependency, self-contained-description, acceptance-criterion and test-planning contracts."),
 }, {
     ...readerAgent, name: FACTORY_CODER, displayName: "Software Factory local coding builder",
     prompt: specialistPrompt("code", "Implement or revise the supplied PBI in the target repository. " +
@@ -149,14 +166,14 @@ export function createReaderTools(application: () => Application, host: () => Re
                 }
             }
             if (definition.native === "grep") {
-                Object.assign(nativeArgs, { output_mode: "content", "-n": true, head_limit: 100 });
+                Object.assign(nativeArgs, { output_mode: "content", "-n": true, head_limit: 200 });
                 if (args.glob !== undefined) nativeArgs.glob = text(args.glob, "File glob");
             }
             if (args.view_range !== undefined) {
                 const range = args.view_range;
                 if (!Array.isArray(range) || range.length !== 2 || !range.every(Number.isSafeInteger) ||
-                    range[0] < 1 || range[1] < range[0] || range[1] - range[0] >= 300) {
-                    throw new FactoryError("invalid_worker_range", "Read at most 300 lines using a positive inclusive line range.");
+                    range[0] < 1 || range[1] < range[0] || range[1] - range[0] >= MAX_WORKER_VIEW_LINES) {
+                    throw new FactoryError("invalid_worker_range", `Read at most ${MAX_WORKER_VIEW_LINES} lines using a positive inclusive line range.`);
                 }
                 nativeArgs.view_range = range;
             }
@@ -165,13 +182,18 @@ export function createReaderTools(application: () => Application, host: () => Re
             const featureId = text(args.featureId, "Feature ID");
             app.lifecycle.assertFresh(featureId, text(args.executionId, "Execution ID"));
             const before = await sourceReceipt(app.lifecycle, execution, target, featureId);
+            const preReadToken = definition.native === "view" && before ? fastFileReadToken(execution, target) : null;
             const name = definition.native === "grep" ? pipeline.grep : definition.native;
             const result = await session.rpc.tools.execute({ name, arguments: jsonValue(nativeArgs) });
             if (typeof result !== "string" && result.resultType !== "success") throw new FactoryError("worker_read_failed", result.textResultForLlm, 403);
-            const after = await sourceReceipt(app.lifecycle, app.lifecycle.assertFresh(featureId, execution.id), target, featureId);
+            const freshExec = app.lifecycle.assertFresh(featureId, execution.id);
+            const postReadToken = preReadToken ? fastFileReadToken(freshExec, target) : null;
+            const after = preReadToken && postReadToken === preReadToken
+                ? before
+                : await sourceReceipt(app.lifecycle, freshExec, target, featureId);
             if (JSON.stringify(before) !== JSON.stringify(after)) throw new FactoryError("source_drift", "Source changed during the native read. Its result was discarded; no stale attestation was returned.", 409);
             const output = typeof result === "string" ? result : result.textResultForLlm;
-            const bounded = output.length <= 30_000 ? output : `${output.slice(0, 30_000)}\n[Output truncated; narrow the search or read a smaller range.]`;
+            const bounded = output.length <= MAX_WORKER_OUTPUT_CHARS ? output : `${output.slice(0, MAX_WORKER_OUTPUT_CHARS)}\n[Output truncated; narrow the search or read a smaller range.]`;
             const rangeSuffix = Array.isArray(args.view_range) ? `:${args.view_range[0]}-${args.view_range[1]}` : "";
             const patternSuffix = typeof args.pattern === "string" ? ` — pattern "${args.pattern}"${typeof args.glob === "string" ? ` (${args.glob})` : ""}` : "";
             const lineCount = bounded.split(/\r?\n/).length;

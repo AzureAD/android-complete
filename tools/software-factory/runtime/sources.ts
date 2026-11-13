@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { Lifecycle } from "../core/lifecycle.ts";
 import { sourceRepositories, type Execution } from "../core/lifecycle-contracts.ts";
@@ -73,6 +73,60 @@ export async function gitlinks(root: string): Promise<{ path: string; revision: 
 const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
 const contains = (root: string, value: string) => normalize(value) === normalize(root) || normalize(value).startsWith(normalize(root) + path.sep);
 const emptyFingerprint = createHash("sha256").digest("hex");
+const gitlinkTreeCache = new Map<string, boolean>();
+
+async function hasGitlinkInTree(root: string, commitRevision: string, prefixes: string[]): Promise<boolean> {
+    if (!prefixes.length) return false;
+    const key = `${normalize(root)}\0${commitRevision}\0${prefixes.join("\0")}`;
+    const cached = gitlinkTreeCache.get(key);
+    if (cached !== undefined) return cached;
+    const tree = await systemRunner.run("git", ["ls-tree", "-z", "HEAD", "--", ...prefixes], { cwd: root });
+    const found = tree.split("\0").some((item) => item.startsWith("160000 commit "));
+    if (gitlinkTreeCache.size > 4096) gitlinkTreeCache.clear();
+    gitlinkTreeCache.set(key, found);
+    return found;
+}
+
+function resolveGitDir(root: string): string | null {
+    const dotGit = path.join(root, ".git");
+    try {
+        const stat = lstatSync(dotGit);
+        if (stat.isDirectory()) return dotGit;
+        if (stat.isFile()) {
+            const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
+            if (match?.[1]) {
+                const resolved = path.resolve(root, match[1].trim());
+                if (existsSync(resolved)) return resolved;
+            }
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
+export function fastFileReadToken(execution: Execution, target: string): string | null {
+    if (execution.kind === "implement") return null;
+    const entry = Object.entries(execution.sourcePins).filter(([root]) => contains(root, target))
+        .sort(([a], [b]) => b.length - a.length)[0];
+    if (!entry) return null;
+    const [root] = entry;
+    const gitDir = resolveGitDir(root);
+    if (!gitDir) return null;
+    try {
+        const targetStat = lstatSync(target);
+        if (!targetStat.isFile()) return null;
+        const headStat = lstatSync(path.join(gitDir, "HEAD"));
+        const indexPath = path.join(gitDir, "index");
+        const indexSig = existsSync(indexPath)
+            ? (() => { const s = lstatSync(indexPath); return `${s.size}:${s.mtimeMs}`; })()
+            : "no-index";
+        const fileHash = fileEvidence(target).toString("hex");
+        return `${headStat.size}:${headStat.mtimeMs}|${indexSig}|${targetStat.size}:${targetStat.mtimeMs}:${fileHash}`;
+    } catch {
+        return null;
+    }
+}
 
 export async function sourceReceipt(factory: Lifecycle, execution: Execution, target: string, featureId?: string) {
     const workspaceRoot = realpathSync(factory.store.registry.project.workspace);
@@ -106,8 +160,7 @@ export async function sourceReceipt(factory: Lifecycle, execution: Execution, ta
         const relative = path.relative(repairRoot, target).split(path.sep).filter(Boolean);
         if (relative.length) {
             const prefixes = relative.map((_, index) => relative.slice(0, index + 1).join("/"));
-            const tree = await systemRunner.run("git", ["ls-tree", "-z", "HEAD", "--", ...prefixes], { cwd: repairRoot });
-            if (tree.split("\0").some((item) => item.startsWith("160000 commit "))) {
+            if (await hasGitlinkInTree(repairRoot, matchedOp.repair.expectedHead, prefixes)) {
                 throw new FactoryError("worker_source_unpinned", "The requested repair path is inside a gitlink without a separately admitted checkout pin.", 409);
             }
         }
@@ -154,8 +207,8 @@ export async function sourceReceipt(factory: Lifecycle, execution: Execution, ta
     const relative = path.relative(root, target).split(path.sep).filter(Boolean);
     if (relative.length) {
         const prefixes = relative.map((_, index) => relative.slice(0, index + 1).join("/"));
-        const tree = await systemRunner.run("git", ["ls-tree", "-z", "HEAD", "--", ...prefixes], { cwd: root });
-        if (tree.split("\0").some((entry) => entry.startsWith("160000 commit "))) {
+        const admittedRevision = admittedPin.split(":")[0]!;
+        if (await hasGitlinkInTree(root, admittedRevision, prefixes)) {
             throw new FactoryError("worker_source_unpinned", "The requested path is inside a gitlink without a separately admitted checkout pin. Inspect software_factory_sources; a sibling repository is not an implicit substitute.", 409);
         }
     }
