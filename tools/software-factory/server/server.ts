@@ -41,6 +41,12 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
             }
             if (exec.kind === "implement") {
                 const syntheticImplTurns: ExecutionTraceEntry[] = [];
+                const roundState = new Map<number, {
+                    targetId: string;
+                    summaries: string[];
+                    filesByPath: Map<string, { path: string; action: string; summary: string }>;
+                    tests: Set<string>;
+                }>();
                 let cIdx = 0;
                 let crIdx = 0;
                 let lastFilesSig = "";
@@ -54,14 +60,54 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                         const filesSig = JSON.stringify(targetObj.files);
                         if (filesSig === lastFilesSig) continue;
                         lastFilesSig = filesSig;
-                        const itemTag = typeof targetObj.id === "string" && targetObj.id ? targetObj.id : "PBI-1";
+                        const itemTag = typeof targetObj.targetId === "string" && targetObj.targetId
+                            ? targetObj.targetId
+                            : typeof targetObj.id === "string" && targetObj.id ? targetObj.id : "PBI-1";
+                        const compactFiles = targetObj.files
+                            .filter((f): f is Record<string, Json> => Boolean(f) && typeof f === "object" && !Array.isArray(f))
+                            .map((f) => ({
+                                path: typeof f.path === "string" ? f.path : "",
+                                action: typeof f.action === "string" ? f.action : "modify",
+                                summary: typeof f.summary === "string" ? f.summary : "",
+                            }))
+                            .filter((f) => Boolean(f.path));
+                        const batchSummary = typeof targetObj.summary === "string" && targetObj.summary.trim()
+                            ? targetObj.summary.trim()
+                            : typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : "";
+                        const batchTests = [
+                            ...(Array.isArray(targetObj.testsAddedOrUpdated) ? targetObj.testsAddedOrUpdated : []),
+                            ...(Array.isArray(parsed.testsAddedOrUpdated) ? parsed.testsAddedOrUpdated : []),
+                        ].filter((t): t is string => typeof t === "string" && Boolean(t.trim()));
+
                         if (syntheticImplTurns.length > 0 && crIdx < cIdx) {
+                            const roundIdx = cIdx - 1;
+                            const state = roundState.get(roundIdx)!;
+                            if (batchSummary && !state.summaries.includes(batchSummary)) state.summaries.push(batchSummary);
+                            for (const f of compactFiles) state.filesByPath.set(f.path, f);
+                            for (const t of batchTests) state.tests.add(t);
+                            for (const f of compactFiles) {
+                                if (/(Test|Tests|Spec)\.(java|kt)$/.test(f.path)) state.tests.add(f.path);
+                            }
                             syntheticImplTurns[syntheticImplTurns.length - 1] = {
                                 ...syntheticImplTurns[syntheticImplTurns.length - 1]!,
                                 timestamp: exec.updatedAt,
-                                outputPreview: JSON.stringify(targetObj).slice(0, 30_000),
+                                outputPreview: JSON.stringify({
+                                    targetId: state.targetId,
+                                    summary: state.summaries.join(" · "),
+                                    files: [...state.filesByPath.values()],
+                                    testsAddedOrUpdated: [...state.tests],
+                                }),
                             };
                         } else {
+                            const roundIdx = cIdx;
+                            const filesByPath = new Map<string, { path: string; action: string; summary: string }>();
+                            const tests = new Set<string>(batchTests);
+                            for (const f of compactFiles) {
+                                filesByPath.set(f.path, f);
+                                if (/(Test|Tests|Spec)\.(java|kt)$/.test(f.path)) tests.add(f.path);
+                            }
+                            const summaries = batchSummary ? [batchSummary] : [];
+                            roundState.set(roundIdx, { targetId: itemTag, summaries, filesByPath, tests });
                             syntheticImplTurns.push({
                                 id: `${exec.id}:journal:coder:${itemTag}:${cIdx}`,
                                 kind: "agent_turn",
@@ -70,7 +116,12 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                                 label: `Factory:coder:${itemTag}:${cIdx}`,
                                 target: "software-factory-coder",
                                 status: "completed",
-                                outputPreview: JSON.stringify(targetObj).slice(0, 30_000),
+                                outputPreview: JSON.stringify({
+                                    targetId: itemTag,
+                                    summary: summaries.join(" · "),
+                                    files: [...filesByPath.values()],
+                                    testsAddedOrUpdated: [...tests],
+                                }),
                             });
                             cIdx++;
                         }
