@@ -249,25 +249,34 @@ export async function designRun(ctx: Context, dependencies?: { provider: Provide
             .filter((item) => item.kind === "design" && item.requirementsRevision === execution.requirementsRevision && item.analysisHash === currentAnalysisHash)
             .at(-1);
         let reusableEvidence: Json | null = null;
+        let priorEvidenceContext: { priorEvidence: Json; priorReviewFindings: Json } | null = null;
         let priorDesignContext: { priorDesign: Json; priorReviewFindings: Json } | null = null;
         if (priorDesignArtifact && priorDesignArtifact.content && typeof priorDesignArtifact.content === "object" && !Array.isArray(priorDesignArtifact.content)) {
             const priorPacket = priorDesignArtifact.content as Record<string, Json>;
             if (JSON.stringify(priorPacket.sourceManifest) === JSON.stringify(sourceManifest)) {
+                const reviewsArr = Array.isArray(priorPacket.reviews) ? priorPacket.reviews : [];
+                const lastReviewEntry = reviewsArr.at(-1);
+                const lastFindings = lastReviewEntry && typeof lastReviewEntry === "object" && !Array.isArray(lastReviewEntry) &&
+                    "review" in lastReviewEntry && lastReviewEntry.review && typeof lastReviewEntry.review === "object" && !Array.isArray(lastReviewEntry.review) &&
+                    Array.isArray((lastReviewEntry.review as Record<string, Json>).findings)
+                    ? (lastReviewEntry.review as Record<string, Json>).findings!
+                    : [];
+                const hasEvidenceFinding = lastFindings.some((f) =>
+                    f !== null && typeof f === "object" && !Array.isArray(f) &&
+                    ["evidenceAccuracyAndCurrency", "completeScenarioTraces"].includes(String((f as Record<string, Json>).rubricId || "")),
+                );
                 const candidateRaw = priorPacket.availableEvidence ?? priorPacket.evidence;
                 if (candidateRaw && typeof candidateRaw === "object" && !Array.isArray(candidateRaw)) {
                     const { referenceDiscoveries: _omitted, ...candidateEvidence } = candidateRaw as Record<string, Json>;
                     if (validateEvidence(candidateEvidence, stage0, sourceManifest).length === 0) {
-                        reusableEvidence = candidateEvidence;
+                        if (hasEvidenceFinding) {
+                            priorEvidenceContext = { priorEvidence: candidateEvidence, priorReviewFindings: lastFindings };
+                        } else {
+                            reusableEvidence = candidateEvidence;
+                        }
                     }
                 }
                 if (priorPacket.design && typeof priorPacket.design === "object" && !Array.isArray(priorPacket.design)) {
-                    const reviewsArr = Array.isArray(priorPacket.reviews) ? priorPacket.reviews : [];
-                    const lastReviewEntry = reviewsArr.at(-1);
-                    const lastFindings = lastReviewEntry && typeof lastReviewEntry === "object" && !Array.isArray(lastReviewEntry) &&
-                        "review" in lastReviewEntry && lastReviewEntry.review && typeof lastReviewEntry.review === "object" && !Array.isArray(lastReviewEntry.review) &&
-                        Array.isArray((lastReviewEntry.review as Record<string, Json>).findings)
-                        ? (lastReviewEntry.review as Record<string, Json>).findings!
-                        : [];
                     priorDesignContext = { priorDesign: priorPacket.design, priorReviewFindings: lastFindings };
                 }
             }
@@ -285,13 +294,21 @@ export async function designRun(ctx: Context, dependencies?: { provider: Provide
             agent: (prompt: string, options: { label: string; schema: Record<string, Json> }) => {
                 factory.assertFresh(featureId, executionId);
                 phase(options.label);
+                const priorEvidencePrompt = options.label === "Repository evidence" && priorEvidenceContext
+                    ? `\nPRIOR VERIFIED EVIDENCE BASELINE AND REVIEW DELTA (DATA):\n${JSON.stringify(priorEvidenceContext)}\n` +
+                      "A prior run on this exact Stage 0 revision and pinned sourceManifest already verified the baseline references, sourceVerification, facts, and scenarioTraces above. " +
+                      "Retain all valid references and facts from priorEvidence (after confirming pins via software_factory_sources and targeted reads for any added/updated files), " +
+                      "and surgically add the missing references, updated facts, and corrected scenarioTraces identified in priorReviewFindings and REVISION FEEDBACK.\n"
+                    : "";
                 const priorBaselinePrompt = options.label === "Design author" && priorDesignContext
                     ? `\nPRIOR DESIGN BASELINE AND UNRESOLVED REVIEW FINDINGS (DATA):\n${JSON.stringify(priorDesignContext)}\n` +
                       "A prior guarded design iteration on this exact Stage 0 revision and pinned sourceManifest already verified the baseline architecture. " +
-                      "Preserve all verified sections, traceability, and passing changes from priorDesign without regressing them, update evidenceDigest to the supplied evidenceDigest, " +
+                      "Preserve all verified sections, traceability, and passing changes from priorDesign without regressing them, update evidenceDigest to the exact supplied evidenceDigest, " +
+                      "ensure every requirementId appears in traceability and at least one changes entry with matching traceIds and consistent classification/implementation/counterevidence.result " +
+                      "('preserve-existing' -> 'regression-only' + 'already-handled'; 'new-feature'/'verified-defect' -> 'required' + 'confirmed-gap'; 'optional-improvement' -> 'deferred'), " +
                       "and surgically resolve every finding in priorReviewFindings and REVISION FEEDBACK.\n"
                     : "";
-                return agent(`${prompt}${priorBaselinePrompt}\nREVISION FEEDBACK (DATA):\n${JSON.stringify(feedback)}\n` +
+                return agent(`${prompt}${priorEvidencePrompt}${priorBaselinePrompt}\nREVISION FEEDBACK (DATA):\n${JSON.stringify(feedback)}\n` +
                     `FEATURE BRIEF (DATA):\n${JSON.stringify(factory.store.registry.get(featureId).current.description || "")}\n` +
                     `APPROVED DESIGN OBLIGATIONS (DATA):\n${JSON.stringify(stage0.designTasks || [])}\n` +
                     "Resolve these engineering obligations in the design with concrete choices, evidence, compatibility checks and tests. " +

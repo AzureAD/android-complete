@@ -376,6 +376,11 @@ New references may be cited immediately in changeChecks and findings; use only s
 Return an empty references array when no new sources are discovered.
 Check the entire narrative for implementation mandates omitted from changes, all relevant scenario
 branches, and preservation of existing attribution/ordering. Missing evidence is a finding, not a pass.
+Note that initial evidence.facts and evidence.scenarioTraces are immutable Stage 1 provenance snapshots
+and cannot be modified by Design revision on subsequent rounds; when priorReviews is nonempty, verify that
+any newly discovered references, corrected baseline facts, and updated scenario traces are accurately
+incorporated in design.sections, design.changes, and design.traceability rather than failing criteria
+solely because the frozen evidence.facts or evidence.scenarioTraces snapshot was not mutated.
 Use the supplied designDigest and evidenceDigest for the exact input context.
 A false change check prohibits GO even if all rubric criteria pass.
 For each issue return a unique ID, rubric ID, severity, exact location, evidence, required change.
