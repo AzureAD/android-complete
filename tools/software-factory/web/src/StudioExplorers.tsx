@@ -1,10 +1,20 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Artifact, Execution, ExecutionTraceEntry, FactoryFeature, Json } from "../../core/lifecycle-contracts.ts";
+import type {
+    Artifact,
+    Execution,
+    ExecutionTraceEntry,
+    ExecutionTranscriptResponse,
+    FactoryFeature,
+    Json,
+    TranscriptAgentSummary,
+    TranscriptMessageItem,
+} from "../../core/lifecycle-contracts.ts";
 import { workerGuidance } from "../../runtime/guidance.ts";
+import { request } from "./api";
 
 function isRecord(value: unknown): value is Record<string, Json> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -1744,6 +1754,46 @@ export function DeliveryCommandCenter({
     );
 }
 
+function formatTokens(tokens?: number): string {
+    if (!tokens || tokens <= 0) return "0";
+    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
+    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+    return tokens.toLocaleString();
+}
+
+function AssistantDeliverableView({ content }: { content: string }) {
+    const [showFormattedJson, setShowFormattedJson] = useState(false);
+    const trimmed = content.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+            const parsed: unknown = JSON.parse(trimmed);
+            const pretty = JSON.stringify(parsed, null, 2);
+            return (
+                <div className="deliverable-structured-wrap">
+                    <StructuredOutputPreview raw={trimmed} />
+                    <div className="deliverable-json-toggle-row">
+                        <button
+                            type="button"
+                            className="ghost-chip-btn"
+                            onClick={() => setShowFormattedJson(!showFormattedJson)}
+                        >
+                            {showFormattedJson ? "Hide Formatted JSON ▴" : "{ } Inspect Formatted JSON ▾"}
+                        </button>
+                    </div>
+                    {showFormattedJson && <pre className="code-snippet-box">{pretty}</pre>}
+                </div>
+            );
+        } catch {
+            // Not valid JSON — render as Markdown below.
+        }
+    }
+    return (
+        <div className="markdown-prose transcript-markdown">
+            <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+        </div>
+    );
+}
+
 export function SubagentFlightRecorder({
     feature,
     selectedExecutionId,
@@ -1754,89 +1804,188 @@ export function SubagentFlightRecorder({
     onSelectExecution?: (id: string) => void;
 }) {
     const executions = [...feature.factory.executions].reverse();
-    const activeExec = executions.find((e) => e.id === selectedExecutionId) || executions[0] || null;
-    const [traceFilter, setTraceFilter] = useState<"all" | "agent_turn" | "tool_call">("all");
-    const [inspectedTrace, setInspectedTrace] = useState<ExecutionTraceEntry | null>(null);
-    const [selectedLaneKey, setSelectedLaneKey] = useState<string | null>(null);
+    const [stageKindFilter, setStageKindFilter] = useState<string>("all");
+    const stageFilteredExecutions = stageKindFilter === "all"
+        ? executions
+        : executions.filter((e) => e.kind === stageKindFilter);
+
+    // Prefer explicitly selected execution, else an active or subagent-bearing run so users immediately see rich transcripts.
+    const defaultExec = stageFilteredExecutions.find((e) => e.status === "running" || e.status === "starting")
+        || stageFilteredExecutions.find((e) => (e.usage?.subagents ?? 0) > 0 || (e.trace?.length ?? 0) > 0)
+        || stageFilteredExecutions[0]
+        || executions[0]
+        || null;
+    const activeExec = executions.find((e) => e.id === selectedExecutionId) || defaultExec;
+
+    const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
+    const [transcriptData, setTranscriptData] = useState<ExecutionTranscriptResponse | null>(null);
+    const [loadingTranscript, setLoadingTranscript] = useState(false);
+    const [transcriptFilter, setTranscriptFilter] = useState<"all" | "conversation" | "tools">("all");
+    const [searchQuery, setSearchQuery] = useState("");
+    const [expandedToolIds, setExpandedToolIds] = useState<Record<string, boolean>>({});
+    const [expandedPrompts, setExpandedPrompts] = useState<Record<string, boolean>>({});
+    const [showPlaybooks, setShowPlaybooks] = useState(false);
+    const [showMilestones, setShowMilestones] = useState(false);
+
+    useEffect(() => {
+        setSelectedAgentId(undefined);
+        setExpandedToolIds({});
+        setExpandedPrompts({});
+    }, [activeExec?.id]);
+
+    useEffect(() => {
+        if (!activeExec) {
+            setTranscriptData(null);
+            return;
+        }
+        let cancelled = false;
+        const fetchTranscript = async (isBackgroundPoll = false) => {
+            if (!isBackgroundPoll) setLoadingTranscript(true);
+            try {
+                const qs = selectedAgentId ? `?agentId=${encodeURIComponent(selectedAgentId)}` : "";
+                const data = await request<ExecutionTranscriptResponse>(
+                    `/api/executions/${encodeURIComponent(feature.id)}/${encodeURIComponent(activeExec.id)}/transcript${qs}`,
+                );
+                if (!cancelled) {
+                    setTranscriptData(data);
+                    if (!selectedAgentId && data.selectedAgentId) {
+                        setSelectedAgentId(data.selectedAgentId);
+                    }
+                }
+            } catch {
+                if (!cancelled) setTranscriptData(null);
+            } finally {
+                if (!cancelled && !isBackgroundPoll) setLoadingTranscript(false);
+            }
+        };
+        void fetchTranscript(false);
+
+        const isLive = activeExec.status === "running" || activeExec.status === "starting";
+        const timer = isLive ? setInterval(() => { void fetchTranscript(true); }, 2500) : undefined;
+        return () => {
+            cancelled = true;
+            if (timer) clearInterval(timer);
+        };
+    }, [feature.id, activeExec?.id, activeExec?.status, activeExec?.updatedAt, selectedAgentId]);
 
     if (!activeExec) {
         return (
-            <div className="flight-recorder-empty">
+            <div className="flight-recorder-empty" aria-label="Subagent Flight Recorder">
                 <span className="eyebrow">FLIGHT RECORDER IDLE</span>
                 <p className="muted">
-                    No subagent workflows have run yet. When you start Intake, Design, Planning, Coding, or Monitoring, live subagent swimlanes, scoped repository reads/searches, and structured transcripts appear here.
+                    No subagent workflows have run yet. When you start Intake, Design, Planning, Coding, or Monitoring, full subagent prompts, reasoning thoughts, messages, and repository tool calls appear here.
                 </p>
             </div>
         );
     }
 
-    const trace = activeExec.trace || [];
-    const filteredTrace = trace.filter((entry) => traceFilter === "all" || entry.kind === traceFilter);
-    const usageAgents = activeExec.usage?.agents || [];
-    const turnEntries = trace.filter((t) => t.kind === "agent_turn");
-    const toolEntries = trace.filter((t) => t.kind === "tool_call");
+    const agents: TranscriptAgentSummary[] = transcriptData?.agents?.length
+        ? transcriptData.agents
+        : (activeExec.usage?.agents || []).map((ag, idx) => ({
+            agentId: `fallback-${idx}`,
+            label: ag.label,
+            agentType: "software-factory-worker",
+            status: ag.status,
+            model: ag.resolvedModel || ag.requestedModel || null,
+            reasoningEffort: null,
+            startedAtMs: null,
+            completedAtMs: null,
+            activeMs: ag.activeMs,
+            nanoAiu: 0,
+            messageCount: 0,
+            thoughtCount: 0,
+            toolCallCount: 0,
+            totalTokens: 0,
+        }));
 
-    const lanes = usageAgents.length > 0
-        ? usageAgents.map((ag, idx) => {
-            const info = roleDisplayName(undefined, ag.label);
-            const occurrenceIdx = usageAgents.slice(0, idx).filter((prev) => prev.label === ag.label).length;
-            const matchingTurns = turnEntries.filter((t) => t.label === ag.label);
-            const matchingTurn = matchingTurns[occurrenceIdx] || matchingTurns.at(-1) || null;
-            return {
-                key: `${ag.label}-${idx}`,
-                stepNumber: idx + 1,
-                badge: info.badge,
-                title: info.title,
-                purpose: info.purpose,
-                label: ag.label,
-                status: ag.status,
-                model: ag.resolvedModel || ag.requestedModel || "Runtime default",
-                duration: `${(ag.activeMs / 1000).toFixed(1)}s`,
-                guides: info.guideKey ? workerGuidance[info.guideKey] : [],
-                turn: matchingTurn,
-            };
-        })
-        : turnEntries.map((turn, idx) => {
-            const info = roleDisplayName(turn.role, turn.label);
-            return {
-                key: turn.id,
-                stepNumber: idx + 1,
-                badge: info.badge,
-                title: info.title,
-                purpose: info.purpose,
-                label: turn.label || turn.role || "worker",
-                status: turn.status,
-                model: "Scoped session model",
-                duration: turn.durationMs ? `${(turn.durationMs / 1000).toFixed(1)}s` : "running",
-                guides: info.guideKey ? workerGuidance[info.guideKey] : [],
-                turn,
-            };
-        });
+    const activeAgent = agents.find((a) => a.agentId === (transcriptData?.selectedAgentId || selectedAgentId)) || agents[0] || null;
+    const activeAgentIdx = activeAgent ? agents.findIndex((a) => a.agentId === activeAgent.agentId) : -1;
+    const activeRoleInfo = activeAgent ? roleDisplayName(activeAgent.agentType, activeAgent.label) : null;
+    const activeGuides = activeRoleInfo?.guideKey ? workerGuidance[activeRoleInfo.guideKey] : [];
 
-    const selectedLane = lanes.find((l) => l.key === selectedLaneKey) || null;
+    const rawItems: TranscriptMessageItem[] = transcriptData?.transcript || [];
+    const conversationCount = rawItems.filter((i) => i.kind === "prompt" || i.kind === "thought" || i.kind === "assistant").length;
+    const toolCount = rawItems.filter((i) => i.kind === "tool_call").length;
+
+    const filteredItems = rawItems.filter((item) => {
+        if (transcriptFilter === "conversation" && item.kind === "tool_call") return false;
+        if (transcriptFilter === "tools" && item.kind !== "tool_call") return false;
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase();
+            const hay = `${item.title || ""} ${item.content} ${item.toolTarget || ""} ${item.toolOutput || ""}`.toLowerCase();
+            if (!hay.includes(q)) return false;
+        }
+        return true;
+    });
+
+    const stageKinds = Array.from(new Set(executions.map((e) => e.kind)));
+    const milestones = transcriptData?.progress || [];
+    const totalSubagentsInRun = Math.max(activeExec.usage?.subagents ?? 0, agents.length);
+    const totalToolsAcrossAgents = agents.reduce((sum, a) => sum + a.toolCallCount, 0) || (activeExec.trace || []).filter((t) => t.kind === "tool_call").length;
+    const totalThoughtsAcrossAgents = agents.reduce((sum, a) => sum + a.thoughtCount, 0);
+
+    const toggleTool = (id: string) => {
+        setExpandedToolIds((prev) => ({ ...prev, [id]: !prev[id] }));
+    };
 
     return (
         <div className="flight-recorder" aria-label="Subagent Flight Recorder">
-            {executions.length > 1 && (
-                <div className="flight-exec-selector">
-                    <label htmlFor="flight-exec-select" className="eyebrow">SELECT EXECUTION RUN</label>
-                    <select
-                        id="flight-exec-select"
-                        value={activeExec.id}
-                        onChange={(e) => {
-                            onSelectExecution?.(e.target.value);
-                            setInspectedTrace(null);
-                            setSelectedLaneKey(null);
-                        }}
-                    >
-                        {executions.map((exec) => (
-                            <option key={exec.id} value={exec.id}>
-                                {exec.kind.toUpperCase()} — {exec.status} ({exec.phase}) · {new Date(exec.updatedAt).toLocaleTimeString()}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-            )}
+            <div className="flight-top-controls">
+                {stageKinds.length > 1 && (
+                    <div className="flight-stage-pills" role="group" aria-label="Filter runs by stage">
+                        <button
+                            type="button"
+                            className={stageKindFilter === "all" ? "active" : ""}
+                            onClick={() => {
+                                setStageKindFilter("all");
+                            }}
+                        >
+                            All Stages ({executions.length})
+                        </button>
+                        {stageKinds.map((kind) => {
+                            const count = executions.filter((e) => e.kind === kind).length;
+                            return (
+                                <button
+                                    type="button"
+                                    key={kind}
+                                    className={stageKindFilter === kind ? "active" : ""}
+                                    onClick={() => {
+                                        setStageKindFilter(kind);
+                                        const bestForKind = executions.find((e) => e.kind === kind && ((e.usage?.subagents ?? 0) > 0 || e.status === "running"))
+                                            || executions.find((e) => e.kind === kind);
+                                        if (bestForKind) onSelectExecution?.(bestForKind.id);
+                                    }}
+                                >
+                                    {kind.toUpperCase()} ({count})
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {stageFilteredExecutions.length > 1 && (
+                    <div className="flight-exec-selector">
+                        <label htmlFor="flight-exec-select" className="eyebrow">EXECUTION RUN</label>
+                        <select
+                            id="flight-exec-select"
+                            value={activeExec.id}
+                            onChange={(e) => {
+                                onSelectExecution?.(e.target.value);
+                            }}
+                        >
+                            {stageFilteredExecutions.map((exec) => {
+                                const subCount = exec.usage?.subagents ?? 0;
+                                const credits = exec.usage?.nanoAiu ? ` · ${formatAiUsage(exec.usage.nanoAiu)}` : "";
+                                return (
+                                    <option key={exec.id} value={exec.id}>
+                                        {exec.kind.toUpperCase()} — {exec.status} ({subCount} subagent{subCount === 1 ? "" : "s"}{credits}) · {new Date(exec.updatedAt).toLocaleString()}
+                                    </option>
+                                );
+                            })}
+                        </select>
+                    </div>
+                )}
+            </div>
 
             <div className="flight-telemetry-bar">
                 <div className="telemetry-stat">
@@ -1849,11 +1998,15 @@ export function SubagentFlightRecorder({
                 </div>
                 <div className="telemetry-stat">
                     <span>SUBAGENTS</span>
-                    <strong>{activeExec.usage?.subagents ?? turnEntries.length}</strong>
+                    <strong>{totalSubagentsInRun}</strong>
                 </div>
                 <div className="telemetry-stat">
-                    <span>SCOPED READS</span>
-                    <strong>{toolEntries.length}</strong>
+                    <span>AGENT THOUGHTS</span>
+                    <strong>{totalThoughtsAcrossAgents > 0 ? totalThoughtsAcrossAgents.toLocaleString() : "—"}</strong>
+                </div>
+                <div className="telemetry-stat">
+                    <span>TOOL CALLS</span>
+                    <strong>{totalToolsAcrossAgents.toLocaleString()}</strong>
                 </div>
                 <div className="telemetry-stat" title={activeExec.usage ? `${activeExec.usage.nanoAiu.toLocaleString()} nano-AIU` : undefined}>
                     <span>AI USAGE</span>
@@ -1861,82 +2014,147 @@ export function SubagentFlightRecorder({
                 </div>
             </div>
 
-            {lanes.length > 0 && (
-                <div className="swimlanes-section">
-                    <div className="swimlanes-header">
-                        <span className="eyebrow">SUBAGENT SWIMLANES &amp; SPECIALIST ROLES</span>
-                        <span className="field-help">Click any specialist card to inspect its role, repo playbooks &amp; output</span>
-                    </div>
-                    <div className="swimlane-cards">
-                        {lanes.map((lane) => {
-                            const isSelected = selectedLane?.key === lane.key;
-                            return (
-                                <button
-                                    type="button"
-                                    key={lane.key}
-                                    aria-expanded={isSelected}
-                                    className={`swimlane-card status-${lane.status} ${isSelected ? "selected" : ""}`}
-                                    onClick={() => {
-                                        const next = isSelected ? null : lane.key;
-                                        setSelectedLaneKey(next);
-                                        if (next && lane.turn) setInspectedTrace(lane.turn);
-                                    }}
-                                >
-                                    <div className="swimlane-top">
-                                        <span className={`studio-pill ${lane.badge === "REVIEWER" ? "purple" : lane.badge === "BUILDER" ? "blue" : "emerald"}`}>
-                                            #{lane.stepNumber} · {lane.badge}
-                                        </span>
-                                        <span className="swimlane-duration">{lane.duration}</span>
+            {milestones.length > 0 && (
+                <div className="flight-milestones-bar">
+                    <button
+                        type="button"
+                        className="milestones-toggle-btn"
+                        aria-expanded={showMilestones}
+                        onClick={() => setShowMilestones(!showMilestones)}
+                    >
+                        <span className="studio-pill blue">ORCHESTRATOR LOG</span>
+                        <strong>{milestones.at(-1)?.title || activeExec.phase}</strong>
+                        <span className="muted">({milestones.length} workflow milestone{milestones.length === 1 ? "" : "s"} {showMilestones ? "▴" : "▾"})</span>
+                    </button>
+                    {showMilestones && (
+                        <div className="milestones-timeline">
+                            {milestones.map((m) => (
+                                <div key={m.seq} className="milestone-row">
+                                    <span className={`studio-pill ${m.outcome === "failure" ? "crimson" : m.outcome === "warning" ? "amber" : "emerald"}`}>
+                                        #{m.seq}
+                                    </span>
+                                    <div className="milestone-body">
+                                        <strong>{m.title}</strong>
+                                        {m.summary && <p className="muted">{m.summary}</p>}
                                     </div>
-                                    <strong>{lane.title}</strong>
-                                    <code className="swimlane-label">{lane.label}</code>
-                                    <div className="swimlane-meta">
-                                        <span className="mono-chip">{lane.model}</span>
-                                        <span className={`status-pill-mini ${lane.status}`}>{lane.status}</span>
-                                    </div>
-                                    {lane.guides.length > 0 && (
-                                        <div className="swimlane-guides">
-                                            📘 {lane.guides.length} repo standard{lane.guides.length === 1 ? "" : "s"} {isSelected ? "▴" : "▾"}
-                                        </div>
+                                    {m.prUrl && (
+                                        <a href={m.prUrl} target="_blank" rel="noreferrer" className="mono-chip emerald">
+                                            Open PR ↗
+                                        </a>
                                     )}
-                                </button>
-                            );
-                        })}
-                    </div>
+                                    <span className="trace-time">{new Date(m.recordedAt).toLocaleTimeString()}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
 
-                    {selectedLane && (
+            <div className="flight-studio-split">
+                <aside className="flight-roster-pane" aria-label="Subagent roster">
+                    <div className="flight-roster-header">
+                        <span className="eyebrow">SPECIALIST SUBAGENTS ({agents.length})</span>
+                        <span className="field-help">Select any specialist to read its full conversation</span>
+                    </div>
+                    {agents.length > 0 ? (
+                        <div className="swimlane-cards vertical-roster">
+                            {agents.map((ag, idx) => {
+                                const info = roleDisplayName(ag.agentType, ag.label);
+                                const isSelected = activeAgent?.agentId === ag.agentId;
+                                const pillTone = info.badge === "REVIEWER" ? "purple"
+                                    : info.badge === "BUILDER" ? "blue"
+                                        : info.badge === "OBSERVER" ? "amber"
+                                            : "emerald";
+                                return (
+                                    <button
+                                        type="button"
+                                        key={ag.agentId}
+                                        aria-expanded={isSelected}
+                                        className={`swimlane-card status-${ag.status} ${isSelected ? "selected" : ""}`}
+                                        onClick={() => {
+                                            setSelectedAgentId(ag.agentId);
+                                        }}
+                                    >
+                                        <div className="swimlane-top">
+                                            <span className={`studio-pill ${pillTone}`}>
+                                                #{idx + 1} · {info.badge}
+                                            </span>
+                                            <span className="swimlane-duration">{formatDuration(ag.activeMs)}</span>
+                                        </div>
+                                        <strong>{info.title}</strong>
+                                        <code className="swimlane-label">{ag.label}</code>
+                                        <div className="swimlane-meta">
+                                            {ag.model && <span className="mono-chip">{ag.model}{ag.reasoningEffort ? ` · ${ag.reasoningEffort}` : ""}</span>}
+                                            {ag.nanoAiu > 0 && <span className="mono-chip emerald">{formatAiUsage(ag.nanoAiu)}</span>}
+                                            <span className={`status-pill-mini ${ag.status}`}>{ag.status}</span>
+                                        </div>
+                                        {(ag.thoughtCount > 0 || ag.messageCount > 0 || ag.toolCallCount > 0) && (
+                                            <div className="swimlane-counts">
+                                                {ag.thoughtCount > 0 && <span>💭 {ag.thoughtCount} thoughts</span>}
+                                                {ag.messageCount > 0 && <span>💬 {ag.messageCount} msg{ag.messageCount === 1 ? "" : "s"}</span>}
+                                                {ag.toolCallCount > 0 && <span>🔧 {ag.toolCallCount} tools</span>}
+                                            </div>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <p className="muted">
+                            {activeExec.status === "error"
+                                ? `This run stopped before spawning subagents (${activeExec.error || activeExec.phase}). Choose another run above to inspect subagent transcripts.`
+                                : "Waiting for the orchestrator to spawn the first specialist subagent…"}
+                        </p>
+                    )}
+                </aside>
+
+                <div className="flight-transcript-pane">
+                    {activeAgent && activeRoleInfo && (
                         <section className="swimlane-inspector" aria-label="Selected Specialist Inspector">
                             <div className="swimlane-inspector-head">
                                 <div>
                                     <div className="studio-badge-row">
-                                        <span className={`studio-pill ${selectedLane.badge === "REVIEWER" ? "purple" : selectedLane.badge === "BUILDER" ? "blue" : "emerald"}`}>
-                                            STEP #{selectedLane.stepNumber} · {selectedLane.badge}
+                                        <span className={`studio-pill ${activeRoleInfo.badge === "REVIEWER" ? "purple" : activeRoleInfo.badge === "BUILDER" ? "blue" : "emerald"}`}>
+                                            STEP #{activeAgentIdx + 1} · {activeRoleInfo.badge}
                                         </span>
-                                        <span className={`status-pill-mini ${selectedLane.status}`}>{selectedLane.status}</span>
-                                        <span className="mono-chip">{selectedLane.model}</span>
-                                        <span className="mono-chip">{selectedLane.duration}</span>
+                                        <span className={`status-pill-mini ${activeAgent.status}`}>{activeAgent.status}</span>
+                                        {activeAgent.model && (
+                                            <span className="mono-chip">
+                                                {activeAgent.model}{activeAgent.reasoningEffort ? ` (${activeAgent.reasoningEffort})` : ""}
+                                            </span>
+                                        )}
+                                        <span className="mono-chip">{formatDuration(activeAgent.activeMs)}</span>
+                                        {activeAgent.totalTokens > 0 && <span className="mono-chip">{formatTokens(activeAgent.totalTokens)} tokens</span>}
+                                        {activeAgent.nanoAiu > 0 && <span className="mono-chip emerald">{formatAiUsage(activeAgent.nanoAiu)}</span>}
                                     </div>
-                                    <h4>{selectedLane.title} <span className="muted">({selectedLane.label})</span></h4>
+                                    <h4>{activeRoleInfo.title} <span className="muted">({activeAgent.label})</span></h4>
                                 </div>
-                                <button type="button" className="ghost-chip-btn" onClick={() => setSelectedLaneKey(null)}>
-                                    Close
-                                </button>
+                                {activeGuides.length > 0 && (
+                                    <button
+                                        type="button"
+                                        className="ghost-chip-btn"
+                                        aria-expanded={showPlaybooks}
+                                        onClick={() => setShowPlaybooks(!showPlaybooks)}
+                                    >
+                                        📘 Domain Playbooks ({activeGuides.length}) {showPlaybooks ? "▴" : "▾"}
+                                    </button>
+                                )}
                             </div>
-                            <p className="swimlane-purpose">{selectedLane.purpose}</p>
-                            {selectedLane.status === "cancelled" && (
+                            <p className="swimlane-purpose">{activeRoleInfo.purpose}</p>
+                            {activeAgent.status === "cancelled" && (
                                 <p className="swimlane-cancelled-note">
                                     <strong>Why cancelled?</strong> This specialist turn was interrupted when the workflow reached a configured timeout ceiling; resuming the workflow with a higher ceiling automatically re-ran this step cleanly.
                                 </p>
                             )}
 
-                            {selectedLane.guides.length > 0 && (
+                            {activeGuides.length > 0 && (showPlaybooks || transcriptData?.source === "trace_fallback") && (
                                 <div className="guide-cards-block">
                                     <span className="eyebrow">ENFORCED REPOSITORY STANDARDS (DOMAIN PLAYBOOKS)</span>
                                     <p className="field-help">
-                                        Read-only repository instruction files injected into this specialist&apos;s prompt contract so its output obeys team architecture and review standards:
+                                        Read-only repository instruction files injected into this specialist&apos;s prompt contract:
                                     </p>
                                     <div className="guide-cards-grid">
-                                        {selectedLane.guides.map((guidePath) => {
+                                        {activeGuides.map((guidePath) => {
                                             const desc = describeGuidanceFile(guidePath);
                                             return (
                                                 <div key={guidePath} className="guide-card">
@@ -1949,83 +2167,186 @@ export function SubagentFlightRecorder({
                                     </div>
                                 </div>
                             )}
-
-                            {selectedLane.turn?.outputPreview ? (
-                                <div className="swimlane-turn-preview">
-                                    <span className="eyebrow">RECORDED SPECIALIST OUTPUT SUMMARY</span>
-                                    <StructuredOutputPreview raw={selectedLane.turn.outputPreview} />
-                                </div>
-                            ) : (
-                                <p className="field-help">
-                                    {selectedLane.status === "running"
-                                        ? "This specialist is currently running — live scoped repository reads and searches appear in the stream below as they execute."
-                                        : "Structured output from this step was folded into the stage workflow state (live trace retains the most recent 200 tool/turn events below)."}
-                                </p>
-                            )}
                         </section>
                     )}
-                </div>
-            )}
 
-            <div className="trace-stream-section">
-                <div className="trace-stream-header">
-                    <span className="eyebrow">LIVE TOOL CALLS &amp; TURN TRANSCRIPTS ({filteredTrace.length})</span>
-                    <div className="trace-filter-pills">
-                        <button type="button" className={traceFilter === "all" ? "active" : ""} onClick={() => setTraceFilter("all")}>
-                            All ({trace.length})
-                        </button>
-                        <button type="button" className={traceFilter === "agent_turn" ? "active" : ""} onClick={() => setTraceFilter("agent_turn")}>
-                            Turns ({turnEntries.length})
-                        </button>
-                        <button type="button" className={traceFilter === "tool_call" ? "active" : ""} onClick={() => setTraceFilter("tool_call")}>
-                            Reads/Searches ({toolEntries.length})
-                        </button>
+                    <div className="transcript-toolbar">
+                        <div className="trace-filter-pills" role="tablist" aria-label="Transcript view filter">
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={transcriptFilter === "all"}
+                                className={transcriptFilter === "all" ? "active" : ""}
+                                onClick={() => setTranscriptFilter("all")}
+                            >
+                                Full Transcript ({rawItems.length})
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={transcriptFilter === "conversation"}
+                                className={transcriptFilter === "conversation" ? "active" : ""}
+                                onClick={() => setTranscriptFilter("conversation")}
+                            >
+                                💬 Prompts, Reasoning &amp; Messages ({conversationCount})
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={transcriptFilter === "tools"}
+                                className={transcriptFilter === "tools" ? "active" : ""}
+                                onClick={() => setTranscriptFilter("tools")}
+                            >
+                                🔧 Tool Calls ({toolCount})
+                            </button>
+                        </div>
+                        <input
+                            type="search"
+                            className="transcript-search-input"
+                            placeholder="Search thoughts, messages, or file paths…"
+                            aria-label="Search transcript"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
                     </div>
-                </div>
 
-                {filteredTrace.length > 0 ? (
-                    <div className="trace-feed">
-                        {[...filteredTrace].reverse().map((entry) => {
-                            const isTurn = entry.kind === "agent_turn";
-                            const icon = isTurn ? "🤖" : entry.tool?.includes("search") ? "🔍" : entry.tool?.includes("find") ? "📂" : "📄";
-                            return (
-                                <div
-                                    key={entry.id}
-                                    className={`trace-item ${isTurn ? "turn-item" : "tool-item"} ${inspectedTrace?.id === entry.id ? "selected" : ""}`}
-                                    onClick={() => setInspectedTrace(inspectedTrace?.id === entry.id ? null : entry)}
-                                >
-                                    <div className="trace-item-row">
-                                        <span className="trace-icon">{icon}</span>
-                                        <strong className="trace-title">
-                                            {isTurn ? (entry.label || entry.role) : entry.tool?.replace("software_factory_", "")}
-                                        </strong>
-                                        <code className="trace-target">{entry.target}</code>
-                                        <span className="trace-time">
-                                            {entry.durationMs ? `${(entry.durationMs / 1000).toFixed(1)}s · ` : ""}
-                                            {new Date(entry.timestamp).toLocaleTimeString()}
-                                        </span>
-                                    </div>
-                                    {entry.detail && <p className="trace-detail">{entry.detail}</p>}
-                                    {inspectedTrace?.id === entry.id && entry.outputPreview && (
-                                        <div className="trace-transcript-drawer" onClick={(e) => e.stopPropagation()}>
-                                            <div className="trace-drawer-head">
-                                                <span>{isTurn ? "Structured Agent Output Summary" : "Scoped Read Snippet"}</span>
-                                                <button type="button" className="ghost-chip-btn" onClick={() => setInspectedTrace(null)}>Close</button>
+                    {loadingTranscript && !transcriptData ? (
+                        <p className="muted">Loading full subagent conversation transcript…</p>
+                    ) : filteredItems.length > 0 ? (
+                        <div className="transcript-stream" role="log" aria-label="Subagent conversation transcript">
+                            {filteredItems.map((item) => {
+                                if (item.kind === "prompt") {
+                                    const isLong = item.content.length > 900;
+                                    const isExpanded = Boolean(expandedPrompts[item.id]);
+                                    const visiblePrompt = isLong && !isExpanded ? `${item.content.slice(0, 900)}…` : item.content;
+                                    return (
+                                        <article key={item.id} className="transcript-bubble bubble-prompt">
+                                            <header className="bubble-header">
+                                                <div className="studio-badge-row">
+                                                    <span className="studio-pill neutral">📋 PROMPT</span>
+                                                    <strong>{item.title || "Specialist Task Prompt"}</strong>
+                                                </div>
+                                                <span className="trace-time">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                                            </header>
+                                            <div className="markdown-prose transcript-markdown">
+                                                <Markdown remarkPlugins={[remarkGfm]}>{visiblePrompt}</Markdown>
                                             </div>
-                                            <StructuredOutputPreview raw={entry.outputPreview} />
+                                            {isLong && (
+                                                <button
+                                                    type="button"
+                                                    className="ghost-chip-btn"
+                                                    onClick={() => setExpandedPrompts((prev) => ({ ...prev, [item.id]: !isExpanded }))}
+                                                >
+                                                    {isExpanded ? "Collapse prompt ▴" : `Show full prompt (${item.content.length.toLocaleString()} chars) ▾`}
+                                                </button>
+                                            )}
+                                            {item.attachedDataPreview && (
+                                                <details className="prompt-data-drawer">
+                                                    <summary>Attached Context &amp; Preloaded Playbooks Preview</summary>
+                                                    <pre className="code-snippet-box">{item.attachedDataPreview}</pre>
+                                                </details>
+                                            )}
+                                        </article>
+                                    );
+                                }
+
+                                if (item.kind === "thought") {
+                                    return (
+                                        <article key={item.id} className="transcript-bubble bubble-thought">
+                                            <header className="bubble-header">
+                                                <div className="studio-badge-row">
+                                                    <span className="studio-pill blue">💭 REASONING</span>
+                                                    <strong>{item.title || "Agent Reasoning"}</strong>
+                                                    {item.tokens && (
+                                                        <span className="mono-chip">
+                                                            {formatTokens(item.tokens.input)} in · {formatTokens(item.tokens.reasoning)} thought · {formatTokens(item.tokens.output)} out
+                                                            {item.tokens.durationMs ? ` · ${(item.tokens.durationMs / 1000).toFixed(1)}s` : ""}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="trace-time">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                                            </header>
+                                            <div className="markdown-prose transcript-markdown">
+                                                <Markdown remarkPlugins={[remarkGfm]}>{item.content}</Markdown>
+                                            </div>
+                                        </article>
+                                    );
+                                }
+
+                                if (item.kind === "assistant") {
+                                    return (
+                                        <article key={item.id} className="transcript-bubble bubble-assistant">
+                                            <header className="bubble-header">
+                                                <div className="studio-badge-row">
+                                                    <span className="studio-pill emerald">🤖 AGENT MESSAGE</span>
+                                                    <strong>{item.title || "Agent Response"}</strong>
+                                                    {item.tokens && !item.tokens.reasoning && (
+                                                        <span className="mono-chip">
+                                                            {formatTokens(item.tokens.input)} in · {formatTokens(item.tokens.output)} out
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="trace-time">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                                            </header>
+                                            <AssistantDeliverableView content={item.content} />
+                                        </article>
+                                    );
+                                }
+
+                                if (item.kind === "lifecycle") {
+                                    return (
+                                        <div key={item.id} className="transcript-lifecycle-banner">
+                                            <span className="studio-pill emerald">🏁 {item.title || "Completed"}</span>
+                                            <span>{item.content}</span>
+                                            <span className="trace-time">{new Date(item.timestamp).toLocaleTimeString()}</span>
                                         </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <p className="muted">
-                        {activeExec.status === "running" || activeExec.status === "starting"
-                            ? `Active phase: "${activeExec.phase}". Waiting for worker tool calls and turn completions...`
-                            : "No granular tool or turn events were recorded for this execution."}
-                    </p>
-                )}
+                                    );
+                                }
+
+                                // Tool call row
+                                const isExpanded = Boolean(expandedToolIds[item.id]);
+                                const icon = item.toolName?.includes("search") || item.toolName?.includes("grep") ? "🔍"
+                                    : item.toolName?.includes("find") || item.toolName?.includes("glob") ? "📂"
+                                        : item.toolName?.includes("sources") ? "🧭"
+                                            : "📄";
+                                return (
+                                    <div
+                                        key={item.id}
+                                        className={`trace-item tool-item ${isExpanded ? "selected" : ""}`}
+                                        onClick={() => item.toolOutput && toggleTool(item.id)}
+                                    >
+                                        <div className="trace-item-row">
+                                            <span className="trace-icon">{icon}</span>
+                                            <strong className="trace-title">{item.title || item.toolName}</strong>
+                                            <code className="trace-target">{item.toolTarget || item.content}</code>
+                                            <span className={`status-pill-mini ${item.toolStatus === "failed" ? "error" : "completed"}`}>
+                                                {item.toolStatus === "failed" ? "failed" : item.toolStatus === "running" ? "running" : "ok"}
+                                            </span>
+                                            <span className="trace-time">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                                        </div>
+                                        {isExpanded && item.toolOutput && (
+                                            <div className="trace-transcript-drawer" onClick={(e) => e.stopPropagation()}>
+                                                <div className="trace-drawer-head">
+                                                    <span>Tool Output Snippet ({item.toolOutput.length.toLocaleString()} chars)</span>
+                                                    <button type="button" className="ghost-chip-btn" onClick={() => toggleTool(item.id)}>Close</button>
+                                                </div>
+                                                <StructuredOutputPreview raw={item.toolOutput} />
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <p className="muted">
+                            {searchQuery.trim()
+                                ? `No transcript entries match "${searchQuery}".`
+                                : activeExec.status === "running" || activeExec.status === "starting"
+                                    ? `Active phase: "${activeExec.phase}". Waiting for subagent messages and tool calls…`
+                                    : "No transcript messages were recorded for this filter."}
+                        </p>
+                    )}
+                </div>
             </div>
         </div>
     );

@@ -83,6 +83,7 @@ export function App() {
     const [theme, setTheme] = useState<"light" | "dark">("dark");
     const [featureFilter, setFeatureFilter] = useState("");
     const [activeStageIdx, setActiveStageIdx] = useState<number>(0);
+    const [flightOpen, setFlightOpen] = useState(false);
     const refreshing = useRef(false);
     const refreshSequence = useRef(0);
     const authorityReadAt = useRef(0);
@@ -155,6 +156,7 @@ export function App() {
         setEditing(false);
         setCreating(false);
         setSelectedId(id);
+        setFlightOpen(false);
         setError("");
         setNotice("");
     }
@@ -293,6 +295,22 @@ export function App() {
                     })}
                 {!busy && features.length === 0 && <p className="sidebar-empty">Your next idea starts here.</p>}
             </nav>
+            {selected && !formOpen && (
+                <div className="sidebar-flight-box">
+                    <div className="sidebar-heading"><span>OBSERVABILITY</span><span>{selected.factory.executions.length}</span></div>
+                    <button
+                        type="button"
+                        className={`sidebar-flight-btn ${flightOpen ? "active" : ""}`}
+                        onClick={() => setFlightOpen(!flightOpen)}
+                    >
+                        <span className={`status-dot ${selected.factory.executions.some((e) => ["starting", "running"].includes(e.status)) ? "pulse" : "ready"}`} />
+                        <span className="feature-link-body">
+                            <strong>Subagent Flight Recorder</strong>
+                            <small>Prompts, reasoning &amp; full transcripts</small>
+                        </span>
+                    </button>
+                </div>
+            )}
             <div className="chat-note"><span className="eyebrow">CHAT + DASHBOARD</span><p>Saved chat actions appear here automatically. Free-form chat messages are not copied.</p></div>
             <div className="sidebar-footer"><span className="status-dot ready" /> Native Dynamic Workflows <span>0.2 Studio</span></div>
         </aside>
@@ -327,10 +345,17 @@ export function App() {
                             <strong>{features.reduce((sum, f) => sum + f.factory.artifacts.length, 0)}</strong>
                             <span>artifacts</span>
                         </div>
-                        <div className="kpi-tile">
+                        <button
+                            type="button"
+                            className={`kpi-tile kpi-tile-interactive ${flightOpen ? "active" : ""}`}
+                            title="Open Subagent Flight Recorder & Full Transcripts"
+                            onClick={() => {
+                                if (selected && !formOpen) setFlightOpen(true);
+                            }}
+                        >
                             <strong>{features.reduce((sum, f) => sum + f.factory.executions.length, 0)}</strong>
-                            <span>agent runs</span>
-                        </div>
+                            <span>agent runs ↗</span>
+                        </button>
                     </div>
                 </section>
                 {syncError && <div role="alert" className="message error">Live updates are disconnected: {syncError} Last saved content is shown; unsaved edits are preserved.</div>}
@@ -452,6 +477,8 @@ export function App() {
                         onReviewSuggestions={reviewSuggestions}
                         onCheckSetup={() => void act(async () => { setDoctor(await request("/api/doctor")); })}
                         onActiveStageChange={setActiveStageIdx}
+                        externalFlightOpen={flightOpen}
+                        onFlightOpenChange={setFlightOpen}
                         stage1View={
                             <section className="feature-detail">
                                 <div className="card-heading">

@@ -13,6 +13,7 @@ import { Application } from "../core/application.ts";
 import { FactoryError, MAX_COMMAND_BYTES, type Actor } from "../core/contracts.ts";
 import { runtimeReport } from "../core/doctor.ts";
 import type { ExecutionTraceEntry, FactoryFeature, Json } from "../core/lifecycle-contracts.ts";
+import { readExecutionTranscript } from "./transcripts.ts";
 
 function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
     const targetExecs = feature.factory.executions.filter((e) => (e.kind === "plan" || e.kind === "implement") && e.runtimeId && e.sessionId);
@@ -356,6 +357,15 @@ export async function startServer(options: { application: Application; port?: nu
                 json(response, 200, runtimeReport());
             } else if (request.method === "GET" && url.pathname === "/api/configuration") {
                 json(response, 200, { configuration: options.application.lifecycle.store.configuration() });
+            } else if (request.method === "GET" && url.pathname.startsWith("/api/executions/") && url.pathname.endsWith("/transcript")) {
+                const parts = url.pathname.slice("/api/executions/".length, -"/transcript".length).split("/").filter(Boolean);
+                if (parts.length !== 2) throw new FactoryError("route_not_found", "Expected /api/executions/:featureId/:executionId/transcript.", 404);
+                const [featureId, executionId] = parts;
+                const feature = hydrateStudioFeature(options.application.cachedFeature(featureId!));
+                const execution = feature.factory.executions.find((entry) => entry.id === executionId);
+                if (!execution) throw new FactoryError("execution_not_found", "The requested workflow execution does not exist on this feature.", 404);
+                const requestedAgentId = url.searchParams.get("agentId") || undefined;
+                json(response, 200, readExecutionTranscript(execution, requestedAgentId));
             } else if (request.method === "GET" && url.pathname.startsWith("/api/gates/")) {
                 const featureId = url.pathname.slice("/api/gates/".length);
                 const feature = await options.application.feature(featureId);

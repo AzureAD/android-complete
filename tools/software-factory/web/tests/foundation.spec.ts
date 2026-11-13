@@ -28,7 +28,7 @@ function cachedFeatures(): { features: FactoryFeature[] } {
 test.beforeAll(async () => {
     directory = mkdtempSync(path.join(os.tmpdir(), "software-factory-browser-"));
     child = spawn(process.execPath, [cli, "serve"], {
-        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, stdio: ["ignore", "pipe", "pipe", "ipc"],
+        env: { ...process.env, SOFTWARE_FACTORY_HOME: directory, SOFTWARE_FACTORY_SESSION_STATE_ROOT: path.join(directory, "session-state") }, stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     url = await new Promise<string>((resolve, reject) => {
         let output = "";
@@ -645,12 +645,13 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await deliveryStudio.getByRole("button", { name: "Sign off gap…" }).click();
     await expect(deliveryStudio.getByLabel("Criterion Text")).toHaveValue("Existing callers receive identical envelope keys.");
 
-    // 6. Verify Stage 1 Scope Studio & Header Flight Recorder Drawer
+    // 6. Verify Stage 1 Scope Studio & Prominent Subagent Flight Recorder + Full Conversation Transcripts
     await stageNav.getByRole("button", { name: /Define success/ }).click();
     const scopeStudio = page.getByRole("region", { name: "Scope and Criteria Studio" });
     await expect(scopeStudio).toContainText("Stage 0 Scope Approval Recorded");
 
-    await page.getByRole("button", { name: /Flight Recorder & Runs/ }).click();
+    await expect(page.locator(".sidebar-flight-btn")).toBeVisible();
+    await page.getByRole("tab", { name: /Subagent Flight Recorder & Runs/ }).click();
     const flightDock = page.getByRole("region", { name: "Live subagents and transcripts" });
     await expect(flightDock.getByLabel("Subagent Flight Recorder").getByText("48,500")).toBeVisible();
     await flightDock.locator(".swimlane-card").first().click();
@@ -660,6 +661,11 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await expect(flightDock.getByText("common/src/BrokerController.kt:10-90")).toBeVisible();
     await flightDock.getByText("common/src/BrokerController.kt:10-90").click();
     await expect(flightDock.getByText("class BrokerController { fun execute() {} }")).toBeVisible();
+    // Also verify selecting the 2nd specialist ('Design author') shows its Prompt & Deliverable in Prompts, Reasoning & Messages filter
+    await flightDock.locator(".swimlane-card").nth(1).click();
+    await flightDock.getByRole("tab", { name: /Prompts, Reasoning & Messages/ }).click();
+    await expect(flightDock.getByText("Author complete Android design for R1 and R2.")).toBeVisible();
+    await expect(flightDock.getByText("Architecture And Data Control Flow")).toBeVisible();
 
     // 7. Verify HTTP 401 session_required auto-rehandshakes /api/session transparently
     let injected401 = false;

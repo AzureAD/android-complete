@@ -93,6 +93,8 @@ export function FactoryPanel({
     onCheckSetup,
     stage1View,
     onActiveStageChange,
+    externalFlightOpen,
+    onFlightOpenChange,
 }: {
     feature: FactoryFeature;
     execute: Execute;
@@ -101,11 +103,14 @@ export function FactoryPanel({
     onCheckSetup: () => void;
     stage1View?: ReactNode;
     onActiveStageChange?: (stageIndex: number) => void;
+    externalFlightOpen?: boolean;
+    onFlightOpenChange?: (open: boolean) => void;
 }) {
     const [gates, setGates] = useState<GateResult[]>([]);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
     const [gatesLoaded, setGatesLoaded] = useState(false);
+    const panelRootRef = useRef<HTMLElement>(null);
     const studioViewportRef = useRef<HTMLDivElement>(null);
     const prComposerRef = useRef<HTMLDetailsElement>(null);
     const waiverComposerRef = useRef<HTMLDetailsElement>(null);
@@ -116,7 +121,12 @@ export function FactoryPanel({
     const [revisionDrawerOpen, setRevisionDrawerOpen] = useState(false);
     const [prDrawerOpen, setPrDrawerOpen] = useState(false);
     const [waiverDrawerOpen, setWaiverDrawerOpen] = useState(false);
-    const [flightOpen, setFlightOpen] = useState(false);
+    const [internalFlightOpen, setInternalFlightOpen] = useState(false);
+    const flightOpen = externalFlightOpen !== undefined ? externalFlightOpen : internalFlightOpen;
+    const setFlightOpen = (next: boolean) => {
+        setInternalFlightOpen(next);
+        onFlightOpenChange?.(next);
+    };
     const [minutes, setMinutes] = useState("60");
     const [maxCreditsCap, setMaxCreditsCap] = useState("");
     const [timeoutMinutesCap, setTimeoutMinutesCap] = useState("");
@@ -187,15 +197,23 @@ export function FactoryPanel({
     const pickStage = (idx: number) => {
         setSelectedStage(idx);
         setUserPinnedStage(idx !== progress.stage);
+        if (flightOpen) setFlightOpen(false);
     };
 
     const returnToActiveStep = () => {
         setSelectedStage(progress.stage);
         setUserPinnedStage(false);
+        if (flightOpen) setFlightOpen(false);
+    };
+
+    const openFlightForExecution = (execId?: string) => {
+        if (execId) setSelectedExecId(execId);
+        setFlightOpen(true);
+        setTimeout(() => panelRootRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 40);
     };
 
     const showRuns = () => {
-        setFlightOpen(true);
+        openFlightForExecution();
     };
 
     const appendFeedback = (snippet: string) => {
@@ -413,6 +431,14 @@ export function FactoryPanel({
     };
 
     const anyRunActive = feature.factory.executions.some((e) => e.status === "running" || e.status === "starting");
+    const totalSubagentsAcrossRuns = feature.factory.executions.reduce((sum, e) => sum + (e.usage?.subagents ?? 0), 0);
+    const bestExecForKind = (kind: string) =>
+        [...feature.factory.executions].reverse().find((e) => e.kind === kind && ((e.usage?.subagents ?? 0) > 0 || e.status === "running"))
+        || [...feature.factory.executions].reverse().find((e) => e.kind === kind);
+    const designRunForLink = bestExecForKind("design");
+    const planRunForLink = bestExecForKind("plan");
+    const implRunForLink = bestExecForKind("implement");
+    const monitorRunForLink = bestExecForKind("monitor");
     const viewingActiveStep = selectedStage === progress.stage;
     const gateStageIndex = currentGate?.stage === "design" ? 1
         : currentGate?.stage === "plan" ? 2
@@ -420,33 +446,65 @@ export function FactoryPanel({
                 : currentGate?.stage === "dispatch" ? 4
                     : currentGate?.stage === "complete" ? 5 : -1;
 
-    return <section className="card factory-panel" aria-label="Workflow lifecycle">
+    return <section ref={panelRootRef} className="card factory-panel" aria-label="Workflow lifecycle">
+        <div className="workspace-mode-switcher" role="tablist" aria-label="Feature studio mode">
+            <button
+                type="button"
+                role="tab"
+                aria-selected={!flightOpen}
+                className={`mode-switch-tab ${!flightOpen ? "active" : ""}`}
+                onClick={() => setFlightOpen(false)}
+            >
+                <span className="mode-switch-icon">🧭</span>
+                <div className="mode-switch-copy">
+                    <strong>Lifecycle Pipeline</strong>
+                    <small>6 Guarded Stages · Stage {selectedStage + 1}: {stageLabels[selectedStage]}</small>
+                </div>
+            </button>
+            <button
+                type="button"
+                role="tab"
+                aria-selected={flightOpen}
+                aria-expanded={flightOpen}
+                className={`mode-switch-tab flight-tab ${flightOpen ? "active" : ""}`}
+                onClick={() => setFlightOpen(!flightOpen)}
+            >
+                <span className={`status-dot ${anyRunActive ? "pulse" : "ready"}`} />
+                <div className="mode-switch-copy">
+                    <strong>Subagent Flight Recorder &amp; Runs ({feature.factory.executions.length})</strong>
+                    <small>
+                        {totalSubagentsAcrossRuns > 0
+                            ? `${totalSubagentsAcrossRuns} Specialist Subagents · Full Prompts, Reasoning & Tool Transcripts`
+                            : "Inspect Prompts, Agent Reasoning, Messages & Tool Calls"}
+                    </small>
+                </div>
+                <span className="mode-switch-cta">{flightOpen ? "Viewing ▴" : "Open Transcripts →"}</span>
+            </button>
+        </div>
+
         <div className="phase-track-header">
             <div className="phase-track-header-left">
-                <span className="eyebrow">LIFECYCLE PIPELINE · SELECT ANY STAGE</span>
-                {!viewingActiveStep && (
+                <span className="eyebrow">
+                    {flightOpen
+                        ? `FLIGHT RECORDER ACTIVE · CLICK ANY STAGE BELOW TO RETURN TO PIPELINE`
+                        : `LIFECYCLE PIPELINE · SELECT ANY STAGE`}
+                </span>
+                {!viewingActiveStep && !flightOpen && (
                     <button type="button" className="ghost-chip-btn" onClick={returnToActiveStep}>
                         ← Return to Active Step ({stageLabels[progress.stage]})
                     </button>
                 )}
-            </div>
-            <div className="phase-track-header-right">
-                <button
-                    type="button"
-                    aria-expanded={flightOpen}
-                    className={`flight-drawer-toggle ${flightOpen ? "active" : ""}`}
-                    onClick={() => setFlightOpen(!flightOpen)}
-                >
-                    <span className={`status-dot ${anyRunActive ? "pulse" : "ready"}`} />
-                    <span>Flight Recorder &amp; Runs ({feature.factory.executions.length})</span>
-                    <span>{flightOpen ? "▴" : "▾"}</span>
-                </button>
+                {flightOpen && (
+                    <button type="button" className="ghost-chip-btn" onClick={() => setFlightOpen(false)}>
+                        ← Back to {stageLabels[selectedStage]} Stage
+                    </button>
+                )}
             </div>
         </div>
 
         <div className="phase-track" role="group" aria-label="Feature progress">
             {stageLabels.map((label, index) => {
-                const isSelected = selectedStage === index;
+                const isSelected = !flightOpen && selectedStage === index;
                 const isCurrent = index === progress.stage;
                 const isPast = index < progress.stage;
                 return (
@@ -594,7 +652,7 @@ export function FactoryPanel({
             </section>
         )}
 
-        {viewingActiveStep || progress.failed || progress.report ? (
+        {!flightOpen && (viewingActiveStep || progress.failed || progress.report ? (
             <div className={`next-action ${progress.failed ? "failed" : ""}`} aria-label="Next step">
                 <span className="eyebrow">{progress.failed ? "NEEDS ATTENTION" : progress.report ? "CHAT PROGRESS" : progress.run?.status === "running" || progress.run?.status === "starting" ? "IN PROGRESS" : "ACTIVE STEP"}</span>
                 <h2>{progress.title}</h2>
@@ -654,12 +712,12 @@ export function FactoryPanel({
                     </button>
                 </div>
             </div>
-        )}
+        ))}
 
         {error && <div role="alert" className="message error">{error}</div>}
         {result?.outcome === "not_approved" && <p className="message notice" role="status">Not started. You chose not to approve this action.</p>}
 
-        <div ref={studioViewportRef} className="studio-stage-viewport">
+        {!flightOpen && <div ref={studioViewportRef} className="studio-stage-viewport">
             {selectedStage === 0 && (
                 <section className="stage-1-workspace" aria-label="Scope and Criteria Studio">
                     {stage1View}
@@ -668,6 +726,16 @@ export function FactoryPanel({
 
             {selectedStage === 1 && (
                 <section className="studio-spotlight" aria-label={currentGate?.stage === "design" ? "Review design" : "Design Studio"}>
+                    {designRunForLink && (
+                        <div className="stage-transcript-deeplink">
+                            <span>
+                                <strong>Subagent Transcripts Available:</strong> Inspect the Researcher, Design Author &amp; Independent Design Reviewer prompts, reasoning thoughts, and source reads.
+                            </span>
+                            <button type="button" className="ghost-chip-btn" onClick={() => openFlightForExecution(designRunForLink.id)}>
+                                🛰️ Inspect Design Subagents ({designRunForLink.usage?.subagents ?? "Run"}) →
+                            </button>
+                        </div>
+                    )}
                     {!currentDesignArtifact && designArtifact && (
                         <div className="studio-iteration-banner">
                             <div>
@@ -761,6 +829,16 @@ export function FactoryPanel({
 
             {selectedStage === 2 && (
                 <section className="studio-spotlight" aria-label={currentGate?.stage === "plan" ? "Review plan" : "Plan Studio"}>
+                    {planRunForLink && (
+                        <div className="stage-transcript-deeplink">
+                            <span>
+                                <strong>Subagent Transcripts Available:</strong> Read the Feature Planner &amp; Independent Plan Reviewer step-by-step reasoning and review messages.
+                            </span>
+                            <button type="button" className="ghost-chip-btn" onClick={() => openFlightForExecution(planRunForLink.id)}>
+                                🛰️ Inspect Plan Subagents ({planRunForLink.usage?.subagents ?? "Run"}) →
+                            </button>
+                        </div>
+                    )}
                     {allPlanArtifacts.length > 1 && (
                         <div className="artifact-version-bar">
                             <label htmlFor="plan-version-select" className="eyebrow">PLAN REVISION</label>
@@ -897,6 +975,16 @@ export function FactoryPanel({
 
             {selectedStage === 4 && (
                 <section className="studio-spotlight" aria-label="Code Arena Studio">
+                    {implRunForLink && (
+                        <div className="stage-transcript-deeplink">
+                            <span>
+                                <strong>Subagent Transcripts Available:</strong> Inspect Coding Builder, Independent Code Reviewer &amp; PR Observer conversations and tool calls.
+                            </span>
+                            <button type="button" className="ghost-chip-btn" onClick={() => openFlightForExecution(implRunForLink.id)}>
+                                🛰️ Inspect Implementation Subagents ({implRunForLink.usage?.subagents ?? "Run"}) →
+                            </button>
+                        </div>
+                    )}
                     {currentGate?.stage === "dispatch" && (
                         <div className="gate-decision-bar" style={{ marginBottom: 16 }}>
                             {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
@@ -927,6 +1015,16 @@ export function FactoryPanel({
 
             {selectedStage === 5 && (
                 <section className="studio-spotlight" aria-label="Delivery Studio">
+                    {monitorRunForLink && (
+                        <div className="stage-transcript-deeplink">
+                            <span>
+                                <strong>Subagent Transcripts Available:</strong> Read the Stage 6 Delivery Auditor&apos;s live repository inspection and criteria verification reasoning.
+                            </span>
+                            <button type="button" className="ghost-chip-btn" onClick={() => openFlightForExecution(monitorRunForLink.id)}>
+                                🛰️ Inspect Delivery Auditor ({monitorRunForLink.usage?.subagents ?? "Run"}) →
+                            </button>
+                        </div>
+                    )}
                     {monitorArtifact ? (
                         <ArtifactDocument
                             artifact={monitorArtifact}
@@ -1057,7 +1155,7 @@ export function FactoryPanel({
                     </button>
                 </div>
             )}
-        </div>
+        </div>}
 
         {feature.factory.operations.some((op) => op.status === "reconciliation_required") && (
             <div className="studio-callout warning" style={{ marginTop: 16 }}>

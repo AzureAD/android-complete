@@ -256,6 +256,63 @@ export interface MonitorReport {
     errors: string[]; delivered: boolean;
 }
 
+export interface TranscriptAgentSummary {
+    agentId: string;
+    label: string;
+    agentType: string;
+    status: string;
+    model: string | null;
+    reasoningEffort: string | null;
+    startedAtMs: number | null;
+    completedAtMs: number | null;
+    activeMs: number;
+    nanoAiu: number;
+    messageCount: number;
+    thoughtCount: number;
+    toolCallCount: number;
+    totalTokens: number;
+}
+
+export interface TranscriptMessageItem {
+    id: string;
+    kind: "prompt" | "thought" | "assistant" | "tool_call" | "lifecycle";
+    timestamp: string;
+    turnId?: string;
+    title: string;
+    content: string;
+    attachedDataPreview?: string;
+    toolName?: string;
+    toolTarget?: string;
+    toolStatus?: "running" | "completed" | "failed";
+    toolOutput?: string;
+    tokens?: {
+        input: number;
+        reasoning: number;
+        output: number;
+        durationMs?: number;
+    };
+}
+
+export interface WorkflowProgressItem {
+    seq: number;
+    kind: string;
+    title: string;
+    summary?: string;
+    outcome?: string;
+    prUrl?: string | null;
+    recordedAt: number;
+}
+
+export interface ExecutionTranscriptResponse {
+    executionId: string;
+    runtimeId: string | null;
+    source: "session_events" | "trace_fallback";
+    agents: TranscriptAgentSummary[];
+    progress: WorkflowProgressItem[];
+    selectedAgentId: string | null;
+    transcript: TranscriptMessageItem[];
+}
+
 export function strings(value: unknown, name: string, nonempty = false): string[] {
     if (!Array.isArray(value) || (nonempty && !value.length)) throw new FactoryError("invalid_input", `${name} must be ${nonempty ? "a nonempty" : "an"} array.`);
     return value.map((item) => text(item, name));
