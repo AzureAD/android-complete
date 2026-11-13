@@ -103,6 +103,15 @@ test("idempotent dispatch-status repair preserves existing tags and never reopen
     assert.equal(patch[0]?.value, 7);
     assert.equal(patch.find((entry) => entry.path === "/fields/System.State")?.value, "Resolved");
     assert.match(String(patch.find((entry) => entry.path === "/fields/System.Tags")?.value), /customer-tag; agent-dispatched; status-marker/);
+
+    patch = [];
+    const scrumProvider = new ExternalProvider({ run: async () => "fixture-token" }, async (_input, init) => {
+        if (init?.method === "PATCH") { patch = JSON.parse(String(init.body)); return Response.json({ id: 42 }); }
+        return Response.json({ id: 42, rev: 8, fields: { "System.WorkItemType": "Product Backlog Item", "System.Tags": "ai-generated", "System.State": "New" } });
+    });
+    const scrumResult = await scrumProvider.markDispatched(config(), wi, "scrum-marker") as { state: string };
+    assert.equal(scrumResult.state, "Committed");
+    assert.equal(patch.find((entry) => entry.path === "/fields/System.State")?.value, "Committed");
 });
 
 test("provider rejection is explicit and redirecting authenticated requests is forbidden", async () => {

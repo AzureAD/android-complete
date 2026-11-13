@@ -20,6 +20,23 @@ const segment = (value: string) => encodeURIComponent(value);
 const wiql = (value: string) => value.replaceAll("'", "''");
 const gitObjectId = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
+function dispatchedWorkItemState(fields: Record<string, unknown>, config: Configuration): string {
+    const current = typeof fields["System.State"] === "string" ? fields["System.State"].trim() : "";
+    if (["Committed", "Active", "In Progress", "Resolved", "Closed", "Done", "Removed"].includes(current)) {
+        return current;
+    }
+    const workItemType = (typeof fields["System.WorkItemType"] === "string" && fields["System.WorkItemType"].trim()
+        ? fields["System.WorkItemType"]
+        : config.boards.workItemType).trim().toLowerCase();
+    if (workItemType === "product backlog item" || workItemType === "bug") {
+        return "Committed";
+    }
+    if (workItemType === "task") {
+        return "In Progress";
+    }
+    return "Active";
+}
+
 function assertPublicationBinding(binding: LocalPublicationBinding): void {
     const target = object(binding.target, "Publication target");
     if ((target.provider !== "github" && target.provider !== "ado") ||
@@ -296,11 +313,12 @@ export class ExternalProvider implements Provider {
         const repoTag = `copilot:repo=${repo.slug}@${repo.baseBranch}`;
         if (tags.some((tag) => tag.startsWith("copilot:repo=") && tag !== repoTag)) throw new FactoryError("conflicting_repository", "This work item is already bound to another Copilot repository.", 409);
         for (const tag of [repoTag, marker, "agent-dispatched"]) if (!tags.includes(tag)) tags.push(tag);
+        const state = dispatchedWorkItemState(fields, config);
         await this.ado(config.boards.organization, config.boards.project, `wit/workitems/${workItem.adoId}`, "PATCH", [
             { op: "test", path: "/rev", value: current.rev },
             { op: "add", path: "/fields/System.Tags", value: tags.join("; ") },
             { op: "add", path: "/fields/System.AssignedTo", value: "GitHub Copilot" },
-            { op: "add", path: "/fields/System.State", value: "Active" },
+            { op: "add", path: "/fields/System.State", value: state },
         ], true);
         return { submitted: true, provider: "ado", marker, adoId: workItem.adoId };
     }
@@ -952,7 +970,7 @@ export class ExternalProvider implements Provider {
         const fields = object(current.fields, "Fields");
         const tags = typeof fields["System.Tags"] === "string" ? fields["System.Tags"].split(";").map((tag) => tag.trim()).filter(Boolean) : [];
         for (const tag of ["agent-dispatched", marker]) if (!tags.includes(tag)) tags.push(tag);
-        const state = ["Resolved", "Closed", "Done"].includes(String(fields["System.State"])) ? String(fields["System.State"]) : "Active";
+        const state = dispatchedWorkItemState(fields, config);
         if (fields["System.State"] !== state || fields["System.Tags"] !== tags.join("; ")) {
             await this.ado(config.boards.organization, config.boards.project, `wit/workitems/${item.adoId}`, "PATCH", [
                 { op: "test", path: "/rev", value: current.rev },
