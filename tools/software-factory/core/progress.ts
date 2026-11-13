@@ -102,8 +102,21 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
     const active = currentRuns.findLast((run) => ["starting", "running", "paused"].includes(run.status));
     const latest = currentRuns.at(-1);
     const report = feature.currentProgress;
-    const stage = feature.currentArtifacts.plan ? state.operations.some((op) => op.kind === "dispatch" && op.status === "completed") ? 4 : 2
-        : feature.currentArtifacts.design || feature.status === "ready_for_design" ? 1 : 0;
+    const designApproved = Boolean(feature.currentArtifacts.design &&
+        state.decisions.filter((d) => d.stage === "design" && d.targetId === feature.currentArtifacts.design).at(-1)?.approved);
+    const planApproved = Boolean(feature.currentArtifacts.plan &&
+        state.decisions.filter((d) => d.stage === "plan" && d.targetId === feature.currentArtifacts.plan).at(-1)?.approved);
+    const stage = feature.currentArtifacts.plan
+        ? state.operations.some((op) => op.kind === "dispatch" && op.status === "completed") ? 4 : planApproved ? 3 : 2
+        : designApproved ? 2
+            : feature.currentArtifacts.design || feature.status === "ready_for_design" ? 1 : 0;
+    const workflowStage = (kind: WorkflowKind, fallback: number): number =>
+        kind === "intake" ? 0
+            : kind === "design" ? 1
+                : kind === "plan" ? 2
+                    : kind === "implement" ? 4
+                        : kind === "monitor" ? 5
+                            : fallback;
     if (feature.recovery) return {
         stage, title: "Shared completion needs reconciliation", description: feature.recovery.message, failed: true,
         action: { label: "Review shared completion recovery", command: feature.recovery.command },
@@ -117,9 +130,9 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
         description: `${feature.shared.lock.actor.displayName} owns ${feature.shared.lock.kind}. Inspect that run or operation before explicitly releasing its claim. No automatic takeover is allowed.` };
     if (feature.lifecycleStatus === "completed") return { stage: 5, title: "Feature delivered", description: "Delivery evidence and the completion decision are saved." };
     if (active && ["starting", "running"].includes(active.status)) return {
-        stage: active.kind === "intake" ? 0 : stage, title: /owning Factory runtime/.test(active.phase) ? "Waiting for the owning runtime"
+        stage: workflowStage(active.kind, stage), title: /owning Factory runtime/.test(active.phase) ? "Waiting for the owning runtime"
             : /owning Copilot chat/.test(active.phase) || feature.sessionOwnerOnline === false ? "Waiting for the owning chat"
-            : active.kind === "intake" ? "Factory is drafting your criteria" : "Work in progress",
+            : active.kind === "intake" ? "Factory is drafting your criteria" : `${workflowLabels[active.kind]} in progress`,
         description: feature.sessionOwnerOnline === false
             ? `The original chat controller is offline. Reconnect that chat to inspect/continue its run. Last saved phase: ${active.phase}. No replacement was started.`
             : `${active.requestedBy?.channel === "chat" || active.parentSessionId ? "Started in Copilot chat. " : ""}${active.phase}. Updates appear here automatically.`,
@@ -132,7 +145,7 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
             description: report.summary, report };
     }
     if (latest?.status === "error" && !active) return {
-        stage: latest.kind === "intake" ? 0 : stage, title: `${workflowLabels[latest.kind]} failed`,
+        stage: workflowStage(latest.kind, stage), title: `${workflowLabels[latest.kind]} failed`,
         description: latest.error || "The workflow failed. No success is assumed.", failed: true, run: latest,
         action: latest.runtimeId ? { label: "Inspect and recover run", target: "runs" } : start(latest.kind, "Try again"),
     };
@@ -153,7 +166,7 @@ export function nextStep(feature: FactoryFeature, gates: AvailableGate[]): NextS
         if (gate) return { stage: order.indexOf(gate.stage) + 1, title: `Review ${gate.stage === "complete" ? "completion" : gate.stage} before continuing`,
             description: gate.ready ? "Review the full output and the exact action below. Approval does not resume the run automatically." : gate.blockers?.join(" ") || gate.reason || "This step is blocked.",
             gate, run: active };
-        return { stage, title: "Ready to continue", description: "This run is paused. Continuing uses its original native journal and asks for execution consent.",
+        return { stage: workflowStage(active.kind, stage), title: "Ready to continue", description: "This run is paused. Continuing uses its original native journal and asks for execution consent.",
             run: active, action: { label: "Continue workflow", command: command("control_run", { executionId: active.id, action: "resume" }) } };
     }
     if (!feature.currentArtifacts.design) return { stage: 1, title: "Ready, not running.", description: "Your criteria are approved. Start design when you are ready; it uses Copilot usage.", action: start("design", "Run guarded design") };

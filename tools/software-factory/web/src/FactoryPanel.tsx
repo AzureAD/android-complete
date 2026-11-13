@@ -642,6 +642,12 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                 </section>
             )}
 
+            {studioLens === "gate" && !currentGate && progress.run?.kind === "plan" && planArtifact && (
+                <section className="studio-spotlight" aria-label="Live Plan Studio">
+                    <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+                </section>
+            )}
+
             {(studioLens === "gate" || (currentGate && studioLens === currentGate.stage)) && currentGate && (
                 <section className="current-review" aria-label={`Review ${currentGate.stage}`}>
                     {["design", "plan"].includes(currentGate.stage) && latest(currentGate.stage as "design" | "plan") &&

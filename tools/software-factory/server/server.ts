@@ -5,11 +5,109 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import http from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { Application } from "../core/application.ts";
 import { FactoryError, MAX_COMMAND_BYTES, type Actor } from "../core/contracts.ts";
 import { runtimeReport } from "../core/doctor.ts";
+import type { ExecutionTraceEntry, FactoryFeature, Json } from "../core/lifecycle-contracts.ts";
+
+function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
+    const planExecs = feature.factory.executions.filter((e) => e.kind === "plan" && e.runtimeId && e.sessionId);
+    if (!planExecs.length) return feature;
+    const cloned = structuredClone(feature);
+    for (const exec of cloned.factory.executions) {
+        if (exec.kind !== "plan" || !exec.runtimeId || !exec.sessionId) continue;
+        if (!/^[a-zA-Z0-9_-]+$/.test(exec.sessionId)) continue;
+        const sessionDbPath = path.join(os.homedir(), ".copilot", "session-state", exec.sessionId, "session.db");
+        if (!existsSync(sessionDbPath)) continue;
+        try {
+            const db = new DatabaseSync(sessionDbPath, { readOnly: true });
+            let rows: { result_json: string }[] = [];
+            try {
+                rows = db.prepare("SELECT result_json FROM workflow_journal WHERE root_run_id = ? ORDER BY rowid")
+                    .all(exec.runtimeId) as { result_json: string }[];
+            } finally {
+                db.close();
+            }
+            if (!rows.length) continue;
+            const deduped: string[] = [];
+            for (const row of rows) {
+                if (typeof row.result_json === "string" && deduped.at(-1) !== row.result_json) {
+                    deduped.push(row.result_json);
+                }
+            }
+            const plans: Record<string, Json>[] = [];
+            const reviews: Record<string, Json>[] = [];
+            const syntheticTurns: ExecutionTraceEntry[] = [];
+            let pIdx = 0;
+            let rIdx = 0;
+            for (const rawJson of deduped) {
+                const parsed = JSON.parse(rawJson) as Record<string, Json>;
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+                if (Array.isArray(parsed.items)) {
+                    const label = `Factory:planner:${pIdx}`;
+                    plans.push(parsed);
+                    syntheticTurns.push({
+                        id: `${exec.id}:journal:planner:${pIdx}`,
+                        kind: "agent_turn",
+                        timestamp: exec.updatedAt,
+                        role: "software-factory-planner",
+                        label,
+                        target: "software-factory-planner",
+                        status: "completed",
+                        outputPreview: rawJson.slice(0, 30_000),
+                    });
+                    pIdx++;
+                } else if (typeof parsed.pass === "boolean") {
+                    const label = `Factory:plan-review:${rIdx}`;
+                    reviews.push(parsed);
+                    syntheticTurns.push({
+                        id: `${exec.id}:journal:plan-review:${rIdx}`,
+                        kind: "agent_turn",
+                        timestamp: exec.updatedAt,
+                        role: "software-factory-reader",
+                        label,
+                        target: "software-factory-reader",
+                        status: "completed",
+                        outputPreview: rawJson.slice(0, 30_000),
+                    });
+                    rIdx++;
+                }
+            }
+            exec.trace ??= [];
+            for (const turn of syntheticTurns) {
+                const existingIdx = exec.trace.findIndex((t) => t.kind === "agent_turn" && t.label === turn.label && t.status === "completed");
+                if (existingIdx >= 0) {
+                    if (!exec.trace[existingIdx]!.outputPreview || exec.trace[existingIdx]!.outputPreview!.length < (turn.outputPreview?.length || 0)) {
+                        exec.trace[existingIdx] = { ...exec.trace[existingIdx]!, outputPreview: turn.outputPreview };
+                    }
+                } else {
+                    exec.trace.unshift(turn);
+                }
+            }
+            for (const art of cloned.factory.artifacts) {
+                if ((art.kind === "plan" || art.kind === "planning_attempt") && art.executionId === exec.id &&
+                    art.content && typeof art.content === "object" && !Array.isArray(art.content)) {
+                    const contentObj = art.content as Record<string, Json>;
+                    if (Array.isArray(contentObj.reviewHistory)) {
+                        contentObj.reviewHistory = contentObj.reviewHistory.map((entry, idx) => {
+                            if (entry && typeof entry === "object" && !Array.isArray(entry) && !("candidate" in entry) && plans[idx]) {
+                                return { ...(entry as Record<string, Json>), candidate: plans[idx]! };
+                            }
+                            return entry;
+                        });
+                    }
+                }
+            }
+        } catch {
+            // Best-effort read-only journal hydration for live UI inspection.
+        }
+    }
+    return cloned;
+}
 
 function matches(actual: string | undefined, expected: string): boolean {
     if (typeof actual !== "string") return false;
@@ -104,10 +202,11 @@ export async function startServer(options: { application: Application; port?: nu
                 .find((value) => value.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
             if (!matches(cookie, sessionToken)) throw new FactoryError("session_required", "Reload the local application to establish a session.", 401);
             if (request.method === "GET" && url.pathname === "/api/features") {
+                const rawFeatures = url.searchParams.get("cached") === "1"
+                    ? options.application.registry.list().map((feature) => options.application.cachedFeature(feature.id))
+                    : await options.application.features();
                 json(response, 200, { project: options.application.registry.project,
-                    features: url.searchParams.get("cached") === "1"
-                        ? options.application.registry.list().map((feature) => options.application.cachedFeature(feature.id))
-                        : await options.application.features(),
+                    features: rawFeatures.map(hydrateStudioFeature),
                     cached: url.searchParams.get("cached") === "1" });
             } else if (request.method === "GET" && url.pathname === "/api/doctor") {
                 json(response, 200, runtimeReport());
