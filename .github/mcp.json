@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "mcp-ado-identitydivision": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure-devops/mcp",
+        "IdentityDivision",
+        "--authentication",
+        "azcli",
+        "-d",
+        "core",
+        "work",
+        "work-items",
+        "repositories",
+        "pipelines"
+      ],
+      "tools": ["*"]
+    },
+    "azure-mcp-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"],
+      "tools": ["*"]
+    }
+  }
+}

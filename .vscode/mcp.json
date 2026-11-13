@@ -8,10 +8,10 @@
     }
   ],
   "servers": {
-    // MCP Server Configuration for Microsoft Authenticator Android
+    // Shared MCP server configuration for android-complete
     // Docs: https://code.visualstudio.com/docs/copilot/chat/mcp-servers
 
-    "ado": {
+    "mcp-ado-identitydivision": {
       "type": "stdio",
       "command": "npx",
       "args": [
