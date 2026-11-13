@@ -426,8 +426,10 @@ export class SharedAuthority {
         const state = this.app.lifecycle.store.state(featureId);
         const execution = state.executions.find((entry) => entry.id === executionId);
         if (!execution || !["error", "cancelled"].includes(execution.status) || isResumableError(execution)) return;
-        const hasUncertainOp = (ops: { status: string }[]) =>
-            ops.some((op) => op.status === "inflight" || op.status === "reconciliation_required");
+        const isLocalBuildingRepair = (op: { status: string; kind?: string; repair?: { phase?: string; headSha?: string } }) =>
+            op.kind === "repair" && op.status === "inflight" && op.repair?.phase === "building" && !op.repair.headSha;
+        const hasUncertainOp = (ops: { status: string; kind?: string; repair?: { phase?: string; headSha?: string } }[]) =>
+            ops.some((op) => (op.status === "inflight" || op.status === "reconciliation_required") && !isLocalBuildingRepair(op));
         if (hasUncertainOp(state.operations) || hasUncertainOp(cached.snapshot.state.operations)) return;
         const localSnapshot = this.snapshot(this.app, featureId, cached.snapshot.lock);
         if (digest(localSnapshot.state.operations) !== digest(cached.snapshot.state.operations)) return;
