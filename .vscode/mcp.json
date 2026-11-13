@@ -70,6 +70,12 @@
       "args": ["mcp", "kusto"]
     },
 
+    "bluebird": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "bluebird", "--organization", "IdentityDivision", "--project", "Engineering"]
+    },
+
     "icm": {
       "type": "stdio",
       "command": "agency",

@@ -21,9 +21,9 @@ This repo supports an AI-driven development pipeline powered by GitHub Copilot a
 
 ### Shared MCP configuration
 
-The repository declares the same nine integrations for each supported client:
+The repository declares the same ten integrations for each supported client:
 `mcp-ado-identitydivision`, `azure-mcp-server`, `workiq`, `s360-breeze-mcp`,
-`android-dri-search`, `es-chat`, `m365-user`, `kusto`, and `icm`.
+`android-dri-search`, `es-chat`, `m365-user`, `kusto`, `bluebird`, and `icm`.
 
 | Client | Repository configuration |
 | --- | --- |
@@ -33,12 +33,17 @@ The repository declares the same nine integrations for each supported client:
 | Feature Orchestrator plugin | [`feature-orchestrator-plugin/.mcp.json`](feature-orchestrator-plugin/.mcp.json), using `mcpServers` |
 
 Keep these declarations in sync when adding, removing, or changing an integration.
-Agency retains its native ADO, WorkIQ, S360, Kusto, IcM, ES Chat, and M365 User
-integrations; JSON clients use `agency mcp <name>` stdio adapters for the last four.
+Agency retains its native ADO, WorkIQ, S360, Kusto, IcM, ES Chat, M365 User, and
+Bluebird integrations. JSON clients use `agency mcp <name>` stdio adapters for
+Kusto, IcM, ES Chat, M365 User, and Bluebird.
 These adapters require the [Agency CLI](https://aka.ms/agency) on `PATH`. They are
 not standalone, Agency-free servers. Azure MCP also includes Kusto tools, but is
 not a replacement for the native Kusto tool surface used by the investigation skills.
 Node.js / `npx` is required for the ADO, Azure MCP, and WorkIQ JSON declarations.
+Bluebird explicitly targets `IdentityDivision` / `Engineering` across all
+configurations because this workspace's GitHub remote cannot supply its ADO
+scope. No repository or branch is pinned, so the project-wide indexed
+repositories and server-selected branches remain available.
 
 Trust the checkout/configuration in the client and complete per-user sign-in and
 service permissions. Shared JSON ADO uses Azure CLI authentication (`az login`
@@ -55,8 +60,8 @@ ADO alias or organization. Its bundled defaults target this Android workspace;
 configure the bundled ADO definition before using the plugin for another organization.
 Personal/global settings are intentionally not changed. The app's
 `.github/github-app.yml` configures instructions/scripts/automation, not MCP
-server definitions. Bluebird and unrelated user-installed MCPs are not added
-without an approved server definition.
+server definitions. Unrelated user-installed MCPs are not added without an
+approved server definition.
 
 Configuration parity does not guarantee startup or connectivity: missing Agency,
 Node.js, Azure CLI, client trust, sign-in, or service access remains a per-user

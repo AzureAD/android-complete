@@ -3,6 +3,7 @@
 
 [mcps.builtins]
 mcp-ado-identitydivision = { type = "ado", organization = "IdentityDivision" }
+bluebird       = { type = "bluebird", organization = "IdentityDivision", project = "Engineering" }
 es-chat        = { type = "es-chat" }
 workiq         = { type = "workiq" }
 m365-user      = { type = "m365-user" }

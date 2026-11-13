@@ -58,6 +58,12 @@
       "args": ["mcp", "kusto"],
       "tools": ["*"]
     },
+    "bluebird": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "bluebird", "--organization", "IdentityDivision", "--project", "Engineering"],
+      "tools": ["*"]
+    },
     "icm": {
       "type": "stdio",
       "command": "agency",
