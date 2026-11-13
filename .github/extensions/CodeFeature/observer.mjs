@@ -1141,10 +1141,10 @@ export function dependencyBlockersFromSnapshot(snapshot) {
         .flatMap((build) => build.failedTasks || []);
     const text = tasks.flatMap((task) => [...(task.issues || []), ...(task.excerpt || [])]).join("\n");
     if (tasks.some((task) => (task.failedTests || []).length > 0) || isDefinitiveCodeOrTestFailure(text)) return [];
-    if (/\b(?:401|403)\b|unauthorized|forbidden|(?:plugin|artifact|dependency).*(?:could not.*resolv|could not.*find|not found|could not be resolved)/is.test(text) &&
+    if (/\b(?:401|403|502|503|504)\b|service unavailable|unauthorized|forbidden|(?:plugin|artifact|dependency).*(?:could not.*resolv|could not.*find|not found|could not be resolved)|could not resolve all files for configuration/is.test(text) &&
         /(?:pkgs\.visualstudio\.com|_packaging\/|AuthApp.*maven|maven.*AuthApp)/i.test(text)) {
         const lines = tasks.flatMap((task) => [...(task.issues || []), ...(task.excerpt || [])]);
-        const causes = lines.filter((line) => /UnknownHostException|\b(?:401|403)\b|unauthoriz|forbidden|Plugin \[|could not resolve plugin|was not found/i.test(line));
+        const causes = lines.filter((line) => /UnknownHostException|\b(?:401|403|502|503|504)\b|service unavailable|unauthoriz|forbidden|Plugin \[|could not resolve|was not found/i.test(line));
         return [...new Set([...causes, ...lines])].slice(0, 48);
     }
     return [];
