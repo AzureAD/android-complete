@@ -398,8 +398,15 @@ export class NativeRuntime {
                                 if (execution.kind !== "check") await this.shared?.assertRun(feature.id, execution.id);
                                 this.factory.store.updateExecution(feature.id, execution.id, { status: "running" });
                                 this.markControl(feature.id, control.id);
-                                const result = await session.workflow.resume(execution.runtimeId, { limits: control.limits,
-                                    notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check", logPhaseNames: true });
+                                const currentApproved = execution.usage?.approvedLimits ?? {};
+                                const effectiveLimits = Object.fromEntries(
+                                    Object.entries(control.limits).filter(([key, value]) => value === null || currentApproved[key] !== value),
+                                );
+                                const result = await session.workflow.resume(execution.runtimeId, {
+                                    ...(Object.keys(effectiveLimits).length ? { limits: effectiveLimits } : {}),
+                                    notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check",
+                                    logPhaseNames: true,
+                                });
                                 this.settle(feature.id, execution.id, result);
                                 await this.observeUsage(feature.id, execution.id, session, result.runId);
                             } else {
