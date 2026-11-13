@@ -8,10 +8,10 @@
     }
   ],
   "servers": {
-    // MCP Server Configuration for Microsoft Authenticator Android
+    // Shared MCP server configuration for android-complete
     // Docs: https://code.visualstudio.com/docs/copilot/chat/mcp-servers
 
-    "ado": {
+    "mcp-ado-identitydivision": {
       "type": "stdio",
       "command": "npx",
       "args": [
@@ -49,6 +49,37 @@
     "android-dri-search": {
       "type": "http",
       "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp"
+    },
+
+    // Agency adapters require the Agency CLI on PATH and per-user service access.
+    "es-chat": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "es-chat"]
+    },
+
+    "m365-user": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "m365-user"]
+    },
+
+    "kusto": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "kusto"]
+    },
+
+    "bluebird": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "bluebird", "--organization", "IdentityDivision", "--project", "Engineering"]
+    },
+
+    "icm": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "icm"]
     }
   }
 }
