@@ -248,7 +248,7 @@ test("checkpoint keys bind input revision and workflow has finite explicit limit
     assert.notEqual(a.keys[0], b.keys[0]);
     assert.equal(workflowDefinition.meta.name, "design-feature");
     assert.deepEqual(workflowDefinition.meta.limits, {
-        maxConcurrentSubagents: 1, maxTotalSubagents: 7, timeoutSeconds: 1800, maxAiCredits: 20,
+        maxConcurrentSubagents: 1, maxTotalSubagents: 7, timeoutSeconds: 10800, maxAiCredits: 20,
     });
 });
 

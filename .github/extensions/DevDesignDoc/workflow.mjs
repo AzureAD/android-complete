@@ -424,7 +424,7 @@ export const workflowDefinition = {
         },
         limits: {
             maxConcurrentSubagents: 1, maxTotalSubagents: 7,
-            timeoutSeconds: 1800, maxAiCredits: 20,
+            timeoutSeconds: 10800, maxAiCredits: 20,
         },
     },
     run: runDesignFeature,
