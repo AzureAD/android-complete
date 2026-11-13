@@ -112,18 +112,58 @@ silently adding flags or changing an approved plan.
 For **every feature in Android-complete**, including non-runtime and single-repo features,
 include one dedicated child PBI titled `[Feature name] - Author and review pre-mortem`.
 Reuse a suitable existing child item after verifying its scope; do not create a duplicate.
-This is documentation/review work, not an application-code or automatic coding-agent task.
-Keep one owning repository and a named author/reviewer; record cross-repo inputs as
-dependencies, not a multi-repo implementation PBI. Use the normal metadata, priority,
+This is an agent-authored documentation task followed by human review, not application-code
+implementation. Keep one owning repository and a named agent author/human reviewer;
+record cross-repo inputs as dependencies, not a multi-repo implementation PBI.
+Use the normal metadata, priority,
 effort/sizing and feature-tag conventions; retain `ai-generated` for generated items,
-but do not label human-review-only work `copilot-agent-ready`.
+and use `copilot-agent-ready` only when the agent-authoring scope and inputs are ready
+for approved dispatch. Human-review-only follow-ups must not carry that tag.
+
+**Timing and responsibilities**:
+
+1. **Design**: Capture a feature-specific authoring brief: approved requirements/design
+   revision, source evidence, known risks, telemetry/rollback inputs, open gaps and
+   proposed owners. Do not draft the pre-mortem during design or implementation,
+   or require a completed artifact before planning.
+2. **Planning/backlog**: Create or reuse this dedicated child PBI after approval.
+   Inline the brief, document destination, all content requirements below and the
+   named human reviewer. Make this item depend on **all feature implementation
+   PBIs**, not only one repository's work; never add it as an implementation
+   prerequisite or make it depend on itself. Before dispatch, record
+   `Pre-mortem artifact: Pending implementation completion and PBI dispatch`;
+   absence of the future artifact is not a design/planning/backlog blocker.
+3. **Post-implementation PBI dispatch — agent authoring**: Dispatch this PBI only
+   after all feature implementation PBIs meet their acceptance criteria, their
+   changes are merged where applicable, and required implementation validation
+   evidence is available. Then the agent writes the complete pre-mortem against
+   the implemented, pinned source revisions and exact approved design, including
+   scenario analysis, safeguards, actual KQL drafts, monitoring/response ownership,
+   rollback and owned validation/release
+   prerequisites. Link the reviewable artifact to this PBI and the exact approved
+   design revision. Do not modify application code, activate flags or run live KQL.
+   Hand off with human review pending; agent completion is not PBI acceptance.
+4. **Human review**: The named reviewer checks feature-specific completeness,
+   customer impact, technical assumptions, query contracts/cohorts/denominators,
+   accountable owners, rollback and follow-up gaps. The agent addresses requested
+   revisions; the human records approval/evidence before authoring/review acceptance.
+   Require reviewed pre-mortem acceptance before release/production enablement,
+   not before implementation completion. Query validation and release approval
+   remain separate, later owned gates.
+
+Record every implementation dependency by planned PBI ID, then resolve it to its
+AB# ID in backlog creation. For a feature with no implementation PBIs, explicitly
+justify that fact and verify its approved non-runtime deliverables are complete
+before authoring; do not invent a dependency or exempt it from the pre-mortem.
 
 Use the standard Objective, Target Repository, Context, Scope, Acceptance Criteria,
 Dependencies and Additional Context headings, replacing code/build criteria with:
 
-- **Design linkage**: Link to the exact design revision/section and reviewable pre-mortem
-  artifact using durable authorized URLs, not local workspace paths. Inline essential
-  context in the PBI. Record the PBI back-link in the design after its AB# ID is known.
+- **Design linkage**: Link to the exact design revision/authoring-brief section using
+  durable authorized URLs, not local workspace paths, and inline essential context.
+  Record the PBI back-link in the design after its AB# ID is known. After agent
+  authoring, add the reviewable artifact's durable URL/revision to the PBI/design;
+  before dispatch, keep its explicit pending status instead of inventing a link.
 - **Failure scenarios and customer impact**: Cover applicable success-path regressions,
   failure, cancellation, retry/re-entry, partial state, upgrades and cross-component
   mismatches. State blast radius, affected customers/cohorts, and severity assumptions.
@@ -145,7 +185,8 @@ Dependencies and Additional Context headings, replacing code/build criteria with
   query validation, approvals and release gates, with a named owner and tracking item
   or explicit owner action for each later prerequisite.
 
-**Authoring/review acceptance**: The artifact is linked, reviewed, and contains all
+**Authoring/review acceptance**: The agent-written artifact is linked, approved by
+the named human reviewer with recorded evidence, and contains all
 sections above; unresolved mappings, unexecuted queries, coverage gaps and follow-up
 owners are explicit. KQL may remain an **unexecuted pre-flight draft** with unresolved
 table/property mappings. Missing production data is expected while a feature is

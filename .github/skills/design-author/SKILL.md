@@ -64,19 +64,31 @@ configuration; design approval is not code verification or activation permission
 ### Required pre-mortem and PBI linkage
 
 For every Android-complete feature, including non-runtime features, add a
-**Pre-mortem and operational readiness** section to the design or link a reviewable
-companion artifact at an exact revision. Follow the content and acceptance contract
+**Pre-mortem and operational readiness** section containing a design-time authoring
+brief, not the pre-mortem draft. Capture feature-specific requirements/source
+evidence, known risks, telemetry/rollback inputs, open gaps and proposed owners
+for the later authoring PBI. Follow the content and acceptance contract
 in [Required Feature Pre-mortem PBI](../feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi):
-failure scenarios/customer impact; prevention/detection/response; monitoring signals
-and KQL drafts with contracts, cohorts, denominators and coverage gaps; monitoring
-owner/cadence/stop criteria; rollback including active attempts; validation and
+plan coverage of failure scenarios/customer impact; prevention/detection/response;
+monitoring signals and later KQL drafts with contracts, cohorts, denominators and
+coverage gaps; monitoring owner/cadence/stop criteria; rollback including active attempts; validation and
 release prerequisites with owners.
 
 Include a **Pre-mortem child PBI** field: use `Pending feature planning` before
 backlog creation, or the existing AB# ID and durable URL when available. Feature
 planning must include a dedicated child PBI to author/review the artifact, reusing
-a suitable existing item. Backlog creation adds the PBI link to the design and the
-exact design/artifact links to the PBI after approval.
+a suitable existing item, dependent on all feature implementation PBIs.
+Record **Pre-mortem artifact: Pending implementation completion and PBI dispatch**.
+Backlog creation links the PBI to the exact design/brief revision after approval.
+Only after all feature implementation is complete may that PBI be dispatched.
+The agent then writes the complete pre-mortem (including actual KQL drafts)
+against implemented, pinned sources, links it back, and hands it to the named
+human reviewer.
+The human checks completeness/assumptions/owners/gaps and records approval;
+agent completion or design approval is not pre-mortem authoring/review acceptance.
+Do not draft it during design/implementation or require the future artifact to
+approve the design, plan or implementation. Require human-reviewed pre-mortem
+acceptance before release/production enablement, without authorizing either.
 
 Separate document review from query validation and release approval. Explicitly
 unexecuted pre-flight KQL and unresolved table/property mappings are acceptable

@@ -50,8 +50,11 @@ Work items target a **module name**. To find the repo: `modules.<name>.repo` →
 3. If no design exists, ask the developer whether to create one first
 4. For small, single-repo changes, skip design and proceed directly only where
    the project's feature requirements permit it. In Android-complete, every feature
-   needs a reviewable design-linked pre-mortem; only explicitly scoped non-feature
+   needs a design-linked pre-mortem authoring brief; only explicitly scoped non-feature
    fixes may skip feature design. Missing feature context returns to design review.
+   Only after all feature implementation is complete may the dedicated PBI be
+   dispatched for agent drafting; the future artifact is not a planning or
+   implementation prerequisite.
 5. Android-complete runtime features also need the approved
    [default-off flag contract](references/pbi-template.md#android-complete-default-off-feature-contract).
    Missing flags, enabled defaults or unjustified N/A return to design review,
@@ -86,9 +89,17 @@ Rules:
    [contract](references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
    Record a suitable known existing AB# and reuse intent for backlog verification.
    Keep one owning repository and normal sizing/metadata; identify later query-
-   validation/release owners separately. Mark this `documentation/review` and
-   keep human-review-only work out of coding-agent dispatch and `copilot-agent-ready`
-   tags. Record actual dependencies, not production activation as an authoring blocker.
+   validation/release owners separately. Mark this `documentation/review` with
+   agent authoring on post-implementation PBI dispatch and named human review
+   afterward. Inline the brief, document destination and content/acceptance contract; record
+   `Pre-mortem artifact: Pending implementation completion and PBI dispatch`.
+   Depend on all implementation PBIs across repos and require completion/merged
+   changes/validation evidence before authoring; no reverse dependency blocking
+   implementation. Sequence human acceptance before release and use the contract's
+   justified no-implementation case where applicable. Use `copilot-agent-ready` when
+   agent-authoring scope/inputs are ready for approved dispatch, never for
+   human-review-only follow-ups. Agent completion is not PBI acceptance.
+   Record actual dependencies, not production activation as an authoring blocker.
 7. **Android-complete default-off isolation** — inline the approved flag IDs/keys,
    owning repo/framework, owner, false defaults, all guards, configuration policy,
    test cohort, active-attempt rollback and owned code-review/CI evidence into each

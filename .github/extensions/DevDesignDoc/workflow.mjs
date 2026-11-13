@@ -338,7 +338,7 @@ export async function runDesignFeature(ctx) {
     sourceManifest = JSON.parse(JSON.stringify(ctx.args.sourceManifest));
     const input = JSON.parse(JSON.stringify(ctx.args));
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v8-${digest(input)}`;
+    const prefix = `design-feature-v9-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },
@@ -371,7 +371,7 @@ Inspect only the sourceManifest revisions (pinned local snapshots or authenticat
 verify each pin in sourceVerification. Report any relevant source omitted from the manifest.
 Only put repository source references in references; the separate approvalVerification
 records session approval provenance. Local manifests are verification aids, not repository sources.
-Gather existing telemetry contracts and rollback mechanisms for the pre-mortem from pinned sources.
+Gather existing telemetry contracts and rollback mechanisms for the pre-mortem authoring brief from pinned sources.
 Distinguish verified current instrumentation from proposed signals, unresolved future table/property
 mappings and later validation/release prerequisites. Missing production data while disabled is expected;
 unexecuted pre-flight queries and owned future mapping gaps are not by themselves blocking baseline
@@ -426,37 +426,44 @@ For documentation-only or other non-runtime changes, set runtimeBehaviorChange f
 and a substantive noFlagReason; retain the design section with a reasoned N/A when no runtime changes
 exist. Regression-only/preserve-existing and deferred work do not introduce runtime behavior or flags.
 Render the register visibly; flag defaults, IDs and mappings in prose must match the structured records.
-Generate a self-contained Markdown "Pre-mortem and operational readiness" document in
+Generate a self-contained Markdown authoring brief, not the pre-mortem draft, in
 sections.preMortemAndOperationalReadiness for every feature, including single-repo and non-runtime
-features; never substitute a link, placeholder or generic checklist for the generated content.
-Link failure scenarios to approved requirement IDs, baseline trace IDs and source evidence;
-cover customer impact/blast radius/cohorts, success regressions, failure, cancellation, retry/re-entry,
-upgrades, cross-component mismatches and persisted/partial state where applicable.
-Map each scenario to prevention, detection, response, accountable owners and verification needs.
-Include monitoring signals and actual KQL draft text with event/span/property contracts,
-table/property mappings, units/outcomes, eligibility/execution/baseline cohorts, time windows,
-numerators/denominators, deduplication, sampling and coverage gaps. No traffic or missing
-instrumentation is not proof of health. Label proposed instrumentation and unresolved mappings,
-and explicitly identify unexecuted queries as UNEXECUTED PRE-FLIGHT DRAFTS.
-Name monitoring and response owners, cadence, observation window, thresholds/stop criteria and
-escalation. Assign resolution of unconfirmed values/ownership to an accountable follow-up owner;
-do not invent approved thresholds or people. Specify rollback triggers, decision/execution owner,
-default-off flag rollback for runtime features (non-flag release mechanisms supplement it or apply to
-non-runtime work), propagation limits, active/in-flight attempts, persisted/partial
-state, cleanup/recovery and verification that existing behavior is preserved.
-Record validation and release prerequisites with test cases, named owners and tracking items or
-explicit owner actions. Separate authoring/review acceptance from later telemetry/query validation
-and release approval. Unexecuted pre-flight drafts, unresolved future mappings and absent production
-data while disabled are acceptable with explicit gaps and follow-up owners; do not label them as
-blocking design unknowns solely because validation is deferred. Before relying on monitoring for
-rollout, its owner must validate contracts, mappings, outcomes, cohorts and denominators against
-an approved enabled E2E test cohort and attach evidence. Broad production enablement is not required.
-The release owner separately resolves release-blocking gaps and approves prerequisites/rollback.
+features. Capture approved requirement IDs, baseline trace IDs/source evidence, known risks/customer
+impact, telemetry contracts/coverage gaps, rollback inputs and proposed author/reviewer/operations owners.
+Plan the dedicated PBI's content: scenarios/customer impact and prevention/detection/response;
+monitoring signals and actual KQL drafts with event/span/property contracts, table/property mappings,
+units/outcomes, eligibility/execution/baseline cohorts, time windows, numerators/denominators,
+deduplication/sampling and coverage gaps; monitoring owner/cadence/window/thresholds/stop criteria/
+escalation; rollback triggers/owners/default-off flag mechanism, propagation, active/in-flight attempts
+and persisted/partial-state recovery; and owned validation/release prerequisites.
+Do not generate the full pre-mortem or its KQL drafts during design or implementation.
+Include "Pre-mortem artifact: Pending implementation completion and PBI dispatch".
+Require the dedicated authoring PBI to depend on all feature implementation PBIs across repositories.
+Dispatch it only after all feature implementation is complete: every implementation PBI meets
+acceptance criteria, changes are merged where applicable and required implementation validation
+evidence is available. At that dispatch, the agent writes the complete pre-mortem against implemented,
+pinned source revisions and the exact approved design, including actual KQL drafts; links the artifact
+to the PBI/design; and hands off with human review pending. A named human reviewer checks completeness,
+customer impact, assumptions, contracts/cohorts/denominators, owners, rollback and gaps, requests agent
+revisions, and records approval/evidence before PBI acceptance and release/production enablement.
+Never make pre-mortem completion an implementation prerequisite or require the future artifact before
+design/planning/backlog approval. For no implementation PBIs, explicitly justify the non-runtime case
+and verify approved deliverables are complete before authoring; no self-dependency or omitted pre-mortem.
+Agent completion is not human acceptance. Record the later telemetry/query-validation and release
+owners/gates separately; document acceptance does not authorize release or activation.
+Future unexecuted pre-flight drafts, unresolved mappings and absent production data while disabled
+are acceptable with explicit gaps/follow-up owners; do not invent approved thresholds, mappings or people.
+No traffic or missing instrumentation is not proof of health. Before relying on monitoring for rollout,
+its owner validates contracts, mappings, outcomes, cohorts and denominators against
+an approved enabled E2E test cohort and attaches evidence. Broad production enablement is not required.
+The release owner separately resolves blocking prerequisites and approves rollback readiness/enablement.
 Document review or GO to Planning is not rollout approval, query validation or activation permission.
 Include "Pre-mortem child PBI: Pending feature planning", or a supplied existing AB# and durable URL
 with reuse subject to backlog verification. Require the later approved plan to include one dedicated
-authoring/review child PBI or reuse a suitable existing item, add reciprocal design/PBI links, and
-exclude human-review-only work from automatic coding-agent dispatch. Do not create or update items.
+authoring/review child PBI or reuse a suitable existing item and add reciprocal design/PBI links.
+Mark it documentation/review with approved post-implementation agent authoring and named human review;
+copilot-agent-ready applies only to ready agent-authoring scope/inputs, never human-review-only follow-ups.
+Do not create/update items, dispatch an agent, publish the future pre-mortem or claim it is accepted.
 Bind evidenceDigest to the supplied digest, including all validated reviewer discoveries.
 The original evidence remains provenance, not a guarantee that its claims survived review.
 Use new reference IDs from reviewer discoveries in repaired traceability and counterevidence.
@@ -513,15 +520,21 @@ Ensure the exact contract reaches implementation PBI acceptance criteria and rel
 design approval, PBI creation or a GO recommendation is not implemented isolation or activation approval.
 Find omitted gates, falsely claimed existing flags/frameworks, unowned validation, and mismatched prose.
 Do not create flags, run application tests or inspect/change live production configuration.
-For preMortemAndReleaseGates, independently assess the generated pre-mortem's substantive coverage,
-not just its section presence or keywords: requirement/trace-linked failure scenarios/customer impact,
-prevention/detection/response, actual KQL drafts and contracts/mappings/cohorts/denominators/coverage,
-monitoring owner/cadence/stop criteria/escalation, rollback including active/in-flight attempts and
-persisted state, owned validation/release prerequisites, and the dedicated child-PBI linkage/handoff.
-Reject placeholders, link-only content, invented verified mappings or thresholds, treating no traffic
-as healthy, and omitted applicable risks, owners or rollback behavior. Unexecuted pre-flight drafts and
-unresolved future mappings can pass document review with explicit coverage gaps and follow-up owners;
-missing production data while disabled does not require activation or broad production enablement.
+For preMortemAndReleaseGates, assess the design-time authoring brief and post-implementation handoff,
+not completion or acceptance of the pre-mortem. Check substantive requirement/trace/source-linked
+inputs, known risks/customer impact, telemetry/rollback inputs and planned full-document content:
+scenarios, safeguards, actual KQL drafts with contracts/mappings/cohorts/denominators/coverage,
+monitoring ownership/cadence/stop criteria, active-attempt/partial-state rollback and owned release gates.
+Verify the dedicated PBI depends on all feature implementation PBIs, is dispatched for agent authoring
+only after all implementation is complete with acceptance/merged-change/validation evidence, refreshes
+pinned implemented sources, and requires named human review before release. Reject premature full-draft
+generation, reverse dependencies blocking implementation, a future artifact required before planning,
+missing dependencies, or agent completion treated as human acceptance. Verify the justified
+no-implementation case has completed approved non-runtime deliverables and no self-dependency.
+Reject placeholders/link-only briefs, invented verified mappings/thresholds, treating no traffic as
+healthy, and omitted applicable inputs, owners or rollback plans. Future unexecuted drafts/unresolved
+mappings are acceptable with explicit gaps and follow-up owners; missing production data while disabled
+does not require activation or broad production enablement.
 Verify a separate approved enabled E2E test cohort validation/evidence gate before monitoring is
 relied on for rollout and a separate release-owner approval gate. Design/PBI document completion is
 not rollout approval, query validation or activation permission. Never waive missing baseline evidence.

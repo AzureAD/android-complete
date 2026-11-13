@@ -50,12 +50,23 @@ criteria. Do not invent APIs or inspect/change live production configuration;
 design approval is not code verification or activation permission.
 
 For Android-complete, supplement either template with a **Pre-mortem and operational
-readiness** section or an exact-revision link to a companion artifact. Follow the
+readiness** section containing a design-time authoring brief, not a pre-mortem
+draft: requirements/source evidence, known risks, telemetry/rollback inputs, gaps
+and proposed owners. Plan coverage using the
 [pre-mortem content and acceptance contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
 This applies to every feature, including non-runtime work. Include a
 **Pre-mortem child PBI** field (`Pending feature planning`, or existing AB# and URL);
 planning includes the dedicated authoring/review child item, reusing a suitable
 existing item, and approved backlog creation adds reciprocal design/PBI links.
+Record **Pre-mortem artifact: Pending implementation completion and PBI dispatch**.
+The dedicated PBI depends on all feature implementation PBIs. Only after all
+feature implementation is complete, dispatch it for agent authoring against
+implemented, pinned sources. The agent writes the complete document (including
+actual KQL drafts) and links it for the named human reviewer to check completeness, assumptions,
+owners and gaps and record approval. Agent completion/design approval is not
+pre-mortem acceptance; the future artifact is not a design/planning/implementation
+prerequisite and must not be drafted at those stages. Require human-reviewed
+acceptance before release/production enablement, without authorizing either.
 Explicit unexecuted pre-flight KQL and unresolved mappings are acceptable with
 named follow-up owners. No production data while disabled is expected. Separate
 document review from approved enabled-E2E query validation and release approval;

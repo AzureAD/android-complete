@@ -9,6 +9,14 @@ You are in the **Dispatch** phase. Send work items to Copilot coding agent.
 
 **First**: Read `.github/orchestrator-config.json` for repo slugs, base branches, and account types.
 
+For Android-complete's dedicated pre-mortem PBI, follow the
+[authoring/review contract](../skills/feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
+Dispatch only after all feature implementation PBIs are complete across repos
+with acceptance/merged-change/validation evidence. The agent writes the complete
+pre-mortem against implemented source pins, then a named human reviews/accepts it
+before release. Include the brief, destination and content/acceptance contract;
+do not dispatch review-only follow-ups or treat agent completion as acceptance.
+
 Use the `pbi-dispatcher` skill to:
 1. Discover GitHub accounts (from developer config file or `gh auth status`)
 2. Read work item details from ADO

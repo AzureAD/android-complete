@@ -24,6 +24,14 @@ To resolve a module to dispatch details:
 
 ## Prerequisites
 
+For Android-complete pre-mortem authoring, apply the
+[post-implementation dispatch and human-review contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
+Verify all feature implementation is complete before dispatch; inline implemented
+source pins, the authoring brief/destination/content contract and human reviewer
+in the work-item description before assigning the agent. Dispatch documentation
+only, hand off for human acceptance before release, and exclude review-only
+follow-ups; agent completion is not PBI acceptance.
+
 - **ADO MCP Server** running — for updating work items
 - Copilot SWE agent enabled/onboarded for the target ADO repository
 - Work items with clear descriptions (from the `pbi-creator` skill)

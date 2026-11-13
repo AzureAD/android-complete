@@ -52,10 +52,13 @@ Before decomposing into PBIs, check if an approved design spec exists:
    > introduce new APIs."
 4. If the developer wants a design first, hand off to the `design-author` skill and stop.
 5. Every feature, including small/single-repo and non-runtime features, needs a
-   reviewable design-linked pre-mortem and its dedicated child PBI. An explicitly
+   design-linked pre-mortem authoring brief and its dedicated child PBI. An explicitly
    scoped non-feature bug fix may skip feature design; do not use that exception
    to omit these requirements from a feature. If design/pre-mortem context is
    missing, return to design authoring/review before claiming the plan is ready.
+   The complete pre-mortem is agent-drafted only after all feature implementation
+   is complete and its dedicated PBI is dispatched; its future artifact is not
+   required to approve this plan or complete implementation.
 6. Runtime features must also have the approved
    [default-off flag contract](references/pbi-template.md#required-default-off-feature-contract).
    Missing flags, enabled defaults or unjustified N/A return to design review;
@@ -94,11 +97,20 @@ Break the feature into PBIs following these rules:
    a duplicate; backlog creation verifies it. Assign one owning repository and
    author/reviewer, keep documentation work right-sized, and identify owners of
    later enabled-E2E query validation and release gates separately.
-7. **Dispatch honestly** — mark the pre-mortem item `documentation/review`, not
-   automatic coding-agent work. Preserve feature tags and `ai-generated` where
-   appropriate; reserve `copilot-agent-ready` for actually dispatchable coding work.
-   Include documentation review in the plan's sequencing without making it depend
-   on production activation; record only actual implementation/release dependencies.
+7. **Dispatch honestly** — mark the pre-mortem item `documentation/review` with
+   agent authoring on post-implementation PBI dispatch and named human review
+   afterward. Inline the design brief, document destination and content/acceptance contract; record
+   `Pre-mortem artifact: Pending implementation completion and PBI dispatch`,
+   not a nonexistent artifact link. Depend on all implementation PBIs across
+   repositories and require their completion/merged changes/validation evidence
+   before authoring; never make implementation depend on this document PBI.
+   Preserve feature tags and `ai-generated`; use `copilot-agent-ready` when this
+   agent-authoring scope/inputs are ready for approved dispatch, never for a
+   human-review-only follow-up. Agent completion does not accept the PBI.
+   Sequence human-reviewed pre-mortem acceptance before release, not before
+   implementation. Do not make it depend on production activation; record only
+   actual implementation/release dependencies using the template's no-implementation
+   case when applicable.
 8. **Carry default-off isolation** — inline the exact approved flag IDs/keys,
    owners/frameworks, false defaults, entry-point guards, configuration policy,
    cohort enablement, rollback and verification in each runtime implementation PBI.

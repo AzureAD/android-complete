@@ -72,6 +72,15 @@ For Android-complete features (including non-runtime work), first verify the app
 contains the dedicated design-linked pre-mortem child PBI using the
 [contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
 Return missing/incomplete scope to planning for approval; do not silently add work.
+Verify the inlined design-time brief, document destination, named human reviewer
+and full content/acceptance contract. The agent drafts the pre-mortem when this
+PBI is dispatched after all feature implementation is complete, not during
+design/backlog creation or implementation. Verify dependencies on every
+implementation PBI, resolve planned IDs to AB#, and prohibit reverse/self-links.
+Record `Pre-mortem artifact: Pending implementation completion and PBI dispatch`;
+a future artifact URL is not a creation prerequisite.
+Agent-authoring readiness may use `copilot-agent-ready`; review-only
+follow-ups may not. Human approval, not agent completion, accepts the document/PBI.
 Read nominated existing items and inspect the confirmed Feature's children/related
 items before creation. Verify design revision, scope, ownership and state; propose
 reuse and needed updates for approval rather than duplicating or silently reparenting/
@@ -219,9 +228,11 @@ apply only approved changes and preserve unrelated metadata, tags, state and lin
 3. **Parent to Feature** (if created): Use `mcp_ado_wit_add_child_work_items`
    For Android-complete features, also verify parenting to a confirmed existing
    Feature; their pre-mortem item must be a child of that Feature.
-4. **Android-complete pre-mortem links**: Verify exact design/artifact links in
+4. **Android-complete pre-mortem links**: Verify exact design/authoring-brief links in
    the PBI and its AB# back-link in the design. Make only approved edits in the
    owning design repository; if unavailable, report the exact linkage gap and owner.
+   The dispatched author adds the artifact URL/revision after drafting; do not
+   require or invent that future link during creation.
    Track actual query-validation/release prerequisites, not production activation
    as a documentation blocker.
 
@@ -238,7 +249,8 @@ Do not reset a reused existing item's state without explicit approval.
 For Android-complete, distinguish created/reused pre-mortem work and show reciprocal
 design links or outstanding linkage gaps. Name later enabled-E2E query-validation and
 release-gate owners. Documentation/review completion is not rollout approval;
-keep human-review-only items out of automatic coding-agent dispatch.
+report agent authoring on approved post-implementation PBI dispatch and named human
+review before release; keep human-review-only follow-ups out of dispatch.
 
 ```markdown
 ## Work Items Created: [Feature Name]

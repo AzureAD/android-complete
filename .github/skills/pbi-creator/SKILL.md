@@ -68,6 +68,17 @@ the [required contract](../feature-planner/references/pbi-template.md#required-f
 If missing or incomplete, return the proposed amendment to feature planning for
 developer approval; do not silently add work to an approved plan.
 
+Verify the design-time authoring brief, document destination, named human reviewer
+and full content/acceptance contract are inlined. The agent drafts the document
+after all feature implementation is complete and this PBI is dispatched, not
+during design/backlog creation or implementation. Verify dependencies on every
+implementation PBI (resolve planned IDs to AB#), never the reverse or a self-link.
+Before dispatch, retain `Pre-mortem artifact: Pending implementation completion
+and PBI dispatch`; a future artifact URL is not a creation prerequisite.
+Agent-authoring readiness may use `copilot-agent-ready`;
+human-review-only follow-ups may not. Human approval accepts the document/PBI,
+not the agent's authoring completion.
+
 Read any nominated existing item and, after the parent Feature is identified,
 inspect its children/related items for a suitable pre-mortem PBI. Verify feature,
 design revision, scope, ownership and current state. Propose reuse and any required
@@ -254,11 +265,13 @@ After all PBIs are created and you have the PBI-N → AB# mapping:
    If this tool is unavailable, use `mcp_ado_wit_work_items_link` with `type: "child"` instead.
 
 4. **Pre-mortem links**: Verify the dedicated PBI is a child of the confirmed
-   Feature, links the exact design/pre-mortem artifact, and is back-linked from
+   Feature, links the exact design/authoring-brief revision, and is back-linked from
    the design. Make only approved edits in the owning design repository; if that
    repository is unavailable, report the exact missing back-link and owner rather
    than claiming linkage is complete. Resolve planned references to the reused/
-   created AB# ID. Link actual validation/release prerequisites, not production
+   created AB# ID. The dispatched author adds the artifact URL/revision after
+   drafting; do not require or invent that future link during creation.
+   Link actual validation/release prerequisites, not production
    activation as a prerequisite for documentation completion.
 
 ### Step 5.5: Mark PBIs as Committed
@@ -285,8 +298,9 @@ Do not reset a reused existing item's state without explicit approval.
 Present the results:
 Distinguish created versus reused items, show the pre-mortem/design links and
 remaining linkage gaps, and name later query-validation and release-gate owners.
-Keep documentation/review work out of automatic coding-agent dispatch. Committed
-or completed authoring/review status does not mean rollout approval.
+Report agent authoring on approved post-implementation PBI dispatch and subsequent
+named human review before release; do not dispatch review-only follow-ups.
+Committed or completed authoring/review status does not mean rollout approval.
 
 ```markdown
 ## PBIs Created: [Feature Name]

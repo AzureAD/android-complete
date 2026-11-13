@@ -24,6 +24,15 @@ Look up the module → repo → host chain:
 
 ## Key Rules
 
+For Android-complete's dedicated pre-mortem PBI, apply the
+[authoring/review contract](../skills/feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
+Dispatch document authoring only after all feature implementation PBIs are complete
+across repos with acceptance/merged-change/validation evidence. Inline the brief,
+implemented source pins, destination, content contract and human reviewer. The
+agent writes/links the full document, then the human reviews/accepts it before
+release; no application-code edits, live KQL, activation or autonomous acceptance.
+Human-review-only follow-ups must not be dispatched.
+
 - Read `.github/orchestrator-config.json` for repo slugs, base branches, and host types
 - **Route to the correct dispatcher** based on repo host — never use GitHub dispatch for ADO repos or vice versa
 - Include `Fixes AB#<ID>` in every prompt so the PR links to ADO

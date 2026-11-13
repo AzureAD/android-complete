@@ -75,15 +75,27 @@ Every Android-complete feature, including non-runtime features, requires a
 design-linked pre-mortem and a dedicated child PBI to author/review it. Planning
 includes the item; approved backlog creation verifies and reuses a suitable
 existing item rather than duplicating it, confirms the parent Feature and normal
-metadata, and records design/PBI links in both directions. Documentation/review
-work is not automatically dispatched as application-code work.
+metadata, and records design/PBI links in both directions.
 
 The [Design Doc Dynamic Workflow](.github/extensions/DevDesignDoc/README.md#generated-feature-pre-mortem)
-generates the pre-mortem as a required Markdown section in its JSON design artifact
-and independently reviews it before recommending planning. Its human gate packet
-contains the generated content and pending/existing child-PBI linkage; it does not
-create the PBI or publish a separate file. Planning/backlog creation follows after
-explicit human design approval.
+generates a required feature-specific **authoring brief**, not the pre-mortem draft,
+in its JSON design artifact. Independent design review checks inputs, planned
+content, ownership and handoff. The packet records pending/existing child-PBI
+linkage and `Pre-mortem artifact: Pending implementation completion and PBI dispatch`;
+the workflow does not create the PBI or draft/publish the future document.
+Planning/backlog creation follows explicit human design approval.
+
+The dedicated PBI depends on **all feature implementation PBIs** across repositories.
+Only after every implementation item meets acceptance criteria, changes are merged
+where applicable and implementation validation evidence is available is it
+dispatched. The agent then writes the full pre-mortem against implemented, pinned
+sources and the approved design, including actual KQL drafts, and links the artifact.
+The named human reviewer checks scenarios/impact, assumptions, monitoring contracts,
+owners, rollback and gaps; the agent addresses revisions and the human records
+acceptance before release/production enablement. Agent completion is not acceptance.
+Do not create a reverse dependency making implementation wait for this document.
+For no implementation PBIs, justify that case and verify approved non-runtime
+deliverables are complete before authoring.
 
 Use the [pre-mortem content and acceptance contract](.github/skills/feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi).
 Authoring/review can finish with explicitly unexecuted pre-flight KQL, unresolved

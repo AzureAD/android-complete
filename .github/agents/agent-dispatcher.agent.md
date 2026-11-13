@@ -14,6 +14,12 @@ Read the skill file at `.github/skills/pbi-dispatcher/SKILL.md` and follow its w
 
 ## Key Rules
 
+For the dedicated pre-mortem PBI, verify **all feature implementation is complete**
+across repositories before dispatch. Apply the skill's authoring/review contract:
+the agent writes the full document against implemented sources only then; a named
+human reviews/accepts it before release. Do not dispatch review-only follow-ups,
+modify application code or treat authoring completion as PBI/release approval.
+
 1. **Discover gh accounts first** — follow the GitHub Account Discovery sequence in the skill:
    - Check `.github/developer-local.json`
    - Fall back to `gh auth status`

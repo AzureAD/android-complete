@@ -29,7 +29,12 @@ Read the skill file at `.github/skills/pbi-creator/SKILL.md` and follow its work
   scope to design/planning for approval, not silent flag additions or expanded
   plans. PBI creation is not implemented isolation or activation permission.
 - Keep pre-mortem documentation/review completion separate from enabled-E2E query
-  validation and release approval; do not auto-dispatch human-review-only work.
+  validation and release approval. Verify the authoring brief/destination/contract
+  and human reviewer: depend on all implementation PBIs and dispatch for agent
+  drafting only after all feature implementation is complete. Human acceptance
+  precedes release, not implementation completion. Before dispatch the artifact
+  is explicitly pending, not a creation blocker. Do not dispatch human-review-only
+  follow-ups.
 - **Discover ADO defaults first** — use `mcp_ado_wit_my_work_items` and
   `mcp_ado_wit_get_work_items_batch_by_ids` to discover area paths, iteration paths,
   and assignee from the developer's recent work items
