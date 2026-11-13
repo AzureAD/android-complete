@@ -891,3 +891,96 @@ test("ExternalProvider strips ambient GH_TOKEN/GHE tokens, isolates host credent
         }
     }
 });
+
+test("GitHub PR publication delimits Fixes AB# with a literal space and inspectPr deduplicates superseded check runs", async () => {
+    const h = githubPublicationFixture();
+    try {
+        const binding = await h.provider.prepareLocalPublication(h.localConfig, item, wi, h.marker, h.implementation);
+        await h.provider.publishLocal(h.localConfig, item, wi, h.marker, h.implementation, binding);
+        const body = h.state.pr?.body ?? "";
+        const commitMessage = git(h.repoDir, "log", "-1", "--format=%B", binding.headSha);
+        for (const text of [body, commitMessage]) {
+            const actionMatches = [...text.matchAll(/AB#([^ \]]+)/g)].map((m) => m[1]);
+            assert.deepEqual(actionMatches, ["42"], "danhellem AB# regex must capture exact numeric ID without trailing newline text");
+        }
+
+        const repo = h.localConfig.repositories.broker!;
+        const headSha = "c".repeat(40);
+        let checkRunsPayload: Record<string, unknown>[] = [
+            {
+                id: 1001,
+                name: "AB#ID Check",
+                status: "completed",
+                conclusion: "failure",
+                started_at: "2026-04-17T23:54:06Z",
+                completed_at: "2026-04-17T23:54:15Z",
+                app: { slug: "github-actions" },
+            },
+            {
+                id: 1002,
+                name: "AB#ID Check",
+                status: "completed",
+                conclusion: "success",
+                started_at: "2026-04-17T23:54:10Z",
+                completed_at: "2026-04-17T23:54:20Z",
+                app: { slug: "github-actions" },
+            },
+            {
+                id: 1003,
+                name: "Linux Build",
+                status: "completed",
+                conclusion: "success",
+                started_at: "2026-04-17T23:54:12Z",
+                completed_at: "2026-04-17T23:58:00Z",
+                app: { slug: "azure-pipelines" },
+            },
+        ];
+        const inspectProvider = new ExternalProvider({
+            run: async (command, args) => {
+                if (command === "gh" && args[0] === "auth" && args[1] === "token") return "tok";
+                if (command === "gh" && args[0] === "api") {
+                    const endpoint = args.at(-1)!;
+                    if (endpoint === `repos/${repo.slug}/pulls/3354`) {
+                        return JSON.stringify({
+                            number: 3354,
+                            state: "open",
+                            merged_at: null,
+                            title: "Harden LastRequestTelemetry",
+                            body: `Fixes AB#42 (Azure Boards work item)\n\nSoftware Factory operation: ${h.marker}`,
+                            html_url: `https://${repo.hostname}/${repo.slug}/pull/3354`,
+                            head: { sha: headSha },
+                            base: { ref: repo.baseBranch, repo: { full_name: repo.slug } },
+                        });
+                    }
+                    if (endpoint === `repos/${repo.slug}/commits/${headSha}/status`) {
+                        return JSON.stringify({ state: "pending", total_count: 0 });
+                    }
+                    if (endpoint === `repos/${repo.slug}/commits/${headSha}/check-runs?per_page=100`) {
+                        return JSON.stringify({ total_count: checkRunsPayload.length, check_runs: checkRunsPayload });
+                    }
+                }
+                throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+            },
+        });
+        const passingPr = await inspectProvider.inspectPr(repo, 3354, item.id);
+        assert.equal(passingPr.checks, "passing");
+        assert.deepEqual(passingPr.workItemIds, [42]);
+
+        checkRunsPayload = [
+            ...checkRunsPayload,
+            {
+                id: 1004,
+                name: "AB#ID Check",
+                status: "in_progress",
+                conclusion: null,
+                started_at: "2026-04-17T23:59:00Z",
+                completed_at: null,
+                app: { slug: "github-actions" },
+            },
+        ];
+        const pendingPr = await inspectProvider.inspectPr(repo, 3354, item.id);
+        assert.equal(pendingPr.checks, "pending");
+    } finally {
+        h.cleanup();
+    }
+});

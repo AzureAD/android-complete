@@ -521,6 +521,9 @@ export function fetchPullRequestSnapshot(parsedPr, { workspaceRoot = process.cwd
             (parsedSnapshot.diagnosticErrors ||= []).push("GitHub inline review thread diagnostics unavailable.");
         }
 
+        if (Array.isArray(parsedSnapshot.statusCheckRollup)) {
+            parsedSnapshot.statusCheckRollup = deduplicateStatusCheckRollup(parsedSnapshot.statusCheckRollup);
+        }
         const checks = Array.isArray(parsedSnapshot.statusCheckRollup) ? parsedSnapshot.statusCheckRollup : [];
         const adoBuildRefs = new Map();
         for (const check of checks) {
@@ -825,8 +828,82 @@ export function listPrChangedFiles(repoRoot, snapshotOrBaseBranch = "dev", exec 
     }
 }
 
+export function deduplicateStatusCheckRollup(checks) {
+    if (!Array.isArray(checks) || checks.length <= 1) return checks;
+    const parseMillis = (value) => {
+        if (typeof value !== "string" || !value.trim()) return Number.NaN;
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : Number.NaN;
+    };
+    const parseActionsIds = (entry) => {
+        const rawUrl = String(entry?.detailsUrl || entry?.targetUrl || entry?.url || "");
+        const match = rawUrl.match(/\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/i);
+        if (!match) return null;
+        return {
+            runId: BigInt(match[1]),
+            jobId: match[2] ? BigInt(match[2]) : 0n,
+        };
+    };
+    const isNewer = (candidate, current) => {
+        const candStart = parseMillis(candidate?.startedAt || candidate?.createdAt);
+        const currStart = parseMillis(current?.startedAt || current?.createdAt);
+        if (Number.isFinite(candStart) && Number.isFinite(currStart) && candStart !== currStart) {
+            return candStart > currStart;
+        }
+        const candDone = parseMillis(candidate?.completedAt || candidate?.updatedAt);
+        const currDone = parseMillis(current?.completedAt || current?.updatedAt);
+        if (Number.isFinite(candDone) && Number.isFinite(currDone) && candDone !== currDone) {
+            return candDone > currDone;
+        }
+        const candIds = parseActionsIds(candidate);
+        const currIds = parseActionsIds(current);
+        if (candIds && currIds) {
+            if (candIds.runId !== currIds.runId) return candIds.runId > currIds.runId;
+            if (candIds.jobId !== currIds.jobId) return candIds.jobId > currIds.jobId;
+        }
+        return true;
+    };
+    const keyFor = (entry) => {
+        if (!record(entry)) return "";
+        const typeName = String(entry.__typename || "").trim();
+        const contextGenre = record(entry.context) && typeof entry.context.genre === "string"
+            ? entry.context.genre.trim()
+            : "";
+        const rawContext = typeof entry.context === "string"
+            ? entry.context.trim()
+            : record(entry.context) && typeof entry.context.name === "string"
+                ? entry.context.name.trim()
+                : "";
+        const rawName = typeof entry.name === "string" ? entry.name.trim() : "";
+        const workflowName = typeof entry.workflowName === "string" ? entry.workflowName.trim() : "";
+        if (typeName === "StatusContext" || (rawContext && !rawName)) {
+            return `status:${contextGenre.toLowerCase()}::${rawContext.toLowerCase()}`;
+        }
+        const checkName = rawName || rawContext;
+        if (!checkName) return "";
+        return `check:${workflowName.toLowerCase()}::${checkName.toLowerCase()}`;
+    };
+    const latestByKey = new Map();
+    const unkeyed = [];
+    checks.forEach((entry, index) => {
+        const key = keyFor(entry);
+        if (!key) {
+            unkeyed.push({ index, entry });
+            return;
+        }
+        const existing = latestByKey.get(key);
+        if (!existing || isNewer(entry, existing.entry)) {
+            latestByKey.set(key, { index, entry });
+        }
+    });
+    return [...unkeyed, ...latestByKey.values()]
+        .sort((a, b) => a.index - b.index)
+        .map((item) => item.entry);
+}
+
 export function computeSnapshotFingerprint(snapshot) {
     if (!record(snapshot)) return "";
+    snapshot = scopeAdoSnapshot(snapshot);
     const checks = Array.isArray(snapshot.statusCheckRollup)
         ? snapshot.statusCheckRollup.map((c) => ({
             name: c?.context?.name || c?.name || "",
@@ -881,7 +958,7 @@ function classificationFingerprint(snapshot) {
         }
         return value;
     };
-    return createHash("sha256").update(JSON.stringify(normalize(snapshot))).digest("hex");
+    return createHash("sha256").update(JSON.stringify(normalize(scopeAdoSnapshot(snapshot)))).digest("hex");
 }
 
 export function isTransientCiInfrastructureFailure(textValue) {
@@ -1008,7 +1085,12 @@ function hasPendingRepairFeedback(snapshot) {
 }
 
 export function scopeAdoSnapshot(snapshot) {
-    if (snapshot?.provider !== "ado") return snapshot;
+    if (!record(snapshot)) return snapshot;
+    if (snapshot.provider !== "ado") {
+        return Array.isArray(snapshot.statusCheckRollup)
+            ? { ...snapshot, statusCheckRollup: deduplicateStatusCheckRollup(snapshot.statusCheckRollup) }
+            : snapshot;
+    }
     const sameHead = (head) => nonempty(head) && nonempty(snapshot.headRefOid) && head.toLowerCase() === snapshot.headRefOid.toLowerCase();
     const currentBuilds = (snapshot.prBuilds || []).filter((build) => sameHead(build.sourceHeadSha));
     const policies = (snapshot.policyEvaluations || []).map((policy) => {
@@ -1020,7 +1102,7 @@ export function scopeAdoSnapshot(snapshot) {
                 !sameHead(policy.buildSourceHeadSha || linked?.sourceHeadSha),
         };
     });
-    const checks = (snapshot.statusCheckRollup || []).map((check) => {
+    const checks = deduplicateStatusCheckRollup(snapshot.statusCheckRollup || []).map((check) => {
         const currentValidation = currentBuilds.filter((build) =>
             !/PR-Reviewer|AI PR Review/i.test(String(build.definition || "")));
         const activeValidation = currentValidation.some((build) =>

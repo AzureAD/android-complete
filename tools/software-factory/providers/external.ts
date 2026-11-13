@@ -20,6 +20,67 @@ const segment = (value: string) => encodeURIComponent(value);
 const wiql = (value: string) => value.replaceAll("'", "''");
 const gitObjectId = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
+function deduplicateGitHubCheckRuns(rawRuns: Record<string, unknown>[]): Record<string, unknown>[] {
+    if (rawRuns.length <= 1) return rawRuns;
+    const parseMillis = (value: unknown) => {
+        if (typeof value !== "string" || !value.trim()) return Number.NaN;
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : Number.NaN;
+    };
+    const parseRunId = (entry: Record<string, unknown>) => {
+        if (typeof entry.id === "number" && Number.isSafeInteger(entry.id)) return BigInt(entry.id);
+        if (typeof entry.id === "string" && /^\d+$/.test(entry.id)) return BigInt(entry.id);
+        return null;
+    };
+    const isNewer = (candidate: Record<string, unknown>, current: Record<string, unknown>) => {
+        const candStart = parseMillis(candidate.started_at);
+        const currStart = parseMillis(current.started_at);
+        if (Number.isFinite(candStart) && Number.isFinite(currStart) && candStart !== currStart) {
+            return candStart > currStart;
+        }
+        const candDone = parseMillis(candidate.completed_at);
+        const currDone = parseMillis(current.completed_at);
+        if (Number.isFinite(candDone) && Number.isFinite(currDone) && candDone !== currDone) {
+            return candDone > currDone;
+        }
+        const candId = parseRunId(candidate);
+        const currId = parseRunId(current);
+        if (candId !== null && currId !== null && candId !== currId) {
+            return candId > currId;
+        }
+        return true;
+    };
+    const keyFor = (entry: Record<string, unknown>) => {
+        const name = typeof entry.name === "string" ? entry.name.trim().toLowerCase() : "";
+        if (!name) return "";
+        const app = entry.app && typeof entry.app === "object" && !Array.isArray(entry.app)
+            ? entry.app as Record<string, unknown>
+            : null;
+        const appScope = typeof app?.slug === "string" && app.slug.trim()
+            ? app.slug.trim().toLowerCase()
+            : typeof app?.id === "number" || typeof app?.id === "string"
+                ? String(app.id)
+                : "";
+        return `${appScope}::${name}`;
+    };
+    const latestByKey = new Map<string, { index: number; entry: Record<string, unknown> }>();
+    const unkeyed: { index: number; entry: Record<string, unknown> }[] = [];
+    rawRuns.forEach((entry, index) => {
+        const key = keyFor(entry);
+        if (!key) {
+            unkeyed.push({ index, entry });
+            return;
+        }
+        const existing = latestByKey.get(key);
+        if (!existing || isNewer(entry, existing.entry)) {
+            latestByKey.set(key, { index, entry });
+        }
+    });
+    return [...unkeyed, ...latestByKey.values()]
+        .sort((a, b) => a.index - b.index)
+        .map((item) => item.entry);
+}
+
 function dispatchedWorkItemState(fields: Record<string, unknown>, config: Configuration): string {
     const current = typeof fields["System.State"] === "string" ? fields["System.State"].trim() : "";
     if (["Committed", "Active", "In Progress", "Resolved", "Closed", "Done", "Removed"].includes(current)) {
@@ -294,7 +355,7 @@ export class ExternalProvider implements Provider {
             const token = await this.githubToken(repo);
             const output = await this.runner.run("gh", ["agent-task", "create", "-F", "-", "--repo", `${repo.hostname}/${repo.slug}`, "--base", repo.baseBranch], {
                 env: githubCliEnv(repo.hostname, token),
-                input: `${item.description}\n\nAcceptance criteria:\n${item.acceptanceCriteria.map((value) => `- ${value}`).join("\n")}\n\nExpected tests:\n${item.tests.join("\n")}\n\nFixes AB#${workItem.adoId}\nSoftware Factory operation: ${marker}\nFollow .github/copilot-instructions.md strictly. Preserve the operation marker in the PR body. Do not merge the PR.`,
+                input: `${item.description}\n\nAcceptance criteria:\n${item.acceptanceCriteria.map((value) => `- ${value}`).join("\n")}\n\nExpected tests:\n${item.tests.join("\n")}\n\nFixes AB#${workItem.adoId} (Azure Boards work item)\n\nSoftware Factory operation: ${marker}\nFollow .github/copilot-instructions.md strictly. Preserve the operation marker in the PR body. Do not merge the PR.`,
             });
             const urls = output.match(/https:\/\/[^\s"'<>]+/g) || [];
             return { submitted: true, provider: "github", marker, sessionUrls: urls.filter((url) => new URL(url).hostname === repo.hostname) };
@@ -442,8 +503,8 @@ export class ExternalProvider implements Provider {
         };
         assertPublicationBinding(initialBinding);
         const message = [
-            item.title, "", implementation.summary, "", `Fixes AB#${workItem.adoId}`,
-            `Software Factory operation: ${marker}`, "",
+            item.title, "", implementation.summary, "", `Fixes AB#${workItem.adoId} (Azure Boards work item)`,
+            "", `Software Factory operation: ${marker}`, "",
             "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
         ].join("\n");
         const headSha = await this.runner.run("git", ["commit-tree", implementation.sourceBinding.tree, "-p", implementation.sourceBinding.head], { cwd: root, input: message });
@@ -867,7 +928,7 @@ export class ExternalProvider implements Provider {
             ...item.acceptanceCriteria.map((criterion) => `- ${criterion}`), "", "### Verification", ...evidence, "",
             "### Independent Code Review",
             `- Passed independent AI code review in ${implementation.roundsCompleted} of ${implementation.maxRounds} round(s) (mode: local).`,
-            "", `Fixes AB#${workItem.adoId}`, `Software Factory operation: ${marker}`,
+            "", `Fixes AB#${workItem.adoId} (Azure Boards work item)`, "", `Software Factory operation: ${marker}`,
         ].join("\n");
         const title = new RegExp(`\\bAB#${workItem.adoId}(?!\\d)`).test(item.title) ? item.title : `${item.title} (Fixes AB#${workItem.adoId})`;
         let createdNumber: number;
@@ -1026,10 +1087,21 @@ export class ExternalProvider implements Provider {
             const head = object(pr.head, "PR head");
             const base = object(pr.base, "PR base");
             if (base.ref !== repo.baseBranch) throw new FactoryError("wrong_base_branch", "The linked PR targets a different base branch.", 409);
-            const checks = object(await this.github(repo, `repos/${repo.slug}/commits/${text(head.sha, "Head SHA")}/status`), "Commit checks");
-            const runs = object(await this.github(repo, `repos/${repo.slug}/commits/${String(head.sha)}/check-runs?per_page=100`), "Check runs");
+            const headSha = text(head.sha, "Head SHA");
+            const checks = object(await this.github(repo, `repos/${repo.slug}/commits/${headSha}/status`), "Commit checks");
+            const runs = object(await this.github(repo, `repos/${repo.slug}/commits/${headSha}/check-runs?per_page=100`), "Check runs");
             if (!Array.isArray(runs.check_runs)) throw new FactoryError("invalid_provider_response", "GitHub omitted check-run results.", 502);
-            const checkRuns = runs.check_runs.map((entry) => object(entry, "Check run"));
+            const rawCheckRuns = runs.check_runs.map((entry) => object(entry, "Check run"));
+            const totalCount = typeof runs.total_count === "number" ? runs.total_count : rawCheckRuns.length;
+            let lastPageLength = rawCheckRuns.length;
+            for (let page = 2; page <= 10 && rawCheckRuns.length < totalCount && lastPageLength === 100; page += 1) {
+                const nextRuns = object(await this.github(repo, `repos/${repo.slug}/commits/${headSha}/check-runs?per_page=100&page=${page}`), "Check runs");
+                if (!Array.isArray(nextRuns.check_runs)) throw new FactoryError("invalid_provider_response", "GitHub omitted check-run results.", 502);
+                const pageItems = nextRuns.check_runs.map((entry) => object(entry, "Check run"));
+                lastPageLength = pageItems.length;
+                rawCheckRuns.push(...pageItems);
+            }
+            const checkRuns = deduplicateGitHubCheckRuns(rawCheckRuns);
             const hasLegacy = typeof checks.total_count === "number" && checks.total_count > 0;
             const failed = (hasLegacy && ["failure", "error"].includes(String(checks.state))) ||
                 checkRuns.some((entry) => ["failure", "timed_out", "cancelled", "action_required"].includes(String(entry.conclusion)));
@@ -1041,10 +1113,10 @@ export class ExternalProvider implements Provider {
             return {
                 key: itemId, repository: repo.slug, number, url: url.href,
                 status: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : "open",
-                head: String(head.sha), title: text(pr.title, "PR title"),
+                head: headSha, title: text(pr.title, "PR title"),
                 baseBranch: repo.baseBranch,
                 workItemIds: typeof pr.body === "string" ? [...pr.body.matchAll(/\bAB#(\d+)\b/g)].map((match) => Number(match[1])) : [],
-                checks: Number(runs.total_count) > checkRuns.length ? "unknown" : failed ? "failing" : passing ? "passing" : checkRuns.length || hasLegacy ? "pending" : "unknown",
+                checks: totalCount > rawCheckRuns.length ? "unknown" : failed ? "failing" : passing ? "passing" : checkRuns.length || hasLegacy ? "pending" : "unknown",
             };
         }
         const [organization, project, repository] = repo.slug.split("/");

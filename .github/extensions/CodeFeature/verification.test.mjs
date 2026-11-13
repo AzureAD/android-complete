@@ -14,7 +14,7 @@ import {
     BUILDER_AGENT, EVIDENCE_AGENT, REVIEWER_AGENT, rubric,
 } from "./workflow.mjs";
 import {
-    ciEvidenceFromSnapshot, ciWaitingSummary, fetchPullRequestSnapshot, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
+    ciEvidenceFromSnapshot, ciWaitingSummary, deduplicateStatusCheckRollup, fetchPullRequestSnapshot, isSnapshotReadyForHumanMerge, isSnapshotWaitingForCiOnly, parsePullRequestUrl, publishObserverStatus, refreshStaleAdoBuildPolicies, runPrObserver,
 } from "./observer.mjs";
 import { ciVerificationSummary, deliveryOutcome, localVerificationSummary, pendingVerification, verificationFromGate, verificationSummary } from "./verification.mjs";
 import { fitAdoDescription, parseMarkerBlock, renderCurrentStatusBlock, renderVerificationBlock, deliveryDecisionMarkers, verificationMarkers, statusMarkers } from "./status.mjs";
@@ -1650,4 +1650,91 @@ test("production code-feature packet propagates observer CI failure instead of r
         assert.equal(parseMarkerBlock(result.pullRequests[0].body, statusMarkers).status, "waiting-for-ci");
         assert.equal(result.observations[0].continuation.workflow, "pr-observer");
     } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("formatPrBody space-delimits every AB# token and observer deduplicates superseded statusCheckRollup runs", async () => {
+    const impl = implementation();
+    const singleBody = formatPrBody(task.targets[0], impl.targets[0], impl.traceability, 1, null);
+    assert.deepEqual([...singleBody.matchAll(/AB#([^ \]]+)/g)].map((m) => m[1]), ["123"]);
+    const linkedBody = formatPrBody(task.targets[0], impl.targets[0], impl.traceability, 1, 999);
+    assert.deepEqual([...linkedBody.matchAll(/AB#([^ \]]+)/g)].map((m) => m[1]), ["123", "999"]);
+
+    const supersededRollup = [
+        {
+            __typename: "CheckRun",
+            name: "AB#ID Check",
+            workflowName: "Check PR Linked to Work Item",
+            status: "COMPLETED",
+            conclusion: "FAILURE",
+            startedAt: "2026-04-17T23:54:06Z",
+            completedAt: "2026-04-17T23:54:15Z",
+            detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/24591636899/job/71907072003",
+        },
+        {
+            __typename: "CheckRun",
+            name: "AB#ID Check",
+            workflowName: "Check PR Linked to Work Item",
+            status: "COMPLETED",
+            conclusion: "FAILURE",
+            startedAt: "2026-04-17T23:54:07Z",
+            completedAt: "2026-04-17T23:54:16Z",
+            detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/24591637272/job/71907073041",
+        },
+        {
+            __typename: "CheckRun",
+            name: "AB#ID Check",
+            workflowName: "Check PR Linked to Work Item",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            startedAt: "2026-04-17T23:54:10Z",
+            completedAt: "2026-04-17T23:54:20Z",
+            detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/24591638275/job/71907075933",
+        },
+        {
+            __typename: "CheckRun",
+            name: "Linux Build",
+            workflowName: "Android Common PR Validation",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            startedAt: "2026-04-17T23:54:12Z",
+            completedAt: "2026-04-17T23:59:30Z",
+            detailsUrl: "https://dev.azure.com/IdentityDivision/Engineering/_build/results?buildId=2001",
+        },
+    ];
+    const deduped = deduplicateStatusCheckRollup(supersededRollup);
+    assert.equal(deduped.length, 2);
+    assert.equal(deduped.find((entry) => entry.name === "AB#ID Check")?.conclusion, "SUCCESS");
+
+    const greenSnap = snapshot({ statusCheckRollup: supersededRollup, prBuilds: [] });
+    assert.equal(ciEvidenceFromSnapshot(greenSnap).status, "passed");
+    assert.equal(isSnapshotWaitingForCiOnly(greenSnap), false);
+    assert.equal(isSnapshotReadyForHumanMerge(greenSnap), true);
+
+    const context = ctx([], { publishStatus: false });
+    const observed = await runPrObserver(context, {
+        exec: () => "",
+        fetchPrSnapshot: () => greenSnap,
+    });
+    assert.equal(observed.status, "ready-for-human-merge");
+    assert.equal(observed.ci.status, "passed");
+    assert.equal(context.calls.length, 0);
+
+    const rerunPendingSnap = snapshot({
+        statusCheckRollup: [
+            supersededRollup[0],
+            {
+                __typename: "CheckRun",
+                name: "AB#ID Check",
+                workflowName: "Check PR Linked to Work Item",
+                status: "IN_PROGRESS",
+                conclusion: "",
+                startedAt: "2026-04-17T23:55:00Z",
+                completedAt: "",
+                detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/24591649999/job/71907099999",
+            },
+        ],
+        prBuilds: [],
+    });
+    assert.equal(ciEvidenceFromSnapshot(rerunPendingSnap).status, "pending");
+    assert.equal(isSnapshotWaitingForCiOnly(rerunPendingSnap), true);
 });

@@ -2603,6 +2603,9 @@ export function formatPrBody(
     if (positiveInt(Number(parentWorkItemId)) && Number(parentWorkItemId) !== Number(target.workItemId)) {
         abLinks.push(`Related to AB#${parentWorkItemId}`);
     }
+    if (positiveInt(Number(target.workItemId))) {
+        abLinks.push("Azure Boards");
+    }
     const fileLines = targetImpl.files
         .map((file) => `- \`${file.path}\` (${file.action}) — ${file.summary.trim()}`)
         .join("\n");
