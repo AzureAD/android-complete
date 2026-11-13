@@ -38,6 +38,18 @@ Key sections every design spec should include:
 
 If a template file exists at the configured `design.templatePath`, follow that instead.
 
+For Android-complete, supplement either template with a **Pre-mortem and operational
+readiness** section or an exact-revision link to a companion artifact. Follow the
+[pre-mortem content and acceptance contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
+This applies to every feature, including those without flags. Include a
+**Pre-mortem child PBI** field (`Pending feature planning`, or existing AB# and URL);
+planning includes the dedicated authoring/review child item, reusing a suitable
+existing item, and approved backlog creation adds reciprocal design/PBI links.
+Explicit unexecuted pre-flight KQL and unresolved mappings are acceptable with
+named follow-up owners. No production data while disabled is expected. Separate
+document review from approved enabled-E2E query validation and release approval;
+do not require broad production activation to complete the documentation PBI.
+
 ## Workflow
 
 ### Step 1: Understand the Feature

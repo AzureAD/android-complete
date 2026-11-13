@@ -15,6 +15,9 @@ Read the skill file at `.github/skills/design-author/SKILL.md` and follow its wo
 ## Key Rules
 
 - Follow the template at `design-docs/Template/template.md`
+- Add the skill's mandatory Pre-mortem and operational readiness section for every
+  feature, including unflagged features, with a child-PBI linkage field and separate
+  document-review, enabled-E2E query-validation and release gates.
 - Include: Problem description, Requirements, 2+ Solution Options with pseudo code and pros/cons, Recommended Solution, API surface, Data flow, Feature flag, Telemetry, Testing strategy, Cross-repo impact
 - Save the spec to `design-docs/[Android] <Feature Name>/<spec-name>.md`
 - **After writing the spec, STOP and present 5 explicit choices** using the `askQuestion`

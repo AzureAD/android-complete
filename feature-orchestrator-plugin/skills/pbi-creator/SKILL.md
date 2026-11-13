@@ -43,6 +43,8 @@ Read the plan from chat context. Extract for each work item:
 - **Priority** — P1→1, P2→2, P3→3
 - **Depends on** — WI-N references
 - **Tags** — from metadata table
+- **Work kind / Existing item** — coding versus documentation/review and any
+  existing AB# proposed for reuse
 - **Description** — from `##### Description` section. **Convert to HTML** for ADO:
   - `## Heading` → `<h2>Heading</h2>`
   - `**bold**` → `<strong>bold</strong>`
@@ -65,6 +67,18 @@ If no plan found, ask: "Run the `feature-planner` skill first, or paste PBI deta
 5. **Filter iterations to current month or future only** — discard past iterations
 
 ### Step 3: Present Options for Confirmation
+
+For Android-complete features (flagged or not), first verify the approved plan
+contains the dedicated design-linked pre-mortem child PBI using the
+[contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
+Return missing/incomplete scope to planning for approval; do not silently add work.
+Read nominated existing items and inspect the confirmed Feature's children/related
+items before creation. Verify design revision, scope, ownership and state; propose
+reuse and needed updates for approval rather than duplicating or silently reparenting/
+reopening work. Preserve IDs on recovery and recheck before creating a new item.
+The parent confirmation must select an existing or new Feature for these features;
+"no parent" is valid only for explicitly scoped non-feature work. Resolve a conflicting
+selection before writes without bypassing any metadata/approval confirmation below.
 
 ## ⛔ HARD STOP — DO NOT SKIP THIS STEP
 
@@ -181,6 +195,8 @@ If you can't create work items with full descriptions, STOP and report the failu
 A PBI without a proper description is worse than no PBI at all.
 
 After each creation, record the returned `id` and map WI-N → AB#[id].
+For an approved reused pre-mortem item, map its existing ID without recreating it;
+apply only approved changes and preserve unrelated metadata, tags, state and links.
 
 ### Step 5: Resolve Dependencies + Parent Links
 
@@ -190,15 +206,28 @@ After each creation, record the returned `id` and map WI-N → AB#[id].
    {"updates": [{"id": [dependent], "linkToId": [dependency], "type": "predecessor"}]}
    ```
 3. **Parent to Feature** (if created): Use `mcp_ado_wit_add_child_work_items`
+   For Android-complete features, also verify parenting to a confirmed existing
+   Feature; their pre-mortem item must be a child of that Feature.
+4. **Android-complete pre-mortem links**: Verify exact design/artifact links in
+   the PBI and its AB# back-link in the design. Make only approved edits in the
+   owning design repository; if unavailable, report the exact linkage gap and owner.
+   Track actual query-validation/release prerequisites, not production activation
+   as a documentation blocker.
 
 ### Step 5.5: Mark as Committed
 
 Update all work items to **Committed** state:
+Do not reset a reused existing item's state without explicit approval.
 ```json
 {"id": [id], "fields": [{"name": "System.State", "value": "Committed"}]}
 ```
 
 ### Step 6: Report Summary
+
+For Android-complete, distinguish created/reused pre-mortem work and show reciprocal
+design links or outstanding linkage gaps. Name later enabled-E2E query-validation and
+release-gate owners. Documentation/review completion is not rollout approval;
+keep human-review-only items out of automatic coding-agent dispatch.
 
 ```markdown
 ## Work Items Created: [Feature Name]
@@ -236,6 +265,8 @@ If ADO MCP tools fail mid-workflow:
 
 ### Plan has a single PBI
 Skip dependency linking. Create one work item and report.
+For Android-complete features, include or reuse the dedicated pre-mortem child
+item instead; the single-item shortcut applies only to non-feature work.
 
 ### Developer wants different area paths per PBI
 If PBIs target different teams or modules, ask if they want different area paths.

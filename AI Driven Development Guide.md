@@ -45,6 +45,24 @@ Design → Plan → Backlog → Dispatch → Monitor
 
 The pipeline **stops between stages** and asks for your approval before proceeding. You stay in control — the AI proposes, you decide.
 
+### Feature pre-mortem
+
+Every Android-complete feature, including features without flags, requires a
+design-linked pre-mortem and a dedicated child PBI to author/review it. Planning
+includes the item; approved backlog creation verifies and reuses a suitable
+existing item rather than duplicating it, confirms the parent Feature and normal
+metadata, and records design/PBI links in both directions. Documentation/review
+work is not automatically dispatched as application-code work.
+
+Use the [pre-mortem content and acceptance contract](.github/skills/feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi).
+Authoring/review can finish with explicitly unexecuted pre-flight KQL, unresolved
+mappings and named follow-up owners; absent production data while disabled is
+expected. Before monitoring is used for rollout, its owner validates queries and
+telemetry against an approved enabled E2E test cohort. The release owner separately
+checks release/rollback prerequisites and approval; broad production enablement is
+not needed to validate queries. PBI completion is not rollout approval, even when
+the dashboard labels the feature complete.
+
 ---
 
 ## Prompt Commands

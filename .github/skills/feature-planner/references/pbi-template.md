@@ -8,6 +8,9 @@ description and the repo's `copilot-instructions.md`.
 
 ## Template
 
+The HTML below shows the section structure for ADO. Present feature-plan
+descriptions in plain Markdown; the PBI creator converts them to HTML.
+
 ```html
 <h2>Objective</h2>
 <p>Implement [what] in [which module] that [does what] for [purpose].</p>
@@ -23,7 +26,8 @@ description and the repo's `copilot-instructions.md`.
 <p>[Why this change is needed. How it fits into the larger feature. What user problem it solves.]</p>
 
 <h2>Feature Flag</h2>
-<p>Wrap all new behavior behind <code>ExperimentationFeatureFlag.[FLAG_NAME]</code>.</p>
+<p>[If applicable, wrap new behavior behind <code>ExperimentationFeatureFlag.[FLAG_NAME]</code>.
+Otherwise state "N/A" with the agreed activation/release mechanism; do not invent a flag.]</p>
 
 <h2>Technical Requirements</h2>
 <ul>
@@ -54,7 +58,7 @@ description and the repo's `copilot-instructions.md`.
 <ul>
   <li>[ ] [Functional criterion 1]</li>
   <li>[ ] [Functional criterion 2]</li>
-  <li>[ ] Feature flag integration: behavior is off when flag is disabled</li>
+  <li>[ ] If flagged: behavior is off when flag is disabled</li>
   <li>[ ] Unit tests added for new/modified logic</li>
   <li>[ ] No new lint warnings introduced</li>
   <li>[ ] Compile check passes: <code>./gradlew :[module]:compile[Variant]Kotlin</code></li>
@@ -70,6 +74,58 @@ description and the repo's `copilot-instructions.md`.
 ```
 
 ---
+
+## Required Feature Pre-mortem PBI
+
+For **every feature in Android-complete**, including unflagged and single-repo features,
+include one dedicated child PBI titled `[Feature name] - Author and review pre-mortem`.
+Reuse a suitable existing child item after verifying its scope; do not create a duplicate.
+This is documentation/review work, not an application-code or automatic coding-agent task.
+Keep one owning repository and a named author/reviewer; record cross-repo inputs as
+dependencies, not a multi-repo implementation PBI. Use the normal metadata, priority,
+effort/sizing and feature-tag conventions; retain `ai-generated` for generated items,
+but do not label human-review-only work `copilot-agent-ready`.
+
+Use the standard Objective, Target Repository, Context, Scope, Acceptance Criteria,
+Dependencies and Additional Context headings, replacing code/build criteria with:
+
+- **Design linkage**: Link to the exact design revision/section and reviewable pre-mortem
+  artifact using durable authorized URLs, not local workspace paths. Inline essential
+  context in the PBI. Record the PBI back-link in the design after its AB# ID is known.
+- **Failure scenarios and customer impact**: Cover applicable success-path regressions,
+  failure, cancellation, retry/re-entry, partial state, upgrades and cross-component
+  mismatches. State blast radius, affected customers/cohorts, and severity assumptions.
+- **Prevention, detection and response**: Map each scenario to safeguards, detection
+  signals, response actions, responsible owners and evidence/validation needs.
+- **Monitoring and KQL drafts**: Include actual draft query text for the proposed
+  signals, telemetry event/span and property contracts, table/property mappings,
+  units, outcome definitions, eligibility/execution/baseline cohorts, time windows,
+  numerator/denominator definitions, deduplication, sampling and coverage gaps.
+  Distinguish no traffic or missing instrumentation from healthy behavior.
+- **Operations**: Name the monitoring owner, review cadence, observation window,
+  thresholds/stop criteria and escalation/response owner. Mark unconfirmed values
+  explicitly and assign their resolution rather than inventing approved thresholds.
+- **Rollback**: State triggers, decision/execution owner, mechanism (flag or non-flag
+  alternative), propagation limits, active/in-flight attempts, persisted/partial state,
+  cleanup/recovery and verification of preserved existing behavior.
+- **Validation and release prerequisites**: Identify test cases, instrumentation/
+  query validation, approvals and release gates, with a named owner and tracking item
+  or explicit owner action for each later prerequisite.
+
+**Authoring/review acceptance**: The artifact is linked, reviewed, and contains all
+sections above; unresolved mappings, unexecuted queries, coverage gaps and follow-up
+owners are explicit. KQL may remain an **unexecuted pre-flight draft** with unresolved
+table/property mappings. Missing production data is expected while a feature is
+disabled and does not block this documentation PBI.
+
+**Separate rollout gate**: Before relying on monitoring for rollout, the telemetry/
+query validation owner must validate contracts, mappings, outcomes, cohorts and
+denominators against an **approved enabled E2E test cohort** and attach evidence.
+Broad production enablement is not required for validation. The release owner must
+resolve release-blocking gaps and approve release prerequisites and rollback readiness.
+Completing the authoring/review PBI is **not rollout approval**, query validation, or
+permission to activate the feature. Track actual prerequisites, not an artificial
+dependency on production activation.
 
 ## Example: Adding Retry Logic to IPC Token Request
 

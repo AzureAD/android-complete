@@ -48,7 +48,10 @@ Work items target a **module name**. To find the repo: `modules.<name>.repo` →
 1. Check configured `design.docsPath` for a matching design spec
 2. If design exists and is approved, use it as the primary source
 3. If no design exists, ask the developer whether to create one first
-4. For small, single-repo changes, skip design and proceed directly
+4. For small, single-repo changes, skip design and proceed directly only where
+   the project's feature requirements permit it. In Android-complete, every feature
+   needs a reviewable design-linked pre-mortem; only explicitly scoped non-feature
+   fixes may skip feature design. Missing feature context returns to design review.
 
 ### Step 2: Understand the Feature
 
@@ -74,6 +77,14 @@ Rules:
 3. **Right-sized** — each should be implementable in one agent session (~1-3 files, <500 lines)
 4. **Self-contained description** — everything the coding agent needs, inline
 5. **No local file paths** — the coding agent runs in the cloud with only the target repo cloned
+6. **Android-complete pre-mortem** — include one dedicated child PBI for every feature,
+   including unflagged/single-repo features, using the
+   [contract](references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
+   Record a suitable known existing AB# and reuse intent for backlog verification.
+   Keep one owning repository and normal sizing/metadata; identify later query-
+   validation/release owners separately. Mark this `documentation/review` and
+   keep human-review-only work out of coding-agent dispatch and `copilot-agent-ready`
+   tags. Record actual dependencies, not production activation as an authoring blocker.
 
 ### Step 5: Write Descriptions
 
@@ -202,6 +213,7 @@ renders markdown only. HTML tags appear as raw text.
 
 **Feature flag**: `[flag_name]` (or "N/A")
 **Design spec**: [path] (or "N/A")
+**Pre-mortem**: [Android-complete: exact design/artifact revision URL; WI-N or existing AB#]
 **Total work items**: [N]
 ```
 
@@ -235,6 +247,8 @@ WI-1 (common) → WI-2 (service) + WI-3 (client) [parallel after WI-1]
 
 **5. Work item details:**
 
+The tag example is for coding work; omit `copilot-agent-ready` for human-review-only items.
+
 ```markdown
 ---
 
@@ -247,6 +261,8 @@ WI-1 (common) → WI-2 (service) + WI-3 (client) [parallel after WI-1]
 | **Priority** | P[1-3] |
 | **Depends on** | None / WI-X |
 | **Tags** | `ai-generated; copilot-agent-ready; [feature-tag]` |
+| **Work kind** | coding / documentation-review |
+| **Existing item** | None / AB#[id] with URL (reuse, subject to verification) |
 
 ##### Description
 
@@ -266,6 +282,7 @@ Acceptance Criteria, Files to Modify, Testing]
 
 ### Single-Repo Feature
 One work item. Most bug fixes and small enhancements.
+For Android-complete features, also include or reuse the dedicated pre-mortem child PBI.
 
 ### Two-Repo Feature (Shared + Consumer)
 1. WI-1: Add shared logic/contract
@@ -278,5 +295,6 @@ One work item. Most bug fixes and small enhancements.
 4. WI-4: (optional) Integration tests
 
 ### Feature Flag Convention
-All work items for a feature should use the **same feature flag name** across repos.
-Include the flag name in each description.
+When flagged, all work items for a feature should use the **same feature flag name**
+across repos. Include it in each description; otherwise use `N/A` and document the
+release/rollback mechanism. Unflagged Android-complete features still need a pre-mortem.

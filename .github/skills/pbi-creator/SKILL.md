@@ -25,6 +25,8 @@ Read the feature plan from the chat context. Extract for each PBI:
 - **Priority** — from the metadata table `Priority` field (P1→1, P2→2, P3→3)
 - **Depends on** — from the metadata table `Depends on` field (PBI-N references)
 - **Tags** — from the metadata table `Tags` field
+- **Work kind / Existing item** — distinguish coding from documentation/review,
+  and record existing AB# IDs proposed for reuse
 - **Description** — from the `##### Description` section (in plain markdown).
   **Convert to HTML** before setting as `System.Description` in ADO:
   - `## Heading` → `<h2>Heading</h2>`
@@ -57,6 +59,21 @@ options and avoid path errors.
    is in the past. Compare iteration dates against today's date. For monthly iterations with
    names like `CY26Q1_M2_Feb`, parse the month/year and exclude months before the current one.
    **Never suggest past iterations as options.**
+
+### Step 2a: Verify the Feature Pre-mortem Item
+
+For every feature, including unflagged and single-repo features, verify that the
+approved plan contains one dedicated pre-mortem authoring/review child PBI using
+the [required contract](../feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi).
+If missing or incomplete, return the proposed amendment to feature planning for
+developer approval; do not silently add work to an approved plan.
+
+Read any nominated existing item and, after the parent Feature is identified,
+inspect its children/related items for a suitable pre-mortem PBI. Verify feature,
+design revision, scope, ownership and current state. Propose reuse and any required
+description/link updates for approval rather than creating a duplicate or silently
+reparenting/reopening unrelated or completed work. If suitability is unclear, stop
+for a decision. Recheck before creation and preserve IDs on recovery.
 
 ### Step 3: Present Options for Confirmation
 
@@ -126,6 +143,9 @@ Only show iterations for the **current month or later**. Never include past mont
 
 **Parent Feature**:
 - Offer to create a new Feature, link to an existing one, or no parent
+- For a feature, a confirmed parent Feature is required for its pre-mortem child
+  PBI. "No parent" applies only to explicitly scoped non-feature work; if selected
+  for a feature, explain the conflict and resolve it before creating items.
 
 Wait for all answers before proceeding to Step 4.
 
@@ -189,6 +209,8 @@ Use `mcp_ado_wit_create_work_item` for each PBI. Create them in **dependency ord
 **After each PBI is created:**
 - Record the returned `id` (AB# number)
 - Map `PBI-N` → `AB#[id]` for dependency resolution
+- For an approved reused pre-mortem item, map its existing ID without recreating it.
+  Apply only approved updates; preserve unrelated metadata, tags, state and links.
 
 ### Step 5: Resolve Dependencies + Parent Links
 
@@ -218,6 +240,14 @@ After all PBIs are created and you have the PBI-N → AB# mapping:
    ```
    If this tool is unavailable, use `mcp_ado_wit_work_items_link` with `type: "child"` instead.
 
+4. **Pre-mortem links**: Verify the dedicated PBI is a child of the confirmed
+   Feature, links the exact design/pre-mortem artifact, and is back-linked from
+   the design. Make only approved edits in the owning design repository; if that
+   repository is unavailable, report the exact missing back-link and owner rather
+   than claiming linkage is complete. Resolve planned references to the reused/
+   created AB# ID. Link actual validation/release prerequisites, not production
+   activation as a prerequisite for documentation completion.
+
 ### Step 5.5: Mark PBIs as Committed
 
 After all PBIs are created, linked, and parented, update their state to **Committed**
@@ -235,10 +265,15 @@ for each PBI:
 ```
 
 Also update the Feature work item (if created) to Committed state.
+Do not reset a reused existing item's state without explicit approval.
 
 ### Step 6: Report Summary
 
 Present the results:
+Distinguish created versus reused items, show the pre-mortem/design links and
+remaining linkage gaps, and name later query-validation and release-gate owners.
+Keep documentation/review work out of automatic coding-agent dispatch. Committed
+or completed authoring/review status does not mean rollout approval.
 
 ```markdown
 ## PBIs Created: [Feature Name]
@@ -284,7 +319,8 @@ If ADO MCP tools become unavailable mid-workflow:
 ## Edge Cases
 
 ### Plan has a single PBI
-Skip dependency linking. Create one work item and report.
+For explicitly scoped non-feature work, skip dependency linking if none is needed.
+A feature plan must also include or reuse the dedicated pre-mortem child item.
 
 ### Developer wants different area paths per PBI
 If PBIs target different teams (e.g., one in Common, one in MSAL), ask if they want different

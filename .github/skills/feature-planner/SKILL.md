@@ -51,7 +51,11 @@ Before decomposing into PBIs, check if an approved design spec exists:
    > `design-author` skill? This is recommended for features that span multiple repos or
    > introduce new APIs."
 4. If the developer wants a design first, hand off to the `design-author` skill and stop.
-5. For small, single-repo changes (bug fixes, minor enhancements), skip design and proceed directly.
+5. Every feature, including small/single-repo and unflagged features, needs a
+   reviewable design-linked pre-mortem and its dedicated child PBI. An explicitly
+   scoped non-feature bug fix may skip feature design; do not use that exception
+   to omit these requirements from a feature. If design/pre-mortem context is
+   missing, return to design authoring/review before claiming the plan is ready.
 
 ### Step 2: Understand the Feature
 
@@ -80,6 +84,17 @@ Break the feature into PBIs following these rules:
 3. **Right-sized** — each PBI should be implementable by a single Copilot coding agent session (roughly 1-3 files changed, <500 lines)
 4. **Self-contained description** — the PBI description must contain everything the coding agent needs to implement it without additional context
 5. **No local file paths** — never reference `design-docs/` or other local workspace paths in PBI descriptions. The Copilot coding agent runs in a cloud environment with only the target repo cloned — it cannot access the super-repo, design docs, or other sub-repos. Inline all necessary context directly into the PBI description.
+6. **Dedicated pre-mortem child PBI** — include one per feature using the
+   [required contract](references/pbi-template.md#required-feature-pre-mortem-pbi).
+   Record a suitable known existing item's AB# and reuse intent instead of planning
+   a duplicate; backlog creation verifies it. Assign one owning repository and
+   author/reviewer, keep documentation work right-sized, and identify owners of
+   later enabled-E2E query validation and release gates separately.
+7. **Dispatch honestly** — mark the pre-mortem item `documentation/review`, not
+   automatic coding-agent work. Preserve feature tags and `ai-generated` where
+   appropriate; reserve `copilot-agent-ready` for actually dispatchable coding work.
+   Include documentation review in the plan's sequencing without making it depend
+   on production activation; record only actual implementation/release dependencies.
 
 ### Step 5: Write PBI Descriptions
 
@@ -114,6 +129,7 @@ The output MUST contain these sections in this order:
 
 **Feature flag**: `[flag_name]` (or "N/A")
 **Design PR**: [link] (or "N/A")
+**Pre-mortem**: [exact design section/artifact revision URL; planned PBI-N or existing AB#]
 **Total PBIs**: [N]
 ```
 
@@ -151,6 +167,7 @@ PBI-1 (common) → PBI-2 (broker) + PBI-3 (msal) [parallel after PBI-1]
 **5. PBI details** — one block per PBI with metadata header + full description:
 
 Each PBI detail block MUST have this structure:
+The tag example is for coding work; omit `copilot-agent-ready` for human-review-only items.
 
 ```markdown
 ---
@@ -164,6 +181,8 @@ Each PBI detail block MUST have this structure:
 | **Priority** | P[1-3] |
 | **Depends on** | None / PBI-X |
 | **Tags** | `ai-generated; copilot-agent-ready; [feature-tag]` |
+| **Work kind** | coding / documentation-review |
+| **Existing item** | None / AB#[id] with URL (reuse, subject to verification) |
 
 ##### Description
 
@@ -205,8 +224,12 @@ make the output unreadable. Use standard markdown formatting instead.
 
 ## Common Patterns
 
+The implementation patterns below also include or reuse the dedicated pre-mortem
+child PBI for every feature.
+
 ### Single-Repo Feature
-Most bug fixes and small features only touch one repo. Create a single PBI.
+Create the implementation PBI plus the dedicated pre-mortem child PBI (or reuse
+a suitable existing item). Only explicitly scoped non-feature fixes may use one PBI.
 
 ### Two-Repo Feature (Common + Consumer)
 The most common multi-repo pattern:
@@ -221,6 +244,8 @@ For end-to-end features affecting the full auth flow:
 4. PBI-4: (optional) Integration test PBI
 
 ### Feature Flag Convention
-All PBIs for a feature should use the **same feature flag name** across repos:
+When a feature has a flag, its PBIs should use the **same feature flag name** across repos:
 - Flag name format: `ExperimentationFeatureFlag.<FEATURE_NAME>`
 - Include the flag name in each PBI description
+- Unflagged features use `N/A` and document their release/rollback mechanism;
+  they still require the design-linked pre-mortem child PBI.
