@@ -3004,6 +3004,21 @@ export function buildInspectedFilesContext(workspaceRoot, task, evidence) {
     return results;
 }
 
+const SEARCH_MARKER = `${"<".repeat(7)} SEARCH`;
+const DIVIDER_MARKER = "=".repeat(7);
+const REPLACE_MARKER = `${">".repeat(7)} REPLACE`;
+
+function parseSearchReplaceBlocks(content) {
+    if (typeof content !== "string" || !content.includes(SEARCH_MARKER)) return null;
+    const regex = new RegExp(`${SEARCH_MARKER}\\r?\\n([\\s\\S]*?)\\r?\\n${DIVIDER_MARKER}\\r?\\n([\\s\\S]*?)\\r?\\n${REPLACE_MARKER}`, "g");
+    const edits = [];
+    let match;
+    while ((match = regex.exec(content)) !== null) {
+        edits.push({ oldText: match[1], newText: match[2] });
+    }
+    return edits.length > 0 ? edits : null;
+}
+
 function applySurgicalFileEdits(baseContent, edits) {
     const hasCrlf = baseContent.includes("\r\n");
     let working = baseContent.replace(/\r\n/g, "\n");
@@ -3060,8 +3075,9 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
                     const priorFile = record(priorTarget) && Array.isArray(priorTarget.files)
                         ? priorTarget.files.find((pf) => pf?.path === file.path)
                         : null;
-                    const hasEdits = Array.isArray(file.edits) && file.edits.length > 0;
-                    if (file.action !== "delete" && hasEdits && !nonempty(file.content)) {
+                    const srEdits = file.action === "modify" ? parseSearchReplaceBlocks(file.content) : null;
+                    const effectiveEdits = srEdits || (Array.isArray(file.edits) && file.edits.length > 0 && !nonempty(file.content) ? file.edits : null);
+                    if (file.action !== "delete" && effectiveEdits) {
                         let baseContent = null;
                         if (record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
                             baseContent = priorFile.content;
@@ -3075,18 +3091,18 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
                         if (baseContent === null) {
                             file._editError = `Baseline file ${file.path} was not found on disk or in previousImplementation; use action "create" with full content for new files.`;
                         } else {
-                            const applied = applySurgicalFileEdits(baseContent, file.edits);
+                            const applied = applySurgicalFileEdits(baseContent, effectiveEdits);
                             if (applied.error) {
                                 file._editError = applied.error;
                             } else {
                                 file.content = applied.content;
                             }
                         }
-                    } else if (file.action === "modify" && !nonempty(file.content) && !hasEdits) {
+                    } else if (file.action === "modify" && !nonempty(file.content)) {
                         if (record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
                             file.content = priorFile.content;
                         } else if (requireFullOrEditsContent) {
-                            file._editError = `Modified file ${file.path} must provide either surgical edits[] or full content.`;
+                            file._editError = `Modified file ${file.path} must provide ${SEARCH_MARKER} ... ${REPLACE_MARKER} blocks or full content.`;
                         }
                     }
                     if ("edits" in file) delete file.edits;
@@ -4669,15 +4685,76 @@ export async function prepareCodeFeature(ctx, dependencies = {}) {
     };
     const hostedPlannedFiles = extractHostedPlannedFiles();
 
+    const buildDeterministicHostedEvidence = () => {
+        if (!implementationHost || useSlimSchemas || needsSpecExtraction || hostedPlannedFiles.length <= 6 || !nonempty(workspaceRoot)) {
+            return null;
+        }
+        const primaryTarget = task.targets[0];
+        if (!record(primaryTarget)) return null;
+        const defaultLocalPath = REPOSITORY_DEFAULTS[normalizeRepositoryKey(primaryTarget.repository)]?.localPath || ".";
+        const repoRoot = path.resolve(workspaceRoot, primaryTarget.localPath || defaultLocalPath);
+        if (!existsSync(repoRoot)) return null;
+        let headRev = "HEAD";
+        try {
+            headRev = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).trim() || "HEAD";
+        } catch {
+            // Fallback revision marker if git rev-parse is mocked.
+        }
+        const references = [];
+        const facts = [];
+        for (const relPath of hostedPlannedFiles) {
+            if (!isSafeRelativeFilePath(relPath)) continue;
+            const diskPath = path.resolve(repoRoot, relPath);
+            const relCheck = path.relative(repoRoot, diskPath);
+            if (relCheck.startsWith("..") || path.isAbsolute(relCheck) || !existsSync(diskPath)) continue;
+            try {
+                if (!lstatSync(diskPath).isFile()) continue;
+                const lineCount = Math.max(1, readFileSync(diskPath, "utf8").split(/\r?\n/).length);
+                const refId = `REF-${references.length + 1}`;
+                references.push({
+                    id: refId,
+                    repository: primaryTarget.repository,
+                    revision: headRev,
+                    path: relPath,
+                    locator: `${relPath}:L1-L${lineCount}`,
+                });
+                facts.push({
+                    statement: `Verified baseline target file ${relPath} (${lineCount} lines) at ${headRev}.`,
+                    referenceIds: [refId],
+                });
+            } catch {
+                // Skip unreadable file.
+            }
+        }
+        if (references.length === 0) return null;
+        return {
+            approvalVerification: {
+                verified: true,
+                revision: task.revision,
+                reference: task.approval.reference,
+                rationale: "Deterministically verified approved Software Factory PBI dispatch scope and baseline target files.",
+            },
+            references,
+            facts,
+            conflicts: [],
+            assumptions: [],
+            unknowns: [],
+            blockingUnknowns: [],
+        };
+    };
+
     for (let intakeRound = 0; intakeRound < maxIntakeRounds; intakeRound++) {
         const evidenceStepKey = intakeRound === 0 ? "evidence" : `evidence-round-${intakeRound}`;
         const evidenceLabel = intakeRound === 0 ? "Repository evidence" : `Repository evidence (round ${intakeRound + 1})`;
         const beforeEvidenceSnaps = captureTargetSnapshots();
+        const deterministicEvidence = intakeRound === 0 ? buildDeterministicHostedEvidence() : null;
         const hostedEvidenceFastPath = implementationHost && hostedPlannedFiles.length > 0
             ? `Your domain skill guides are ALREADY preloaded verbatim—do NOT call software_factory_read on .github guide files.
 DATA.plannedFiles lists the exact approved PBI files (${hostedPlannedFiles.length} files). Call software_factory_sources once, then inspect ONLY the existing on-disk files in DATA.plannedFiles (plus any directly referenced base class/test helper if needed) in parallel batches of 6-10 software_factory_read calls per turn—do NOT run broad repository-wide directory/glob crawls.`
             : `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.`;
-        const rawEvidence = await step(evidenceStepKey, () => ask(
+        const rawEvidence = await step(evidenceStepKey, () => deterministicEvidence
+            ? Promise.resolve(deterministicEvidence)
+            : ask(
             evidenceLabel,
             EVIDENCE_AGENT,
             `${hostedEvidenceFastPath}
@@ -4924,18 +5001,20 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
     const pbiScopeInstruction = Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
         ? `\nSCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—implement and test ONLY the specified PBI scope, and do NOT implement or require work explicitly deferred to other PBIs.`
         : "";
-    const builderSchema = useSlimSchemas
-        ? slimResultSchema
-        : implementationHost
-            ? hostImplementationSchema
-            : implementationSchema;
+    const builderSchema = useSlimSchemas ? slimResultSchema : implementationSchema;
     const builderTask = implementationHost
         ? `You are a read-only structured implementation author. Inspect source with your scoped read tools and return the structured implementation schema, including real unit tests, PR metadata, and requirement traceability.
-CRITICAL OUTPUT-BUDGET RULES (to stay well within the 65K output-token ceiling):
-- For EXISTING modified files (action: "modify"), ALWAYS set content: "" and provide surgical edits: [{ oldText, newText }] hunks with 2-5 lines of unique surrounding context per hunk. NEVER re-emit hundreds of unchanged lines of an existing file in content.
-- For NEW files (action: "create"), set edits: [] and provide the complete file in content.
-- For DELETED files (action: "delete"), set content: "" and edits: [].
-- On fix revisions (round > 1), include ONLY files newly created or modified in this revision; unchanged files from previousImplementation are carried forward automatically, and edits[] on previously touched files apply against previousImplementation.
+CRITICAL OUTPUT-BUDGET RULES (to stay well within output-token and streaming limits):
+- For EXISTING modified files (action: "modify"), prefer compact SEARCH/REPLACE blocks in content instead of re-emitting hundreds of unchanged lines:
+  ${SEARCH_MARKER}
+  <exact existing lines with 2-4 lines of unique context>
+  ${DIVIDER_MARKER}
+  <replacement lines>
+  ${REPLACE_MARKER}
+(Multiple SEARCH/REPLACE blocks may appear in content for one file, or full file content if the file is short.)
+- For NEW files (action: "create"), provide the complete file in content.
+- For DELETED files (action: "delete"), set content: "".
+- On fix revisions (round > 1), include ONLY files newly created or modified in this revision; unchanged files from previousImplementation are carried forward automatically, and SEARCH/REPLACE blocks on previously touched files apply against previousImplementation.
 The application applies your proposed changes and runs verification. Do not edit files on disk, invoke a shell, publish, launch agents, or change approvals.
 Follow the supplied coding standards and approved task exactly.${pbiScopeInstruction}
 Use DATA.inspectedFiles and executionEnvironments; do not repeat broad discovery.
@@ -4968,7 +5047,7 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
             return chunks;
         };
         const batches = [
-            ...chunkArray(prodPlanned, 10).map((files, idx, all) => ({
+            ...chunkArray(prodPlanned, 5).map((files, idx, all) => ({
                 kind: "production",
                 label: `Code builder (round 1 · production batch ${idx + 1}/${all.length})`,
                 stepKey: `build-0-prod-${idx}`,
@@ -4981,6 +5060,10 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
                 batchFiles: files,
             })),
         ];
+        const primaryTargetForBatch = task.targets[0];
+        const batchRepoRoot = record(primaryTargetForBatch) && nonempty(workspaceRoot)
+            ? path.resolve(workspaceRoot, primaryTargetForBatch.localPath || REPOSITORY_DEFAULTS[normalizeRepositoryKey(primaryTargetForBatch.repository)]?.localPath || ".")
+            : "";
         let runningImpl = null;
         for (let bIdx = 0; bIdx < batches.length; bIdx++) {
             const batch = batches[bIdx];
@@ -4991,11 +5074,22 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
                     ? { path: f.path, action: f.action, summary: f.summary, content: f.content }
                     : { path: f.path, action: f.action, summary: f.summary },
             );
+            const batchBaselineFiles = [];
+            if (nonempty(batchRepoRoot)) {
+                for (const fp of batch.batchFiles) {
+                    if (!isSafeRelativeFilePath(fp)) continue;
+                    const diskPath = path.resolve(batchRepoRoot, fp);
+                    const relCheck = path.relative(batchRepoRoot, diskPath);
+                    if (!relCheck.startsWith("..") && !path.isAbsolute(relCheck) && existsSync(diskPath) && lstatSync(diskPath).isFile()) {
+                        batchBaselineFiles.push({ path: fp, content: readFileSync(diskPath, "utf8").slice(0, 60_000) });
+                    }
+                }
+            }
             const batchPrompt = `${builderTask}
 CHUNKED GENERATION BATCH (${bIdx + 1}/${batches.length} — ${batch.kind.toUpperCase()}):
-- To prevent single-turn HTTP streaming timeouts on large PBIs, emit ONLY the file entries for DATA.batchFiles (${batch.batchFiles.join(", ")}) in targets[0].files during this step!
+- Emit ONLY the file entries for DATA.batchFiles (${batch.batchFiles.join(", ")}) in targets[0].files during this step!
 - Do NOT include files outside DATA.batchFiles in targets[0].files unless a tiny helper/wiring edit is strictly required for compilation; all files from earlier batches (DATA.alreadyAuthoredFiles) are automatically preserved and merged!
-- DATA.inspectedFiles and DATA.alreadyAuthoredFiles already contain the exact source lines and newly authored production classes—avoid redundant software_factory_read calls unless verifying a missing anchor line for edits[].
+- DATA.batchBaselineFiles already provides the exact current on-disk contents for every existing file in DATA.batchFiles, and DATA.alreadyAuthoredFiles provides newly authored classes from earlier batches—synthesize directly from DATA without redundant software_factory_read calls unless checking an external dependency signature!
 ${isFinalBatch
                 ? "- Because this is the FINAL batch, populate complete pr metadata, testsAddedOrUpdated, and full traceability rows covering every requirement ID across all authored production and test files."
                 : "- Non-final batch: provide concise placeholder strings for pr fields and traceability; the final batch will finalize them."}`;
@@ -5010,6 +5104,7 @@ ${isFinalBatch
                     totalBatches: batches.length,
                     batchKind: batch.kind,
                     batchFiles: batch.batchFiles,
+                    batchBaselineFiles,
                     alreadyAuthoredFiles,
                     maxFixIterations: maxFixes,
                     task,

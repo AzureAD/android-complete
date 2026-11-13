@@ -2924,10 +2924,16 @@ test("prepareCodeFeature chunks >6 hosted planned files into bounded production 
                         };
                     }
                     if (opts.label.startsWith("Code builder")) {
+                        assert.equal("edits" in opts.schema.properties.targets.items.properties.files.items.properties, false);
                         const batchFiles = data.batchFiles.map((fp) =>
                             fp === "src/main/Existing.java"
-                                ? { path: fp, action: "modify", content: "", edits: [{ oldText: "int v = 1;", newText: "int v = 2;" }], summary: "Bump v" }
-                                : { path: fp, action: "create", content: `class ${path.basename(fp, ".java")} {}\n`, edits: [], summary: `Add ${fp}` },
+                                ? {
+                                    path: fp,
+                                    action: "modify",
+                                    content: `${"<".repeat(7)} SEARCH\n    int v = 1;\n${"=".repeat(7)}\n    int v = 2;\n${">".repeat(7)} REPLACE`,
+                                    summary: "Bump v",
+                                }
+                                : { path: fp, action: "create", content: `class ${path.basename(fp, ".java")} {}\n`, summary: `Add ${fp}` },
                         );
                         return {
                             taskRevision: hostedTask.revision,
@@ -2974,7 +2980,6 @@ test("prepareCodeFeature chunks >6 hosted planned files into bounded production 
             },
         );
         assert.deepEqual(labels, [
-            "Repository evidence",
             "Code builder (round 1 · production batch 1/1)",
             "Code builder (round 1 · test batch 1/2)",
             "Code builder (round 1 · test batch 2/2)",
