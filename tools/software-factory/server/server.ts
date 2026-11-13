@@ -33,19 +33,28 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                 db.close();
             }
             if (!rows.length) continue;
+            const deduped: string[] = [];
+            for (const row of rows) {
+                if (typeof row.result_json === "string" && deduped.at(-1) !== row.result_json) {
+                    deduped.push(row.result_json);
+                }
+            }
             if (exec.kind === "implement") {
                 const syntheticImplTurns: ExecutionTraceEntry[] = [];
                 let cIdx = 0;
                 let crIdx = 0;
-                for (const row of rows) {
-                    if (typeof row.result_json !== "string" || typeof row.journal_key !== "string") continue;
-                    const parsed = JSON.parse(row.result_json) as Record<string, Json>;
+                let lastFilesSig = "";
+                for (const rawJson of deduped) {
+                    const parsed = JSON.parse(rawJson) as Record<string, Json>;
                     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-                    const itemMatch = /:coding:([^:]+):/.exec(row.journal_key);
-                    const itemTag = itemMatch?.[1] || "PBI";
-                    if (row.journal_key.includes("normalized-") && Array.isArray(parsed.targets)) {
+                    if (Array.isArray(parsed.targets) && parsed.targets.length > 0) {
                         const t0 = parsed.targets[0];
-                        const targetObj = t0 && typeof t0 === "object" && !Array.isArray(t0) ? t0 as Record<string, Json> : parsed;
+                        const targetObj = t0 && typeof t0 === "object" && !Array.isArray(t0) ? t0 as Record<string, Json> : null;
+                        if (!targetObj || !Array.isArray(targetObj.files)) continue;
+                        const filesSig = JSON.stringify(targetObj.files);
+                        if (filesSig === lastFilesSig) continue;
+                        lastFilesSig = filesSig;
+                        const itemTag = typeof targetObj.id === "string" && targetObj.id ? targetObj.id : "PBI-1";
                         syntheticImplTurns.push({
                             id: `${exec.id}:journal:coder:${itemTag}:${cIdx}`,
                             kind: "agent_turn",
@@ -57,7 +66,8 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                             outputPreview: JSON.stringify(targetObj).slice(0, 30_000),
                         });
                         cIdx++;
-                    } else if (row.journal_key.includes("independent-review-v2-") && typeof parsed.pass === "boolean") {
+                    } else if (typeof parsed.pass === "boolean" && Array.isArray(parsed.criteria) && Array.isArray(parsed.findings)) {
+                        const itemTag = "PBI-1";
                         syntheticImplTurns.push({
                             id: `${exec.id}:journal:code-review:${itemTag}:${crIdx}`,
                             kind: "agent_turn",
@@ -66,7 +76,7 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                             label: `Factory:code-review:${itemTag}:${crIdx}`,
                             target: "software-factory-code-reviewer",
                             status: "completed",
-                            outputPreview: row.result_json.slice(0, 30_000),
+                            outputPreview: rawJson.slice(0, 30_000),
                         });
                         crIdx++;
                     }
@@ -78,12 +88,6 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                     }
                 }
                 continue;
-            }
-            const deduped: string[] = [];
-            for (const row of rows) {
-                if (typeof row.result_json === "string" && deduped.at(-1) !== row.result_json) {
-                    deduped.push(row.result_json);
-                }
             }
             const plans: Record<string, Json>[] = [];
             const reviews: Record<string, Json>[] = [];
