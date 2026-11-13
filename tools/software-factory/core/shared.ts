@@ -19,6 +19,18 @@ interface CompletionGuard {
     output: SharedSnapshot;
 }
 
+function isResumableError(execution: Execution): boolean {
+    if (execution.errorCode === "workflow_limit_reached") return true;
+    if (!execution.error) return false;
+    if (execution.error.includes("workflow_limit_reached")) return true;
+    try {
+        const parsed = JSON.parse(execution.error) as Record<string, unknown>;
+        return parsed?.type === "workflow_limit_reached";
+    } catch {
+        return false;
+    }
+}
+
 export class SharedAuthority {
     private readonly app: Application;
     readonly provider: SharedProvider;
@@ -329,6 +341,10 @@ export class SharedAuthority {
     }
 
     async claimRun(featureId: string, execution: Execution): Promise<void> {
+        const priorLockId = this.cached(featureId)?.snapshot.lock?.id;
+        if (priorLockId && priorLockId !== execution.id) {
+            await this.releaseFailedRun(featureId, priorLockId);
+        }
         const current = await this.pull(featureId);
         if (!current) throw new FactoryError("publish_required", "Publish the reviewed draft to an ADO Feature before starting shared stages.", 409);
         if (current.snapshot.lock) throw new FactoryError("shared_busy", "Another shared operation owns this feature. Inspect it; never take over an active run automatically.", 409);
@@ -401,6 +417,37 @@ export class SharedAuthority {
         this.save(saved);
     }
 
+    async releaseFailedRun(featureId: string, executionId: string): Promise<void> {
+        if (this.completionGuard(featureId)) return;
+        const cached = this.cached(featureId);
+        if (!cached || cached.snapshot.lock?.id !== executionId) return;
+        const state = this.app.lifecycle.store.state(featureId);
+        const execution = state.executions.find((entry) => entry.id === executionId);
+        if (!execution || execution.status !== "error" || isResumableError(execution)) return;
+        const hasUncertainOp = (ops: { status: string }[]) =>
+            ops.some((op) => op.status === "inflight" || op.status === "reconciliation_required");
+        if (hasUncertainOp(state.operations) || hasUncertainOp(cached.snapshot.state.operations)) return;
+        const localSnapshot = this.snapshot(this.app, featureId, cached.snapshot.lock);
+        if (digest(localSnapshot.state.operations) !== digest(cached.snapshot.state.operations)) return;
+        const current = await this.provider.read(cached.target);
+        if (!current || current.snapshot.lock?.id !== executionId ||
+            current.digest !== cached.digest || current.revision !== cached.revision ||
+            hasUncertainOp(current.snapshot.state.operations)) return;
+        const identity = await this.provider.identity(current.target);
+        if (current.snapshot.lock.actor.id !== identity.id) return;
+        const snapshot = this.snapshot(this.app, featureId, null);
+        const baseActor: Actor = execution.requestedBy || { channel: "web", reference: executionId };
+        snapshot.state.events.push({
+            id: randomUUID(), kind: "shared_claim_released_failed", reference: executionId,
+            createdAt: now(),
+            message: "Automatically released shared claim after terminal non-resumable workflow failure with no uncertain provider operations.",
+            actor: { ...baseActor, ado: identity },
+        });
+        const saved = await this.provider.write(current.target, current, snapshot, identity);
+        this.hydrate(this.app, saved);
+        this.save(saved);
+    }
+
     async release(featureId: string, expectedClaimId: string, reason: string, actor: Actor): Promise<void> {
         const record = await this.pull(featureId);
         if (!record || record.snapshot.lock?.id !== expectedClaimId) throw new FactoryError("shared_claim_changed", "Review the current shared claim before releasing it.", 409);
@@ -425,6 +472,10 @@ export class SharedAuthority {
             const scope = object(preview.scope, "Recovery scope");
             await this.reconcileCompletion(id, digest(scope.local));
             return { feature: jsonValue(this.app.lifecycle.store.view(id)) };
+        }
+        if (id && command.kind !== "report_progress" && command.kind !== "release_shared_claim") {
+            const priorLockId = this.cached(id)?.snapshot.lock?.id;
+            if (priorLockId) await this.releaseFailedRun(id, priorLockId);
         }
         const record = id ? await this.pull(id, command.kind === "report_progress") : null;
         const isLocalDispatchWorkflow = command.kind === "dispatch_work" &&

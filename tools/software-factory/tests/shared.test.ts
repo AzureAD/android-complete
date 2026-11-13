@@ -998,3 +998,47 @@ test("combined publish_feature can create an ADO Feature, record authenticated s
         f.cleanup();
     }
 });
+
+test("terminal non-resumable workflow errors release and reclaim clean ADO locks while preserving resumable limit locks", async () => {
+    const f = teamFixture();
+    let appRef: Application | undefined;
+    try {
+        const app = f.create("terminal-error-release");
+        app.lifecycle.configure(teamConfig(".", "terminal-error-release"), actor);
+        appRef = app;
+        const draft = app.execute({ kind: "create_feature", requestId: "terminal-error-draft", input: requirements() }, actor);
+        await submit(app, { kind: "publish_feature", featureId: draft.id, target });
+        const feature = (await f.provider.read(target))!.snapshot.feature;
+        await submit(app, { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id });
+
+        // 1. Pre-existing settled terminal error lock (e.g., local_base_changed) is reclaimed cleanly by claimRun.
+        const failedExec = app.lifecycle.begin(feature.id, "design", actor);
+        await app.shared.claimRun(feature.id, failedExec);
+        app.lifecycle.store.updateExecution(feature.id, failedExec.id, {
+            runtimeId: "run-local-base-changed",
+            status: "error",
+            errorCode: "local_base_changed",
+            error: "The live base branch changed after review; a new review is required.",
+        });
+        assert.equal((await f.provider.read(target))!.snapshot.lock?.id, failedExec.id);
+
+        const retryExec = app.lifecycle.begin(feature.id, "design", actor);
+        await app.shared.claimRun(feature.id, retryExec);
+        const afterReclaim = (await f.provider.read(target))!;
+        assert.equal(afterReclaim.snapshot.lock?.id, retryExec.id);
+        assert.ok(afterReclaim.snapshot.state.events.some((e) => e.kind === "shared_claim_released_failed" && e.reference === failedExec.id));
+
+        // 2. Resumable workflow_limit_reached error MUST keep its ADO lock so resume remains guarded.
+        app.lifecycle.store.updateExecution(feature.id, retryExec.id, {
+            runtimeId: "run-limit-reached",
+            status: "error",
+            error: JSON.stringify({ type: "workflow_limit_reached", limit: "maxTotalSubagents" }),
+        });
+        const blockedSuccessor = app.lifecycle.begin(feature.id, "design", actor);
+        await assert.rejects(() => app.shared.claimRun(feature.id, blockedSuccessor), /Another shared operation owns this feature/);
+        assert.equal((await f.provider.read(target))!.snapshot.lock?.id, retryExec.id);
+    } finally {
+        await appRef?.shutdown();
+        f.cleanup();
+    }
+});

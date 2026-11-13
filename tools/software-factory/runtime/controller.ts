@@ -5,13 +5,14 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { FactoryError, type Actor } from "../core/contracts.ts";
-import { jsonValue, type DeliverySettings, type Execution, type ExecutionLimits, type Json, type WorkflowAdmission, type WorkflowKind } from "../core/lifecycle-contracts.ts";
+import { deliverySettings, jsonValue, type DeliverySettings, type Execution, type ExecutionLimits, type Json, type WorkflowAdmission, type WorkflowKind } from "../core/lifecycle-contracts.ts";
 import type { Lifecycle } from "../core/lifecycle.ts";
 import { now } from "../core/lifecycle-store.ts";
 import { hash } from "../core/lifecycle-store.ts";
 import { loadedWorkflowFingerprint, runtimeFingerprint } from "../core/evidence.ts";
 import type { createClient } from "./host.ts";
-import { requireRuntime } from "../core/runtime-health.ts";
+import { ensureSubrepoWorktree, requireRuntime } from "../core/runtime-health.ts";
+import { systemRunner } from "../providers/cli.ts";
 import { awaitWorkflowRegistration } from "./registration.ts";
 import { resolveExtensionInterpreter } from "./interpreter.ts";
 import { FACTORY_READER, initializeReaderPipeline } from "./reader.ts";
@@ -123,6 +124,7 @@ export class NativeRuntime {
             }
             if (this.stopping) throw new FactoryError("runtime_stopping", "The host stopped during Node verification. No workflow was admitted.", 409);
             this.factory.assertFresh(featureId, execution.id);
+            await this.fastForwardLocalDeliveryTargets(featureId, execution);
             const pins = await sourcePins(this.factory);
             if (this.stopping) throw new FactoryError("runtime_stopping", "The host stopped before workflow admission. No agents were launched; explicitly start again when ready.", 409);
             this.factory.assertFresh(featureId, execution.id);
@@ -131,13 +133,51 @@ export class NativeRuntime {
         })().catch(async (error: unknown) => {
             this.fail(featureId, execution.id, error);
             const failed = this.factory.store.execution(featureId, execution.id);
-            if (failed.status === "error" && !failed.runtimeId && !failed.admissionClaim &&
-                this.factory.store.ownsSession(failed.sessionId, this.ownerToken)) {
-                await this.shared?.releaseUnstartedRun(featureId, execution.id).catch(() => {});
+            if (failed.status === "error" && this.factory.store.ownsSession(failed.sessionId, this.ownerToken)) {
+                if (!failed.runtimeId && !failed.admissionClaim) {
+                    await this.shared?.releaseUnstartedRun(featureId, execution.id).catch(() => {});
+                } else {
+                    await this.shared?.releaseFailedRun(featureId, execution.id).catch(() => {});
+                }
             }
         });
         this.pending.add(pending);
         void pending.finally(() => { this.pending.delete(pending); this.launching.delete(execution.id); });
+    }
+
+    private async fastForwardLocalDeliveryTargets(featureId: string, execution: Execution): Promise<void> {
+        if (execution.kind !== "implement" || !this.factory.provider.fetchRepairRefs) return;
+        try {
+            const config = this.factory.configuration();
+            const delivery = deliverySettings(config, execution.delivery);
+            if (delivery.mode !== "local") return;
+            const { scope } = this.factory.requireDispatchDecision(featureId, delivery);
+            const eligible = Array.isArray(scope.eligible) ? scope.eligible : [];
+            const seenRepos = new Set<string>();
+            for (const raw of eligible) {
+                if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof (raw as Record<string, unknown>).repository !== "string") continue;
+                const repoKey = String((raw as Record<string, unknown>).repository);
+                if (seenRepos.has(repoKey) || !config.repositories[repoKey]) continue;
+                seenRepos.add(repoKey);
+                const repo = config.repositories[repoKey]!;
+                const repoRoot = await ensureSubrepoWorktree(this.factory.store.registry.project.workspace, repo.localPath, repo.baseBranch, systemRunner);
+                const [statusOut, branchOut, headSha, oldOriginSha] = await Promise.all([
+                    systemRunner.run("git", ["status", "--porcelain"], { cwd: repoRoot }),
+                    systemRunner.run("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: repoRoot }).catch(() => ""),
+                    systemRunner.run("git", ["rev-parse", "HEAD"], { cwd: repoRoot }),
+                    systemRunner.run("git", ["rev-parse", `refs/remotes/origin/${repo.baseBranch}`], { cwd: repoRoot }).catch(() => ""),
+                ]);
+                if (!statusOut.trim() && branchOut.trim() === repo.baseBranch && headSha === oldOriginSha) {
+                    await this.factory.provider.fetchRepairRefs(repo, repoRoot, [repo.baseBranch]);
+                    const newOriginSha = await systemRunner.run("git", ["rev-parse", `refs/remotes/origin/${repo.baseBranch}`], { cwd: repoRoot });
+                    if (newOriginSha !== headSha) {
+                        await systemRunner.run("git", ["merge", "--ff-only", `refs/remotes/origin/${repo.baseBranch}`], { cwd: repoRoot });
+                    }
+                }
+            }
+        } catch {
+            // Best-effort fast-forward; verifyLocalReadiness remains the authoritative gate inside implementRun.
+        }
     }
 
     private async session(execution: Execution): Promise<NativeSession> {
@@ -294,6 +334,10 @@ export class NativeRuntime {
         });
         this.settle(featureId, execution.id, result);
         await this.observeUsage(featureId, execution.id, session, result.runId);
+        if (this.factory.store.execution(featureId, execution.id).status === "error" &&
+            this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+            await this.shared?.releaseFailedRun(featureId, execution.id).catch(() => {});
+        }
     }
 
     async control(featureId: string, executionId: string, action: "pause" | "resume" | "cancel" | "refresh", actor: Actor, limits: WorkflowLimitOverrides = {}): Promise<Json> {
@@ -313,6 +357,10 @@ export class NativeRuntime {
             this.assertOwner(execution);
             this.settle(featureId, executionId, await session.workflow.getRun(execution.runtimeId));
             const detail = await this.observeUsage(featureId, executionId, session, execution.runtimeId);
+            if (this.factory.store.execution(featureId, executionId).status === "error" &&
+                this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                await this.shared?.releaseFailedRun(featureId, executionId).catch(() => {});
+            }
             if (!detail) throw new FactoryError("native_observation_failed", this.factory.store.execution(featureId, executionId).observationError!, 502);
             return jsonValue(detail);
         }
@@ -409,6 +457,10 @@ export class NativeRuntime {
                                 });
                                 this.settle(feature.id, execution.id, result);
                                 await this.observeUsage(feature.id, execution.id, session, result.runId);
+                                if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
+                                    this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                    await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                                }
                             } else {
                                 const result = control.action === "pause"
                                     ? await session.workflow.pause(execution.runtimeId) : await session.workflow.cancel(execution.runtimeId);

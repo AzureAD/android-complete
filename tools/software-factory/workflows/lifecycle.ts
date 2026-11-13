@@ -256,10 +256,10 @@ export async function designRun(ctx: Context, dependencies?: { provider: Provide
             if (JSON.stringify(priorPacket.sourceManifest) === JSON.stringify(sourceManifest)) {
                 const reviewsArr = Array.isArray(priorPacket.reviews) ? priorPacket.reviews : [];
                 const lastReviewEntry = reviewsArr.at(-1);
-                const lastFindings = lastReviewEntry && typeof lastReviewEntry === "object" && !Array.isArray(lastReviewEntry) &&
+                const lastFindings: Json[] = lastReviewEntry && typeof lastReviewEntry === "object" && !Array.isArray(lastReviewEntry) &&
                     "review" in lastReviewEntry && lastReviewEntry.review && typeof lastReviewEntry.review === "object" && !Array.isArray(lastReviewEntry.review) &&
                     Array.isArray((lastReviewEntry.review as Record<string, Json>).findings)
-                    ? (lastReviewEntry.review as Record<string, Json>).findings!
+                    ? ((lastReviewEntry.review as Record<string, Json>).findings as Json[])
                     : [];
                 const hasEvidenceFinding = lastFindings.some((f) =>
                     f !== null && typeof f === "object" && !Array.isArray(f) &&
