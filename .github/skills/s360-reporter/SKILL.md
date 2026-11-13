@@ -340,18 +340,18 @@ node .github/skills/s360-reporter/reduce-items.js `
 7. Logs URL-coverage warnings for known per-finding KPIs when not every item
    has an ADO link.
 
-**Maintaining the `PER_FINDING_KPIS` set**: If a new KPI is discovered where each
-S360 item maps to its own ADO Bug (e.g. accessibility per-issue, BinSkim per-rule),
-add its KpiId to the `PER_FINDING_KPIS` set near the top of `reduce-items.js`.
-The script will still do the right thing if you forget (URL-based grouping handles
-it as long as URLs are populated) — the set is a defense-in-depth fallback for
-missing URLs.
+**Maintaining the `PER_FINDING_KPIS` set**: Add a KPI when each `KpiActionItemId`
+represents distinct work, even if S360 gives every item the same generic title and
+does not provide an ADO URL. The set currently includes Security Code Bugs and SDL
+Annual Assessment (`2d6597da-8e08-4495-a4e1-954f7697a4a8`). Accessibility per-issue
+bugs and BinSkim per-rule findings are other likely candidates. Add a focused
+`reduce-items.test.js` regression case whenever this set changes.
 
 For each field the reducer extracts (and the rest of the workflow consumes):
 
 | Field | JSON Path | Notes |
 |-------|-----------|-------|
-| Title | `Title` | **Required** — sanitize before display (see below). If empty, use KPI `displayName` from Step 1d. Never leave blank. If the row is flagged with `usesGenericS360Title: true`, the workflow substitutes the ADO `System.Title` in Step 3e (see below). |
+| Title | `Title` | **Required** — sanitize before display (see below). If empty, use KPI `displayName` from Step 1d. Never leave blank. If the row is flagged with `usesGenericS360Title: true`, use `ActionItem` first and ADO `System.Title` only as a fallback (see Step 3e). |
 | Service | Map `TargetId` → service name from table above. For person-targeted items (`TargetType: "Person"`), use `CustomDimensions.TenantName` instead |
 | Owner Alias | `S360Dimensions.ActionOwnerAlias` | Falls back to `AssignedTo`. If both empty → "unassigned". **Overridden by ADO PBI assignee in Step 3e.** |
 | Owner Name | `S360Dimensions.ActionOwner` | If empty, use the `nameMap` from Step 0 to look up alias → display name. If still empty, use the alias as display name. **Overridden by ADO PBI assignee in Step 3e.** |
@@ -361,11 +361,16 @@ For each field the reducer extracts (and the rest of the workflow consumes):
 | Status Notes | `CurrentStatus` | May be empty |
 | Status Author | `CurrentStatusAuthor` | |
 | ADO Work Item | `S360Dimensions.ADOWorkItemHTMLUrl` | Empty does NOT mean no work item — also check the `URL` field (see next row) |
-| S360 URL | `URL` | Remediation/action link from S360 API. May be `aka.ms/...`, IcM URL, **or an ADO work-item URL**. If it matches `dev.azure.com/.../_workitems/edit/(\d+)` or `*.visualstudio.com/.../_workitems/edit/(\d+)`, extract the ID — that is the **pre-created Bug/PBI for this specific S360 item** (highest-priority work-item match — see Step 3d). |
+| Generic URL | `URL` | Polymorphic remediation/action link. It may be an `aka.ms` help page, IcM, Liquid, or ADO URL. **Do not label it as an S360 dashboard link.** If it matches `dev.azure.com/.../_workitems/edit/(\d+)` or `*.visualstudio.com/.../_workitems/edit/(\d+)`, extract the ID — that is the pre-created Bug/PBI for this specific item (see Step 3d). |
+| Action Item | `ActionItem` / `Action Item` | Preserve as `ActionItem`. For per-finding KPIs with a generic `Title`, use this distinct action text for display, PBI titles, previous-report matching, and keyword searches. |
+| Action Item Subtype | `ActionItemSubtype` / `Action Item Subtype` | Preserve as `ActionItemSubtype` so same-title manual activities remain distinguishable. The reducer also checks `CustomDimensions` and `S360Dimensions`. |
+| Action URL | `LiquidCopilot` / `Liquid Copilot` | Preserve as `ActionUrl`. Values may be raw URLs or HTML anchors; the reducer extracts and HTML-decodes the `href`. |
+| Reference URL | `ReferenceLink` / `Reference Link` | Preserve as `ReferenceUrl`. This is help or remediation documentation, not necessarily the action itself. |
 | KPI ID | `KpiId` | For dedup |
-| Action Item ID | `KpiActionItemId` | For dedup |
+| Action Item ID | `KpiActionItemId` | Required source identifier for dedup and PBI traceability. |
 | Program Name | KPI metadata `displayName` (from Step 1d) | For grouping items by compliance area |
-| usesGenericS360Title | (computed by reducer) | `true` when the S360 publisher reused one identical `Title` across many rows that each link to a distinct ADO work item (e.g. SDL Annual Assessment → 22 rows). When true, Step 3e substitutes the ADO `System.Title` for each row so the report shows the actual finding instead of the umbrella label. |
+| usesGenericS360Title | (computed by reducer) | `true` when the S360 publisher reused one identical `Title` across rows with distinct ADO work items or, for known per-finding KPIs, distinct `ActionItem` values. |
+| genericTitleSource | (computed by reducer) | `"ActionItem"` when each row has distinct action text; otherwise `"AdoTitle"` when distinct ADO work items provide the identity. Step 3e must follow this value rather than guessing which title is authoritative. |
 | Program Desc | `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` | Subtitle under program heading (optional) |
 | Wave | Extract from `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` |
 
@@ -418,7 +423,12 @@ overly technical text that is not suitable for display. Apply these cleanups:
 2. **Set `shortTitle`** — For long titles (especially CFS pipeline items), extract the
    meaningful suffix. For example, `"Use CFS package feeds for pipeline: Publish msal
    to maven"` → shortTitle: `"Publish msal to maven"`.
-3. **Clean up resolved item titles** — Apply the same sanitization to resolved items
+3. **Replace generic per-finding titles** — When a per-finding KPI reuses one generic
+   `Title` and provides distinct `ActionItem` text, use `ActionItem` as the display
+   title, PBI title, and title-matching input. Keep the original `Title` as the program
+   context. For example, display "Onboard to 1CS and complete your SDL assessment"
+   instead of "SDL Annual Assessment".
+4. **Clean up resolved item titles** — Apply the same sanitization to resolved items
    before rendering in the report.
 
 **Dedup** *(reference spec — implemented by `reduce-items.js`; documented here
@@ -443,10 +453,11 @@ multiple times with different `KpiActionItemId` but same or similar `Title` and
      findings): each item has its own pre-created Bug in ADO (linked via `URL`). Render
      one row per finding, with `pbi` set to that Bug's ID — never collapse them under an
      umbrella PBI.
-   - **SDL Annual Assessment** (KPI `2d6597da-8e08-4495-a4e1-954f7697a4a8`): every
-     finding has its own per-finding Bug linked via `URL`. Older versions of this
-     workflow silently merged all SDL items into one row per service, hiding many
-     distinct Bugs — do not regress.
+   - **SDL Annual Assessment** (KPI `2d6597da-8e08-4495-a4e1-954f7697a4a8`): each
+     `KpiActionItemId` is a distinct manual activity. Items may share the generic
+     "SDL Annual Assessment" title and may have no ADO URL. Keep each activity
+     separate using its action-item ID; otherwise one activity (for example, Threat
+     Model Review) can hide another (for example, 1CS onboarding).
    - **Accessibility bugs**, **BinSkim per-rule findings**, and similar per-finding
      KPIs follow the same rule.
 
@@ -493,8 +504,10 @@ Parse the email/report body for:
 - Both literal phrases **`Product Backlog Item 12345`** and **`Bug 12345`** map to the same
   AB# number; capture either
 
-Build a map of **S360 item title → AB# number** from the previous report.
-These are known-good PBI assignments from last week.
+Build a map of **S360 display title → AB# number** from the previous report. For
+per-finding KPIs, the display title must be the distinct `ActionItem`, not the generic
+S360 `Title`. A previous-report row containing only a generic per-finding title is
+ambiguous and must not be used as a work-item match.
 
 If all methods fail, skip this step and continue with Step 3b. Do not fail the workflow.
 
@@ -553,12 +566,19 @@ search_workitem(
 )
 ```
 
+**Per-finding identity search comes first**: Before searching title keywords for an
+item in `PER_FINDING_KPIS`, search ADO for its exact `KpiActionItemId`. PBIs created by
+this workflow store that ID in `System.Description`. Accept the result only when the
+description contains the exact action-item ID and matching `KpiId`. This identifier
+match outranks every title-based source.
+
 If the `search_workitem` tool does not accept a `workItemType` parameter, run
 the search without a type filter (the tool's default returns all types). Do
 **NOT** post-filter the results down to PBIs only — keep Bug hits.
 
 **Keyword extraction rules:**
-- Use the most distinctive 2–4 words from the S360 item title
+- For generic per-finding titles, use the distinct `ActionItem` text and subtype.
+- Otherwise, use the most distinctive 2–4 words from the S360 item title.
 - Omit generic words like "required", "should", "the", "for", "is"
 - Examples:
   - "MISE Compliance - 1.31.0+ [Wave 10]" → search: `"MISE Compliance Wave 10"`
@@ -591,13 +611,15 @@ For each S360 item, check if a work item (PBI or Bug) exists from any source:
 2. The S360 API field `S360Dimensions.ADOWorkItemHTMLUrl` (legacy linked-item field —
    often empty for newer KPIs that use `URL` instead; the linked item may be a PBI or a Bug;
    the URL doesn't encode the type)
-3. Last week's email AB# references (from 3a) — confirmed human assignments
-4. ADO tag/title search results (from 3b) — items explicitly tagged S360 (Bug or PBI)
-5. ADO keyword search results (from 3c) — catches manually-created items (Bug or PBI)
+3. Exact `KpiActionItemId` + `KpiId` found in an ADO description
+4. Last week's email AB# references (from 3a) — confirmed human assignments
+5. ADO tag/title search results (from 3b) — items explicitly tagged S360 (Bug or PBI)
+6. ADO keyword search results (from 3c) — catches manually-created items (Bug or PBI)
    without the S360 tag
 
-**Priority: URL-parsed ADO ID (source 1) > ADOWorkItemHTMLUrl (source 2) > last week's
-email > keyword search (3c) > tag search (3b).**
+**Priority: URL-parsed ADO ID (source 1) > ADOWorkItemHTMLUrl (source 2) > exact
+source-identifier match (source 3) > last week's email > keyword search (3c) >
+tag search (3b).**
 
 Rationale: A per-item ADO link in the `URL` field is the most authoritative match — it
 is the actual Bug/PBI the publisher created for that specific finding. Falling back to
@@ -605,6 +627,9 @@ keyword/tag search for these items risks matching an unrelated umbrella PBI (e.g
 PBI for the whole KPI) and losing the per-bug granularity.
 
 **Title matching logic** (for 3a, 3b, 3c):
+- **Never accept a generic-title-only match for a per-finding KPI.** Match by the exact
+  source identifiers, or by the distinct `ActionItem` text with sufficient keyword
+  overlap. This prevents every "SDL Annual Assessment" activity from reusing one AB#.
 - **Normalize both titles identically before comparing**: strip `[S360]` prefix, replace
   all non-alphanumeric characters (hyphens, underscores, brackets, etc.) with spaces,
   collapse multiple spaces to one, trim whitespace, lowercase. Apply the **same**
@@ -644,14 +669,12 @@ owner, not the S360 default.
    - Otherwise: extract alias from ADO `System.AssignedTo` (strip `@microsoft.com`),
      set `ownerAlias` = ADO alias, `ownerName` = ADO display name.
    - **If the row is flagged with `usesGenericS360Title: true`** (set by `reduce-items.js`
-     Pass 7), substitute the ADO `System.Title` for the row's `Title` so the report
-     shows the actual finding instead of the umbrella label. Apply the same title
-     sanitization (GUID → service name, etc.) afterward. Example: SDL Annual Assessment
-     (KPI `2d6597da-…`) publishes 22 rows all titled "SDL Annual Assessment", each
-     linked to a distinct ADO Task — without this substitution every row would read
-     "SDL Annual Assessment"; with it, rows read like "Use only approved cryptographic
-     hash functions", "All issues identified by the Attack Surface Analyzer (ASA) tool
-     must be fixed", etc.
+     Pass 7), follow `genericTitleSource` exactly:
+     - `"ActionItem"` → use the S360 `ActionItem`.
+     - `"AdoTitle"` → use ADO `System.Title`, even when `ActionItem` is non-empty,
+       because repeated action text cannot distinguish the linked findings.
+     Apply title sanitization afterward. This preserves the correct identity while
+     replacing generic labels such as "SDL Annual Assessment".
 4. Items WITHOUT a matched work item keep their S360-sourced owner and title (from Step 2)
 
 **Rationale (assignee)**: The S360 `ActionOwnerAlias` often defaults to the service dev
@@ -659,10 +682,10 @@ owner or a team lead, while the ADO work item has been explicitly assigned to th
 doing the work. The ADO assignment is more accurate — *unless* the ADO assignee is a bot,
 in which case the S360 owner is the better signal for the report.
 
-**Rationale (title)**: Some S360 KPIs (notably SDL Annual Assessment) reuse one generic
-umbrella `Title` across every sub-item while linking each one to its own per-finding
-ADO Task with a descriptive `System.Title`. Showing the umbrella title makes every row
-indistinguishable; substituting the ADO title makes the report actionable.
+**Rationale (title)**: Some S360 KPIs reuse one generic umbrella `Title` across every
+sub-item. Distinct S360 `ActionItem` text is the most stable display and matching key.
+When action text is also repeated but ADO IDs are distinct, the ADO title is the only
+available per-finding label; `genericTitleSource` records that decision.
 
 ### Step 4: Create Missing PBIs
 
@@ -706,7 +729,7 @@ matching PBI **nor** a matching Bug):
      "project": "Engineering",
      "workItemType": "Product Backlog Item",
      "fields": [
-       {"name": "System.Title", "value": "[S360] <item Title>"},
+       {"name": "System.Title", "value": "[S360] <distinct ActionItem when available; otherwise item Title>"},
        {"name": "System.Description", "value": "<HTML with S360 details>", "format": "Html"},
        {"name": "System.AreaPath", "value": "<confirmed area path>"},
        {"name": "System.IterationPath", "value": "<confirmed iteration>"},
@@ -719,12 +742,30 @@ matching PBI **nor** a matching Bug):
    ```
    The description HTML should include:
    - S360 item title and service name
+   - `KpiActionItemId` and `KpiId` (always — these are the source traceability keys)
+   - Action item subtype (if available)
    - SLA state and due date
-   - Link to S360 URL for remediation details
+   - Action URL (for example, Liquid Compliance) when available
+   - Reference/help URL when available
+   - Generic `URL`, accurately labelled as remediation, IcM, or ADO based on its destination
    - Current status notes (if any)
    - Wave information (if any)
 
-4. Record the created AB# for each item.
+   **Link accuracy requirements**:
+   - Never call an `aka.ms`, Liquid, IcM, or ADO URL an "S360 dashboard" link.
+   - Only show an "S360 dashboard" link when the API returns a canonical S360 URL.
+   - Never construct a dashboard URL from `KpiId` or `KpiActionItemId` unless S360
+     publishes and supports that URL format.
+
+4. When the ADO tooling supports relations, add each available action, reference,
+   and canonical S360 URL as a `Hyperlink` relation. Description links remain
+   required because relation support varies by tool.
+
+5. Record the created AB# for each item.
+
+6. Do not claim that the PBI was written back to S360. A reverse S360 → ADO link
+   requires an authenticated S360 mutation/link API; the current read-only MCP
+   workflow does not provide one.
 
 ### Step 4b: Auto-Close Resolved Work Items
 
@@ -770,7 +811,7 @@ Write a JSON file to a temp location (e.g., `$env:TEMP/s360_data.json`) with thi
       "eta": "Mon DD, YYYY or null",
       "pbi": "12345 or null (ADO work item ID — PBI or Bug; generator adds AB# prefix)",
       "isNew": true,
-      "s360Url": "https://s360.msftcloudes.com/...",
+      "s360Url": "Best available action or reference URL (legacy field name)",
       "program": "Program display name",
       "programDesc": "Program subtitle/description (optional)",
       "subtitle": "Wave or campaign name (optional — renders inside TITLE column, do NOT set to service name since Service has its own column; leave null unless wave/campaign info is available)"
@@ -801,6 +842,9 @@ Write a JSON file to a temp location (e.g., `$env:TEMP/s360_data.json`) with thi
 - `pbi`: This field is the ADO work item ID and accepts **either a PBI or a Bug** ID
   (the generator's `pbiUrl()` builds a type-agnostic ADO URL that works for both).
   When the matched item is a Bug, still put its ID here — do not leave it null.
+- `s360Url`: Legacy report-generator field name. Populate it with `ActionUrl`, then
+  `ReferenceUrl`, then a non-ADO generic `URL`. It is the title's actionable link,
+  not proof of a canonical S360 dashboard URL.
 
 #### 5b: Run the generator
 
