@@ -876,6 +876,9 @@ export class ExternalProvider implements Provider {
                 title, head: binding.branch, base: repo.baseBranch, body,
             }), "Created GitHub PR");
             createdNumber = Number(created.number);
+            if (Number.isSafeInteger(createdNumber) && createdNumber > 0) {
+                await this.applyDefaultChangelogLabel(repo, createdNumber);
+            }
         } else {
             const [organization, project, repository] = repo.slug.split("/");
             if (!organization || !project || !repository) throw new FactoryError("invalid_configuration", "ADO repository mapping is incomplete.");
@@ -891,6 +894,25 @@ export class ExternalProvider implements Provider {
             throw new FactoryError("reconciliation_required", "The created PR could not be verified against its reviewed commit. Do not retry publication.", 409);
         }
         return receipt;
+    }
+
+    private async applyDefaultChangelogLabel(repo: RepositoryTarget, prNumber: number): Promise<void> {
+        try {
+            const labels = await this.github(repo, `repos/${repo.slug}/labels?per_page=100`);
+            if (!Array.isArray(labels)) return;
+            const available = new Set(
+                labels.map((entry) => (entry && typeof entry === "object" && "name" in entry && typeof entry.name === "string" ? entry.name : "")),
+            );
+            const preferred = available.has("changelog:minor")
+                ? "changelog:minor"
+                : available.has("changelog:patch")
+                    ? "changelog:patch"
+                    : "";
+            if (!preferred) return;
+            await this.github(repo, `repos/${repo.slug}/issues/${prNumber}/labels`, "POST", { labels: [preferred] });
+        } catch {
+            // Best-effort CI hygiene; never fail or trigger reconciliation after PR creation.
+        }
     }
 
     async findLocalPublication(config: Configuration, item: PlannedItem, workItem: WorkItem, marker: string, binding: LocalPublicationBinding): Promise<Json | null> {
