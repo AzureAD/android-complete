@@ -311,11 +311,80 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     })();
     const planArtifact = allPlanArtifacts.find((a) => a.id === selectedPlanId) || currentPlanArtifact || allPlanArtifacts[0] || livePlanArtifact;
 
-    const codeArtifact = latestImpl();
+    const liveCodeArtifact: Artifact | undefined = (() => {
+        const activeImplExec = [...feature.factory.executions].reverse().find(
+            (e) => e.kind === "implement" && ["starting", "running", "paused", "error"].includes(e.status),
+        );
+        if (!activeImplExec) return undefined;
+        const turns = (activeImplExec.trace || []).filter((t) => t.kind === "agent_turn" && t.status === "completed" && typeof t.outputPreview === "string");
+        const coderTurns = turns.filter((t) => (t.label || "").startsWith("Factory:coder:"));
+        const reviewTurns = turns.filter((t) => (t.label || "").startsWith("Factory:code-review:"));
+        if (!coderTurns.length && !reviewTurns.length) return undefined;
+        const itemTag = coderTurns[0]?.label?.split(":")[2] || reviewTurns[0]?.label?.split(":")[2] || "PBI-1";
+        const roundCount = Math.max(coderTurns.length, reviewTurns.length);
+        const reviewHistory: Record<string, Json>[] = [];
+        for (let idx = 0; idx < roundCount; idx++) {
+            let coderObj: Record<string, Json> | null = null;
+            let revObj: Record<string, Json> | null = null;
+            try { if (coderTurns[idx]?.outputPreview) coderObj = JSON.parse(coderTurns[idx]!.outputPreview!) as Record<string, Json>; } catch { /* ignore */ }
+            try { if (reviewTurns[idx]?.outputPreview) revObj = JSON.parse(reviewTurns[idx]!.outputPreview!) as Record<string, Json>; } catch { /* ignore */ }
+            const filesList = Array.isArray(coderObj?.files)
+                ? (coderObj.files as Json[]).map((f) => (f && typeof f === "object" && !Array.isArray(f) ? String((f as Record<string, Json>).path || "") : String(f))).filter(Boolean)
+                : [];
+            const testsList = Array.isArray(coderObj?.testsAddedOrUpdated) ? (coderObj.testsAddedOrUpdated as Json[]).map(String) : [];
+            reviewHistory.push({
+                round: idx + 1,
+                builderSummary: typeof coderObj?.summary === "string" ? coderObj.summary : "Coding round completed; awaiting independent code review.",
+                files: filesList,
+                testsAddedOrUpdated: testsList,
+                ...(revObj ? { review: revObj } : {}),
+            });
+        }
+        return {
+            id: `live-code-${activeImplExec.id}`,
+            kind: "implementation_attempt",
+            requirementsRevision: feature.current.id,
+            parentId: currentPlanArtifact?.id || null,
+            generation: 0,
+            configurationId: activeImplExec.configurationId,
+            analysisHash: "",
+            executionId: activeImplExec.id,
+            hash: "",
+            createdAt: activeImplExec.updatedAt,
+            content: {
+                itemId: itemTag,
+                mode: "local",
+                status: activeImplExec.status === "running" ? "in_progress" : activeImplExec.status,
+                roundsCompleted: reviewHistory.length,
+                reviewHistory,
+            },
+        } satisfies Artifact;
+    })();
+    const codeArtifact = latestImpl() || liveCodeArtifact;
     const monitorArtifact = latest("monitor");
 
     const stage0Approval = [...feature.approvals].reverse().find((a) => a.revisionId === feature.current.id) || feature.approvals.at(-1);
     const backlogOperations = feature.factory.operations.filter((op) => op.kind === "work_item" || op.kind === "links" || op.kind === "dispatch");
+    const provisionedWorkItems = feature.factory.operations
+        .filter((op) => op.kind === "work_item" && op.status === "completed" && op.receipt && typeof op.receipt === "object" && !Array.isArray(op.receipt))
+        .map((op) => {
+            const r = op.receipt as Record<string, Json>;
+            const linked = feature.factory.operations.some((l) => l.kind === "links" && l.itemId === op.itemId && l.planId === op.planId && l.status === "completed");
+            const disp = feature.factory.operations.find((d) => d.kind === "dispatch" && d.itemId === op.itemId && d.planId === op.planId);
+            return {
+                key: String(r.key || op.itemId),
+                adoId: Number(r.adoId || 0),
+                title: String(r.title || op.itemId),
+                repository: String(r.repository || ""),
+                status: String(r.status || "New"),
+                url: typeof r.url === "string" ? r.url : "",
+                linked,
+                dispatchStatus: disp?.status || null,
+                prUrl: disp?.receipt && typeof disp.receipt === "object" && !Array.isArray(disp.receipt) && typeof (disp.receipt as Record<string, Json>).url === "string"
+                    ? String((disp.receipt as Record<string, Json>).url)
+                    : "",
+            };
+        });
     const inspectedStageIndex = stageIndexToLens.indexOf(studioLens);
 
     const openArtifactInStudio = (artifact: Artifact) => {
@@ -577,22 +646,58 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                     <div className="scope-inspector-card">
                         <div className="studio-badge-row">
                             <span className="studio-pill purple">STAGE 4 · BACKLOG &amp; WORK ITEMS</span>
-                            <span className="mono-chip">{backlogOperations.length} recorded operation(s)</span>
+                            <span className="mono-chip">{provisionedWorkItems.length} ADO PBI(s) · {backlogOperations.length} recorded operation(s)</span>
                         </div>
                         <h3>Azure DevOps Backlog &amp; PBI Provisioning</h3>
-                        {backlogOperations.length > 0 ? (
-                            <div className="artifact-cards-list">
-                                {backlogOperations.map((op) => (
-                                    <div key={op.key} className="run-card">
-                                        <div className="card-heading">
-                                            <strong>{op.itemId} · {op.kind}</strong>
-                                            <span className={`studio-pill ${op.status === "completed" ? "emerald" : "amber"}`}>{op.status}</span>
+                        {provisionedWorkItems.length > 0 && (
+                            <div className="delivery-cards-grid" style={{ marginBottom: 14 }}>
+                                {provisionedWorkItems.map((wi) => (
+                                    <div key={wi.key} className="delivery-pbi-card">
+                                        <div className="delivery-pbi-head">
+                                            <div className="studio-badge-row">
+                                                <strong>{wi.key}</strong>
+                                                {wi.url ? (
+                                                    <a href={wi.url} target="_blank" rel="noreferrer" className="studio-pill purple">
+                                                        ADO #{wi.adoId} ↗
+                                                    </a>
+                                                ) : (
+                                                    <span className="mono-chip">ADO #{wi.adoId}</span>
+                                                )}
+                                                {wi.repository && <span className="studio-pill blue">repo: {wi.repository}</span>}
+                                            </div>
+                                            <div className="studio-badge-row">
+                                                <span className="studio-pill neutral">{wi.status}</span>
+                                                <span className={`studio-pill ${wi.linked ? "emerald" : "amber"}`}>
+                                                    {wi.linked ? "✓ Linked to Feature & DAG" : "Pending links"}
+                                                </span>
+                                                {wi.prUrl && (
+                                                    <a href={wi.prUrl} target="_blank" rel="noreferrer" className="studio-pill emerald">
+                                                        PR Opened ↗
+                                                    </a>
+                                                )}
+                                            </div>
                                         </div>
-                                        <code>{op.key}</code>
-                                        <details><summary>Provider receipt</summary><pre>{JSON.stringify(op.receipt, null, 2)}</pre></details>
+                                        <h4>{wi.title}</h4>
                                     </div>
                                 ))}
                             </div>
+                        )}
+                        {backlogOperations.length > 0 ? (
+                            <details>
+                                <summary>Raw provider operation receipts ({backlogOperations.length})</summary>
+                                <div className="artifact-cards-list" style={{ marginTop: 10 }}>
+                                    {backlogOperations.map((op) => (
+                                        <div key={op.key} className="run-card">
+                                            <div className="card-heading">
+                                                <strong>{op.itemId} · {op.kind}</strong>
+                                                <span className={`studio-pill ${op.status === "completed" ? "emerald" : "amber"}`}>{op.status}</span>
+                                            </div>
+                                            <code>{op.key}</code>
+                                            <details><summary>Provider receipt</summary><pre>{JSON.stringify(op.receipt, null, 2)}</pre></details>
+                                        </div>
+                                    ))}
+                                </div>
+                            </details>
                         ) : planArtifact ? (
                             <p className="muted">
                                 Plan is drafted ({Array.isArray((planArtifact.content as Record<string, Json>)?.items) ? ((planArtifact.content as Record<string, Json>).items as Json[]).length : 0} PBIs). Once the plan gate is approved, confirming Backlog Creation creates and links the ADO Product Backlog Items here.
@@ -645,6 +750,11 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
             {studioLens === "gate" && !currentGate && progress.run?.kind === "plan" && planArtifact && (
                 <section className="studio-spotlight" aria-label="Live Plan Studio">
                     <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+                </section>
+            )}
+            {studioLens === "gate" && !currentGate && progress.run?.kind === "implement" && codeArtifact && (
+                <section className="studio-spotlight" aria-label="Live Code Arena Studio">
+                    <ArtifactDocument artifact={codeArtifact} feature={feature} />
                 </section>
             )}
 

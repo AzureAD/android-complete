@@ -15,24 +15,70 @@ import { runtimeReport } from "../core/doctor.ts";
 import type { ExecutionTraceEntry, FactoryFeature, Json } from "../core/lifecycle-contracts.ts";
 
 function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
-    const planExecs = feature.factory.executions.filter((e) => e.kind === "plan" && e.runtimeId && e.sessionId);
-    if (!planExecs.length) return feature;
+    const targetExecs = feature.factory.executions.filter((e) => (e.kind === "plan" || e.kind === "implement") && e.runtimeId && e.sessionId);
+    if (!targetExecs.length) return feature;
     const cloned = structuredClone(feature);
     for (const exec of cloned.factory.executions) {
-        if (exec.kind !== "plan" || !exec.runtimeId || !exec.sessionId) continue;
+        if ((exec.kind !== "plan" && exec.kind !== "implement") || !exec.runtimeId || !exec.sessionId) continue;
         if (!/^[a-zA-Z0-9_-]+$/.test(exec.sessionId)) continue;
         const sessionDbPath = path.join(os.homedir(), ".copilot", "session-state", exec.sessionId, "session.db");
         if (!existsSync(sessionDbPath)) continue;
         try {
             const db = new DatabaseSync(sessionDbPath, { readOnly: true });
-            let rows: { result_json: string }[] = [];
+            let rows: { journal_key: string; result_json: string }[] = [];
             try {
-                rows = db.prepare("SELECT result_json FROM workflow_journal WHERE root_run_id = ? ORDER BY rowid")
-                    .all(exec.runtimeId) as { result_json: string }[];
+                rows = db.prepare("SELECT journal_key, result_json FROM workflow_journal WHERE root_run_id = ? ORDER BY rowid")
+                    .all(exec.runtimeId) as { journal_key: string; result_json: string }[];
             } finally {
                 db.close();
             }
             if (!rows.length) continue;
+            if (exec.kind === "implement") {
+                const syntheticImplTurns: ExecutionTraceEntry[] = [];
+                let cIdx = 0;
+                let crIdx = 0;
+                for (const row of rows) {
+                    if (typeof row.result_json !== "string" || typeof row.journal_key !== "string") continue;
+                    const parsed = JSON.parse(row.result_json) as Record<string, Json>;
+                    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+                    const itemMatch = /:coding:([^:]+):/.exec(row.journal_key);
+                    const itemTag = itemMatch?.[1] || "PBI";
+                    if (row.journal_key.includes("normalized-") && Array.isArray(parsed.targets)) {
+                        const t0 = parsed.targets[0];
+                        const targetObj = t0 && typeof t0 === "object" && !Array.isArray(t0) ? t0 as Record<string, Json> : parsed;
+                        syntheticImplTurns.push({
+                            id: `${exec.id}:journal:coder:${itemTag}:${cIdx}`,
+                            kind: "agent_turn",
+                            timestamp: exec.updatedAt,
+                            role: "software-factory-coder",
+                            label: `Factory:coder:${itemTag}:${cIdx}`,
+                            target: "software-factory-coder",
+                            status: "completed",
+                            outputPreview: JSON.stringify(targetObj).slice(0, 30_000),
+                        });
+                        cIdx++;
+                    } else if (row.journal_key.includes("independent-review-v2-") && typeof parsed.pass === "boolean") {
+                        syntheticImplTurns.push({
+                            id: `${exec.id}:journal:code-review:${itemTag}:${crIdx}`,
+                            kind: "agent_turn",
+                            timestamp: exec.updatedAt,
+                            role: "software-factory-code-reviewer",
+                            label: `Factory:code-review:${itemTag}:${crIdx}`,
+                            target: "software-factory-code-reviewer",
+                            status: "completed",
+                            outputPreview: row.result_json.slice(0, 30_000),
+                        });
+                        crIdx++;
+                    }
+                }
+                exec.trace ??= [];
+                for (const turn of syntheticImplTurns) {
+                    if (!exec.trace.some((t) => t.kind === "agent_turn" && t.label === turn.label)) {
+                        exec.trace.push(turn);
+                    }
+                }
+                continue;
+            }
             const deduped: string[] = [];
             for (const row of rows) {
                 if (typeof row.result_json === "string" && deduped.at(-1) !== row.result_json) {
