@@ -1042,3 +1042,91 @@ test("terminal non-resumable workflow errors release and reclaim clean ADO locks
         f.cleanup();
     }
 });
+
+test("reconnected chat controller automatically resumes an idle-evicted halted workflow", async () => {
+    const f = teamFixture();
+    let appRef: Application | undefined;
+    try {
+        const app = f.create("reconnect-auto-resume");
+        const ws = app.registry.project.workspace;
+        app.lifecycle.configure(teamConfig(".", "reconnect-auto-resume"), actor);
+        execFileSync("git", ["init", "--quiet", ws]);
+        execFileSync("git", ["-C", ws, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", ws, "config", "user.name", "Test"]);
+        writeFileSync(path.join(ws, "README.md"), "fixture\n");
+        execFileSync("git", ["-C", ws, "add", "README.md"]);
+        execFileSync("git", ["-C", ws, "commit", "--quiet", "-m", "init"]);
+        appRef = app;
+
+        const draft = app.execute({ kind: "create_feature", requestId: "reconnect-draft", input: requirements() }, actor);
+        await submit(app, { kind: "publish_feature", featureId: draft.id, target });
+        const feature = (await f.provider.read(target))!.snapshot.feature;
+        await submit(app, { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id });
+
+        const execution = app.lifecycle.begin(
+            feature.id, "design", actor, {}, {}, undefined,
+            { sessionId: actor.sessionId!, kind: "chat", established: true },
+            "PR observer (PBI-1): Observe",
+        );
+        await app.shared.claimRun(feature.id, execution);
+        app.lifecycle.store.updateExecution(feature.id, execution.id, {
+            runtimeId: "halted-run-1",
+            status: "running",
+            phase: "PR observer (PBI-1): Observe",
+        });
+
+        const sessionHash = createHash("sha256").update(actor.sessionId!).digest("hex");
+        let resumeCount = 0;
+        const session = {
+            sessionId: actor.sessionId!,
+            rpc: {
+                extensions: { list: async () => ({ extensions: [{ id: "project:SoftwareFactory", name: "SoftwareFactory", source: "project" as const, status: "running" as const }] }), reload: async () => {} },
+                tools: {
+                    initializeAndValidate: async () => ({ toolNames: [] }),
+                    getCurrentMetadata: async () => ({ tools: [{ name: "view", description: "v" }, { name: "glob", description: "g" }, { name: "grep", description: "s" }] }),
+                    execute: async () => ({
+                        resultType: "success" as const,
+                        textResultForLlm: JSON.stringify({
+                            ready: true, sessionId: "******", sessionIdHash: sessionHash,
+                            workflowNames: ["software-factory-design"], runtimeFingerprint: runtimeFingerprint(), readerAgent: FACTORY_READER,
+                        }),
+                    }),
+                },
+            },
+            workflow: {
+                run: async () => { throw new Error("unexpected run"); },
+                resume: async (runId: string) => {
+                    assert.equal(runId, "halted-run-1");
+                    resumeCount++;
+                    return { runId, status: "completed" as const, result: { resumed: true } };
+                },
+                pause: async () => { throw new Error("unexpected pause"); },
+                cancel: async () => { throw new Error("unexpected cancel"); },
+                getRun: async () => ({ runId: "halted-run-1", status: "halted" as const }),
+                getRunDetail: async () => ({
+                    runId: "halted-run-1", workflowName: "software-factory-design", description: "Design", status: "completed" as const,
+                    revision: 2, createdAt: Date.now(), startedAt: Date.now(), updatedAt: Date.now(), completedAt: Date.now(),
+                    currentPhase: null, declaredPhaseCount: 1, liveAgentCount: 0, totalSpawnedAgentCount: 0,
+                    consumed: { subagents: 1, activeMs: 10, nanoAiu: 0 },
+                    declaredLimits: {}, approved: null, observedAt: Date.now(), activeSegmentStartedAt: null,
+                    terminal: null, canResume: false, phases: [], agents: [],
+                    progress: { records: [], oldestSeq: null, newestSeq: null, hasMoreOlder: false, hasMoreNewer: false, revision: 2 },
+                }),
+            },
+        };
+
+        await app.bindChatSession(session);
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+            const current = app.lifecycle.store.execution(feature.id, execution.id);
+            if (current.status === "completed" || current.status === "error") break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const settled = app.lifecycle.store.execution(feature.id, execution.id);
+        assert.equal(settled.status, "completed", settled.error || settled.status);
+        assert.equal(resumeCount, 1);
+    } finally {
+        await appRef?.shutdown();
+        f.cleanup();
+    }
+});

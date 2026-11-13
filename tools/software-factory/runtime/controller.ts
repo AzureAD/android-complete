@@ -41,6 +41,7 @@ export class NativeRuntime {
     private readonly leaseSessions = new Set<string>();
     private readonly heartbeats = new Map<string, number>();
     private readonly lastUsageObserved = new Map<string, number>();
+    private readonly activeRuns = new Set<string>();
     private readonly activeControls = new Set<string>();
     private readonly timer: NodeJS.Timeout;
     private started = false;
@@ -329,10 +330,16 @@ export class NativeRuntime {
             if (current.admissionClaim || current.runtimeId) throw new FactoryError("native_admission_exists", "This execution was already submitted or its admission is uncertain. Inspect the owning run; do not submit it twice.", 409);
             current.admissionClaim = this.ownerToken;
         }, { localOnly: true });
-        const result = await session.workflow.run(names[execution.kind], {
-            args: { featureId, executionId: execution.id }, notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check", logPhaseNames: true,
-            limits: { maxAiCredits: null, ...execution.limits },
-        });
+        this.activeRuns.add(execution.id);
+        let result: WorkflowRunResult;
+        try {
+            result = await session.workflow.run(names[execution.kind], {
+                args: { featureId, executionId: execution.id }, notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check", logPhaseNames: true,
+                limits: { maxAiCredits: null, ...execution.limits },
+            });
+        } finally {
+            this.activeRuns.delete(execution.id);
+        }
         this.settle(featureId, execution.id, result);
         await this.observeUsage(featureId, execution.id, session, result.runId);
         if (this.factory.store.execution(featureId, execution.id).status === "error" &&
@@ -423,6 +430,56 @@ export class NativeRuntime {
                     }
                     if (residentOwner &&
                         execution.status === "running" && execution.runtimeId &&
+                        !this.activeRuns.has(execution.id)) {
+                        const session = await this.session(execution);
+                        const runState = await session.workflow.getRun(execution.runtimeId);
+                        if (runState.status === "halted" && execution.runtimeFingerprint === loadedWorkflowFingerprint) {
+                            this.activeRuns.add(execution.id);
+                            const recoverTask = (async () => {
+                                try {
+                                    this.factory.assertFresh(feature.id, execution.id);
+                                    await this.registration(feature.id, execution, session);
+                                    if (execution.kind !== "check") await this.shared?.assertRun(feature.id, execution.id);
+                                    const savedPhase = execution.phase;
+                                    this.factory.store.updateExecution(feature.id, execution.id, {
+                                        status: "running", phase: savedPhase, error: null, errorCode: null,
+                                    });
+                                    const result = await session.workflow.resume(execution.runtimeId!, {
+                                        notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check",
+                                        logPhaseNames: true,
+                                    });
+                                    this.settle(feature.id, execution.id, result);
+                                    await this.observeUsage(feature.id, execution.id, session, result.runId);
+                                    if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
+                                        this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                        await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                                    }
+                                } catch (error) {
+                                    this.fail(feature.id, execution.id, error);
+                                    if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
+                                        this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                        await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                                    }
+                                } finally {
+                                    this.activeRuns.delete(execution.id);
+                                }
+                            })();
+                            this.pending.add(recoverTask);
+                            void recoverTask.finally(() => this.pending.delete(recoverTask));
+                            continue;
+                        }
+                        if (runState.status !== "running" && runState.status !== "pending") {
+                            this.settle(feature.id, execution.id, runState);
+                            await this.observeUsage(feature.id, execution.id, session, runState.runId);
+                            if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
+                                this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                            }
+                            continue;
+                        }
+                    }
+                    if (residentOwner &&
+                        execution.status === "running" && execution.runtimeId &&
                         nowMs - (this.lastUsageObserved.get(execution.id) ?? 0) >= 5_000) {
                         this.lastUsageObserved.set(execution.id, nowMs);
                         const session = await this.session(execution);
@@ -460,11 +517,17 @@ export class NativeRuntime {
                                 const effectiveLimits = Object.fromEntries(
                                     Object.entries(control.limits).filter(([key, value]) => value === null || currentApproved[key] !== value),
                                 );
-                                const result = await session.workflow.resume(execution.runtimeId, {
-                                    ...(Object.keys(effectiveLimits).length ? { limits: effectiveLimits } : {}),
-                                    notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check",
-                                    logPhaseNames: true,
-                                });
+                                this.activeRuns.add(execution.id);
+                                let result: WorkflowRunResult;
+                                try {
+                                    result = await session.workflow.resume(execution.runtimeId, {
+                                        ...(Object.keys(effectiveLimits).length ? { limits: effectiveLimits } : {}),
+                                        notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check",
+                                        logPhaseNames: true,
+                                    });
+                                } finally {
+                                    this.activeRuns.delete(execution.id);
+                                }
                                 this.settle(feature.id, execution.id, result);
                                 await this.observeUsage(feature.id, execution.id, session, result.runId);
                                 if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
