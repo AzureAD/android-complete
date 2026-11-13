@@ -15,6 +15,10 @@ API reference: [official Dynamic Workflow documentation](https://github.com/gith
 The existing `.github/skills/design-author/SKILL.md` informs the design content;
 this workflow does **not** execute that skill's ADO publishing steps.
 
+The executable template is the `sections`/`designSchema`, author/revision prompts
+and independent-review rubric in `workflow.mjs`. It does not load the external
+`design-docs/Template/template.md` or the orchestrator plugin's Markdown template.
+
 ## Input and use
 
 Start `design-feature` through the runtime's Dynamic Workflow tooling, passing
@@ -81,7 +85,7 @@ session storage. A request to draft is not automatically requirements approval.
 3. Author structured design sections, requirement traceability, and a visible
    per-change necessity register: baseline trace, existing behavior, requested delta,
    necessity, counterevidence search, classification and verification. Generate the
-   required default-off flag register/isolation section and a pre-mortem
+   required accessibility design, default-off flag register/isolation and a pre-mortem
    authoring brief/post-implementation handoff in the same artifact.
 4. Check sections, revision, exact evidence digest, links and trace/necessity coverage.
    Already-handled behavior is `preserve-existing` / `regression-only`; optional
@@ -92,7 +96,8 @@ session storage. A request to draft is not automatically requirements approval.
    The reviewer reads pinned sources, seeks disconfirming paths for every proposed
    change, and checks for mandates missing from the register. Per-change checks and
    the review bind to the exact design digest; every check must pass.
-   `defaultOffFeatureIsolation` and `preMortemAndReleaseGates` are mandatory.
+   `accessibilityDesignAndVerification`, `defaultOffFeatureIsolation` and
+   `preMortemAndReleaseGates` are mandatory.
    Reviewers return `references` (empty if none) for discoveries outside the initial
    reference list, with fresh IDs and full repository/revision/path/locator metadata.
    Discoveries must match exact `sourceManifest` pairs; malformed, duplicate,
@@ -112,6 +117,33 @@ assumptions/open decisions, and repository revisions before explicitly approving
 planning. `NO-GO` means validation/review failed or two fixes were exhausted.
 No ADO items, code changes, merges, deployments, or human approvals are created.
 `ctx.pause()` is not used.
+
+### Accessibility design and evidence
+
+Every design retains a nonempty `design.sections.accessibility`, including a
+reasoned N/A when no UI is affected. For affected Android UI, map approved
+requirement and scenario/screen/flow IDs (requirements-template sections 3.6/4
+when supplied) to semantics, TalkBack reading/announcements and focus,
+keyboard/D-pad navigation, scaling/reflow, 48dp by 48dp targets, contrast/non-color
+cues, and verification. Include reused screens/components and relevant loading,
+error, cancellation, retry, return/re-entry, restoration and flag-on/off states.
+Use pinned owning-app accessibility guidance; do not invent new product decisions
+or change approved requirements to fill gaps.
+
+Carry measurable expected outcomes, testing/review owners, configurations,
+planned evidence locations and explicit gaps into `testsAndEvals` and the later
+testing-PBI/release prerequisites. Real-app TalkBack and separate keyboard-only
+checks may remain planned/Unverified during design authoring. Missing evidence
+or access is Unverified/Blocked, never a pass. Compilation, screenshots,
+semantics/navigation assertions and forced-focus tests are supporting evidence.
+Documentation/design approval does not certify runtime accessibility or approve
+rollout; deferrals need an owner, rationale, tracking and release consequence.
+
+Structural validation rejects a missing/blank section. The mandatory independent
+`accessibilityDesignAndVerification` rubric criterion assesses applicability,
+justified N/A, concrete per-state coverage, source/requirement traceability and
+owned evidence plans; missing applicable coverage is a finding, not a pass.
+Substantive assessment is an agent judgment, not keyword-based certification.
 
 The packet preserves the original `evidence` unchanged. Validated reviewer sources
 remain in review history and `referenceDiscoveries` with their discovery round.
@@ -231,7 +263,7 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v9` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v10` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
@@ -242,8 +274,9 @@ not recheck a mutable branch or re-read edited local snapshots; do not alter sna
 in place. Start a fresh run with new pins if the source/evidence changes; change the key version when workflow semantics,
 schemas, prompts, or rubric change. Steps have no intentional external side effects,
 so replay does not publish duplicate artifacts.
-The post-implementation authoring handoff does not reuse prior v5 outputs,
-accessibility-only v6, pre-mortem-only v7 or design-time full-pre-mortem/default-off v8 outputs.
+The combined accessibility/default-off/post-implementation handoff does not reuse
+prior v5 outputs, accessibility-only v6, pre-mortem-only v7, design-time
+full-pre-mortem/default-off v8 or pre-accessibility post-implementation v9 outputs.
 
 ## Checks
 
@@ -262,7 +295,7 @@ fixed rubric/per-change coverage, bounded fixes, recommendation semantics, and
 source/evidence-bound checkpoint identity. Pre-mortem regressions cover missing/
 blank briefs, runtime/non-runtime post-implementation handoff, omitted/failed review
 criteria, repair/re-review, owned pre-flight gaps without production activation,
-and stale v5/v6/v7/v8 checkpoint isolation. Default-off regressions cover missing/
+and stale v5/v6/v7/v8/v9 checkpoint isolation. Default-off regressions cover missing/
 non-false contracts, invalid mappings/source ownership, non-runtime declarations,
 shared/multiple flags, schema/prompt handoff, mandatory independent criteria and
 repair/re-review. Synthetic executable completion fixtures
@@ -270,6 +303,9 @@ also cover new pinned reviewer references, repair/re-review, invalid discoveries
 stale digest rejection and journal replay with preserved provenance. Completion fixtures
 cover indirect handling (reuse/regression-only) and a genuinely missing handler
 (verified defect), plus a disputed false gap that must be fixed and re-reviewed.
+Accessibility fixtures cover missing/blank sections, multi-screen UI traceability,
+planned runtime evidence, omitted/failed accessibility review criteria, bounded
+repair, justified non-UI N/A and isolation from pre-accessibility v5 checkpoints.
 These are deterministic gate tests with mocked agent judgments, **not semantic
 quality eval results**, actual Android isolation tests or live production
 configuration verification. For a live agent eval, present both synthetic variants

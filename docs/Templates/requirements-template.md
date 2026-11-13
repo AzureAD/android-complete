@@ -1,7 +1,7 @@
 <!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
 # Requirements: [Feature name]
 
-Template version: 2
+Template version: 3
 Owner: [Person/team]
 Feature/work-item link: [Link]
 Status: Draft
@@ -24,6 +24,9 @@ For features with user interaction, complete the journey and UX evidence in
 section 3 before handing requirements to the design author. A happy-path summary
 or a Figma link alone is not a complete flow. For non-UI features, mark the visual
 subsections N/A with a reason and describe the caller journey instead.
+For new or changed Authenticator UI, including reused screens and changed
+navigation flows, complete the required accessibility section 3.6. Existing
+accessibility behavior alone is not an acceptance specification.
 
 ## 1. Problem and desired outcome
 
@@ -132,6 +135,58 @@ or Unknown. A supplied Figma file is input, not evidence of requirements or fina
 design approval. Missing behavior that changes the design is a blocking question;
 do not treat this checklist as approval or defer it silently to implementation.]
 
+### 3.6 Accessibility requirements and evidence (required)
+
+Complete this section for every new or changed Authenticator UI feature, including
+reused screens, entry points, and navigation flows. For features without affected
+Authenticator UI, retain the section and mark it N/A with a reason.
+
+Use Authenticator's `.github/skills/android-ui-development/SKILL.md` and
+`.github/skills/android-ui-development/references/accessibility.md` in the owning
+checkout as the baseline. Established accessibility standards are mandatory
+defaults, not optional product choices to reconfirm. Ask questions only about
+ambiguous feature-specific behavior; record decisions and unresolved questions
+in section 8. Do not invent behavior or silently defer design-blocking questions.
+
+Describe observable requirements, not implementation classes or modifiers.
+Map each applicable row to the screens, scenarios, flows, and stable requirement
+IDs in section 4. "Preserve existing accessibility" or reuse of a shared component
+does not replace feature-specific acceptance criteria.
+
+| Area | Feature-specific requirements to capture | Scenario / screen / flow and requirement IDs |
+|---|---|---|
+| TalkBack | [Logical forward/backward reading order; true headings; localized names, roles, states, and required announcements on focused nodes; nonduplicated semantics; full accessible dynamic values; actual Links navigation where links exist.] | [S1; SCREEN-1; FLOW-1; REQ-ID] |
+| Keyboard / D-pad | [Reach every control from screen entry without touch or prior navigation in another mode; logical focus order, visible focus, activation, cancellation/exit, and return behavior.] | [Applicable IDs] |
+| Large text and layout | [Readable, reachable instructions and actions at large font/display size, short viewports, landscape, and light/dark themes; reflow without clipping required content.] | [Applicable IDs] |
+| Touch targets | [All interactive controls retain at least 48dp by 48dp targets, including Back/Close and secondary actions.] | [Applicable IDs] |
+| Other applicable interactions | [Accessible errors, loading/selection changes, destructive confirmations, or non-drag alternatives; mark individual concerns N/A with a reason.] | [Applicable IDs] |
+
+Cover each supported entry point and applicable success, error, cancellation,
+retry, restoration/rotation, and feature-on/off path. Distinguish app-owned
+behavior from external system/service UI; record required handoff/return checks
+without inventing external guarantees.
+
+#### Acceptance ownership and evidence
+
+| Requirement / scenario IDs | Runtime check and configurations | Test owner / reviewer | Evidence location and status / gap |
+|---|---|---|---|
+| [Applicable IDs] | [Entry steps, actions, expected results; device/Android, theme/font/display settings, feature/cohort configuration, TalkBack or keyboard setup.] | [Confirmed people/team, or Unknown] | [Planned evidence location; Passed with evidence / Unverified / Blocked with reason and follow-up owner / N/A with rationale.] |
+
+Plan real-app TalkBack verification and separate keyboard-only verification from
+screen entry. Record the tested build/commit, device/emulator and Android version,
+TalkBack version/settings or keyboard/input setup, steps, and observed outcomes
+with reviewable evidence. Reuse valid evidence only when its revision and scenario
+coverage apply. Keep private recordings and sensitive values in authorized locations.
+
+Compilation, screenshots, semantics assertions, navigation tests, and tests that
+force focus onto a control are supporting evidence, not proof of end-to-end
+accessibility. Runtime evidence may be planned and Unverified during requirements
+authoring; missing device/service access must be recorded as a gap, not a pass.
+Carry these requirements, owners, and evidence statuses into the developer design
+and PBI acceptance matrix. Document approval does not establish accessibility
+acceptance or rollout approval. Record any accepted deferral's decision owner,
+rationale, tracking item, and release consequence; do not count it as passed.
+
 ## 4. Requirements and acceptance criteria
 
 Use **MUST** for release-blocking requirements and **SHOULD** for desired behavior.
@@ -139,6 +194,8 @@ Give each requirement a stable ID so the design and tests can reference it.
 For user-visible behavior, reference the scenario/flow IDs and relevant UX source
 frames or an explicit owner decision. Include intermediate routing and terminal
 state expectations, not only the final happy-path screen.
+Include applicable accessibility requirements from section 3.6 with measurable
+acceptance criteria and traceability to their scenarios and evidence plan.
 
 | ID | Priority | Requirement | Acceptance criterion | Source |
 |---|---|---|---|---|

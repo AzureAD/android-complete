@@ -72,6 +72,64 @@ named follow-up owners. No production data while disabled is expected. Separate
 document review from approved enabled-E2E query validation and release approval;
 do not require broad production activation to complete the documentation PBI.
 
+### Accessibility design (required)
+
+Retain an **Accessibility design** section in every spec, including when the
+configured template lacks it. For new or changed Authenticator UI, map the stable
+requirement IDs from `docs/Templates/requirements-template.md` section 3.6 and
+section 4 to concrete design decisions. Requirements define what must be observed;
+this section explains how the chosen solution achieves it. For features without
+affected Authenticator UI, retain the section and mark it N/A with a reason.
+
+Use Authenticator's `.github/skills/android-ui-development/SKILL.md` and
+`.github/skills/android-ui-development/references/accessibility.md` in the owning
+checkout as mandatory baselines. Record missing access as an evidence gap.
+Resolve only ambiguous feature-specific behavior with the owner; do not reconfirm
+established standards as optional choices or invent missing requirements.
+
+| Requirement / scenario / flow IDs | Affected screens and states | Design decision and rationale | Verification IDs |
+|---|---|---|---|
+| [Stable IDs from requirements] | [Screen IDs, entry points, transitions, and state variants] | [How the chosen solution satisfies acceptance; existing behavior to preserve or required delta] | [Checks in Testing strategy] |
+
+Cover the following areas with feature-specific decisions, or an individual N/A
+and rationale:
+- **TalkBack**: localized names, roles, states, headings and dynamic values;
+  nonduplicated semantics; forward/backward reading order; focus placement,
+  announcements and restoration across transitions.
+- **Keyboard / D-pad**: reachability from screen entry without touch or prior
+  navigation in another mode, focus order and visible focus, activation and exit.
+- **Text scaling / layout**: reflow and reachable content/actions at large
+  font/display sizes, short viewports, landscape, and light/dark themes.
+- **Touch targets**: at least 48dp by 48dp for every interactive control,
+  including Back/Close and secondary actions.
+- **Contrast / non-color cues**: baseline-compliant contrast and perceivable
+  labels, states and errors that do not rely on color alone.
+
+Map applicable loading, error, success, cancellation, Back/Close, handoff/return,
+retry/re-entry and restoration/rotation states across the whole multi-screen flow,
+including feature-on/off paths. Distinguish app-owned behavior from external UI:
+specify app handoff/return checks without inventing external guarantees. For reused
+screens/components, cite the inspected revision and explain how their behavior
+satisfies each feature-specific requirement and transition; reuse alone is not
+justification or runtime evidence.
+
+In **Testing strategy**, include a verification matrix referenced by this section:
+
+| Verification ID / requirement IDs | Entry steps, actions and expected results | Build / device / Android and configuration | Test owner / reviewer | Evidence location and status / gap |
+|---|---|---|---|---|
+| [CHECK-1; stable IDs] | [Real-app TalkBack and separate keyboard-only checks from entry] | [Build/commit, device/emulator, Android, theme/font/display, feature/cohort, TalkBack version/settings or input setup; Unknown if not yet tested] | [Confirmed owner or Unknown] | [Planned location; Passed with evidence / Unverified / Blocked with reason and follow-up owner / N/A with rationale] |
+
+Plan representative multi-screen checks, not just isolated controls. Supporting
+screenshots, compilation, semantics assertions or forced-focus tests do not prove
+runtime accessibility. Preserve requirements' evidence statuses and gaps; require
+revision/scenario coverage before reusing evidence and keep sensitive recordings
+in authorized locations. Record missing applicable coverage as a blocking design
+question, not N/A. Runtime evidence may remain planned/Unverified during design.
+Carry owners, checks and gaps into PBI acceptance; reference this matrix from
+**Rollout plan** instead of duplicating it. Record accepted deferrals with decision
+owner, rationale, tracking item and release consequence. Design approval never
+establishes runtime accessibility acceptance or rollout approval.
+
 ## Workflow
 
 ### Step 1: Understand the Feature
@@ -120,6 +178,12 @@ Write the design knowing a coding agent will implement it. Be explicit about:
 - Integration points with other modules
 
 ### Step 5: Present Design for Review
+
+Assess the Accessibility design section before handoff and after revisions.
+Check every applicable requirement, screen/state and verification mapping, including
+reused components and justified non-UI/N/A cases. Missing applicable design coverage
+blocks readiness; planned runtime evidence must remain explicitly Unverified rather
+than being treated as a pass.
 
 After writing, **STOP and present choices** using `askQuestion`:
 

@@ -41,6 +41,13 @@ After installing, configure the plugin for your project:
 
 This creates `.github/orchestrator-config.json` in your workspace. Commit it to share with your team.
 
+The bundled [`.mcp.json`](.mcp.json) mirrors android-complete's shared MCP
+configuration, including the IdentityDivision ADO default. See the
+[repository setup requirements](https://github.com/AzureAD/android-complete#shared-mcp-configuration) for Agency
+adapters, authentication, and client discovery. When distributing this plugin to
+another organization, configure its bundled ADO server as well as the workspace
+configuration; the setup wizard does not rewrite an installed plugin's files.
+
 ## Quick Start
 
 After setup, describe a feature to start the pipeline:

@@ -22,7 +22,7 @@ export const sections = Object.freeze([
     "problemAndScope", "requirements", "architectureAndDataControlFlow",
     "alternativesAndDecision", "componentsInterfacesCompatibility",
     "stateFailuresRecoveryReversibility", "securityPrivacyPerformance",
-    "telemetryAndSuccessCriteria", "testsAndEvals", "dependenciesAndOpenDecisions",
+    "telemetryAndSuccessCriteria", "accessibility", "testsAndEvals", "dependenciesAndOpenDecisions",
     "preMortemAndOperationalReadiness",
     "featureFlagsAndIsolation",
 ]);
@@ -31,7 +31,7 @@ export const rubric = Object.freeze([
     "completeScenarioTraces", "changeNecessityAndCounterevidence",
     "completeRequirementsTraceability", "architectureAndCompatibility",
     "failureRecoveryAndReversibility", "securityPrivacyAndPerformance",
-    "measurableTelemetryAndSuccess", "testsEvalsAndDependencies",
+    "measurableTelemetryAndSuccess", "accessibilityDesignAndVerification", "testsEvalsAndDependencies",
     "preMortemAndReleaseGates",
     "defaultOffFeatureIsolation",
 ]);
@@ -338,7 +338,7 @@ export async function runDesignFeature(ctx) {
     sourceManifest = JSON.parse(JSON.stringify(ctx.args.sourceManifest));
     const input = JSON.parse(JSON.stringify(ctx.args));
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v9-${digest(input)}`;
+    const prefix = `design-feature-v10-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },
@@ -366,6 +366,14 @@ are already implemented. Name planned/unreachable future routes as deltas, not m
 baseline evidence. For externally owned illustrative UI, verify the app handoff and
 return contract; do not claim to verify an unspecified server challenge sequence.
 For non-executable requirements, trace the applicable configuration/contract to its observable effect.
+For affected Android UI, inspect the owning app's approved accessibility guidance and reused
+components at sourceManifest pins; for Authenticator, include android-ui-development and its
+accessibility reference when relevant. Record source-linked baseline semantics, focus/navigation
+and layout behavior for affected screens/states, not a claim of runtime accessibility conformance.
+Inspect supplied requirements-template sections 3.6/4 and scenario/screen/flow IDs when available;
+preserve approved requirements and record missing feature-specific decisions as owned unknowns.
+Missing executed TalkBack/keyboard evidence is an expected later testing gap, not evidence that
+the baseline source cannot be understood. Distinguish design-blocking uncertainty from release checks.
 Unresolved paths must be marked unresolved and block authoring, never be invented.
 Inspect only the sourceManifest revisions (pinned local snapshots or authenticated remote reads);
 verify each pin in sourceVerification. Report any relevant source omitted from the manifest.
@@ -464,6 +472,33 @@ authoring/review child PBI or reuse a suitable existing item and add reciprocal 
 Mark it documentation/review with approved post-implementation agent authoring and named human review;
 copilot-agent-ready applies only to ready agent-authoring scope/inputs, never human-review-only follow-ups.
 Do not create/update items, dispatch an agent, publish the future pre-mortem or claim it is accepted.
+Accessibility design: retain the accessibility section for every feature. State applicability;
+if no UI is affected, use justified N/A with a reason, never omit the section. For new or changed
+Android UI (including reused screens, entry points and navigation), map approved requirement IDs
+and scenario/screen/flow IDs to concrete design decisions and testsAndEvals verification.
+Keep approved requirements unchanged; missing product decisions remain owned open questions,
+with design-blocking decisions in blockingUnknowns, not invented requirements.
+Use source-linked approved platform/team guidance; for Authenticator, use its android-ui-development
+accessibility baseline. Established standards are defaults, not optional product choices:
+include at least 48dp by 48dp Android interactive touch targets, not invented product-specific limits.
+Cover localized names/roles/states, true headings/links and full dynamic values, nonduplicated
+TalkBack reading order/announcements, focus entry/order/restoration across screens/dialogs,
+keyboard-only/D-pad reachability without touch or forced focus, visible focus and activation/exit,
+large font/display scaling and reflow across applicable viewport/orientation/theme configurations,
+contrast and non-color cues. Map success, loading, error, retry, cancellation, return/re-entry,
+restoration/rotation and feature-on/off states; distinguish app-owned UI from external handoff/return.
+Explain reused versus new behavior per scenario; shared-component reuse or "preserve accessibility"
+alone is not an acceptance case. Individually justify any inapplicable area.
+In testsAndEvals, carry requirement/scenario IDs, measurable expected outcomes, testing/review owner,
+planned evidence location, build/commit, device/Android, TalkBack/input and layout configurations,
+steps and outcomes, and explicit Passed-with-evidence, Unverified, Blocked or justified N/A status.
+Plan real-app TalkBack and separate keyboard-only verification from screen entry; runtime evidence
+may remain planned and Unverified at design approval. Compilation, screenshots, semantics assertions,
+navigation tests and forced-focus tests are supporting evidence, not runtime acceptance.
+Record missing access/evidence and follow-up owners; bind later execution/sign-off to feature testing
+PBIs and applicable release prerequisites in stateFailuresRecoveryReversibility/dependenciesAndOpenDecisions.
+Deferrals need decision owner, rationale, tracking and release consequence, never a false pass.
+Design approval is not runtime accessibility acceptance or rollout approval.
 Bind evidenceDigest to the supplied digest, including all validated reviewer discoveries.
 The original evidence remains provenance, not a guarantee that its claims survived review.
 Use new reference IDs from reviewer discoveries in repaired traceability and counterevidence.
@@ -494,6 +529,17 @@ do not replace comprehensive implementation contracts with a short summary.`;
 Apply the fixed rubric: ${rubric.join(", ")}. Check every criterion and every approved requirement,
 source currency/conflicts, alternatives, open decisions, measurable targets, Android IPC/security
 boundaries, OneAuth ownership and backwards compatibility. Do not edit the design or requirements.
+For accessibilityDesignAndVerification, assess the mandatory accessibility section against affected
+UI, approved requirements/IDs, owning guidance, screen/state coverage and testsAndEvals.
+Require concrete semantics, TalkBack/focus, keyboard-only, scaling/reflow, target-size and contrast/
+non-color decisions, per-scenario reuse justification and owned expected-outcome/evidence plans.
+Reject blanket "preserve existing accessibility", unjustified N/A and missing applicable coverage
+as findings; design-blocking product uncertainty remains owned and blocks readiness.
+Require real-app TalkBack and separate keyboard-only checks planned from screen entry, plus later
+testing/review owners and release consequences. Planned or unavailable evidence stays Unverified or Blocked,
+not Passed; source review, compilation, screenshots and forced-focus tests do not prove runtime acceptance.
+Do not block design authorship merely because planned runtime checks have not executed.
+Reject claims that design approval or documentation completion certifies accessibility or permits rollout.
 Independently read pinned sources and challenge EACH change's necessity, including claims
 that a callback/error/terminal outcome is missing. Follow the complete trigger-to-terminal chain,
 including indirect observers and result/completion handling. Actively seek counterevidence outside

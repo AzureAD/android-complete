@@ -448,8 +448,9 @@ test("owned future mapping gaps and absent production data do not require activa
     assert.match(ctx.calls[2].prompt.split("\nDATA:\n")[0], /not rollout approval/);
 });
 
-test("post-implementation authoring handoff does not reuse v5-v8 design-time pre-mortem outputs", async () => {
+test("combined accessibility and post-implementation handoff does not reuse v5-v9 outputs", async () => {
     const legacyDesign = design();
+    delete legacyDesign.sections.accessibility;
     delete legacyDesign.sections.preMortemAndOperationalReadiness;
     delete legacyDesign.sections.featureFlagsAndIsolation;
     delete legacyDesign.featureFlags;
@@ -460,10 +461,11 @@ test("post-implementation authoring handoff does not reuse v5-v8 design-time pre
     legacyReview.criteria = legacyReview.criteria.filter((criterion) => criterion.id !== "preMortemAndReleaseGates");
     const ctx = context([evidence(), design(), review()]);
     const journal = new Map();
-    for (const version of ["v5", "v6", "v7", "v8"]) {
+    for (const version of ["v5", "v6", "v7", "v8", "v9"]) {
         const prefix = `design-feature-${version}-${digest(ctx.args)}`;
-        const oldDesign = version === "v8" ? design() : legacyDesign;
-        const oldReview = version === "v8" ? review(oldDesign) : legacyReview;
+        const oldDesign = ["v8", "v9"].includes(version) ? design() : legacyDesign;
+        delete oldDesign.sections.accessibility;
+        const oldReview = ["v8", "v9"].includes(version) ? review(oldDesign) : legacyReview;
         journal.set(`${prefix}-evidence`, evidence());
         journal.set(`${prefix}-${digest(evidence())}-design`, oldDesign);
         journal.set(`${prefix}-${digest(evidence())}-independent-review-0-${digest(oldDesign)}-${digest([])}`, oldReview);
@@ -476,8 +478,165 @@ test("post-implementation authoring handoff does not reuse v5-v8 design-time pre
     const packet = await runDesignFeature(ctx);
     assert.equal(packet.recommendation, "GO to Planning");
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v9-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v10-")));
     assert.ok(packet.design.sections.preMortemAndOperationalReadiness);
+    assert.ok(packet.design.sections.accessibility);
+});
+
+test("accessibility is a required design section and omission is repaired before review", async () => {
+    for (const value of [undefined, "", " "]) {
+        const incomplete = design();
+        if (value === undefined) delete incomplete.sections.accessibility;
+        else incomplete.sections.accessibility = value;
+        assert.match(validateDesign(incomplete, stage0(), evidence()).join(" "), /Missing design section: accessibility/);
+    }
+    const incomplete = design();
+    delete incomplete.sections.accessibility;
+    const ctx = context([evidence(), incomplete, design(), review()]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(ctx.calls[2].options.label, "Design revision");
+    for (const index of [1, 2]) {
+        assert.ok(ctx.calls[index].options.schema.properties.sections.required.includes("accessibility"));
+    }
+});
+
+function accessibilityFixture() {
+    const s = stage0();
+    s.requirements[0].text = "Keep the prompt and retry screens accessible during navigation, failure and return.";
+    const e = evidence();
+    e.scenarioTraces[0].scenario = "Prompt to retry screen and back";
+    e.scenarioTraces[0].steps = [
+        { behavior: "Prompt exposes its heading and Continue action.", referenceIds: ["E1"] },
+        { behavior: "Loading disables Continue; failure presents retry actions.", referenceIds: ["E1"] },
+        { behavior: "Cancellation returns to the prompt and restores its focus.", referenceIds: ["E1"] },
+    ];
+    const d = design();
+    d.evidenceDigest = digest(e);
+    d.sections.accessibility = `Applicable: changed Android UI, R1; SCREEN-PROMPT and SCREEN-RETRY.
+Reuse the existing heading, localized action names/roles/states and focus restoration.
+TalkBack reads the prompt before Continue and announces loading/error once; Back restores entry focus.
+Keyboard-only entry reaches Continue, Retry and Back without touch or forced focus, with visible focus.
+Large text/display scaling reflows both screens without clipping; all interactive targets are 48dp by 48dp.
+Errors have text/non-color cues and contrast follows approved platform guidance.
+Cover success, loading, error, retry, cancellation, return and restoration states on both screens.
+R1 runtime checks: QA owner; private evidence location; Unverified, planned for the feature testing PBI.
+Record build/commit, device/Android, TalkBack/input, font/display/theme configuration, steps and outcomes.
+Execute real-app TalkBack and separate keyboard-only checks before applicable release acceptance.
+Compilation and semantics/navigation assertions are supporting evidence, not runtime acceptance.`;
+    d.traceability[0].sectionIds = ["accessibility", "testsAndEvals"];
+    d.traceability[0].verification = "QA executes R1 TalkBack and separate keyboard-only checks on both screens; evidence planned.";
+    d.changes[0].sectionIds = ["accessibility", "testsAndEvals"];
+    return { s, e, d };
+}
+
+test("multi-screen UI design carries accessibility traceability and planned evidence through the real schemas", async () => {
+    const { s, e, d } = accessibilityFixture();
+    const ctx = context([e, d, review(d)], s);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.humanApproval, "pending");
+    assert.deepEqual(packet.stage0.requirements, s.requirements);
+    assert.deepEqual(packet.design.traceability, d.traceability);
+    assert.equal(packet.design.sections.accessibility, d.sections.accessibility);
+    assert.ok(ctx.calls[2].options.schema.properties.criteria.items.properties.id.enum.includes("accessibilityDesignAndVerification"));
+    assert.match(ctx.calls[0].prompt, /owning.*accessibility guidance/);
+    assert.match(ctx.calls[1].prompt, /48dp by 48dp/);
+    assert.match(ctx.calls[1].prompt, /TalkBack.*keyboard-only/);
+    assert.match(ctx.calls[2].prompt, /missing applicable coverage/);
+    assert.match(ctx.calls[2].prompt, /Unverified.*Blocked/);
+});
+
+test("omitted accessibility review criterion fails closed even when all other checks pass", async () => {
+    const r = review();
+    r.criteria = r.criteria.filter((c) => c.id !== "accessibilityDesignAndVerification");
+    const ctx = context([evidence(), design(), r]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "NO-GO");
+    assert.equal(packet.reviewReady, false);
+    assert.equal(ctx.calls.length, 3);
+});
+
+test("runtime UI retains accessibility, default-off flags and post-implementation pre-mortem gates together", async () => {
+    const { s, e, d } = accessibilityFixture();
+    const flagged = runtimeDesign();
+    d.featureFlags = flagged.featureFlags;
+    d.changes = flagged.changes;
+    d.sections.featureFlagsAndIsolation = flagged.sections.featureFlagsAndIsolation;
+    const ctx = context([e, d, review(d)], s);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.humanApproval, "pending");
+    assert.equal(packet.design.sections.accessibility, d.sections.accessibility);
+    assert.deepEqual(packet.design.featureFlags, flagged.featureFlags);
+    assert.match(ctx.calls[1].prompt, /only after all feature implementation is complete/);
+    for (const criterionId of [
+        "accessibilityDesignAndVerification", "defaultOffFeatureIsolation", "preMortemAndReleaseGates",
+    ]) {
+        assert.ok(ctx.calls[2].options.schema.properties.criteria.items.properties.id.enum.includes(criterionId));
+        const incomplete = review(d);
+        incomplete.criteria = incomplete.criteria.filter((criterion) => criterion.id !== criterionId);
+        assert.equal(validateReview(incomplete, d, e), false);
+    }
+});
+
+test("missing applicable keyboard/state coverage cannot pass and every revision retains the accessibility contract", async () => {
+    const { s, e, d } = accessibilityFixture();
+    d.sections.accessibility = "Applicable: R1. Reuse accessible shared components; keyboard and return-state coverage unspecified.";
+    const failed = review(d);
+    failed.criteria.find((c) => c.id === "accessibilityDesignAndVerification").pass = false;
+    failed.findings = [{
+        id: "A11Y-1", rubricId: "accessibilityDesignAndVerification", severity: "major",
+        location: "accessibility", evidence: "R1 omits keyboard entry and per-state focus decisions.",
+        requiredChange: "Map keyboard and return-state behavior to R1 and owned verification.",
+    }];
+    const ctx = context([e, d, failed, d, failed, d, failed], s);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "NO-GO");
+    assert.equal(packet.reviewReady, false);
+    assert.equal(packet.fixIterations, 2);
+    assert.equal(ctx.calls.length, 7);
+    for (const index of [3, 5]) {
+        assert.match(ctx.calls[index].prompt, /Accessibility design/);
+        assert.match(ctx.calls[index].prompt, /justified N\/A/);
+        assert.match(ctx.calls[index].prompt, /not runtime accessibility acceptance or rollout approval/);
+    }
+});
+
+test("non-UI design retains justified N/A without requiring runtime activation or invented UI requirements", async () => {
+    const d = design();
+    d.sections.accessibility = "N/A: R1 preserves a background library contract; no screens, UI states or navigation are affected.";
+    const ctx = context([evidence(), d, review(d)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.deepEqual(packet.stage0, stage0());
+    assert.equal(packet.humanApproval, "pending");
+    assert.match(ctx.calls[1].prompt, /N\/A.*reason/);
+    assert.match(ctx.calls[1].prompt, /planned.*Unverified/);
+    assert.match(ctx.calls[1].prompt, /requirements.*unchanged/);
+});
+
+test("changed accessibility schema and rubric never replay pre-accessibility v5 journal output", async () => {
+    const legacy = design();
+    delete legacy.sections.accessibility;
+    const legacyReview = review(legacy);
+    legacyReview.criteria = legacyReview.criteria.filter((c) => c.id !== "accessibilityDesignAndVerification");
+    const ctx = context([evidence(), design(), review()]);
+    const prefix = `design-feature-v5-${digest(ctx.args)}`;
+    const journal = new Map([
+        [`${prefix}-evidence`, evidence()],
+        [`${prefix}-${digest(evidence())}-design`, legacy],
+        [`${prefix}-${digest(evidence())}-independent-review-0-${digest(legacy)}-${digest([])}`, legacyReview],
+    ]);
+    ctx.step = async (key, producer) => {
+        ctx.keys.push(key);
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    assert.equal((await runDesignFeature(ctx)).recommendation, "GO to Planning");
+    assert.equal(ctx.calls.length, 3);
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v10-")));
 });
 
 test("ordinary agent failures explicitly fail closed at each stage", async () => {
@@ -1004,7 +1163,7 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v9-/);
+    assert.match(initial.keys[0], /^design-feature-v10-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
     changed.args.sourceManifest[0].revision = newerSourceRevision;

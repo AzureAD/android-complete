@@ -29,6 +29,11 @@ Instruct it to return **comprehensive, detailed output** — your design depends
 - Testing strategy
 - Cross-repo impact
 
+Follow the `design-author` skill's required **Accessibility design** section,
+including with a configured template: map requirements section 3.6 IDs to affected
+screens/states, concrete decisions, and Testing strategy owners/evidence/gaps.
+Retain a reasoned N/A for features without affected Authenticator UI.
+
 Save to the configured `design.docsPath` location.
 
 **Step 3**: Present the design using `askQuestion`:

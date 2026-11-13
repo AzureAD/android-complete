@@ -1,27 +1,74 @@
 {
-  "inputs": [
-    {
-      "id": "ado_org",
-      "type": "promptString",
-      "description": "Azure DevOps organization name ONLY — do NOT enter a URL (e.g., 'IdentityDivision' not 'https://dev.azure.com/IdentityDivision')",
-      "default": "YOUR_ORG"
-    }
-  ],
-  "servers": {
-    "ado": {
+  "mcpServers": {
+    "mcp-ado-identitydivision": {
       "type": "stdio",
       "command": "npx",
       "args": [
         "-y",
         "@azure-devops/mcp",
-        "${input:ado_org}",
+        "IdentityDivision",
+        "--authentication",
+        "azcli",
         "-d",
         "core",
         "work",
         "work-items",
         "repositories",
         "pipelines"
-      ]
+      ],
+      "tools": ["*"]
+    },
+    "azure-mcp-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"],
+      "tools": ["*"]
+    },
+    "workiq": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/workiq", "mcp"],
+      "tools": ["*"]
+    },
+    "s360-breeze-mcp": {
+      "type": "http",
+      "url": "https://mcp.vnext.s360.msftcloudes.com/",
+      "tools": ["*"]
+    },
+    "android-dri-search": {
+      "type": "http",
+      "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp",
+      "tools": ["*"]
+    },
+    "es-chat": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "es-chat"],
+      "tools": ["*"]
+    },
+    "m365-user": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "m365-user"],
+      "tools": ["*"]
+    },
+    "kusto": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "kusto"],
+      "tools": ["*"]
+    },
+    "bluebird": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "bluebird", "--organization", "IdentityDivision", "--project", "Engineering"],
+      "tools": ["*"]
+    },
+    "icm": {
+      "type": "stdio",
+      "command": "agency",
+      "args": ["mcp", "icm"],
+      "tools": ["*"]
     }
   }
 }

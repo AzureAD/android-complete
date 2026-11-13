@@ -31,6 +31,9 @@ Read the skill file at `.github/skills/design-author/SKILL.md` and follow its wo
   needs a reasoned exemption, never a size/repository exemption. Carry the exact
   contract into PBI acceptance criteria. Do not inspect/change live production
   configuration; design approval is not code verification or activation permission.
+- Retain the design-author skill's required **Accessibility design** section even
+  if the external template omits it; map requirements section 3.6 IDs to decisions
+  and Testing strategy evidence, or retain a justified non-UI/N/A.
 - Include: Problem description, Requirements, 2+ Solution Options with pseudo code and pros/cons, Recommended Solution, API surface, Data flow, Feature flag, Telemetry, Testing strategy, Cross-repo impact
 - Save the spec to `design-docs/[Android] <Feature Name>/<spec-name>.md`
 - **After writing the spec, STOP and present 5 explicit choices** using the `askQuestion`
