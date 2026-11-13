@@ -55,17 +55,25 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                         if (filesSig === lastFilesSig) continue;
                         lastFilesSig = filesSig;
                         const itemTag = typeof targetObj.id === "string" && targetObj.id ? targetObj.id : "PBI-1";
-                        syntheticImplTurns.push({
-                            id: `${exec.id}:journal:coder:${itemTag}:${cIdx}`,
-                            kind: "agent_turn",
-                            timestamp: exec.updatedAt,
-                            role: "software-factory-coder",
-                            label: `Factory:coder:${itemTag}:${cIdx}`,
-                            target: "software-factory-coder",
-                            status: "completed",
-                            outputPreview: JSON.stringify(targetObj).slice(0, 30_000),
-                        });
-                        cIdx++;
+                        if (syntheticImplTurns.length > 0 && crIdx < cIdx) {
+                            syntheticImplTurns[syntheticImplTurns.length - 1] = {
+                                ...syntheticImplTurns[syntheticImplTurns.length - 1]!,
+                                timestamp: exec.updatedAt,
+                                outputPreview: JSON.stringify(targetObj).slice(0, 30_000),
+                            };
+                        } else {
+                            syntheticImplTurns.push({
+                                id: `${exec.id}:journal:coder:${itemTag}:${cIdx}`,
+                                kind: "agent_turn",
+                                timestamp: exec.updatedAt,
+                                role: "software-factory-coder",
+                                label: `Factory:coder:${itemTag}:${cIdx}`,
+                                target: "software-factory-coder",
+                                status: "completed",
+                                outputPreview: JSON.stringify(targetObj).slice(0, 30_000),
+                            });
+                            cIdx++;
+                        }
                     } else if (typeof parsed.pass === "boolean" && Array.isArray(parsed.criteria) && Array.isArray(parsed.findings)) {
                         const itemTag = "PBI-1";
                         syntheticImplTurns.push({

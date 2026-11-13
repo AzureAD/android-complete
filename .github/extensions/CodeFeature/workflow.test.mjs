@@ -2855,3 +2855,135 @@ test("normalizeImplementationResponse applies surgical edits with CRLF preservat
         rmSync(tmp, { recursive: true, force: true });
     }
 });
+
+test("prepareCodeFeature chunks >6 hosted planned files into bounded production and test batches", async () => {
+    const { prepareCodeFeature } = await import("./workflow.mjs");
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "code-feature-chunked-batches-"));
+    try {
+        const repoDir = path.join(tmp, "common");
+        mkdirSync(path.join(repoDir, "src", "main"), { recursive: true });
+        writeFileSync(path.join(repoDir, "src", "main", "Existing.java"), "class Existing {\n    int v = 1;\n}\n", "utf8");
+        execFileSync("git", ["init", "--quiet", repoDir]);
+        execFileSync("git", ["-C", repoDir, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", repoDir, "config", "user.name", "Test"]);
+        execFileSync("git", ["-C", repoDir, "add", "."]);
+        execFileSync("git", ["-C", repoDir, "commit", "--quiet", "-m", "init"]);
+        execFileSync("git", ["-C", repoDir, "update-ref", "refs/remotes/origin/dev", "HEAD"]);
+        const plannedFiles = [
+            "src/main/Existing.java",
+            "src/main/New1.java",
+            "src/main/New2.java",
+            "src/main/New3.java",
+            "src/main/New4.java",
+            "src/test/FirstTest.java",
+            "src/test/SecondTest.java",
+            "src/test/ThirdTest.java",
+        ];
+        const baseTask = task();
+        const hostedTask = {
+            ...baseTask,
+            designSummary: JSON.stringify({ item: { id: baseTask.targets[0].id, files: plannedFiles } }),
+            targets: [{ ...baseTask.targets[0], localPath: "common", verificationCommands: [] }],
+        };
+        const labels = [];
+        let appliedFiles = [];
+        const backups = new Map();
+        const packet = await prepareCodeFeature(
+            {
+                runId: "chunk-test",
+                args: {
+                    task: hostedTask,
+                    options: {
+                        workspaceRoot: tmp,
+                        createPullRequests: false,
+                        observePullRequests: false,
+                        applyToWorkspace: true,
+                        allowLocalOnly: true,
+                        maxFixIterations: 1,
+                        slimSchemas: false,
+                        pauseOnBlocker: false,
+                        verifyPrerequisites: false,
+                        iterativeIntake: false,
+                        requireBriefApproval: false,
+                        challengeBrief: false,
+                    },
+                },
+                step: async (_key, fn) => fn(),
+                phase: () => {},
+                log: () => {},
+                agent: async (prompt, opts) => {
+                    labels.push(opts.label);
+                    const data = JSON.parse(prompt.split("\nDATA:\n").at(-1));
+                    if (opts.label === "Repository evidence") {
+                        assert.deepEqual(data.plannedFiles, plannedFiles);
+                        return {
+                            approvalVerification: { verified: true, revision: hostedTask.revision, reference: hostedTask.approval.reference, rationale: "ok" },
+                            references: [{ id: "R1", repository: "common", revision: "abc", path: "src/main/Existing.java", locator: "L1-L3" }],
+                            facts: [{ statement: "Existing baseline.", referenceIds: ["R1"] }],
+                            conflicts: [], assumptions: [], unknowns: [], blockingUnknowns: [],
+                        };
+                    }
+                    if (opts.label.startsWith("Code builder")) {
+                        const batchFiles = data.batchFiles.map((fp) =>
+                            fp === "src/main/Existing.java"
+                                ? { path: fp, action: "modify", content: "", edits: [{ oldText: "int v = 1;", newText: "int v = 2;" }], summary: "Bump v" }
+                                : { path: fp, action: "create", content: `class ${path.basename(fp, ".java")} {}\n`, edits: [], summary: `Add ${fp}` },
+                        );
+                        return {
+                            taskRevision: hostedTask.revision,
+                            targets: [{
+                                targetId: hostedTask.targets[0].id,
+                                repository: "common",
+                                summary: "Chunked implementation",
+                                files: batchFiles,
+                                testsAddedOrUpdated: data.batchFiles.filter((fp) => fp.includes("/test/")),
+                                verificationCommandsRun: [],
+                                pr: { title: "Title", summary: "Summary", testPlan: "Unit tests", breakingChanges: "None", rolloutAndFlag: "Off" },
+                            }],
+                            traceability: hostedTask.requirements.map((r) => ({
+                                requirementId: r.id,
+                                targetIds: [hostedTask.targets[0].id],
+                                filePaths: ["Existing.java", "New1.java"],
+                                testLocations: ["src/test/FirstTest.java"],
+                                verification: "JUnit",
+                            })),
+                            assumptions: [], openDecisions: [], blockingUnknowns: [],
+                        };
+                    }
+                    return {
+                        criteria: rubric.map((id) => ({ id, pass: true })),
+                        acceptanceCriteria: hostedTask.targets[0].acceptanceCriteria.map((criterion) => ({
+                            targetId: hostedTask.targets[0].id, criterion, passed: true, evidence: "ok",
+                        })),
+                        findings: [],
+                        blockingUnknowns: [],
+                    };
+                },
+            },
+            {
+                verifyLocal: () => ({ ok: true, errors: [], deferredWarnings: [], commandsAttempted: [] }),
+                implementationHost: {
+                    guides: { evidence: ["g1"], builder: ["g2"], reviewer: ["g3"] },
+                    prepareTarget: async () => {},
+                    applyFiles: (_target, files) => {
+                        appliedFiles = files;
+                        applyTargetFiles(repoDir, files, backups);
+                    },
+                    restoreFiles: () => restoreTargetFiles(repoDir, backups),
+                },
+            },
+        );
+        assert.deepEqual(labels, [
+            "Repository evidence",
+            "Code builder (round 1 · production batch 1/1)",
+            "Code builder (round 1 · test batch 1/2)",
+            "Code builder (round 1 · test batch 2/2)",
+            "Independent code reviewer (round 1)",
+        ]);
+        assert.equal(packet.recommendation, "publication-ready");
+        assert.equal(appliedFiles.length, 8);
+        assert.match(appliedFiles.find((f) => f.path === "src/main/Existing.java").content, /int v = 2;/);
+    } finally {
+        rmSync(tmp, { recursive: true, force: true });
+    }
+});

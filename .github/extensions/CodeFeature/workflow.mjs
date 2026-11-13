@@ -3105,6 +3105,27 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
                         }
                     }
                 }
+                if (requireFullOrEditsContent && Array.isArray(actual.testsAddedOrUpdated)) {
+                    for (const f of actual.files) {
+                        if (record(f) && f.action !== "delete" && nonempty(f.path) &&
+                            /(?:Test\.java$|Test\.kt$|Tests\.java$|Tests\.kt$|\/test\/|\/androidTest\/)/i.test(f.path) &&
+                            !actual.testsAddedOrUpdated.includes(f.path)) {
+                            actual.testsAddedOrUpdated.push(f.path);
+                        }
+                    }
+                    if (Array.isArray(rawImpl.traceability)) {
+                        const knownPaths = actual.files.map((f) => f?.path).filter(nonempty);
+                        for (const row of rawImpl.traceability) {
+                            if (!record(row) || !Array.isArray(row.filePaths)) continue;
+                            row.filePaths = row.filePaths.map((fp) => {
+                                const clean = String(fp || "").trim().replace(/\\/g, "/");
+                                if (knownPaths.includes(clean)) return clean;
+                                const suffixMatches = knownPaths.filter((kp) => kp.endsWith(`/${clean}`));
+                                return suffixMatches.length === 1 ? suffixMatches[0] : clean;
+                            });
+                        }
+                    }
+                }
             }
             if (record(actual) && (!Array.isArray(actual.files) || actual.files.length === 0) && nonempty(workspaceRoot)) {
                 const repoRoot = path.resolve(workspaceRoot, expectedTarget.localPath || ".");
@@ -4635,14 +4656,31 @@ export async function prepareCodeFeature(ctx, dependencies = {}) {
     }
     const challengeBrief = rawOptions.challengeBrief === true;
 
+    const extractHostedPlannedFiles = () => {
+        if (!implementationHost || useSlimSchemas || !nonempty(task.designSummary)) return [];
+        try {
+            const parsed = JSON.parse(task.designSummary);
+            return Array.isArray(parsed?.item?.files)
+                ? parsed.item.files.filter(nonempty).map((p) => p.trim().replace(/\\/g, "/"))
+                : [];
+        } catch {
+            return [];
+        }
+    };
+    const hostedPlannedFiles = extractHostedPlannedFiles();
+
     for (let intakeRound = 0; intakeRound < maxIntakeRounds; intakeRound++) {
         const evidenceStepKey = intakeRound === 0 ? "evidence" : `evidence-round-${intakeRound}`;
         const evidenceLabel = intakeRound === 0 ? "Repository evidence" : `Repository evidence (round ${intakeRound + 1})`;
         const beforeEvidenceSnaps = captureTargetSnapshots();
+        const hostedEvidenceFastPath = implementationHost && hostedPlannedFiles.length > 0
+            ? `Your domain skill guides are ALREADY preloaded verbatim—do NOT call software_factory_read on .github guide files.
+DATA.plannedFiles lists the exact approved PBI files (${hostedPlannedFiles.length} files). Call software_factory_sources once, then inspect ONLY the existing on-disk files in DATA.plannedFiles (plus any directly referenced base class/test helper if needed) in parallel batches of 6-10 software_factory_read calls per turn—do NOT run broad repository-wide directory/glob crawls.`
+            : `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.`;
         const rawEvidence = await step(evidenceStepKey, () => ask(
             evidenceLabel,
             EVIDENCE_AGENT,
-            `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.
+            `${hostedEvidenceFastPath}
 Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and the target Android repositories (${
                 task.targets.length > 0
                     ? task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")
@@ -4662,7 +4700,13 @@ Infer technical details from the design doc, PBI, clarifications, and existing c
             useSlimSchemas
                 ? slimIntakeSchema
                 : (needsSpecExtraction || intakeRound > 0 ? extractionEvidenceSchema : evidenceSchema),
-            { task, createPullRequests, intakeRound: intakeRound + 1, skillGuides: evidenceGuides },
+            {
+                task,
+                createPullRequests,
+                intakeRound: intakeRound + 1,
+                skillGuides: evidenceGuides,
+                ...(hostedPlannedFiles.length > 0 ? { plannedFiles: hostedPlannedFiles } : {}),
+            },
             rawOptions.evidenceModel,
         ));
         evidence = normalizeEvidenceResponse(rawEvidence, task);
@@ -4913,15 +4957,84 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
 
     phase("Build initial implementation");
     let latestBuildStartedAtMs = Date.now();
-    let latestRawBuilderOutput = await step("build-0", () => ask(
-        "Code builder (round 1)",
-        BUILDER_AGENT,
-        builderTask,
-        builderSchema,
-        { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, executionEnvironments, skillGuides: builderGuides },
-        rawOptions.builderModel,
-    ));
-    implementation = await normalizeBuild(latestRawBuilderOutput, "build-0");
+    let latestRawBuilderOutput = null;
+    if (implementationHost && !useSlimSchemas && hostedPlannedFiles.length > 6) {
+        const isTestPlannedPath = (p) => /(?:Test\.java$|Test\.kt$|Tests\.java$|Tests\.kt$|\/test\/|\/androidTest\/|^test\/|^androidTest\/)/i.test(p);
+        const prodPlanned = hostedPlannedFiles.filter((p) => !isTestPlannedPath(p));
+        const testPlanned = hostedPlannedFiles.filter((p) => isTestPlannedPath(p));
+        const chunkArray = (arr, size) => {
+            const chunks = [];
+            for (let idx = 0; idx < arr.length; idx += size) chunks.push(arr.slice(idx, idx + size));
+            return chunks;
+        };
+        const batches = [
+            ...chunkArray(prodPlanned, 10).map((files, idx, all) => ({
+                kind: "production",
+                label: `Code builder (round 1 · production batch ${idx + 1}/${all.length})`,
+                stepKey: `build-0-prod-${idx}`,
+                batchFiles: files,
+            })),
+            ...chunkArray(testPlanned, 2).map((files, idx, all) => ({
+                kind: "tests",
+                label: `Code builder (round 1 · test batch ${idx + 1}/${all.length})`,
+                stepKey: `build-0-tests-${idx}`,
+                batchFiles: files,
+            })),
+        ];
+        let runningImpl = null;
+        for (let bIdx = 0; bIdx < batches.length; bIdx++) {
+            const batch = batches[bIdx];
+            const isFinalBatch = bIdx === batches.length - 1;
+            const priorTargetFiles = runningImpl?.targets?.[0]?.files || [];
+            const alreadyAuthoredFiles = priorTargetFiles.map((f) =>
+                f.action === "create"
+                    ? { path: f.path, action: f.action, summary: f.summary, content: f.content }
+                    : { path: f.path, action: f.action, summary: f.summary },
+            );
+            const batchPrompt = `${builderTask}
+CHUNKED GENERATION BATCH (${bIdx + 1}/${batches.length} — ${batch.kind.toUpperCase()}):
+- To prevent single-turn HTTP streaming timeouts on large PBIs, emit ONLY the file entries for DATA.batchFiles (${batch.batchFiles.join(", ")}) in targets[0].files during this step!
+- Do NOT include files outside DATA.batchFiles in targets[0].files unless a tiny helper/wiring edit is strictly required for compilation; all files from earlier batches (DATA.alreadyAuthoredFiles) are automatically preserved and merged!
+- DATA.inspectedFiles and DATA.alreadyAuthoredFiles already contain the exact source lines and newly authored production classes—avoid redundant software_factory_read calls unless verifying a missing anchor line for edits[].
+${isFinalBatch
+                ? "- Because this is the FINAL batch, populate complete pr metadata, testsAddedOrUpdated, and full traceability rows covering every requirement ID across all authored production and test files."
+                : "- Non-final batch: provide concise placeholder strings for pr fields and traceability; the final batch will finalize them."}`;
+            const batchRaw = await step(batch.stepKey, () => ask(
+                batch.label,
+                BUILDER_AGENT,
+                batchPrompt,
+                builderSchema,
+                {
+                    round: 1,
+                    batchIndex: bIdx + 1,
+                    totalBatches: batches.length,
+                    batchKind: batch.kind,
+                    batchFiles: batch.batchFiles,
+                    alreadyAuthoredFiles,
+                    maxFixIterations: maxFixes,
+                    task,
+                    evidence,
+                    inspectedFiles,
+                    executionEnvironments,
+                    skillGuides: builderGuides,
+                },
+                rawOptions.builderModel,
+            ));
+            latestRawBuilderOutput = batchRaw;
+            runningImpl = await normalizeBuild(batchRaw, batch.stepKey, runningImpl);
+        }
+        implementation = runningImpl;
+    } else {
+        latestRawBuilderOutput = await step("build-0", () => ask(
+            "Code builder (round 1)",
+            BUILDER_AGENT,
+            builderTask,
+            builderSchema,
+            { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, executionEnvironments, skillGuides: builderGuides },
+            rawOptions.builderModel,
+        ));
+        implementation = await normalizeBuild(latestRawBuilderOutput, "build-0");
+    }
 
     const restoreAll = () => {
         if (!applyToWorkspace) return;
