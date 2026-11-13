@@ -26,14 +26,25 @@ export interface ReaderSession {
     rpc: { tools: Pick<CopilotSession["rpc"]["tools"], "execute" | "initializeAndValidate" | "getCurrentMetadata"> };
 }
 
+const verifiedReaderPipelines = new WeakMap<ReaderSession["rpc"]["tools"], Promise<{ view: "view"; glob: "glob"; grep: "grep" | "rg" }>>();
+
 export async function initializeReaderPipeline(session: ReaderSession) {
-    await session.rpc.tools.initializeAndValidate();
-    const names = new Set((await session.rpc.tools.getCurrentMetadata()).tools?.map((tool) => tool.name));
-    const search = names.has("grep") ? "grep" : names.has("rg") ? "rg" : null;
-    if (!names.has("view") || !names.has("glob") || !search) {
-        throw new FactoryError("worker_tools_unavailable", "This session does not offer the native view/glob/grep tools required by scoped workers. Resolve this blocker before starting further agents.", 503);
-    }
-    return { view: "view", glob: "glob", grep: search };
+    const cached = verifiedReaderPipelines.get(session.rpc.tools);
+    if (cached) return cached;
+    const pending = (async () => {
+        await session.rpc.tools.initializeAndValidate();
+        const names = new Set((await session.rpc.tools.getCurrentMetadata()).tools?.map((tool) => tool.name));
+        const search = names.has("grep") ? "grep" : names.has("rg") ? "rg" : null;
+        if (!names.has("view") || !names.has("glob") || !search) {
+            throw new FactoryError("worker_tools_unavailable", "This session does not offer the native view/glob/grep tools required by scoped workers. Resolve this blocker before starting further agents.", 503);
+        }
+        return { view: "view" as const, glob: "glob" as const, grep: search as "grep" | "rg" };
+    })().catch((error) => {
+        verifiedReaderPipelines.delete(session.rpc.tools);
+        throw error;
+    });
+    verifiedReaderPipelines.set(session.rpc.tools, pending);
+    return pending;
 }
 export const readerToolNames = ["software_factory_read", "software_factory_find", "software_factory_search", "software_factory_sources"];
 export const readerAgent: CustomAgentConfig = {

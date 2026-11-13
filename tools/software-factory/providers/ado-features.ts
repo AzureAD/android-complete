@@ -81,7 +81,12 @@ export class AdoFeatureProvider implements SharedProvider {
     private rememberVerified(target: SharedTarget, revision: number, record: SharedRecord): void {
         const revKey = `${digest(target)}:${revision}`;
         const digestKey = `${digest(target)}:digest:${record.digest}`;
-        if (!this.verified.has(revKey) && this.verified.size >= 6) {
+        const existing = this.verified.get(revKey);
+        if (existing && existing.digest === record.digest && existing.revision === revision) {
+            this.verified.set(digestKey, existing);
+            return;
+        }
+        if (!existing && this.verified.size >= 6) {
             const oldest = this.verified.keys().next().value;
             if (oldest !== undefined) this.verified.delete(oldest);
         }

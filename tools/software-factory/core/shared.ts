@@ -34,6 +34,7 @@ function isResumableError(execution: Execution): boolean {
 export class SharedAuthority {
     private readonly app: Application;
     readonly provider: SharedProvider;
+    private readonly memoryCache = new Map<string, { raw: string; record: SharedRecord }>();
     constructor(app: Application, provider: SharedProvider = new AdoFeatureProvider()) {
         this.app = app;
         this.provider = provider;
@@ -127,17 +128,28 @@ export class SharedAuthority {
 
     cached(featureId: string): SharedRecord | null {
         const row = this.app.registry.connection.prepare("SELECT record_json FROM shared_features WHERE feature_id=?").get(featureId);
-        if (!row) return null;
-        const raw = object(JSON.parse(String(row.record_json)), "Cached shared record");
+        if (!row) {
+            this.memoryCache.delete(featureId);
+            return null;
+        }
+        const rawText = String(row.record_json);
+        const hit = this.memoryCache.get(featureId);
+        if (hit && hit.raw === rawText) {
+            this.provider.seedVerified?.(hit.record);
+            return hit.record;
+        }
+        const raw = object(JSON.parse(rawText), "Cached shared record");
         const snapshot = parseSnapshot(raw.snapshot);
         if (snapshot.feature.id !== featureId || raw.digest !== digest(snapshot) || !Number.isSafeInteger(raw.revision)) throw new FactoryError("shared_corrupt", "Invalid shared cache.", 409);
         const record = { snapshot, digest: String(raw.digest), revision: Number(raw.revision), target: sharedTarget(raw.target) };
+        this.memoryCache.set(featureId, { raw: rawText, record });
         this.provider.seedVerified?.(record);
         return record;
     }
 
     private save(record: SharedRecord): void {
         const serialized = JSON.stringify(record);
+        this.memoryCache.set(record.snapshot.feature.id, { raw: serialized, record });
         const existing = this.app.registry.connection.prepare("SELECT record_json FROM shared_features WHERE feature_id=?").get(record.snapshot.feature.id);
         if (existing && existing.record_json === serialized) return;
         this.app.registry.connection.prepare("INSERT INTO shared_features VALUES (?, ?, ?) ON CONFLICT(feature_id) DO UPDATE SET record_json=excluded.record_json")

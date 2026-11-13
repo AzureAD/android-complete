@@ -40,6 +40,7 @@ export class NativeRuntime {
     private readonly shared?: SharedAuthority;
     private readonly leaseSessions = new Set<string>();
     private readonly heartbeats = new Map<string, number>();
+    private readonly lastUsageObserved = new Map<string, number>();
     private readonly activeControls = new Set<string>();
     private readonly timer: NodeJS.Timeout;
     private started = false;
@@ -407,17 +408,23 @@ export class NativeRuntime {
             }
             for (const feature of this.factory.store.registry.list()) {
                 const state = this.factory.store.state(feature.id);
+                let sharedRecord: ReturnType<NonNullable<typeof this.shared>["cached"]> | undefined;
+                const getSharedRecord = () => {
+                    if (sharedRecord === undefined) sharedRecord = this.shared ? this.shared.cached(feature.id) : null;
+                    return sharedRecord;
+                };
                 for (const execution of state.executions) {
                     const residentOwner = this.factory.store.ownsSession(execution.sessionId, this.ownerToken);
-                    const claimingShared = execution.phase === "Claiming shared execution" ||
-                        Boolean(this.shared?.cached(feature.id) && execution.kind !== "check" &&
-                            this.shared.cached(feature.id)?.snapshot.lock?.id !== execution.id);
-                    if (residentOwner && !claimingShared &&
-                        execution.status === "starting" && !execution.runtimeId && !this.launching.has(execution.id)) {
-                        this.launch(feature.id, execution);
+                    if (residentOwner && execution.status === "starting" && !execution.runtimeId && !this.launching.has(execution.id)) {
+                        const cachedShared = execution.kind !== "check" ? getSharedRecord() : null;
+                        const claimingShared = execution.phase === "Claiming shared execution" ||
+                            Boolean(cachedShared && cachedShared.snapshot.lock?.id !== execution.id);
+                        if (!claimingShared) this.launch(feature.id, execution);
                     }
                     if (residentOwner &&
-                        execution.status === "running" && execution.runtimeId) {
+                        execution.status === "running" && execution.runtimeId &&
+                        nowMs - (this.lastUsageObserved.get(execution.id) ?? 0) >= 5_000) {
+                        this.lastUsageObserved.set(execution.id, nowMs);
                         const session = await this.session(execution);
                         await this.observeUsage(feature.id, execution.id, session, execution.runtimeId);
                     }
