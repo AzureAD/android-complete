@@ -21,30 +21,131 @@ function formatSectionTitle(key: string): string {
         .trim();
 }
 
-function roleDisplayName(role?: string, label?: string): { title: string; badge: string; guideKey?: keyof typeof workerGuidance } {
+function describeGuidanceFile(filePath: string): { title: string; summary: string } {
+    if (filePath.includes("research-standards.md")) {
+        return {
+            title: "Codebase Research Standards",
+            summary: "Requires pinned file-and-line source citations across target and consumer repos; forbids unverified assumptions.",
+        };
+    }
+    if (filePath.includes("design-standards.md")) {
+        return {
+            title: "Android Auth Design Standards",
+            summary: "Enforces the 10-section architecture contract, IPC wire compatibility, telemetry schema, and requirement traceability.",
+        };
+    }
+    if (filePath.includes("review-rubric.md")) {
+        return {
+            title: "Independent Design & Plan Review Rubric",
+            summary: "Adversarial GO/NO-GO checklist auditing Stage 0 fidelity, cross-version IPC safety, concurrency, and testability.",
+        };
+    }
+    if (filePath.includes("planning-standards.md")) {
+        return {
+            title: "Feature Planning & PBI DAG Standards",
+            summary: "Rules for decomposing an approved design into single-repo PBIs, ordered dependency waves, and unit/E2E test targets.",
+        };
+    }
+    if (filePath.includes("coding-standards.md")) {
+        return {
+            title: "Android Auth Coding Standards",
+            summary: "Enforces Kotlin-first conventions, custom Logger privacy rules, structured concurrency, and module boundaries.",
+        };
+    }
+    if (filePath.includes("review-standards.md")) {
+        return {
+            title: "Independent Code Review Standards",
+            summary: "Audits diffs and test results against every PBI acceptance criterion, compatibility invariant, and security rule.",
+        };
+    }
+    if (filePath.includes("copilot-instructions.md")) {
+        return {
+            title: "Workspace Architecture & Multi-Repo Guide",
+            summary: "Defines MSAL/OneAuth → Common IPC → Broker → eSTS flow boundaries and repository ownership.",
+        };
+    }
+    return {
+        title: filePath.split("/").pop() || filePath,
+        summary: "Read-only repository guidance loaded into this specialist's context.",
+    };
+}
+
+function roleDisplayName(role?: string, label?: string): {
+    title: string;
+    badge: string;
+    purpose: string;
+    guideKey?: keyof typeof workerGuidance;
+} {
     const raw = `${role || ""} ${label || ""}`.toLowerCase();
     if (raw.includes("researcher") || raw.includes("evidence") || raw.includes("draft success criteria")) {
-        return { title: "Repository Researcher", badge: "RESEARCH", guideKey: "research" };
+        return {
+            title: "Repository Researcher",
+            badge: "RESEARCH",
+            purpose: "Reads pinned source files across target and consumer repositories to gather verified file/line facts, call flows, and compatibility constraints before authoring.",
+            guideKey: "research",
+        };
     }
     if (raw.includes("design-reviewer") || raw.includes("independent design reviewer") || raw.includes("independent-review")) {
-        return { title: "Independent Design Reviewer", badge: "REVIEWER", guideKey: "review" };
+        return {
+            title: "Independent Design Reviewer",
+            badge: "REVIEWER",
+            purpose: "Adversarially audits the authored specification against repository source code, Stage 0 requirements, and IPC/wire compatibility; blocks approval until zero findings remain.",
+            guideKey: "review",
+        };
     }
-    if (raw.includes("design-author") || raw.includes("design author") || raw.includes("design revision")) {
-        return { title: "Design Author", badge: "BUILDER", guideKey: "design" };
+    if (raw.includes("design revision")) {
+        return {
+            title: "Design Author (Revision)",
+            badge: "BUILDER",
+            purpose: "Updates the technical specification, sequence flows, and traceability matrix to resolve every blocker/major/minor finding raised by the Independent Design Reviewer.",
+            guideKey: "design",
+        };
+    }
+    if (raw.includes("design-author") || raw.includes("design author")) {
+        return {
+            title: "Design Author",
+            badge: "BUILDER",
+            purpose: "Authors the 10-section technical design, component contracts, failure modes, rollout telemetry, and requirement traceability grounded in Researcher evidence.",
+            guideKey: "design",
+        };
     }
     if (raw.includes("plan-review")) {
-        return { title: "Independent Plan Reviewer", badge: "REVIEWER", guideKey: "review" };
+        return {
+            title: "Independent Plan Reviewer",
+            badge: "REVIEWER",
+            purpose: "Verifies that planned PBIs cover 100% of approved requirements, respect single-repo boundaries, and form a valid, acyclic dependency DAG.",
+            guideKey: "review",
+        };
     }
     if (raw.includes("planner") || raw.includes("feature-planner")) {
-        return { title: "Feature Planner", badge: "PLANNER", guideKey: "plan" };
+        return {
+            title: "Feature Planner",
+            badge: "PLANNER",
+            purpose: "Decomposes the approved design into ordered, repository-scoped backlog items with explicit file targets, acceptance criteria, and test plans.",
+            guideKey: "plan",
+        };
     }
     if (raw.includes("code-reviewer") || raw.includes("validate")) {
-        return { title: "Independent Code Reviewer", badge: "REVIEWER", guideKey: "codeReview" };
+        return {
+            title: "Independent Code Reviewer",
+            badge: "REVIEWER",
+            purpose: "Independently reviews code changes and test coverage against PBI acceptance criteria without mutation privileges.",
+            guideKey: "codeReview",
+        };
     }
     if (raw.includes("coder") || raw.includes("local builder")) {
-        return { title: "Coding Builder", badge: "BUILDER", guideKey: "code" };
+        return {
+            title: "Coding Builder",
+            badge: "BUILDER",
+            purpose: "Implements scoped code changes and unit tests inside an isolated repository worktree and iterates on reviewer findings.",
+            guideKey: "code",
+        };
     }
-    return { title: label || role || "Factory Worker", badge: "WORKER" };
+    return {
+        title: label || role || "Factory Worker",
+        badge: "WORKER",
+        purpose: "Executes a bounded workflow step inside the guarded Software Factory runtime.",
+    };
 }
 
 export function DesignStudioExplorer({
@@ -1187,6 +1288,7 @@ export function SubagentFlightRecorder({
     const activeExec = executions.find((e) => e.id === selectedExecutionId) || executions[0] || null;
     const [traceFilter, setTraceFilter] = useState<"all" | "agent_turn" | "tool_call">("all");
     const [inspectedTrace, setInspectedTrace] = useState<ExecutionTraceEntry | null>(null);
+    const [selectedLaneKey, setSelectedLaneKey] = useState<string | null>(null);
 
     if (!activeExec) {
         return (
@@ -1205,6 +1307,45 @@ export function SubagentFlightRecorder({
     const turnEntries = trace.filter((t) => t.kind === "agent_turn");
     const toolEntries = trace.filter((t) => t.kind === "tool_call");
 
+    const lanes = usageAgents.length > 0
+        ? usageAgents.map((ag, idx) => {
+            const info = roleDisplayName(undefined, ag.label);
+            const occurrenceIdx = usageAgents.slice(0, idx).filter((prev) => prev.label === ag.label).length;
+            const matchingTurns = turnEntries.filter((t) => t.label === ag.label);
+            const matchingTurn = matchingTurns[occurrenceIdx] || matchingTurns.at(-1) || null;
+            return {
+                key: `${ag.label}-${idx}`,
+                stepNumber: idx + 1,
+                badge: info.badge,
+                title: info.title,
+                purpose: info.purpose,
+                label: ag.label,
+                status: ag.status,
+                model: ag.resolvedModel || ag.requestedModel || "Runtime default",
+                duration: `${(ag.activeMs / 1000).toFixed(1)}s`,
+                guides: info.guideKey ? workerGuidance[info.guideKey] : [],
+                turn: matchingTurn,
+            };
+        })
+        : turnEntries.map((turn, idx) => {
+            const info = roleDisplayName(turn.role, turn.label);
+            return {
+                key: turn.id,
+                stepNumber: idx + 1,
+                badge: info.badge,
+                title: info.title,
+                purpose: info.purpose,
+                label: turn.label || turn.role || "worker",
+                status: turn.status,
+                model: "Scoped session model",
+                duration: turn.durationMs ? `${(turn.durationMs / 1000).toFixed(1)}s` : "running",
+                guides: info.guideKey ? workerGuidance[info.guideKey] : [],
+                turn,
+            };
+        });
+
+    const selectedLane = lanes.find((l) => l.key === selectedLaneKey) || null;
+
     return (
         <div className="flight-recorder" aria-label="Subagent Flight Recorder">
             {executions.length > 1 && (
@@ -1216,6 +1357,7 @@ export function SubagentFlightRecorder({
                         onChange={(e) => {
                             onSelectExecution?.(e.target.value);
                             setInspectedTrace(null);
+                            setSelectedLaneKey(null);
                         }}
                     >
                         {executions.map((exec) => (
@@ -1250,66 +1392,109 @@ export function SubagentFlightRecorder({
                 </div>
             </div>
 
-            {(usageAgents.length > 0 || turnEntries.length > 0) && (
+            {lanes.length > 0 && (
                 <div className="swimlanes-section">
-                    <span className="eyebrow">SUBAGENT SWIMLANES &amp; SPECIALIST ROLES</span>
-                    <div className="swimlane-cards">
-                        {(usageAgents.length > 0
-                            ? usageAgents.map((ag, idx) => {
-                                const info = roleDisplayName(undefined, ag.label);
-                                const matchingTurn = turnEntries.find((t) => t.label === ag.label);
-                                return {
-                                    key: `${ag.label}-${idx}`,
-                                    badge: info.badge,
-                                    title: info.title,
-                                    label: ag.label,
-                                    status: ag.status,
-                                    model: ag.resolvedModel || ag.requestedModel || "Runtime default",
-                                    duration: `${(ag.activeMs / 1000).toFixed(1)}s`,
-                                    guides: info.guideKey ? workerGuidance[info.guideKey] : [],
-                                    turn: matchingTurn || null,
-                                };
-                            })
-                            : turnEntries.map((turn) => {
-                                const info = roleDisplayName(turn.role, turn.label);
-                                return {
-                                    key: turn.id,
-                                    badge: info.badge,
-                                    title: info.title,
-                                    label: turn.label || turn.role || "worker",
-                                    status: turn.status,
-                                    model: "Scoped session model",
-                                    duration: turn.durationMs ? `${(turn.durationMs / 1000).toFixed(1)}s` : "running",
-                                    guides: info.guideKey ? workerGuidance[info.guideKey] : [],
-                                    turn,
-                                };
-                            })
-                        ).map((lane) => (
-                            <div
-                                key={lane.key}
-                                className={`swimlane-card status-${lane.status} ${inspectedTrace && lane.turn?.id === inspectedTrace.id ? "selected" : ""}`}
-                                onClick={() => lane.turn && setInspectedTrace(lane.turn)}
-                            >
-                                <div className="swimlane-top">
-                                    <span className={`studio-pill ${lane.badge === "REVIEWER" ? "purple" : lane.badge === "BUILDER" ? "blue" : "emerald"}`}>
-                                        {lane.badge}
-                                    </span>
-                                    <span className="swimlane-duration">{lane.duration}</span>
-                                </div>
-                                <strong>{lane.title}</strong>
-                                <code className="swimlane-label">{lane.label}</code>
-                                <div className="swimlane-meta">
-                                    <span className="mono-chip">{lane.model}</span>
-                                    <span className={`status-pill-mini ${lane.status}`}>{lane.status}</span>
-                                </div>
-                                {lane.guides.length > 0 && (
-                                    <div className="swimlane-guides" title={lane.guides.join("\n")}>
-                                        📚 {lane.guides.length} domain guide{lane.guides.length === 1 ? "" : "s"}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
+                    <div className="swimlanes-header">
+                        <span className="eyebrow">SUBAGENT SWIMLANES &amp; SPECIALIST ROLES</span>
+                        <span className="field-help">Click any specialist card to inspect its role, repo playbooks &amp; output</span>
                     </div>
+                    <div className="swimlane-cards">
+                        {lanes.map((lane) => {
+                            const isSelected = selectedLane?.key === lane.key;
+                            return (
+                                <button
+                                    type="button"
+                                    key={lane.key}
+                                    aria-expanded={isSelected}
+                                    className={`swimlane-card status-${lane.status} ${isSelected ? "selected" : ""}`}
+                                    onClick={() => {
+                                        const next = isSelected ? null : lane.key;
+                                        setSelectedLaneKey(next);
+                                        if (next && lane.turn) setInspectedTrace(lane.turn);
+                                    }}
+                                >
+                                    <div className="swimlane-top">
+                                        <span className={`studio-pill ${lane.badge === "REVIEWER" ? "purple" : lane.badge === "BUILDER" ? "blue" : "emerald"}`}>
+                                            #{lane.stepNumber} · {lane.badge}
+                                        </span>
+                                        <span className="swimlane-duration">{lane.duration}</span>
+                                    </div>
+                                    <strong>{lane.title}</strong>
+                                    <code className="swimlane-label">{lane.label}</code>
+                                    <div className="swimlane-meta">
+                                        <span className="mono-chip">{lane.model}</span>
+                                        <span className={`status-pill-mini ${lane.status}`}>{lane.status}</span>
+                                    </div>
+                                    {lane.guides.length > 0 && (
+                                        <div className="swimlane-guides">
+                                            📘 {lane.guides.length} repo standard{lane.guides.length === 1 ? "" : "s"} {isSelected ? "▴" : "▾"}
+                                        </div>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {selectedLane && (
+                        <section className="swimlane-inspector" aria-label="Selected Specialist Inspector">
+                            <div className="swimlane-inspector-head">
+                                <div>
+                                    <div className="studio-badge-row">
+                                        <span className={`studio-pill ${selectedLane.badge === "REVIEWER" ? "purple" : selectedLane.badge === "BUILDER" ? "blue" : "emerald"}`}>
+                                            STEP #{selectedLane.stepNumber} · {selectedLane.badge}
+                                        </span>
+                                        <span className={`status-pill-mini ${selectedLane.status}`}>{selectedLane.status}</span>
+                                        <span className="mono-chip">{selectedLane.model}</span>
+                                        <span className="mono-chip">{selectedLane.duration}</span>
+                                    </div>
+                                    <h4>{selectedLane.title} <span className="muted">({selectedLane.label})</span></h4>
+                                </div>
+                                <button type="button" className="ghost-chip-btn" onClick={() => setSelectedLaneKey(null)}>
+                                    Close
+                                </button>
+                            </div>
+                            <p className="swimlane-purpose">{selectedLane.purpose}</p>
+                            {selectedLane.status === "cancelled" && (
+                                <p className="swimlane-cancelled-note">
+                                    <strong>Why cancelled?</strong> This specialist turn was interrupted when the workflow reached a configured timeout ceiling; resuming the workflow with a higher ceiling automatically re-ran this step cleanly.
+                                </p>
+                            )}
+
+                            {selectedLane.guides.length > 0 && (
+                                <div className="guide-cards-block">
+                                    <span className="eyebrow">ENFORCED REPOSITORY STANDARDS (DOMAIN PLAYBOOKS)</span>
+                                    <p className="field-help">
+                                        Read-only repository instruction files injected into this specialist&apos;s prompt contract so its output obeys team architecture and review standards:
+                                    </p>
+                                    <div className="guide-cards-grid">
+                                        {selectedLane.guides.map((guidePath) => {
+                                            const desc = describeGuidanceFile(guidePath);
+                                            return (
+                                                <div key={guidePath} className="guide-card">
+                                                    <strong>📘 {desc.title}</strong>
+                                                    <code>{guidePath}</code>
+                                                    <p className="muted">{desc.summary}</p>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {selectedLane.turn?.outputPreview ? (
+                                <div className="swimlane-turn-preview">
+                                    <span className="eyebrow">RECORDED SPECIALIST OUTPUT PREVIEW</span>
+                                    <pre>{selectedLane.turn.outputPreview}</pre>
+                                </div>
+                            ) : (
+                                <p className="field-help">
+                                    {selectedLane.status === "running"
+                                        ? "This specialist is currently running — live scoped repository reads and searches appear in the stream below as they execute."
+                                        : "Structured output from this step was folded into the stage workflow state (live trace retains the most recent 200 tool/turn events below)."}
+                                </p>
+                            )}
+                        </section>
+                    )}
                 </div>
             )}
 

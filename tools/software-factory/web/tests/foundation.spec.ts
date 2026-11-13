@@ -597,9 +597,26 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await codeArena.getByRole("button", { name: /Round 3/ }).click();
     await expect(codeArena.locator(".reviewer-pane")).toContainText("All acceptance criteria and compatibility checks passed.");
 
-    // 5. Verify Subagent Flight Recorder & Live Transcripts
+    // 5. Verify Interactive Stage Track, Sticky Sidebar, Rich Artifact Cards & Subagent Playbook Inspector
+    await page.evaluate(() => window.scrollTo(0, 900));
+    const sidebarBox = await page.locator(".sidebar").boundingBox();
+    expect(sidebarBox?.y).toBe(0);
+
+    await page.getByRole("group", { name: "Feature progress" }).getByRole("button", { name: /Define success/ }).click();
+    const scopeStudio = page.getByRole("region", { name: "Scope and Criteria Studio" });
+    await expect(scopeStudio).toContainText("Stage 0 Scope Approval Recorded");
+
+    const deliverablesHub = page.getByRole("region", { name: "Saved deliverables and run controls" });
+    await expect(deliverablesHub.getByText(/Technical Design Specification/)).toBeVisible();
+    await deliverablesHub.locator(".artifact-summary-card", { hasText: "Implementation Plan & PBI DAG" }).getByRole("button", { name: "Open in Studio ↑" }).click();
+    await expect(page.getByRole("region", { name: "Plan Studio" })).toBeVisible();
+
     const flightDock = page.getByRole("region", { name: "Live subagents and transcripts" });
     await expect(flightDock.getByText("48,500")).toBeVisible();
+    await flightDock.locator(".swimlane-card").first().click();
+    const specialistInspector = flightDock.getByRole("region", { name: "Selected Specialist Inspector" });
+    await expect(specialistInspector).toContainText("ENFORCED REPOSITORY STANDARDS (DOMAIN PLAYBOOKS)");
+    await expect(specialistInspector).toContainText("Codebase Research Standards");
     await expect(flightDock.getByText("common/src/BrokerController.kt:10-90")).toBeVisible();
     await flightDock.getByText("common/src/BrokerController.kt:10-90").click();
     await expect(flightDock.getByText("class BrokerController { fun execute() {} }")).toBeVisible();

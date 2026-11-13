@@ -331,14 +331,36 @@ export function App() {
                 {settings && <FactorySettings execute={execute} />}
                 {error && <div role="alert" className="message error">{error}</div>}
                 {notice && <div role="status" className="message notice">{notice}</div>}
-                {!formOpen && <section className="card" aria-label="Team features">
-                    <h2>{selected?.shared ? `Shared ADO Feature #${selected.shared.target.workItemId}` : "Local draft or team feature"}</h2>
-                    <p>Publish deliberately to an existing ADO Feature. Versioned attachments hold the shared requirements, artifacts and approvals.
-                        Local historical approvals are not transferred. The signed-in ADO user must have edit permission to approve.</p>
-                    {selected?.shared?.lock && <p role="status">Shared operation: {selected.shared.lock.kind}, owned by {selected.shared.lock.actor.displayName}.
-                        Inspect the owner and receipts before recovery; do not start a competing run.</p>}
-                    {selected?.shared && <p><a href={`https://dev.azure.com/${encodeURIComponent(selected.shared.target.organization)}/${encodeURIComponent(selected.shared.target.project)}/_workitems/edit/${selected.shared.target.workItemId}`} target="_blank" rel="noreferrer">Open authoritative ADO Feature</a>
-                        {" "}— revision {selected.shared.revision}. Local checkout paths and GitHub accounts are not shared.</p>}
+                {!formOpen && <section className="card ado-sync-card" aria-label="Team features">
+                    <div className="ado-sync-header">
+                        <div>
+                            <span className="eyebrow">{selected?.shared ? "SHARED AUTHORITY · AZURE DEVOPS" : "COLLABORATION & SHARED AUTHORITY"}</span>
+                            <h2>{selected?.shared ? `Shared ADO Feature #${selected.shared.target.workItemId}` : "Local draft or team feature"}</h2>
+                        </div>
+                        {selected?.shared && (
+                            <div className="ado-sync-badges">
+                                <span className="studio-pill emerald">Revision {selected.shared.revision}</span>
+                                {selected.shared.lock && (
+                                    <span className="studio-pill amber">
+                                        Active lock: {selected.shared.lock.kind} ({selected.shared.lock.actor.displayName})
+                                    </span>
+                                )}
+                                <a
+                                    className="secondary ado-link-btn"
+                                    href={`https://dev.azure.com/${encodeURIComponent(selected.shared.target.organization)}/${encodeURIComponent(selected.shared.target.project)}/_workitems/edit/${selected.shared.target.workItemId}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                >
+                                    Open authoritative ADO Feature ↗
+                                </a>
+                            </div>
+                        )}
+                    </div>
+                    {!selected?.shared && (
+                        <p className="muted">Publish deliberately to an existing ADO Feature. Versioned attachments hold the shared requirements, artifacts and approvals. Local historical approvals are not transferred. The signed-in ADO user must have edit permission to approve.</p>
+                    )}
+                    {selected?.shared?.lock && <p role="status" className="muted">Shared operation: {selected.shared.lock.kind}, owned by {selected.shared.lock.actor.displayName}.
+                        {" "}Inspect the owner and receipts before recovery; do not start a competing run.</p>}
                     {selected?.shared?.lock && <details><summary>Recover an inspected shared claim</summary>
                         <p>Stop or inspect the original owner and reconcile uncertain provider sends first. Releasing does not cancel native work.</p>
                         <label htmlFor="shared-recovery-reason">Investigation and recovery reason</label>
@@ -348,26 +370,52 @@ export function App() {
                             setRecoveryReason("");
                         })}>Review claim release</button>
                     </details>}
-                    <label htmlFor="ado-feature-id">ADO Feature work item ID</label>
-                    <input id="ado-feature-id" inputMode="numeric" value={adoFeatureId} onChange={(event) => setAdoFeatureId(event.target.value)} />
-                    <div className="factory-actions">
-                        <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>Open team feature</button>
-                        <button className="secondary" disabled={busy || !selected || !!selected.shared || !adoFeatureId}
-                            onClick={() => void act(() => teamAction("publish_feature"))}>Publish draft to ADO</button>
-                        <button className="secondary" disabled={busy || !selected || !!selected.shared}
-                            onClick={() => void act(() => teamAction("publish_feature", 0, true))}>Create &amp; publish ADO Feature</button>
-                        <button className="secondary" disabled={busy} onClick={() => void act(async () => {
-                            const result = await execute({ kind: "list_shared_features" });
-                            if (!Array.isArray(result.features)) throw new Error("ADO returned no team feature list.");
-                            setTeamFeatures(result.features.map((entry) => {
-                                if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.workItemId !== "number" ||
-                                    typeof entry.organization !== "string" || typeof entry.project !== "string") throw new Error("Invalid shared feature reference.");
-                                return { organization: entry.organization, project: entry.project, workItemId: entry.workItemId };
-                            }));
-                        })}>Find team features</button>
-                    </div>
-                    {teamFeatures.map((target) => <button key={target.workItemId} className="text-button" disabled={busy}
-                        onClick={() => void act(async () => { await execute({ kind: "open_shared_feature", target }); })}>Open Feature #{target.workItemId}</button>)}
+                    {selected?.shared ? (
+                        <details className="ado-switch-drawer">
+                            <summary>Open or switch to another shared ADO Feature</summary>
+                            <div className="ado-switch-body">
+                                <label htmlFor="ado-feature-id">ADO Feature work item ID</label>
+                                <input id="ado-feature-id" inputMode="numeric" value={adoFeatureId} onChange={(event) => setAdoFeatureId(event.target.value)} placeholder="e.g. 3802483" />
+                                <div className="factory-actions">
+                                    <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>Open team feature</button>
+                                    <button className="secondary" disabled={busy} onClick={() => void act(async () => {
+                                        const result = await execute({ kind: "list_shared_features" });
+                                        if (!Array.isArray(result.features)) throw new Error("ADO returned no team feature list.");
+                                        setTeamFeatures(result.features.map((entry) => {
+                                            if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.workItemId !== "number" ||
+                                                typeof entry.organization !== "string" || typeof entry.project !== "string") throw new Error("Invalid shared feature reference.");
+                                            return { organization: entry.organization, project: entry.project, workItemId: entry.workItemId };
+                                        }));
+                                    })}>Find team features</button>
+                                </div>
+                                {teamFeatures.map((target) => <button key={target.workItemId} className="text-button" disabled={busy}
+                                    onClick={() => void act(async () => { await execute({ kind: "open_shared_feature", target }); })}>Open Feature #{target.workItemId}</button>)}
+                            </div>
+                        </details>
+                    ) : (
+                        <>
+                            <label htmlFor="ado-feature-id">ADO Feature work item ID</label>
+                            <input id="ado-feature-id" inputMode="numeric" value={adoFeatureId} onChange={(event) => setAdoFeatureId(event.target.value)} placeholder="Enter existing ADO Feature ID to link or open" />
+                            <div className="factory-actions">
+                                <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>Open team feature</button>
+                                <button className="secondary" disabled={busy || !selected || !!selected.shared || !adoFeatureId}
+                                    onClick={() => void act(() => teamAction("publish_feature"))}>Publish draft to ADO</button>
+                                <button className="secondary" disabled={busy || !selected || !!selected.shared}
+                                    onClick={() => void act(() => teamAction("publish_feature", 0, true))}>Create &amp; publish ADO Feature</button>
+                                <button className="secondary" disabled={busy} onClick={() => void act(async () => {
+                                    const result = await execute({ kind: "list_shared_features" });
+                                    if (!Array.isArray(result.features)) throw new Error("ADO returned no team feature list.");
+                                    setTeamFeatures(result.features.map((entry) => {
+                                        if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.workItemId !== "number" ||
+                                            typeof entry.organization !== "string" || typeof entry.project !== "string") throw new Error("Invalid shared feature reference.");
+                                        return { organization: entry.organization, project: entry.project, workItemId: entry.workItemId };
+                                    }));
+                                })}>Find team features</button>
+                            </div>
+                            {teamFeatures.map((target) => <button key={target.workItemId} className="text-button" disabled={busy}
+                                onClick={() => void act(async () => { await execute({ kind: "open_shared_feature", target }); })}>Open Feature #{target.workItemId}</button>)}
+                        </>
+                    )}
                 </section>}
                 {doctor !== undefined && <section className="card preflight"><div className="card-heading"><h2>{doctor.runtime.ready ? "Local runtime ready" : "Local runtime needs repair"}</h2><button className="text-button" onClick={() => setDoctor(undefined)}>Close</button></div>
                     <p>{doctor.runtime.message}</p>{doctor.runtime.recoveryCommand && <><p>Run this from the repository root, then explicitly retry. No AI work runs during repair.</p><pre>{doctor.runtime.recoveryCommand}</pre></>}
