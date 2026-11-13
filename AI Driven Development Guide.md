@@ -54,6 +54,13 @@ existing item rather than duplicating it, confirms the parent Feature and normal
 metadata, and records design/PBI links in both directions. Documentation/review
 work is not automatically dispatched as application-code work.
 
+The [Design Doc Dynamic Workflow](.github/extensions/DevDesignDoc/README.md#generated-feature-pre-mortem)
+generates the pre-mortem as a required Markdown section in its JSON design artifact
+and independently reviews it before recommending planning. Its human gate packet
+contains the generated content and pending/existing child-PBI linkage; it does not
+create the PBI or publish a separate file. Planning/backlog creation follows after
+explicit human design approval.
+
 Use the [pre-mortem content and acceptance contract](.github/skills/feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi).
 Authoring/review can finish with explicitly unexecuted pre-flight KQL, unresolved
 mappings and named follow-up owners; absent production data while disabled is

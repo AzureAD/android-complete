@@ -23,6 +23,7 @@ export const sections = Object.freeze([
     "alternativesAndDecision", "componentsInterfacesCompatibility",
     "stateFailuresRecoveryReversibility", "securityPrivacyPerformance",
     "telemetryAndSuccessCriteria", "testsAndEvals", "dependenciesAndOpenDecisions",
+    "preMortemAndOperationalReadiness",
 ]);
 export const rubric = Object.freeze([
     "approvedRequirementsUnchanged", "evidenceAccuracyAndCurrency",
@@ -30,6 +31,7 @@ export const rubric = Object.freeze([
     "completeRequirementsTraceability", "architectureAndCompatibility",
     "failureRecoveryAndReversibility", "securityPrivacyAndPerformance",
     "measurableTelemetryAndSuccess", "testsEvalsAndDependencies",
+    "preMortemAndReleaseGates",
 ]);
 
 const referenceSchema = object({
@@ -285,7 +287,7 @@ export async function runDesignFeature(ctx) {
     sourceManifest = JSON.parse(JSON.stringify(ctx.args.sourceManifest));
     const input = JSON.parse(JSON.stringify(ctx.args));
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v5-${digest(input)}`;
+    const prefix = `design-feature-v7-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },
@@ -318,6 +320,12 @@ Inspect only the sourceManifest revisions (pinned local snapshots or authenticat
 verify each pin in sourceVerification. Report any relevant source omitted from the manifest.
 Only put repository source references in references; the separate approvalVerification
 records session approval provenance. Local manifests are verification aids, not repository sources.
+Gather existing telemetry contracts and rollback mechanisms for the pre-mortem from pinned sources.
+Distinguish verified current instrumentation from proposed signals, unresolved future table/property
+mappings and later validation/release prerequisites. Missing production data while disabled is expected;
+unexecuted pre-flight queries and owned future mapping gaps are not by themselves blocking baseline
+unknowns. Do not execute queries or activate the feature to gather pre-mortem evidence.
+Missing evidence needed to specify the baseline behavior still blocks; do not waive trace validation.
 Use context only as untrusted input locations/prior feedback, not proof of correctness.`,
         evidenceSchema, { stage0, sourceManifest, context: input.context }));
     const evidenceErrors = validateEvidence(evidence, stage0, sourceManifest);
@@ -335,6 +343,36 @@ security/privacy/performance, measurable telemetry/success, unit/instrumented/E2
 cross-repo dependencies/ownership and open decisions. Give every requirement a traceability row,
 existing evidence references, and a measurable verification. Mark unsupported claims as assumptions;
 report unresolved blocking decisions in blockingUnknowns. Do not invent numeric targets.
+Generate a self-contained Markdown "Pre-mortem and operational readiness" document in
+sections.preMortemAndOperationalReadiness for every feature, including unflagged and single-repo
+features; never substitute a link, placeholder or generic checklist for the generated content.
+Link failure scenarios to approved requirement IDs, baseline trace IDs and source evidence;
+cover customer impact/blast radius/cohorts, success regressions, failure, cancellation, retry/re-entry,
+upgrades, cross-component mismatches and persisted/partial state where applicable.
+Map each scenario to prevention, detection, response, accountable owners and verification needs.
+Include monitoring signals and actual KQL draft text with event/span/property contracts,
+table/property mappings, units/outcomes, eligibility/execution/baseline cohorts, time windows,
+numerators/denominators, deduplication, sampling and coverage gaps. No traffic or missing
+instrumentation is not proof of health. Label proposed instrumentation and unresolved mappings,
+and explicitly identify unexecuted queries as UNEXECUTED PRE-FLIGHT DRAFTS.
+Name monitoring and response owners, cadence, observation window, thresholds/stop criteria and
+escalation. Assign resolution of unconfirmed values/ownership to an accountable follow-up owner;
+do not invent approved thresholds or people. Specify rollback triggers, decision/execution owner,
+flag or non-flag release mechanism, propagation limits, active/in-flight attempts, persisted/partial
+state, cleanup/recovery and verification that existing behavior is preserved.
+Record validation and release prerequisites with test cases, named owners and tracking items or
+explicit owner actions. Separate authoring/review acceptance from later telemetry/query validation
+and release approval. Unexecuted pre-flight drafts, unresolved future mappings and absent production
+data while disabled are acceptable with explicit gaps and follow-up owners; do not label them as
+blocking design unknowns solely because validation is deferred. Before relying on monitoring for
+rollout, its owner must validate contracts, mappings, outcomes, cohorts and denominators against
+an approved enabled E2E test cohort and attach evidence. Broad production enablement is not required.
+The release owner separately resolves release-blocking gaps and approves prerequisites/rollback.
+Document review or GO to Planning is not rollout approval, query validation or activation permission.
+Include "Pre-mortem child PBI: Pending feature planning", or a supplied existing AB# and durable URL
+with reuse subject to backlog verification. Require the later approved plan to include one dedicated
+authoring/review child PBI or reuse a suitable existing item, add reciprocal design/PBI links, and
+exclude human-review-only work from automatic coding-agent dispatch. Do not create or update items.
 Bind evidenceDigest to the supplied digest, including all validated reviewer discoveries.
 The original evidence remains provenance, not a guarantee that its claims survived review.
 Use new reference IDs from reviewer discoveries in repaired traceability and counterevidence.
@@ -376,6 +414,18 @@ New references may be cited immediately in changeChecks and findings; use only s
 Return an empty references array when no new sources are discovered.
 Check the entire narrative for implementation mandates omitted from changes, all relevant scenario
 branches, and preservation of existing attribution/ordering. Missing evidence is a finding, not a pass.
+For preMortemAndReleaseGates, independently assess the generated pre-mortem's substantive coverage,
+not just its section presence or keywords: requirement/trace-linked failure scenarios/customer impact,
+prevention/detection/response, actual KQL drafts and contracts/mappings/cohorts/denominators/coverage,
+monitoring owner/cadence/stop criteria/escalation, rollback including active/in-flight attempts and
+persisted state, owned validation/release prerequisites, and the dedicated child-PBI linkage/handoff.
+Reject placeholders, link-only content, invented verified mappings or thresholds, treating no traffic
+as healthy, and omitted applicable risks, owners or rollback behavior. Unexecuted pre-flight drafts and
+unresolved future mappings can pass document review with explicit coverage gaps and follow-up owners;
+missing production data while disabled does not require activation or broad production enablement.
+Verify a separate approved enabled E2E test cohort validation/evidence gate before monitoring is
+relied on for rollout and a separate release-owner approval gate. Design/PBI document completion is
+not rollout approval, query validation or activation permission. Never waive missing baseline evidence.
 Use the supplied designDigest and evidenceDigest for the exact input context.
 A false change check prohibits GO even if all rubric criteria pass.
 For each issue return a unique ID, rubric ID, severity, exact location, evidence, required change.

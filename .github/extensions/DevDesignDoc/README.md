@@ -80,7 +80,8 @@ session storage. A request to draft is not automatically requirements approval.
    unresolved traces stop before authoring.
 3. Author structured design sections, requirement traceability, and a visible
    per-change necessity register: baseline trace, existing behavior, requested delta,
-   necessity, counterevidence search, classification and verification.
+   necessity, counterevidence search, classification and verification. Generate the
+   required pre-mortem and operational-readiness document in the same artifact.
 4. Check sections, revision, exact evidence digest, links and trace/necessity coverage.
    Already-handled behavior is `preserve-existing` / `regression-only`; optional
    improvements are deferred. Required work needs a `confirmed-gap`. Unresolved
@@ -119,6 +120,46 @@ fresh independent review, even if the discovering review otherwise passes.
 Repaired traceability and change/counterevidence records may cite discovered IDs.
 Original claims are retained for provenance, not silently endorsed over findings.
 
+### Generated feature pre-mortem
+
+The executable template is the JSON `design.sections` schema in `workflow.mjs`,
+not the external `design-docs/Template/template.md`. Every design must contain a
+nonblank `preMortemAndOperationalReadiness` section, including unflagged and
+single-repository features. Author and revision prompts generate a self-contained
+Markdown pre-mortem in that section; the human gate packet carries the content,
+not merely instructions to write it later or a link to a missing document.
+
+The section follows the
+[feature pre-mortem contract](../../skills/feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi):
+requirement/trace-linked failure scenarios and customer impact; prevention,
+detection and response; actual KQL drafts and telemetry contracts, mappings,
+cohorts, denominators and coverage gaps; monitoring ownership, cadence, stop
+criteria and escalation; rollback including active/in-flight attempts and partial
+state; and owned validation/release prerequisites. It includes a
+`Pre-mortem child PBI: Pending feature planning` field, or a supplied existing
+AB# and durable URL with reuse subject to backlog verification. After human design
+approval, planning/backlog creation includes or reuses the dedicated author/review
+child PBI and establishes reciprocal links. This design-only workflow creates no
+work items and does not publish a separate Markdown file.
+
+The fixed independent-review rubric requires `preMortemAndReleaseGates`.
+Structural validation rejects absent/blank sections or missing rubric coverage;
+the reviewer evaluates substantive completeness, source accuracy and gate
+separation. Placeholders, invented verified telemetry, omitted applicable rollback
+or unowned follow-ups cannot pass review merely by containing the right words.
+Findings must be repaired and independently re-reviewed within the existing bounds.
+
+Pre-flight KQL may remain explicitly unexecuted with unresolved future mappings
+and accountable follow-up owners. Missing production data while disabled is
+expected, not a reason to activate production or reject document authorship.
+Before relying on monitoring for rollout, the telemetry owner validates contracts,
+mappings, outcomes, cohorts and denominators against an approved enabled E2E
+test cohort and attaches evidence. Broad production enablement is not required.
+The release owner separately approves prerequisites and rollback readiness.
+Document review, PBI completion and `GO to Planning` are not query validation,
+activation permission or rollout approval. These deferred gates do not waive
+missing evidence needed to specify current baseline behavior.
+
 ## Bounds, safety, and resume
 
 The workflow uses journaled `ctx.step` calls and sequential `ctx.agent` calls:
@@ -133,7 +174,7 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v5` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v7` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
@@ -144,6 +185,8 @@ not recheck a mutable branch or re-read edited local snapshots; do not alter sna
 in place. Start a fresh run with new pins if the source/evidence changes; change the key version when workflow semantics,
 schemas, prompts, or rubric change. Steps have no intentional external side effects,
 so replay does not publish duplicate artifacts.
+Pre-mortem schema/prompt/rubric changes do not reuse prior v5 outputs or the
+accessibility-only v6 outputs from the separate accessibility change.
 
 ## Checks
 
@@ -159,7 +202,10 @@ Tests use mocked agents/steps and require no SDK installation, network, or paid
 agents. They cover approval gates, rejection of mutable/abbreviated source revisions
 before checkpoint creation, full SHA-1/SHA-256 pins, source/trace validation, ordinary/hard failures,
 fixed rubric/per-change coverage, bounded fixes, recommendation semantics, and
-source/evidence-bound checkpoint identity. Synthetic executable completion fixtures
+source/evidence-bound checkpoint identity. Pre-mortem regressions cover missing/
+blank output, flagged/unflagged generated-section handoff, omitted/failed review
+criteria, repair/re-review, owned pre-flight gaps without production activation,
+and stale v5/v6 checkpoint isolation. Synthetic executable completion fixtures
 also cover new pinned reviewer references, repair/re-review, invalid discoveries,
 stale digest rejection and journal replay with preserved provenance. Completion fixtures
 cover indirect handling (reuse/regression-only) and a genuinely missing handler

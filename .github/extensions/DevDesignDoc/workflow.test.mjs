@@ -131,6 +131,151 @@ test("structural checks reject missing sections, changed revision and invalid tr
     }
 });
 
+test("missing or blank pre-mortems cannot produce a review-ready packet", async () => {
+    for (const value of [undefined, "", " \n "]) {
+        const incomplete = design();
+        if (value === undefined) delete incomplete.sections.preMortemAndOperationalReadiness;
+        else incomplete.sections.preMortemAndOperationalReadiness = value;
+        assert.match(validateDesign(incomplete, stage0(), evidence()).join(" "), /Missing design section: preMortemAndOperationalReadiness/);
+        const ctx = context([evidence(), incomplete, incomplete, incomplete]);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.equal(packet.reviewReady, false);
+        assert.equal(packet.fixIterations, 2);
+        assert.equal(ctx.calls.length, 4);
+        assert.ok(ctx.calls.every((call) => call.options.label !== "Independent design reviewer"));
+    }
+});
+
+test("flagged and unflagged designs return the generated pre-mortem in the human gate packet", async () => {
+    for (const flagged of [true, false]) {
+        const d = design();
+        d.sections.preMortemAndOperationalReadiness = `# Pre-mortem and operational readiness
+R1 / T1: a supported caller receives an incompatible response; all eligible callers are affected.
+Prevent with compatibility tests; detect incompatible outcomes; response owner: feature owner.
+Monitoring: eligible/executed/baseline cohorts; failed attempts / all executed attempts per hour.
+Contract: proposed attemptId, outcome and featureVersion; mappings remain unverified.
+Deduplicate attempts; sampling may hide failures; missing instrumentation is not healthy behavior.
+\`\`\`kql
+// UNEXECUTED PRE-FLIGHT DRAFT: table/property mapping requires validation.
+ProposedAttempts | summarize total=count(), failed=countif(outcome == "incompatible")
+\`\`\`
+Monitoring owner: telemetry owner; hourly cadence during the agreed observation window.
+Feature owner must confirm thresholds/stop criteria and escalation before rollout.
+Rollback owner: release owner; ${flagged ? "disable the feature flag" : "revert to the prior release"}.
+Active/in-flight attempts finish under their admitted version; verify persisted state recovery.
+Validation owner: telemetry owner; validate contracts, cohorts and denominators using an
+approved enabled E2E test cohort and attach evidence before relying on monitoring for rollout.
+Release owner resolves release-blocking gaps and approves rollback readiness.
+Pre-mortem child PBI: Pending feature planning; reuse a suitable existing child if verified.
+Document authoring/review is not query validation, activation permission or rollout approval.`;
+        const ctx = context([evidence(), d, review(d)]);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "GO to Planning");
+        assert.equal(packet.humanApproval, "pending");
+        assert.equal(packet.design.sections.preMortemAndOperationalReadiness, d.sections.preMortemAndOperationalReadiness);
+        assert.deepEqual(packet.stage0, stage0());
+        assert.equal(ctx.calls.length, 3);
+        assert.ok(ctx.calls[1].options.schema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
+        const task = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+        assert.match(task, /every feature, including unflagged/);
+        assert.match(task, /actual KQL draft text/);
+        assert.match(task, /active\/in-flight attempts/);
+        assert.match(task, /Pending feature planning/);
+        assert.match(ctx.calls[2].prompt.split("\nDATA:\n")[0], /preMortemAndReleaseGates/);
+    }
+});
+
+test("review omission or failure of the pre-mortem criterion cannot bypass its gate", async () => {
+    const missing = review();
+    missing.criteria = missing.criteria.filter((criterion) => criterion.id !== "preMortemAndReleaseGates");
+    assert.equal(validateReview(missing, design(), evidence()), false);
+    const malformed = await runDesignFeature(context([evidence(), design(), missing]));
+    assert.equal(malformed.recommendation, "NO-GO");
+    assert.equal(malformed.reviewReady, false);
+    const failed = review();
+    failed.criteria.find((criterion) => criterion.id === "preMortemAndReleaseGates").pass = false;
+    const ctx = context([evidence(), design(), failed, design(), failed, design(), failed]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "NO-GO");
+    assert.equal(packet.fixIterations, 2);
+    assert.equal(ctx.calls.length, 7);
+});
+
+test("pre-mortem review findings require repair and a fresh independent review", async () => {
+    const d = design();
+    const failed = review(d);
+    failed.criteria.find((criterion) => criterion.id === "preMortemAndReleaseGates").pass = false;
+    failed.findings.push({
+        id: "PM1", rubricId: "preMortemAndReleaseGates", severity: "major",
+        location: "sections.preMortemAndOperationalReadiness",
+        evidence: "Rollback omitted active attempts and telemetry validation had no owner.",
+        requiredChange: "Add in-flight rollback and assign the enabled-E2E validation owner.",
+    });
+    const corrected = design();
+    corrected.sections.preMortemAndOperationalReadiness =
+        "Rollback: active/in-flight attempts retain admitted behavior; release owner verifies recovery. " +
+        "Telemetry owner validates the draft against an approved enabled E2E test cohort before monitoring is relied on.";
+    const ctx = context([evidence(), d, failed, corrected, review(corrected)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(packet.reviews.length, 2);
+    assert.equal(ctx.calls.length, 5);
+    const revision = ctx.calls[3];
+    assert.equal(revision.options.label, "Design revision");
+    assert.ok(revision.options.schema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
+    assert.match(revision.prompt.split("\nDATA:\n")[0], /actual KQL draft text/);
+    assert.equal(ctx.calls[4].options.label, "Independent design reviewer");
+    const data = JSON.parse(ctx.calls[4].prompt.split("\nDATA:\n")[1]);
+    assert.equal(data.design.sections.preMortemAndOperationalReadiness, corrected.sections.preMortemAndOperationalReadiness);
+    assert.equal(data.designDigest, digest(corrected));
+});
+
+test("owned pre-flight mapping gaps and absent production data do not require activation to author", async () => {
+    const e = evidence();
+    e.unknowns = ["Proposed telemetry mappings require enabled-E2E validation by the telemetry owner."];
+    const d = design();
+    d.evidenceDigest = digest(e);
+    d.sections.preMortemAndOperationalReadiness =
+        "UNEXECUTED PRE-FLIGHT DRAFT; table/property mappings remain unresolved. " +
+        "No production data while disabled; telemetry owner validates with an approved enabled E2E cohort. " +
+        "Release owner separately approves release prerequisites; document review is not rollout approval.";
+    const ctx = context([e, d, review(d)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.humanApproval, "pending");
+    assert.deepEqual(packet.evidence.unknowns, e.unknowns);
+    assert.match(ctx.calls[0].prompt.split("\nDATA:\n")[0], /Missing production data while disabled is expected/);
+    assert.match(ctx.calls[1].prompt.split("\nDATA:\n")[0], /Broad production enablement is not required/);
+    assert.match(ctx.calls[2].prompt.split("\nDATA:\n")[0], /not rollout approval/);
+});
+
+test("pre-mortem generation does not reuse v5 or accessibility-only v6 journal outputs", async () => {
+    const legacyDesign = design();
+    delete legacyDesign.sections.preMortemAndOperationalReadiness;
+    const legacyReview = review(legacyDesign);
+    legacyReview.criteria = legacyReview.criteria.filter((criterion) => criterion.id !== "preMortemAndReleaseGates");
+    const ctx = context([evidence(), design(), review()]);
+    const journal = new Map();
+    for (const version of ["v5", "v6"]) {
+        const prefix = `design-feature-${version}-${digest(ctx.args)}`;
+        journal.set(`${prefix}-evidence`, evidence());
+        journal.set(`${prefix}-${digest(evidence())}-design`, legacyDesign);
+        journal.set(`${prefix}-${digest(evidence())}-independent-review-0-${digest(legacyDesign)}-${digest([])}`, legacyReview);
+    }
+    ctx.step = async (key, producer) => {
+        ctx.keys.push(key);
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(ctx.calls.length, 3);
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v7-")));
+    assert.ok(packet.design.sections.preMortemAndOperationalReadiness);
+});
+
 test("ordinary agent failures explicitly fail closed at each stage", async () => {
     for (const [results, expected] of [
         [[null], "needs clarification"],
@@ -655,7 +800,7 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v5-/);
+    assert.match(initial.keys[0], /^design-feature-v7-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
     changed.args.sourceManifest[0].revision = newerSourceRevision;
