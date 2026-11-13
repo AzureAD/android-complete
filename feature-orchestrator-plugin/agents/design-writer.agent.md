@@ -16,6 +16,9 @@ Read the `design-author` skill and follow its workflow for writing the spec.
 
 - Read `.github/orchestrator-config.json` for `design.docsPath` and `design.templatePath`
 - If a template exists, follow it. Otherwise use the built-in template from the skill.
+- Retain the design-author skill's required **Accessibility design** section even
+  if the configured template omits it; map requirements section 3.6 IDs to decisions
+  and Testing strategy evidence, or retain a justified non-UI/N/A.
 - Include: Problem description, Requirements, 2+ Solution Options with pseudo code and pros/cons,
   Recommended Solution, API surface, Data flow, Testing strategy
 - Save the spec to the configured docs path
