@@ -1,0 +1,49 @@
+// Stack-trace + error_message slice for code attribution. MANDATORY for every
+// broker-tagged regression card before claiming "Originator: Broker".
+//
+// Rationale: most broker exception codes flow through
+// common/ExceptionAdapter.{getExceptionFromTokenErrorResponse,
+// exceptionFromAuthorizationResult, clientExceptionFromException}. Without
+// reading the throw site + the dominant error_message string, you cannot tell
+// whether the code originated in broker code or was bridged from an eSTS
+// AADSTS response. (See ../docs/kusto-cheatsheet.md "AADSTS reference table".)
+//
+// THIS TEMPLATE COVERS BOTH error_code AND error_type IN ONE ROUND-TRIP.
+// Pass an empty list for the side you don't want to slice.
+//
+// Rolling 7-day window. See SKILL.md and bootstrap-report.ps1.
+//
+// Inputs:
+//   <CODES_LIST>  e.g. 'invalid_resource', 'null_pointer_error'  (or empty)
+//   <TYPES_LIST>  e.g. 'IntuneAppProtectionPolicyRequiredException'  (or empty)
+//   <CUR_START>   datetime -- start of the current 7-day window (e.g. 2026-07-02)
+//                 Use the FULL 7-day window, NOT a narrower 3-5 day slice
+//                 (low-volume types like SSLHandshakeException / Intune* may
+//                 return zero rows in a sub-window slice).
+//   <CUR_END>     datetime -- exclusive upper bound (e.g. 2026-07-09)
+//
+// Tip: if the current 7-day window returns no rows for a low-volume code/type,
+// fall back to the prior 14 days (<PREV_START> .. <CUR_END>) before giving up.
+//
+// Output column 'loc' is a JSON blob {"ClassName":"...","MethodName":"...","LineNumber":N}
+// -- this is normal. Read it as text. To project the method name only, use
+//   parse_json(loc).MethodName
+//
+// HARD RULE (per SKILL.md Step 4): if the throw site is in
+// ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}
+// AND the message starts with "AADSTS", the originator is eSTS, not broker.
+
+let curStart = datetime(<CUR_START>);
+let curEnd   = datetime(<CUR_END>);
+let codes = dynamic([<CODES_LIST>]);
+let types = dynamic([<TYPES_LIST>]);
+android_spans
+| where PipelineInfo_IngestionTime >= curStart and PipelineInfo_IngestionTime < curEnd
+| where (array_length(codes) > 0 and error_code in (codes))
+     or (array_length(types) > 0 and error_type in (types))
+| extend loc = tostring(error_location),
+         msg = substring(tostring(error_message), 0, 120)
+| summarize cnt = count(),
+            devices = dcount(DeviceInfo_Id)
+     by error_code, error_type, loc, msg
+| top 80 by devices desc

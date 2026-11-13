@@ -128,17 +128,17 @@ if (Test-Path $devLocalPath) {
         $config = Get-Content $devLocalPath -Raw | ConvertFrom-Json
         $ghAccounts = @{
             "AzureAD" = $config.github_accounts.AzureAD
-            "identity-authnz-teams" = $config.github_accounts."identity-authnz-teams"
+            "msft.ghe.com" = $config.github_accounts."msft.ghe.com"
         }
         Write-Host "  OK: developer-local.json exists" -ForegroundColor Green
         Write-Host "    AzureAD account: $($ghAccounts['AzureAD'])" -ForegroundColor DarkGray
-        Write-Host "    EMU account: $($ghAccounts['identity-authnz-teams'])" -ForegroundColor DarkGray
+        Write-Host "    msft.ghe.com account: $($ghAccounts['msft.ghe.com'])" -ForegroundColor DarkGray
     } catch {
         Write-Host "  WARNING: developer-local.json exists but couldn't be parsed" -ForegroundColor Yellow
     }
 }
 
-if (-not $ghAccounts["AzureAD"] -or -not $ghAccounts["identity-authnz-teams"]) {
+if (-not $ghAccounts["AzureAD"] -or -not $ghAccounts["msft.ghe.com"]) {
     Write-Host "  GitHub accounts not configured. Let's set them up." -ForegroundColor Yellow
     Write-Host ""
 
@@ -192,36 +192,36 @@ if (-not $ghAccounts["AzureAD"] -or -not $ghAccounts["identity-authnz-teams"]) {
         }
     }
 
-    # EMU account (identity-authnz-teams repos)
-    if (-not $ghAccounts["identity-authnz-teams"]) {
+    # GHE.com account (security/ad-accounts-for-android, i.e. broker)
+    if (-not $ghAccounts["msft.ghe.com"]) {
         Write-Host ""
-        Write-Host "  You need an EMU GitHub account for identity-authnz-teams/* repos (broker)." -ForegroundColor Cyan
+        Write-Host "  You need an msft.ghe.com account for security/ad-accounts-for-android (broker)." -ForegroundColor Cyan
         if ($discoveredEmu) {
             $confirm = Read-Host "  Use discovered account '$discoveredEmu'? (Y/n)"
             if ($confirm -ne "n") {
                 $emuUser = $discoveredEmu
             } else {
-                $emuUser = Read-Host "  Enter your EMU GitHub username"
+                $emuUser = Read-Host "  Enter your msft.ghe.com username"
             }
         } else {
-            $emuUser = Read-Host "  Enter your EMU GitHub username (e.g., johndoe_microsoft)"
+            $emuUser = Read-Host "  Enter your msft.ghe.com username (e.g., johndoe_microsoft)"
         }
         if ($emuUser) {
-            $ghAccounts["identity-authnz-teams"] = $emuUser
-            $isLoggedIn = $loggedIn -contains $emuUser
+            $ghAccounts["msft.ghe.com"] = $emuUser
+            $isLoggedIn = (gh auth status --hostname msft.ghe.com 2>&1 | Out-String) -match [regex]::Escape($emuUser)
             if (-not $isLoggedIn) {
-                Write-Host "  Authenticating $emuUser with GitHub..." -ForegroundColor Cyan
-                gh auth login --hostname github.com --git-protocol https --web
+                Write-Host "  Authenticating $emuUser with msft.ghe.com..." -ForegroundColor Cyan
+                gh auth login --hostname msft.ghe.com --git-protocol https --web
             }
         }
     }
 
     # Save developer-local.json
-    if ($ghAccounts["AzureAD"] -and $ghAccounts["identity-authnz-teams"]) {
+    if ($ghAccounts["AzureAD"] -and $ghAccounts["msft.ghe.com"]) {
         $config = @{
             github_accounts = @{
                 AzureAD = $ghAccounts["AzureAD"]
-                "identity-authnz-teams" = $ghAccounts["identity-authnz-teams"]
+                "msft.ghe.com" = $ghAccounts["msft.ghe.com"]
             }
         }
         $configDir = Join-Path $repoRoot ".github"

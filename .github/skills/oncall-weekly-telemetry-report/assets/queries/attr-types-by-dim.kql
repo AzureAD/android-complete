@@ -1,0 +1,19 @@
+// Spike attribution: types by ONE dimension at a time.
+// Same usage as attr-codes-by-dim.kql but for error_type regressions.
+//
+// Rolling 7-day WoW window. See SKILL.md and bootstrap-report.ps1.
+let curEnd    = datetime(<CUR_END>);
+let curStart  = datetime(<CUR_START>);
+let prevStart = datetime(<PREV_START>);
+let types = dynamic([<TYPES_LIST>]);
+materialized_view('ErrorStatsMetrics')
+| extend unified_error_type = MergeUiRequiredExceptions(error_type)
+| extend unified_account_type = MergeAccountType(account_type)
+| extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
+| where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
+| where unified_error_type in (types)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+            errs = sum(countOverall)
+     by week, unified_error_type, <DIM>
+| order by unified_error_type asc, week asc, devs desc

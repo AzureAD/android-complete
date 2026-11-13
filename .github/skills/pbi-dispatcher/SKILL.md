@@ -48,7 +48,7 @@ After installation completes, verify with `gh --version`, then prompt authentica
 ```powershell
 $config = Get-Content ".github/developer-local.json" -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
 $publicUser = $config.github_accounts.AzureAD
-$emuUser = $config.github_accounts.'identity-authnz-teams'
+$gheUser = $config.github_accounts.'msft.ghe.com'
 ```
 
 **Step 2: Discover from `gh auth status`** (zero-config if logged in):
@@ -57,15 +57,15 @@ $ghStatus = gh auth status 2>&1
 # Parse output for logged-in accounts on each host
 # Look for lines like: "Logged in to github.com account <username>"
 ```
-Map accounts to orgs:
-- Non-EMU account (no `_` suffix) → `AzureAD/*` repos
-- EMU account (ends with `_microsoft` or similar) → `identity-authnz-teams/*` repos
+Map accounts to hosts:
+- Account logged in to `github.com` → `AzureAD/*` repos
+- Account logged in to `msft.ghe.com` → `security/ad-accounts-for-android` (broker)
 
 **Step 3: Prompt the developer** (fallback — save for next time):
 If neither Step 1 nor Step 2 yields both accounts, ask:
 > "I need your GitHub usernames for dispatching:
-> 1. **Public GitHub** (for AzureAD/* repos like common, msal, adal): ___
-> 2. **GitHub Enterprise / EMU** (for identity-authnz-teams/* repos like broker): ___"
+> 1. **github.com** (for AzureAD/* repos like common, msal, adal): ___
+> 2. **msft.ghe.com** (for `security/ad-accounts-for-android`, i.e. broker): ___"
 
 After receiving the answer, offer to save:
 > "Save these to `.github/developer-local.json` so you don't have to enter them again? (Y/n)"
@@ -75,7 +75,7 @@ If yes, write the config file:
 {
   "github_accounts": {
     "AzureAD": "<public_username>",
-    "identity-authnz-teams": "<emu_username>"
+    "msft.ghe.com": "<ghe_username>"
   }
 }
 ```
@@ -84,6 +84,7 @@ If yes, write the config file:
 > "You're not signed in to GitHub CLI. Please run:
 > ```
 > gh auth login --hostname github.com
+> gh auth login --hostname msft.ghe.com
 > ```
 > Then try dispatching again."
 
@@ -95,7 +96,7 @@ Do NOT attempt to proceed without valid accounts — fail fast with clear instru
 |---------------|-------------|--------------|
 | common / common4j | `AzureAD/microsoft-authentication-library-common-for-android` | Public (AzureAD) |
 | msal | `AzureAD/microsoft-authentication-library-for-android` | Public (AzureAD) |
-| broker / broker4j / AADAuthenticator | `identity-authnz-teams/ad-accounts-for-android` | EMU (identity-authnz-teams) |
+| broker / broker4j / AADAuthenticator | `security/ad-accounts-for-android` | msft.ghe.com |
 | adal | `AzureAD/azure-activedirectory-library-for-android` | Public (AzureAD) |
 
 ## Workflow
@@ -107,17 +108,17 @@ PBI description — it will be needed for the dispatch prompt.
 ### 2. Check Dependencies
 For each PBI, check if its dependencies (other AB# IDs) have merged PRs. Skip blocked PBIs.
 
-### 3. Switch gh Account + Dispatch to Copilot Agent
+### 3. Select gh Host/Account + Dispatch to Copilot Agent
 
 For each ready PBI:
 
-**Step 1: Switch to the correct gh account** (using the discovered username from above):
+**Step 1: Target the correct gh host** (using the discovered username from above):
 ```bash
-# For AzureAD/* repos (common, msal, adal):
-gh auth switch --user <discovered_public_username>
+# For AzureAD/* repos (common, msal, adal) on github.com:
+gh auth switch --hostname github.com --user <discovered_public_username>
 
-# For identity-authnz-teams/* repos (broker):
-gh auth switch --user <discovered_emu_username>
+# For security/ad-accounts-for-android (broker) on msft.ghe.com:
+# no account switch — add --hostname msft.ghe.com to every gh command
 ```
 
 **Step 2: Dispatch using `gh agent-task create` (PREFERRED — requires gh v2.80+):**

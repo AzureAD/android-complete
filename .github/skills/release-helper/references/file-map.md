@@ -189,7 +189,6 @@ azure-pipelines/
 │   ├── adal-test-app.yml                   # ADAL test app CD (cron 3AM UTC)
 │   ├── azure-sample-app.yml                # Azure sample app CD
 │   ├── broker-host.yml                     # Broker host app CD
-│   ├── java-linux-test-app.yml             # Java Linux test app CD
 │   ├── microsoft-identity-diagnostics-cd.yml
 │   └── msal-test-app.yml                   # MSAL test app CD
 ├── ui-automation/

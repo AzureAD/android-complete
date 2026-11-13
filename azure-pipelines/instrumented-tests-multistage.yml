@@ -32,10 +32,10 @@ resources:
     ref: $(adal_branch)
     endpoint: ANDROID_GITHUB
   - repository: broker
-    type: github
-    name: AzureAD/ad-accounts-for-android
+    type: githubenterprise
+    name: security/ad-accounts-for-android
     ref: $(broker_branch)
-    endpoint: ANDROID_GITHUB
+    endpoint: MSFT_GHE_SECURITY
 
 parameters:
 - name: listOfApis

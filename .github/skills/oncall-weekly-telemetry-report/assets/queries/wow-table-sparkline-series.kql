@@ -1,0 +1,47 @@
+// 8-week per-error sparkline series for the WoW tables (data-trend arrays).
+//
+// MANDATORY (per SKILL.md Output checklist, v8): the `data-trend` arrays in
+// the Section 6 (error_code) and Section 7 (error_type) WoW tables must come
+// from real data -- not be fabricated from a "roughly increasing" pattern.
+// Past failure mode: small-volume codes (Broker request cancelled,
+// kdfv2_key_derivation_error, TimeoutCancellationException) were filtered out
+// by the 60d bucketer's peak-floor, then their sparklines were invented inline
+// in the WoW table HTML. That's data dishonesty even when the array looks plausible.
+//
+// This query returns 8 weekly buckets for every code/type that appears in
+// either the WoW movers list OR the 60d trend output. Run it twice -- once with
+// the codes filter, once with the types filter -- and feed the result into the
+// WoW-table generator so every row has a real-data trend.
+//
+// NOTE ON WEEK ALIGNMENT: these sparklines use the SAME rolling 7-day buckets as
+// the 60-day trend and the headline WoW numbers -- `bin_at(t, 7d, <SPARK_END>)`
+// with <SPARK_END> = curEnd. That makes the LAST sparkline point identical to the
+// row's own "current" value, so a row reading +63% no longer draws a falling
+// trajectory. All 8 buckets are complete 7-day windows, so the old "keep complete
+// Sun-Sat weeks to avoid a misleading partial dip in every row" workaround is no
+// longer needed -- the partial-point problem cannot occur under rolling alignment.
+// Do not reintroduce startofweek() here: it would desynchronise the sparkline from
+// the number printed beside it.
+//
+// Inputs (distinct from the trend-codes/types <TREND_*> tokens, which cover
+// the LITERAL last 60 days ending today -- these SPARK_* tokens cover the
+// last 8 rolling weeks):
+//   <SPARK_START>  = curEnd - 56d  (8 rolling 7-day buckets)
+//   <SPARK_END>    = curEnd (today), EXCLUSIVE, and the bin_at anchor. No
+//                    Sunday-alignment requirement -- any date works, because the
+//                    buckets are defined by 7-day steps back from this anchor.
+//   <CODES>        Dynamic list of error_code values whose sparklines we need.
+//                  Build this from the union of:
+//                    * wow-movers-codes.json results
+//                    * 60d-codes regression/spike/improvement bucket members
+//                  For the type variant, swap to `unified_error_type in (<TYPES>)`
+//                  and the MergeUiRequiredExceptions extension.
+
+let codes = dynamic([<CODES>]);
+materialized_view('ErrorStatsMetrics')
+| where EventInfo_Time >= datetime(<SPARK_START>) and EventInfo_Time < datetime(<SPARK_END>)
+| where error_code in (codes)
+| summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+            errs = sum(countOverall)
+     by week = bin_at(EventInfo_Time, 7d, datetime(<SPARK_END>)), error_code
+| order by error_code asc, week asc

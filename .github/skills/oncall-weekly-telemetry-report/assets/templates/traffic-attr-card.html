@@ -1,0 +1,46 @@
+<!--
+  Traffic Attribution card — for errors whose spike is fully or partly explained
+  by per-app request volume rising rather than per-request failure rate. Routed
+  to the calling-app team, not to broker.
+
+  Use under the "🚚 Traffic Attribution" section. If no errors qualify in a
+  given week, emit the "None this week" callout instead (see SKILL.md Step 6c).
+-->
+<div class="attr-card" id="traffic-card-{{ERROR_ID}}">
+  <div class="attr-header" style="background:linear-gradient(180deg,#fff8c5 0%,#fffbe8 100%);border-bottom-color:#d4a72c;">
+    <div class="attr-name">{{ERROR_NAME}} &nbsp;
+      <span class="tag tag-warn">{{WOW_BADGE}}</span>
+      <span class="tag tag-info">traffic-driven, not failure-rate</span>
+    </div>
+    <div class="attr-tags">
+      <span class="tag tag-info">dominant caller: {{DOMINANT_APP}}</span>
+    </div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict">
+      <strong>Verdict:</strong> {{VERDICT_PARAGRAPH}}
+    </div>
+
+    <table style="width:100%; font-size:12px;">
+      <thead><tr>
+        <th>Calling app</th>
+        <th class="num">Δ overall requests WoW</th>
+        <th class="num">Per-request failure rate (prev → cur)</th>
+        <th class="num">Δ failure rate</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td><code>{{APP_1}}</code></td>
+          <td class="num">{{APP_1_DELTA_REQ}}</td>
+          <td class="num">{{APP_1_PREV_RATE}} → {{APP_1_CUR_RATE}}</td>
+          <td class="num {{APP_1_RATE_CLASS}}">{{APP_1_DELTA_RATE}}</td>
+        </tr>
+        <!-- repeat per affected app -->
+      </tbody>
+    </table>
+
+    <div class="attr-verdict" style="border-left-color:#9a6700; background:#fff8c5; margin-top:12px;">
+      <strong>Routing:</strong> 📝 <strong>{{CALLER_OWNER_TEAM}}</strong> (not broker). Per-request failure rate is essentially flat, so a code regression in the broker is not implicated. The error spike is a function of {{DOMINANT_APP}} sending {{APP_1_DELTA_REQ}} more requests this week.
+    </div>
+  </div>
+</div>

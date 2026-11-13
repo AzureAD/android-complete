@@ -1,0 +1,69 @@
+// Authenticator — WEEK-OVER-WEEK error-reason breakdown for ONE scenario.
+//
+// The outcome MVs say a scenario got worse; this says WHY. Every scenario has an Errors companion
+// MV, named by inserting "Errors" before "_MV_V1":
+//     Passkey_WebAuthN_Registration_MV_V1  ->  Passkey_WebAuthN_Registration_Errors_MV_V1
+//     Entra_MFA_Push_Notification_And_CheckForAuth_MV_V1
+//                                          ->  Entra_MFA_Push_Notification_And_CheckForAuth_Errors_MV_V1
+//
+// ⚠️⚠️ THE ERRORS MVs ARE **NOT** UNIFORM. Verified live 3 distinct column shapes exist.
+// You MUST normalise per-MV with an explicit `project` before doing anything else.
+//
+//   Shape A — 10 of 12 MVs (the default; assume this unless listed below):
+//       Reason = ErrorBeautified   Errors = ErrorCount   Devices = ErrorDCount
+//       Entra_PSI_Registration_Errors_MV_V1, Entra_MFA_Registration_QR_Code_Flow_Errors_MV_V1,
+//       Entra_MFA_Registration_Errors_Manual_MV_V1, Entra_MFA_Registration_Errors_Non_QR_Code_Flow_MV_V1,
+//       Entra_MSA_NGC_Registration_Errors_MV_V1, Entra_MSA_SA_Registration_Errors_MV_V1,
+//       Passkey_InApp_Registration_Failures_MV_V1, Entra_PSI_Push_Notification_Registration_Errors_MV_V1,
+//       Entra_MFA_Push_Notification_And_CheckForAuth_Errors_MV_V1,
+//       Entra_PSI_Push_Notification_And_CheckForAuth_Errors_MV_V1
+//
+//   Shape B — Passkey WebAuthN only (column is `Error`, NOT `ErrorBeautified`):
+//       Reason = Error             Errors = ErrorCount   Devices = ErrorDCount
+//       Passkey_WebAuthN_Authentication_Errors_MV_V1, Passkey_WebAuthN_Registration_Errors_MV_V1
+//
+//   Shape C — MSA push notification only (completely different family):
+//       Reason = ErrorDetails      Errors = SessionTimeInitiated   Devices = SessionTimeInitiatedDCount
+//       Entra_MSA_Push_Notification_And_CheckForAuth_Errors_MV_V1
+//
+// ❌ Do NOT try to paper over this with `column_ifexists` after a `union` — union merges the
+//    schemas first, so the "missing" column then EXISTS (full of nulls) and the fallback never
+//    fires. Verified live: that silently returns Reason="" and Errors=0. Normalise per leg.
+// ❌ Do NOT wrap the normalisation in a `let f = (T:(*)) {...}` lambda either — a wildcard tabular
+//    parameter cannot be followed by `project` on named columns (SEM0100).
+//    See the gotcha header in scenario-outcomes-wow.kql.
+//
+// ⚠️ COUNTS ONLY. This MV has no denominator. Always pair the numbers with the scenario's
+// Initiated from scenario-outcomes-wow.kql before calling anything a rate. A raw error-count rise
+// that tracks an equal initiated rise is traffic growth, not a regression.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Tokens: <ERRORS_MV> <REASON_COL> <ERROR_COUNT_COL> <ERROR_DCOUNT_COL> <CUR_START> <CUR_END> <PREV_START>
+//   Shape A -> ErrorBeautified / ErrorCount / ErrorDCount
+//   Shape B -> Error           / ErrorCount / ErrorDCount
+//   Shape C -> ErrorDetails    / SessionTimeInitiated / SessionTimeInitiatedDCount
+let curStart  = datetime(<CUR_START>);
+let curEnd    = datetime(<CUR_END>);
+let prevStart = datetime(<PREV_START>);
+<ERRORS_MV>
+| where EventDate >= prevStart and EventDate < curEnd
+| project EventDate,
+          Reason  = tostring(<REASON_COL>),
+          ErrCnt  = tolong(<ERROR_COUNT_COL>),
+          ErrDev  = tolong(<ERROR_DCOUNT_COL>)
+| summarize Errors = sum(ErrCnt), Devices = sum(ErrDev)
+    by Reason, Window = iff(EventDate >= curStart, "current", "previous")
+| summarize
+    CurErrors  = sumif(Errors,  Window == "current"),
+    PrevErrors = sumif(Errors,  Window == "previous"),
+    CurDevices = sumif(Devices, Window == "current"),
+    PrevDevices= sumif(Devices, Window == "previous")
+    by Reason
+| extend
+    DeltaErrorsPct  = round(case(PrevErrors  > 0, (todouble(CurErrors)  - PrevErrors)  / PrevErrors  * 100, 0.0), 1),
+    DeltaDevicesPct = round(case(PrevDevices > 0, (todouble(CurDevices) - PrevDevices) / PrevDevices * 100, 0.0), 1),
+    IsNew           = PrevErrors == 0 and CurErrors > 0
+| project Reason, CurErrors, PrevErrors, DeltaErrorsPct, CurDevices, PrevDevices, DeltaDevicesPct, IsNew
+| order by CurDevices desc

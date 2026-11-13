@@ -1,5 +1,9 @@
 # GitHub Copilot Custom Instructions for Android Multi-Repo Project
 
+Start with the root [AGENTS.md](../AGENTS.md) for workspace setup, repository
+boundaries, and actionable build/test verification. The guidance below remains
+the source for domain architecture and coding conventions.
+
 These instructions guide GitHub Copilot to provide suggestions and responses aligned with our Android project's conventions, architecture, and coding style, specifically addressing our multi-repository setup and language transition.
 
 ---
@@ -48,10 +52,17 @@ Client App
 - **Common Module:** Contains all IPC (Inter-Process Communication) logic. MSAL/OneAuth use Common layer to send requests to Broker over IPC
 - **Broker Module:** Handles the actual authentication logic, communicates with eSTS, and returns tokens
 
-### 1.3 DRI Copilot MCP Server
+### 1.3 Android DRI MCP Server
 
-DRI Copilot MCP tools are available for querying documentation, TSGs, and past incidents:
-- **Broker DRI Copilot** (tools containing `Broker_DRI_Copilot`) - For Broker-related questions, PRT, device registration, brokered auth flows
+The `android-dri-search` MCP server provides tools for querying past incidents, TSGs, and DRI knowledge:
+
+| Tool | Purpose |
+|------|---------|
+| `mcp_android-dri-s_get_incident` | Fetch a specific IcM incident by ID |
+| `mcp_android-dri-s_batch_search` | Run multiple ICM and/or TSG searches in parallel |
+| `mcp_android-dri-s_search_tsgs` | Search troubleshooting guides (single query) |
+
+The server is configured in `.vscode/mcp.json` as `android-dri-search`. Authentication is automatic via Entra ID OAuth — you must be a member of the **Android Auth Client SDK** security group. See `android_dri_mcp_server/deployment-and-connection-guide.md` for details.
 
 > **For incident investigations:** Use the `incident-investigator` skill (located at `.github/skills/incident-investigator/SKILL.md`) which provides a comprehensive workflow for IcM/customer-reported issues.
 
@@ -125,16 +136,22 @@ For complex investigation tasks, use these skills (read the skill file for detai
 |-------|----------|----------|
 | **codebase-researcher** | `.github/skills/codebase-researcher/SKILL.md` | "where is X implemented", "how does Y work", "trace the flow of", data flow investigation |
 | **incident-investigator** | `.github/skills/incident-investigator/SKILL.md` | IcM incidents, customer-reported issues, authentication failures |
+| **vuln-triage-reporter** | `.github/skills/vuln-triage-reporter/SKILL.md` | `[MSRC]`/`[ITD]` vulnerability triage, classify/right-size severity, FireWatch findings, on-call security report |
+| **aria-alert-investigator** | `.github/skills/aria-alert-investigator/SKILL.md` | "Aria detected an incident", "investigate Aria alert", "health metric incident", telemetry threshold breach |
 | **kusto-analyst** | `.github/skills/kusto-analyst/SKILL.md` | "query Kusto", "analyze telemetry", "check android_spans", eSTS correlation, latency investigation |
 | **feature-planner** | `.github/skills/feature-planner/SKILL.md` | "plan this feature", "break this down into PBIs", "decompose this into tasks", feature decomposition |
 | **pbi-creator** | `.github/skills/pbi-creator/SKILL.md` | "create the PBIs", "create work items", "push PBIs to ADO", approved plan → ADO work items |
 | **design-author** | `.github/skills/design-author/SKILL.md` | "design this feature", "create a design spec", "write a design doc", "create an implementation plan" |
 | **design-reviewer** | `.github/skills/design-reviewer/SKILL.md` | "address review comments", "handle my review", "review comments on" |
+| **code-author** | `.github/skills/code-author/SKILL.md` | Ordinary implementation, bug fixes, PBIs, tests and PR authoring; coding standards, not an automatic dynamic-workflow launch |
+| **code-feature** | `.github/skills/code-feature/SKILL.md` | Experimental opt-in only: `/code-feature` or an explicit request to use the coding/dynamic/coding-and-PR workflow; not normal coding prompts, questions or quoted examples |
 | **pbi-dispatcher** | `.github/skills/pbi-dispatcher/SKILL.md` | "dispatch PBIs to agent", "assign to Copilot", "send work items to coding agent" |
 | **test-planner** | `.github/skills/test-planner/SKILL.md` | "create test plan", "write test cases", "add tests to ADO", "export test plan", "E2E tests for" |
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |
+| **s360-reporter** | `.github/skills/s360-reporter/SKILL.md` | "S360 report", "generate S360 report", "weekly S360", "S360 status", "what are our S360 items" |
 | **copilot-review-analyst** | `.github/skills/copilot-review-analyst/SKILL.md` | "analyze Copilot reviews", "Copilot review effectiveness", "review analysis report", "how helpful are Copilot reviews" |
 | **architect-reviewer** | `.github/skills/architect-reviewer/SKILL.md` | "review this design doc", "architect review", "is this design approvable", "review this spec", "what are the risks in this design", "prepare for design review", produce a structured brief for design review |
+| **oncall-weekly-telemetry-report** | `.github/skills/oncall-weekly-telemetry-report/SKILL.md` | "produce the OCE report", "weekly on-call report", "WoW telemetry report", "weekly broker health report", "generate this week's on-call summary" |
 
 ## 13. Azure DevOps Integration
 
@@ -157,7 +174,7 @@ The `design-docs/` folder contains the `AuthLibrariesApiReview` ADO repo (cloned
 |--------|-------------|
 | common / common4j | `AzureAD/microsoft-authentication-library-common-for-android` |
 | msal | `AzureAD/microsoft-authentication-library-for-android` |
-| broker / broker4j | `identity-authnz-teams/ad-accounts-for-android` (GHE) |
+| broker / broker4j | `security/ad-accounts-for-android` (GHE) |
 | adal | `AzureAD/azure-activedirectory-library-for-android` |
 | 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) |
 

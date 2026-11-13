@@ -1,0 +1,82 @@
+// Authenticator — WEEK-OVER-WEEK outcome distribution for every single-MV scenario, in ONE round-trip.
+//
+// This is the workhorse behind the report's scenario scoreboard (Section 1) and the regression
+// list (Section 2). It returns one row per (Scenario, Window) with raw-event and distinct-device
+// counts side by side, so the report can quote both a volume axis and a reach axis without a
+// second query — the same dual-axis discipline the Broker report uses for devices vs requests.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Tokens (printed by bootstrap-report.ps1 -App authapp):
+//   <CUR_START>   curEnd - 7d
+//   <CUR_END>     curEnd (EXCLUSIVE upper bound)
+//   <PREV_START>  curEnd - 14d   (the baseline window's end is always <CUR_START>)
+//
+// NOTES
+//  * Outcome MVs expose ONLY Initiated / Succeeded / Failed (+ …DCount twins) and
+//    TotalUniqueDevices. There is NO Cancelled and NO PartiallySucceeded column.
+//  * Any shortfall (Initiated > Succeeded + Failed) is bucketed as "Unknown" — a session that
+//    started but never produced a terminal result in-window. Unknown is a first-class Authenticator
+//    signal (user abandonment / silent drop) with no Broker equivalent; report it, do not hide it.
+//  * Push-notification families are NOT in this query — they have no Succeeded/Failed columns.
+//    Use pn-completion-wow.kql for those.
+//
+// KQL GOTCHAS THIS QUERY WAS BITTEN BY (verified live — do not "simplify" these away):
+//  1. In a `let` lambda, TABULAR parameters must be declared BEFORE scalar ones. `(label:string,
+//     T:(...))` fails with "Tabular parameters must be declared first" — hence `outcome(T, label)`.
+//  2. A wildcard tabular parameter `(T:(*))` CANNOT be followed by `project` on named columns:
+//     the columns aren't statically known, so you get "Failed to resolve scalar expression named
+//     'EventDate'". The `P()` shim therefore declares every column explicitly.
+//  3. `union` as a function ARGUMENT needs its own parentheses — `P(union A, B)` parses the comma
+//     as an argument separator. Write `P((union A, B))`.
+//  4. Entra_PSI_Push_Notification_Registration_MV_V1 does NOT use the Initiated/Succeeded/Failed
+//     naming. Its columns are RegistrationStarted / RegistrationSucceeded / RegistrationFailed
+//     (+ …DCount twins) — plus a RegistrationCancelled it does not expose to us here. Cancellations
+//     therefore fall into Unknown, which is semantically correct: a cancel IS an abandonment.
+let curStart  = datetime(<CUR_START>);
+let curEnd    = datetime(<CUR_END>);
+let prevStart = datetime(<PREV_START>);
+let outcome = (T:(EventDate:datetime, Ini:long, Suc:long, Fai:long, IniD:long, SucD:long, FaiD:long), label:string) {
+    T
+    | where EventDate >= prevStart and EventDate < curEnd
+    | summarize
+        Initiated       = sum(Ini),
+        Succeeded       = sum(Suc),
+        Failed          = sum(Fai),
+        InitiatedDevices= sum(IniD),
+        SucceededDevices= sum(SucD),
+        FailedDevices   = sum(FaiD)
+        by Window = iff(EventDate >= curStart, "current", "previous")
+    | extend Scenario = label
+};
+// Rename shim for the MVs that DO use the standard Initiated/Succeeded/Failed naming.
+let P = (T:(EventDate:datetime, Initiated:long, Succeeded:long, Failed:long, InitiatedDCount:long, SucceededDCount:long, FailedDCount:long)) {
+    T | project EventDate, Ini = Initiated, Suc = Succeeded, Fai = Failed,
+                IniD = InitiatedDCount, SucD = SucceededDCount, FaiD = FailedDCount
+};
+union
+  outcome(P(Passkey_WebAuthN_Registration_MV_V1),       "Passkey WebAuthN Registration"),
+  outcome(P(Passkey_InApp_Registration_MV_V1),          "Passkey InApp Registration"),
+  outcome(P(Passkey_WebAuthN_Authentication_MV_V1),     "Passkey WebAuthN Authentication"),
+  outcome(P(Entra_MFA_Registration_QR_Code_Flow_MV_V1), "Entra MFA Registration (QR)"),
+  outcome(P((union Entra_MFA_Registration_Manual_Flow_MV_V1, Entra_MFA_Registration_Non_QR_Code_Flow_MV_V1)),
+                                                        "Entra MFA Registration (No-QR)"),
+  outcome(P(Entra_PSI_Registration_MV_V1),              "Entra PSI Registration"),
+  outcome(P(Entra_MSA_NGC_Registration_MV_V1),          "MSA NGC Registration"),
+  outcome(P(Entra_MSA_SA_Registration_MV_V1),           "MSA SA Registration"),
+  // PSI push-notification registration uses the Registration* column family (see gotcha 4).
+  outcome((Entra_PSI_Push_Notification_Registration_MV_V1
+           | project EventDate, Ini = RegistrationStarted, Suc = RegistrationSucceeded, Fai = RegistrationFailed,
+                     IniD = RegistrationStartedDCount, SucD = RegistrationSucceededDCount, FaiD = RegistrationFailedDCount),
+          "Entra PSI PN Registration")
+| extend Unknown        = case(Initiated > (Succeeded + Failed), Initiated - (Succeeded + Failed), 0)
+| extend UnknownDevices = case(InitiatedDevices > (SucceededDevices + FailedDevices), InitiatedDevices - (SucceededDevices + FailedDevices), 0)
+| extend
+    SuccessRate = round(case(Initiated > 0, todouble(Succeeded) / todouble(Initiated) * 100, 0.0), 2),
+    FailureRate = round(case(Initiated > 0, todouble(Failed)    / todouble(Initiated) * 100, 0.0), 2),
+    UnknownRate = round(case(Initiated > 0, todouble(Unknown)   / todouble(Initiated) * 100, 0.0), 2)
+| project Scenario, Window, Initiated, Succeeded, Failed, Unknown,
+          SuccessRate, FailureRate, UnknownRate,
+          InitiatedDevices, SucceededDevices, FailedDevices, UnknownDevices
+| order by Scenario asc, Window desc

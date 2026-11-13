@@ -302,7 +302,7 @@ gh pr view <prNumber> --repo "<full-repo-slug>" --json state,title,url,statusChe
 Repo slug mapping:
 - `common` → `AzureAD/microsoft-authentication-library-common-for-android`
 - `msal` → `AzureAD/microsoft-authentication-library-for-android`
-- `broker` → `identity-authnz-teams/ad-accounts-for-android`
+- `broker` → `security/ad-accounts-for-android`
 - `adal` → `AzureAD/azure-activedirectory-library-for-android`
 
 **Step 3: Present results** as a table with: PR #, repo, title, status, checks, +/- lines.

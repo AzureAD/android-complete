@@ -1,0 +1,48 @@
+// Broker — PER-SPAN request-rate for specific error codes, one host app, two host-app versions.
+// The COMPLEMENT to broker-top-errors-by-host-app.kql. That query measures DEVICE-SHARE
+// (fraction of all auth-hosted-broker devices that hit code X *anywhere*, deduped across spans).
+// Device-share MASKS a per-span request-rate rise: invalid_grant can climb inside
+// AcquireTokenSilent / ATISilently while overall device-share falls, because the device-dedup +
+// the broad denominator (dominated by the low-invalid_grant silent path) drowns it out, and an
+// early-rollout cohort is "healthier" on the dominant path. When a code looks flat/down in the
+// device-share table but you suspect a span-local spike, run THIS to slice by span_name.
+//
+// Cluster:  https://idsharedeus2.kusto.windows.net
+// Database: ad-accounts-android-otel
+//
+// Placeholders:
+//   <PACKAGE>  active broker package, e.g. "com.azure.authenticator".
+//   <FIRST>    rolling-out host-app version (AppInfo_Version), e.g. "6.2606.3817".
+//   <SECOND>   previous/baseline host-app version, e.g. "6.2605.3042".
+//   <CODES>    lower-cased error_code list to drill into, e.g. "invalid_grant","interaction_required".
+//   <START><END>  datetime bounds (yyyy-mm-dd).
+//
+// Rate = errored requests for the code in span S / TOTAL requests in span S, per version
+// (request-level, NOT device-level). ErrorStatsMetrics carries BOTH success and failure rows
+// (error_code == "success" exists), so the per-span denominator is the full request volume.
+// countOverall is additive — sum() is safe. deltaPp = firstRate - secondRate (lower is better).
+// The (firstReq+secondReq) > 1000 floor drops tiny, noisy span/code cells.
+let pkg = "<PACKAGE>";
+let firstVer = "<FIRST>"; let secondVer = "<SECOND>";
+let win = materialized_view('ErrorStatsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where active_broker_package_name == pkg
+  | where AppInfo_Version in (firstVer, secondVer)
+  | where isnotempty(span_name);
+let totals = win | summarize totReq = sum(countOverall) by AppInfo_Version, span_name;
+win
+| where tolower(error_code) in (<CODES>)
+| summarize codeReq = sum(countOverall) by AppInfo_Version, span_name, error_code
+| join kind=inner totals on AppInfo_Version, span_name
+| extend ratePct = 100.0 * codeReq / totReq
+| summarize firstRate  = sumif(ratePct, AppInfo_Version == firstVer),
+            secondRate = sumif(ratePct, AppInfo_Version == secondVer),
+            firstReq   = sumif(codeReq, AppInfo_Version == firstVer),
+            secondReq  = sumif(codeReq, AppInfo_Version == secondVer)
+     by error_code, span_name
+| extend deltaPp = round(firstRate - secondRate, 4)
+| where (firstReq + secondReq) > 1000
+| project error_code, span_name,
+          secondRate = round(secondRate, 4), firstRate = round(firstRate, 4),
+          deltaPp, firstReq, secondReq
+| order by error_code asc, deltaPp desc

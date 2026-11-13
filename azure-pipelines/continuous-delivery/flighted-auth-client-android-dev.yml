@@ -1,6 +1,6 @@
 # File: azure-pipelines/continuous-delivery/auth-client-android-dev.yml
 # Description: Assemble & publish dev builds of auth client android sdk libraries to internal maven feed
-#  Libraries include common4j, common, broker4j, linux broker, broker, msal and adal
+#  Libraries include common4j, common, broker4j, broker, msal and adal
 # Variable: 'mvnUserName' user name to access internal maven feed
 # Variable: 'mvnPAT' access token to access internal maven feed
 # Variable: 'MSAL_LTW_Branch' MSAL branch to be passed to LTW UI Automation
@@ -22,10 +22,10 @@ resources:
       ref: dev
       endpoint: ANDROID_GITHUB
     - repository: broker
-      type: github
-      name: AzureAD/ad-accounts-for-android
+      type: githubenterprise
+      name: security/ad-accounts-for-android
       ref: dev
-      endpoint: ANDROID_GITHUB
+      endpoint: MSFT_GHE_SECURITY
     - repository: msal
       type: github
       name: AzureAD/microsoft-authentication-library-for-android
@@ -103,7 +103,6 @@ variables:
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
   commonVersionParam: -PdistCommonVersion=$(versionNumber)
-  linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   authenticatorPipelineId: 237369
@@ -245,64 +244,6 @@ stages:
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
-# Linux Broker - Build and publish
-- stage: 'publishLinuxBrokeLibraries'
-  displayName: Linux Broker - Build and publish
-  dependsOn: 
-  - publishCommon4jLibraries
-  - publishBroke4jLibraries
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: broker
-      project: LinuxBroker
-      publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
-      testCmd: linuxBrokerUnitTestCoverageReport
-      dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
-      publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(LabVaultAppSecret) -Psystemd_mode_enabled=false --build-cache --info
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'mvnPAT'
-      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
-  - job: PublishLinuxBrokerPackage
-    dependsOn: publishLinuxBrokerLibraries
-    displayName: Publish Linux Broker Package
-    pool:
-      vmImage: ubuntu-latest
-    variables:
-    - group: AndroidAuthClientAutomationSecrets
-    steps:
-    - checkout: broker
-      persistCredentials: True
-    - task: Gradle@3
-      displayName: Build and publish linux broker package
-      env:
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: VSTS
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(mvnPAT)
-      inputs:
-        cwd: $(Build.SourcesDirectory)/broker-java-root
-        tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDebian $(linuxBrokerVersion) --build-cache --info
-        publishJUnitResults: false
-        jdkArchitecture: x86
-        sqAnalysisBreakBuildIfQualityGateFailed: false
-    - task: CopyFiles@2
-      name: CopyFiles1
-      displayName: Copy Files to Artifact Staging Directory
-      inputs:
-        SourceFolder: LinuxBrokerPackage/build/distributions
-        TargetFolder: $(build.artifactstagingdirectory)
-    - task: PublishPipelineArtifact@1
-      name: PublishPipelineArtifacts1
-      enabled: ${{ parameters.publishLibraryArtifacts }}
-      displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
-      inputs:
-        ArtifactName: LinuxBrokerPackage Deb Package
-        TargetPath: $(build.artifactstagingdirectory)
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish

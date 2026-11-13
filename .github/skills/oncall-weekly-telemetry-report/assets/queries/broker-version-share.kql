@@ -1,0 +1,17 @@
+// Per-broker-version request and device share for the WoW window -- the
+// canonical evidence for the "denominator caveat" callout. If the all-spans
+// device count moved >20% WoW, this query tells you WHICH version cohort drove
+// it.
+//
+// Rolling 7-day window. See SKILL.md and bootstrap-report.ps1 for the canonical
+// window computation. Two rows per broker_version (week = prevStart or curStart).
+let curEnd    = datetime(<CUR_END>);
+let curStart  = datetime(<CUR_START>);
+let prevStart = datetime(<PREV_START>);
+materialized_view('BrokerAdoptionStatsUpdated')
+| where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| summarize req = sum(countRequests),
+            dev = dcount_hll(hll_merge(countDevicesHll))
+     by week, broker_version
+| order by week asc, req desc

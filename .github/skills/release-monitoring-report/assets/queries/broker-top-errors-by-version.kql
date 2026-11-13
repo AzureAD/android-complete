@@ -1,0 +1,36 @@
+// Broker — TOP ERROR CODES per version, with cross-version delta. The core "why is
+// this release different?" query. One row per error_code with explicit first/second
+// columns (device + request counts and device-share %), plus the device-share delta in
+// percentage points. Feeds compare-versions.js and the Broker "Top regressions /
+// improvements" report section.
+//
+// Cluster:  https://idsharedeus2.kusto.windows.net
+// Database: ad-accounts-android-otel
+//
+// Placeholders: <FIRST> (rolling-out broker_version), <SECOND> (previous), <START>, <END>.
+//
+// Device share = devicesHittingError / totalDevicesOnThatVersion, so a code that grew
+// only because the version has more devices does NOT show up as a regression.
+// HLL gotcha: merge sketches, never sum countDevices.
+let firstVer  = "<FIRST>";
+let secondVer = "<SECOND>";
+let win = materialized_view('ErrorStatsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where broker_version in (firstVer, secondVer);
+let firstTotalDev  = toscalar(win | where broker_version == firstVer  | summarize dcount_hll(hll_merge(countDevicesHll)));
+let secondTotalDev = toscalar(win | where broker_version == secondVer | summarize dcount_hll(hll_merge(countDevicesHll)));
+win
+| where isnotempty(error_code) and tolower(error_code) != "success"
+| summarize devs = dcount_hll(hll_merge(countDevicesHll)), reqs = sum(countOverall)
+     by broker_version, error_code
+| summarize firstDevs  = sumif(devs, broker_version == firstVer),
+            secondDevs = sumif(devs, broker_version == secondVer),
+            firstReqs  = sumif(reqs, broker_version == firstVer),
+            secondReqs = sumif(reqs, broker_version == secondVer)
+     by error_code
+| extend firstShare  = round(100.0 * firstDevs  / firstTotalDev, 4),
+         secondShare = round(100.0 * secondDevs / secondTotalDev, 4)
+| extend shareDeltaPp = round(firstShare - secondShare, 4)
+| project error_code, firstDevs, secondDevs, firstReqs, secondReqs,
+          firstShare, secondShare, shareDeltaPp
+| order by shareDeltaPp desc

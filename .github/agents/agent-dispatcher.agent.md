@@ -20,9 +20,9 @@ Read the skill file at `.github/skills/pbi-dispatcher/SKILL.md` and follow its w
    - Fall back to prompting the developer
    - **Never hardcode GitHub usernames**
 
-2. **Switch gh account** before any GitHub operations using the discovered usernames:
-   - `AzureAD/*` repos → `gh auth switch --user <discovered_public_username>`
-   - `identity-authnz-teams/*` repos → `gh auth switch --user <discovered_emu_username>`
+2. **Select the right gh host/account** before any GitHub operations using the discovered usernames:
+   - `AzureAD/*` repos (github.com) → `gh auth switch --hostname github.com --user <discovered_public_username>`
+   - `security/*` repos on `msft.ghe.com` (broker) → pass `--hostname msft.ghe.com` to every `gh` call (separate host, not an account switch)
 
 2. **Read the full PBI** from ADO using `mcp_ado_wit_get_work_item` before dispatching
 

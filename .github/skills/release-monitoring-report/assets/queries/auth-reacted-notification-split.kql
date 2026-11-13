@@ -1,0 +1,34 @@
+// Authenticator — per-version REACTED-NOTIFICATION outcome split (Approved/Denied/Error).
+// Generalizes the dashboard's "Reacted Notification Success Rate" / "PN Reacted
+// Notification Success Rate" tiles (Entra MFA, Entra PSI, MSA NGC/SA). Splits the
+// notifications the user reacted to into Approved / Denied / Error percentages.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Per-family wiring (set <RESULT_MV> <REACT_COL> <FAMILY_FILTER>):
+//   Entra MFA : <RESULT_MV>=Entra_MFA_Push_Notification_And_CheckForAuth_Results_MV_V1  <REACT_COL>=RequestTimeInitiated  <FAMILY_FILTER>=(none)
+//   Entra PSI : <RESULT_MV>=Entra_PSI_Push_Notification_And_CheckForAuth_Results_MV_V1  <REACT_COL>=RequestTimeInitiated  <FAMILY_FILTER>=(none)
+//   MSA NGC   : <RESULT_MV>=Entra_MSA_Push_Notification_And_CheckForAuth_Results_MV_V1  <REACT_COL>=SessionTimeInitiated  <FAMILY_FILTER>=| where IsNGC == "true"
+//   MSA SA    : same as NGC but <FAMILY_FILTER>=| where IsNGC == "false"
+//
+// Placeholders: <FIRST> <SECOND> <START> <END> <DCOUNT>.
+let dc = <DCOUNT>;
+<RESULT_MV>
+| where FinalResult in ("Approved", "Denied", "Error")
+<FAMILY_FILTER>
+| where EventDate >= startofday(datetime(<START>)) and EventDate <= endofday(datetime(<END>))
+| where AppVersion in ("<FIRST>", "<SECOND>")
+| summarize Reacted = iff(dc, sum(<REACT_COL>DCount), sum(<REACT_COL>)) by AppVersion, FinalResult
+| summarize
+    Approved = sumif(Reacted, FinalResult == "Approved"),
+    Denied   = sumif(Reacted, FinalResult == "Denied"),
+    Error    = sumif(Reacted, FinalResult == "Error")
+    by AppVersion
+| extend Total = Approved + Denied + Error
+| extend
+    ApprovedRate = round(todouble(Approved) / todouble(Total) * 100, 2),
+    DeniedRate   = round(todouble(Denied)   / todouble(Total) * 100, 2),
+    ErrorRate    = round(todouble(Error)    / todouble(Total) * 100, 2)
+| project AppVersion, Total, Approved, Denied, Error, ApprovedRate, DeniedRate, ErrorRate
+| order by AppVersion desc

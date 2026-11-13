@@ -98,314 +98,746 @@
     .card-grid { grid-template-columns: repeat(2, 1fr); }
     .donut-container { flex-direction: column; }
   }
+  /* --- 4-way methodology additions --- */
+  :root {
+    --blue: #0969da; --light-blue: #ddf4ff;
+    --purple: #8250df; --light-purple: #fbefff;
+  }
+  .card.blue { border-left: 4px solid var(--blue); }
+  .card.purple { border-left: 4px solid var(--purple); }
+  .bar-fill.blue { background: var(--blue); }
+  .bar-fill.purple { background: var(--purple); }
+  .stacked-segment.green { background: var(--green); }
+  .stacked-segment.blue { background: var(--blue); }
+  .stacked-segment.red { background: var(--red); }
+  .stacked-segment.amber { background: var(--amber); }
+  .card.six-grid { }
+  .card-grid.six { grid-template-columns: repeat(6, 1fr); }
+  @media (max-width: 640px) { .card-grid.six { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
 <body>
 
 <h1>Copilot Code Review Effectiveness Analysis</h1>
-<p class="subtitle">Android Auth Platform &nbsp;|&nbsp; January 23 – March 23, 2026 &nbsp;|&nbsp; Common, MSAL, Broker Repositories</p>
+<p class="subtitle">Android Auth Platform &nbsp;|&nbsp; June 10 &ndash; July 15, 2026 &nbsp;|&nbsp; Common, MSAL, Broker Repositories</p>
 
-<!-- ==================== EXECUTIVE SUMMARY ==================== -->
-<h2>Executive Summary</h2>
-
-<p class="lead">We analyzed <strong>every inline code review comment</strong> left by GitHub Copilot on human-authored pull requests across our three Android Auth repositories over the past two months. For each of the <strong>557 comments</strong>, we determined whether the feedback led to a concrete code improvement.</p>
-
-<div class="card-grid">
-  <div class="card gray">
-    <div class="number">57%</div>
-    <div class="label">of comments received<br><strong>no response</strong></div>
-  </div>
-  <div class="card green">
-    <div class="number">41%</div>
-    <div class="label">confirmed<br><strong>helpful</strong></div>
-  </div>
-  <div class="card red">
-    <div class="number">18%</div>
-    <div class="label">confirmed<br><strong>not helpful</strong></div>
-  </div>
-  <div class="card amber">
-    <div class="number">41%</div>
-    <div class="label">unresolved<br><strong>(not evaluated)</strong></div>
-  </div>
+<h2 id="executive-summary">Executive Summary</h2>
+<p>We analyzed <strong>every inline code review comment</strong> left by GitHub Copilot on human-authored pull requests across our three Android Auth repositories (Common, MSAL, Broker) over the past five weeks. For each of the <strong>132 comments</strong>, we determined whether the feedback led to a concrete code improvement — either through an explicit engineer response, or by verifying that the suggested change appeared in subsequent commit diffs — and, critically, whether any dismissal was because <em>Copilot was wrong</em> or because <em>the engineer made a deliberate judgment call</em>.</p>
+<div class="card-grid six">
+  <div class="card gray"><div class="number">72%</div><div class="label">engineer<br><strong>response rate</strong></div></div>
+  <div class="card green"><div class="number">54.5%</div><div class="label">confirmed<br><strong>helpful</strong></div></div>
+  <div class="card blue"><div class="number">20.5%</div><div class="label">correct but<br><strong>declined</strong></div></div>
+  <div class="card red"><div class="number">1.5%</div><div class="label">actually<br><strong>incorrect</strong></div></div>
+  <div class="card amber"><div class="number">23.5%</div><div class="label">unresolved<br><strong>(no evidence)</strong></div></div>
+  <div class="card purple"><div class="number">97.3%</div><div class="label">review<br><strong>precision</strong></div></div>
 </div>
-
-<div class="callout insight">
-  <strong>The biggest finding isn't about AI quality — it's about adoption.</strong>
-  When engineers <em>do</em> engage with Copilot's comments, 60% turn out to be helpful. But 57% of comments receive no response at all, and 41% of all comments are unresolved — we can't tell if they were useful because no one evaluated them. The true helpfulness rate lies between 41% (confirmed floor) and 82% (if all unresolved were helpful).
-</div>
-
-<!-- ==================== SCOPE ==================== -->
-<h2>Scope</h2>
-
-<div class="card-grid">
-  <div class="card">
-    <div class="number">163</div>
-    <div class="label">Human PRs<br>scanned</div>
-  </div>
-  <div class="card">
-    <div class="number">113</div>
-    <div class="label">PRs received<br>Copilot review (69%)</div>
-  </div>
-  <div class="card">
-    <div class="number">557</div>
-    <div class="label">Inline review<br>comments</div>
-  </div>
-  <div class="card">
-    <div class="number">4.9</div>
-    <div class="label">Avg comments<br>per reviewed PR</div>
-  </div>
-</div>
-
-<!-- ==================== OVERALL RESULTS ==================== -->
-<h2>Overall Results</h2>
-
-<h3>Engineer Response Rate</h3>
+<div class="callout insight"><strong>Fairness principle</strong>We separate &ldquo;Declined&rdquo; (Copilot was correct or reasonable, but the engineer intentionally chose not to act &mdash; a nitpick, a stylistic preference, or an approximation the author knew about) from &ldquo;Incorrect&rdquo; (Copilot was factually wrong). Only genuinely <em>Incorrect</em> comments count against review quality. <strong>Precision = Helpful &divide; (Helpful + Incorrect)</strong>, excluding Declined and Unresolved &mdash; so we never penalize Copilot for feedback it had no way to know the author would decline.</div>
+<p>This run introduces a <strong>new, fairer methodology</strong>. In prior reports, any comment an engineer declined was lumped into a single &quot;not helpful&quot; bucket. That was unfair to Copilot: a comment can be entirely correct and well-reasoned, yet the author still decides not to act on it because of context the AI had no way to know (a deliberate design choice, a subjective naming preference, or a readability nit). This report separates those cases into a neutral <strong>Declined</strong> category and reserves <strong>Not Helpful</strong> exclusively for comments where Copilot was demonstrably <em>wrong</em>.</p>
+<p><strong>Key findings:</strong></p>
+<ul>
+<li><strong>72% of Copilot's comments now receive a response from engineers.</strong> This is up sharply from prior periods (44% → 79% → 68% → 72%) and reflects a real behavior change — several engineers went back and replied to comments they had previously left unanswered. When engineers engage, we can actually judge the AI's value.</li>
+<li><strong>Only 1.5% of all comments were genuinely wrong.</strong> Across 132 comments, just <strong>two</strong> were confirmed as Copilot errors. When you compute Copilot's <strong>precision</strong> — helpful comments as a share of everything we can actually adjudicate (helpful + wrong) — it lands at <strong>97.3%</strong>. The AI is rarely incorrect.</li>
+<li><strong>20.5% of comments were correct-but-declined.</strong> These 27 comments were reasonable feedback the engineer chose not to adopt for a stated reason — by design, a subjective preference, or context Copilot couldn't have known. <strong>These do not count against Copilot's quality.</strong> Treating them as failures, as the old methodology did, materially understated the tool's accuracy.</li>
+<li><strong>54.5% of all comments led to a confirmed code improvement.</strong> With only 1.5% confirmed wrong and 23.5% unresolved (never evaluated), the true helpfulness ceiling is very high — the gap is engineer engagement, not AI accuracy.</li>
+</ul>
+<hr />
+<h2 id="how-we-measured-this">How We Measured This</h2>
+<p>This analysis went through five phases to ensure accuracy:</p>
+<ol>
+<li><p><strong>Data collection.</strong> We used the GitHub API to extract all 132 Copilot inline review comments from 53 reviewed human-authored PRs (excluding PRs authored by the Copilot coding agent). We also recorded which comments received human replies and captured the full reply text.</p>
+</li>
+<li><p><strong>Diff-level verification.</strong> For the 37 comments (28%) that received no reply, we checked whether the engineer silently acted on the feedback. We used the GitHub compare API to examine the diff between the commit Copilot reviewed and the final PR head. For comments containing GitHub suggestion blocks, we checked if the suggested code tokens appeared as additions in the diff. For prose comments, we checked if the exact line range was modified in a subsequent commit.</p>
+</li>
+<li><p><strong>AI-assisted reply classification (three-way).</strong> For the 95 comments (72%) that received a human reply, the AI conducting this analysis read the full Copilot comment and the engineer's reply in context, and assigned one of three verdicts:</p>
+<ul>
+<li><strong>Helpful</strong> — the engineer accepted the feedback (acknowledged it, fixed it, or delegated the fix back to Copilot).</li>
+<li><strong>Declined</strong> — the engineer's reply shows the feedback was understood and reasonable, but they made a deliberate choice not to act on it (by design, subjective preference, moot/out-of-scope, or context Copilot couldn't have known). <strong>Copilot was not wrong</strong> — it simply had no way to know the author's intent.</li>
+<li><strong>Not Helpful (incorrect)</strong> — the engineer's reply demonstrates the comment was factually or technically <em>wrong</em> (a false positive, a hallucinated problem, or a misunderstanding of a library/API).</li>
+</ul>
+</li>
+<li><p><strong>The fairness principle.</strong> The dividing line between <em>Declined</em> and <em>Not Helpful</em> is <strong>whether Copilot was wrong</strong>, not whether the engineer acted. If an engineer says &quot;good point, but we want the verbose stack trace for this new feature,&quot; Copilot's observation was legitimate — the author just weighed the tradeoff differently. That is <strong>Declined</strong>, and it is neutral. Only when the engineer shows the comment was actually incorrect (&quot;the annotation is already there,&quot; &quot;not reproducible on this version&quot;) does it count as <strong>Not Helpful</strong>.</p>
+</li>
+<li><p><strong>Cross-validation.</strong> All no-reply comments were re-examined against the diff evidence. Where the evidence of a silent fix was strong (the suggested tokens or exact lines appeared in a later commit), the comment was reclassified as Helpful rather than left Unresolved.</p>
+</li>
+</ol>
+<p>The final dataset classifies each of the 132 comments as <strong>confirmed helpful</strong>, <strong>declined (correct but not adopted)</strong>, <strong>not helpful (incorrect)</strong>, or <strong>unresolved</strong> (insufficient evidence to determine). No comment is left without a classification.</p>
+<hr />
+<h2 id="a-note-on-fairness-why-declined-is-not-wrong">A Note on Fairness: Why &quot;Declined&quot; Is Not &quot;Wrong&quot;</h2>
+<p>The single most important change in this report is the recognition that <strong>an engineer declining a comment is not evidence that the comment was bad.</strong></p>
+<p>Consider Broker PR #201. Copilot flagged a code comment that read <code>~1 per device</code> as potentially misleading — the tilde could be read as an exact value. The engineer replied simply: <em>&quot;~ = approximate. i think this is ok.&quot;</em> Copilot's observation was perfectly reasonable — an ambiguous notation is worth a second look. The author simply judged that, in context, the notation was clear enough. Copilot had no way to know the author's tolerance for that ambiguity beforehand. Counting this against the AI's review quality would be unfair.</p>
+<p>We saw this pattern repeatedly: Copilot suggests removing a log line, and the engineer explains it's deliberately there to catch a regression in a specific scenario; Copilot proposes a different span name, and the engineer prefers the existing one; Copilot flags a full stack-trace log, and the engineer wants exactly that verbosity for a brand-new feature. In every case the AI's reasoning was sound. The engineer had additional context — and the right — to decide otherwise.</p>
+<p>By separating these <strong>Declined</strong> cases (20.5% of all comments) from genuine <strong>errors</strong> (1.5%), we get an honest picture: Copilot's feedback is correct or reasonable the overwhelming majority of the time. The old binary rubric — which would have reported ~22% &quot;not helpful&quot; this period — obscured that the AI was actually <em>wrong</em> in only 2 of 132 comments.</p>
+<hr />
+<h2 id="overall-results">Overall Results</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Human PRs scanned</td>
+<td>87</td>
+</tr>
+<tr>
+<td>PRs that received Copilot review</td>
+<td>53 (61%)</td>
+</tr>
+<tr>
+<td>Total inline review comments</td>
+<td>132</td>
+</tr>
+<tr>
+<td>Average comments per reviewed PR</td>
+<td>2.5</td>
+</tr>
+</tbody>
+</table>
+<h3 id="engineer-response-rate">Engineer Response Rate</h3>
 <p>Before looking at helpfulness, it's important to understand how engineers interact with Copilot reviews — because a comment can only demonstrate value if someone reads it.</p>
-
+<table>
+<thead>
+<tr>
+<th>Behavior</th>
+<th>Count</th>
+<th>Percentage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Engineer replied</strong> (any response — acceptance, decline, or discussion)</td>
+<td>95</td>
+<td><strong>72.0%</strong></td>
+</tr>
+<tr>
+<td><strong>Engineer did not reply</strong></td>
+<td>37</td>
+<td><strong>28.0%</strong></td>
+</tr>
+</tbody>
+</table>
+<p>At 72%, this is the second-highest response rate we've recorded, and a marked improvement over the first analysis period (44%). Several engineers returned to previously-ignored comments and replied — most notably one engineer who went from a mix of ignored/unanswered comments to a <strong>100% response rate</strong> across all seven of their comments. Every reply, even a decline, is valuable: it lets us tell the difference between feedback that was wrong and feedback that was simply not adopted.</p>
+<h3 id="helpfulness-verdict">Helpfulness Verdict</h3>
+<p>Each comment was classified into one of four categories. Note the deliberate split between <strong>Declined</strong> (Copilot was right, the engineer chose otherwise) and <strong>Not Helpful</strong> (Copilot was wrong):</p>
 <div class="stacked-bar">
-  <div class="stacked-segment" style="width:42.9%;background:var(--green)">43% replied</div>
-  <div class="stacked-segment" style="width:57.1%;background:var(--gray)">57% ignored</div>
+  <div class="stacked-segment green" style="width:54.5%">54.5%</div>
+  <div class="stacked-segment blue" style="width:20.5%">20.5%</div>
+  <div class="stacked-segment red" style="width:1.5%"></div>
+  <div class="stacked-segment amber" style="width:23.5%">23.5%</div>
 </div>
 <div class="stacked-legend">
-  <span><span class="dot" style="background:var(--green)"></span> Engineer replied (239)</span>
-  <span><span class="dot" style="background:var(--gray)"></span> No response (318)</span>
+  <span><span class="dot" style="background:#2da44e"></span>Helpful (72)</span>
+  <span><span class="dot" style="background:#0969da"></span>Declined (27)</span>
+  <span><span class="dot" style="background:#cf222e"></span>Incorrect (2)</span>
+  <span><span class="dot" style="background:#bf8700"></span>Unresolved (31)</span>
 </div>
-
-<p>More than half of all Copilot review comments receive no human response. The majority of AI feedback enters a void — it may be valid, but we can never confirm its value if no one engages with it.</p>
-
-<h3>Helpfulness Verdict</h3>
-
-<div class="stacked-bar">
-  <div class="stacked-segment" style="width:41.3%;background:var(--green)">41.3%</div>
-  <div class="stacked-segment" style="width:18.1%;background:var(--red)">18.1%</div>
-  <div class="stacked-segment" style="width:40.6%;background:var(--amber)">40.6%</div>
-</div>
-<div class="stacked-legend">
-  <span><span class="dot" style="background:var(--green)"></span> Confirmed Helpful (230)</span>
-  <span><span class="dot" style="background:var(--red)"></span> Confirmed Not Helpful (101)</span>
-  <span><span class="dot" style="background:var(--amber)"></span> Unresolved (226)</span>
-</div>
-
 <table>
-  <tr><th>Verdict</th><th class="right">Count</th><th class="right">%</th><th>Definition</th></tr>
-  <tr><td class="bold" style="color:var(--green)">Confirmed Helpful</td><td class="right">230</td><td class="right">41.3%</td><td>The comment led to a code change — engineer explicitly acknowledged it, or the suggested fix was verified in a subsequent commit diff.</td></tr>
-  <tr><td class="bold" style="color:var(--red)">Confirmed Not Helpful</td><td class="right">101</td><td class="right">18.1%</td><td>The engineer explicitly dismissed the comment with a reason why the feedback was incorrect, irrelevant, or by design.</td></tr>
-  <tr><td class="bold" style="color:var(--amber)">Unresolved</td><td class="right">226</td><td class="right">40.6%</td><td>No reply and no definitive diff evidence. Includes comments on the final commit before merge, files modified at different lines, and comments with no line number. Could be valid feedback that was never evaluated.</td></tr>
+<thead>
+<tr>
+<th>Verdict</th>
+<th>Count</th>
+<th>Percentage</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Confirmed Helpful</strong></td>
+<td><strong>72</strong></td>
+<td><strong>54.5%</strong></td>
+<td>The comment led to a code change — the engineer explicitly acknowledged it, or the suggested fix was verified in a subsequent commit diff.</td>
+</tr>
+<tr>
+<td><strong>Declined (correct, not adopted)</strong></td>
+<td><strong>27</strong></td>
+<td><strong>20.5%</strong></td>
+<td>The engineer understood the feedback and made a deliberate choice not to act on it — by design, a subjective preference, moot/out-of-scope, or context Copilot couldn't have known. <strong>This is neutral; Copilot was not wrong.</strong></td>
+</tr>
+<tr>
+<td><strong>Not Helpful (incorrect)</strong></td>
+<td><strong>2</strong></td>
+<td><strong>1.5%</strong></td>
+<td>The engineer demonstrated the comment was factually or technically <em>wrong</em> — a false positive, a hallucination, or a misunderstanding of a library/API. This is the only bucket that counts against Copilot's quality.</td>
+</tr>
+<tr>
+<td><strong>Unresolved</strong></td>
+<td><strong>31</strong></td>
+<td><strong>23.5%</strong></td>
+<td>The comment received no reply AND we could not confirm whether it was addressed. Could be valid feedback that was never evaluated.</td>
+</tr>
+</tbody>
 </table>
-
-<div class="callout warning">
-  <strong>226 comments (41%) are unresolved — not because the AI was wrong, but because no one looked.</strong>
-  This includes 122 comments on the final commit before merge where the engineer had no subsequent commits, 45 where the file was modified at different lines, 50 with no line number for verification, and 9 where the file was never modified. If engineers had engaged — even just to dismiss — we would know.
-</div>
-
-<h3>How Helpful Comments Were Delivered</h3>
+<h3 id="the-precision-metric">The Precision Metric</h3>
+<p>Because <em>Declined</em> is neutral and <em>Unresolved</em> is unknown, the fairest single measure of Copilot's review quality is its <strong>precision</strong> — of the comments we can actually adjudicate as right or wrong, what fraction were right?</p>
+<blockquote>
+<p><strong>Precision = Helpful ÷ (Helpful + Incorrect) = 72 ÷ (72 + 2) = 97.3%</strong></p>
+</blockquote>
+<p>Declined and Unresolved comments are excluded from both the numerator and the denominator, because neither represents a Copilot mistake. <strong>97.3% precision</strong> means that when an engineer engaged deeply enough for us to judge correctness, Copilot's comment was right 72 times out of 74. The AI is almost never wrong; the open question is adoption and engagement, not accuracy.</p>
+<h3 id="how-each-category-breaks-down">How Each Category Breaks Down</h3>
+<p><strong>Confirmed Helpful (72):</strong></p>
 <table>
-  <tr><th>Path</th><th class="right">Count</th><th>Description</th></tr>
-  <tr><td>Engineer replied and acknowledged</td><td class="right">144</td><td>"good catch", "fixed", "addressed", "added unit test", "@copilot apply changes"</td></tr>
-  <tr><td>Engineer silently applied the fix</td><td class="right">86</td><td>No reply, but suggestion code or exact line range verified as modified in subsequent commit</td></tr>
-  <tr><td class="bold">Total Confirmed Helpful</td><td class="right bold">230</td><td></td></tr>
+<thead>
+<tr>
+<th>Path</th>
+<th>Count</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Engineer replied and acknowledged</td>
+<td>66</td>
+<td>Engineer explicitly confirmed the feedback was useful (e.g., &quot;good catch&quot;, &quot;fixed&quot;, &quot;done&quot;, &quot;implemented in commit …&quot;)</td>
+</tr>
+<tr>
+<td>Engineer silently applied the fix</td>
+<td>6</td>
+<td>No reply, but the suggestion code or exact line range was verified as modified in a subsequent commit</td>
+</tr>
+</tbody>
 </table>
-
-<h3>How Not Helpful Comments Were Identified</h3>
+<p><strong>Declined — correct but not adopted (27):</strong> All 27 received an engineer reply. In every case the engineer engaged with the feedback and gave a reason for not acting on it — a design decision, a subjective preference, a moot/out-of-scope note, or domain context Copilot couldn't have known. None indicate the comment was wrong.</p>
+<p><strong>Not Helpful — incorrect (2):</strong></p>
 <table>
-  <tr><th>Path</th><th class="right">Count</th><th>Description</th></tr>
-  <tr><td>Engineer replied and dismissed</td><td class="right">95</td><td>"won't fix", "this is fine", "not applicable", "Copilot is incorrect"</td></tr>
-  <tr><td>Comment on stale/outdated code</td><td class="right">6</td><td>Comment was on code already changed in a different commit</td></tr>
-  <tr><td class="bold">Total Confirmed Not Helpful</td><td class="right bold">101</td><td></td></tr>
+<thead>
+<tr>
+<th>Comment</th>
+<th>Repo / PR</th>
+<th>Why it was wrong</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mockito varargs matcher warning</td>
+<td>Common #3171</td>
+<td>Engineer verified the flagged behavior does not reproduce on Mockito 5.11.0; the full suite passed 12/12.</td>
+</tr>
+<tr>
+<td>&quot;Missing <code>@Override</code> annotation&quot;</td>
+<td>Broker #212</td>
+<td>The <code>@Override</code> annotation was already present — a hallucinated problem.</td>
+</tr>
+</tbody>
 </table>
-
-<!-- ==================== PER REPO ==================== -->
-<h2>Results by Repository</h2>
-
-<div class="bar-chart">
-  <div class="bar-row">
-    <div class="bar-label">Broker</div>
-    <div class="bar-track">
-      <div class="bar-fill green" style="width:48.5%">48.5%</div>
-      <div class="bar-fill" style="width:16.4%;background:var(--red)">16%</div>
-      <div class="bar-fill amber" style="width:35.2%">35%</div>
-    </div>
-    <div class="bar-value">293</div>
-  </div>
-  <div class="bar-row">
-    <div class="bar-label">Common</div>
-    <div class="bar-track">
-      <div class="bar-fill green" style="width:36.2%">36.2%</div>
-      <div class="bar-fill" style="width:18.1%;background:var(--red)">18%</div>
-      <div class="bar-fill amber" style="width:45.7%">46%</div>
-    </div>
-    <div class="bar-value">188</div>
-  </div>
-  <div class="bar-row">
-    <div class="bar-label">MSAL</div>
-    <div class="bar-track">
-      <div class="bar-fill green" style="width:26.3%">26%</div>
-      <div class="bar-fill" style="width:25.0%;background:var(--red)">25%</div>
-      <div class="bar-fill amber" style="width:48.7%">49%</div>
-    </div>
-    <div class="bar-value">76</div>
-  </div>
-</div>
-<div class="stacked-legend">
-  <span><span class="dot" style="background:var(--green)"></span> Helpful</span>
-  <span><span class="dot" style="background:var(--red)"></span> Not Helpful</span>
-  <span><span class="dot" style="background:var(--amber)"></span> Unresolved</span>
-  <span style="color:var(--text-secondary)">(number = total comments)</span>
-</div>
-
+<p><strong>Unresolved (31):</strong> No reply and no diff evidence either way. These are not confirmed failures — they are comments no one evaluated.</p>
+<hr />
+<h2 id="results-by-repository">Results by Repository</h2>
 <table>
-  <tr><th>Repository</th><th class="right">Comments</th><th class="right">Response Rate</th><th class="right">Helpful</th><th class="right">Not Helpful</th><th class="right">Unresolved</th></tr>
-  <tr><td class="bold">Broker</td><td class="right">293</td><td class="right">56.0%</td><td class="right" style="color:var(--green)">142 (48.5%)</td><td class="right" style="color:var(--red)">48 (16.4%)</td><td class="right" style="color:var(--amber)">103 (35.2%)</td></tr>
-  <tr><td class="bold">Common</td><td class="right">188</td><td class="right">29.8%</td><td class="right" style="color:var(--green)">68 (36.2%)</td><td class="right" style="color:var(--red)">34 (18.1%)</td><td class="right" style="color:var(--amber)">86 (45.7%)</td></tr>
-  <tr><td class="bold">MSAL</td><td class="right">76</td><td class="right">25.0%</td><td class="right" style="color:var(--green)">20 (26.3%)</td><td class="right" style="color:var(--red)">19 (25.0%)</td><td class="right" style="color:var(--amber)">37 (48.7%)</td></tr>
+<thead>
+<tr>
+<th>Repository</th>
+<th>Comments</th>
+<th>Response Rate</th>
+<th>Helpful</th>
+<th>Declined</th>
+<th>Not Helpful</th>
+<th>Unresolved</th>
+<th>Precision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Broker</strong></td>
+<td>66</td>
+<td><strong>69.7%</strong></td>
+<td>33 (50.0%)</td>
+<td>16 (24.2%)</td>
+<td>1 (1.5%)</td>
+<td>16 (24.2%)</td>
+<td><strong>97.1%</strong></td>
+</tr>
+<tr>
+<td><strong>Common</strong></td>
+<td>51</td>
+<td><strong>68.6%</strong></td>
+<td>29 (56.9%)</td>
+<td>7 (13.7%)</td>
+<td>1 (2.0%)</td>
+<td>14 (27.5%)</td>
+<td><strong>96.7%</strong></td>
+</tr>
+<tr>
+<td><strong>MSAL</strong></td>
+<td>15</td>
+<td><strong>93.3%</strong></td>
+<td>10 (66.7%)</td>
+<td>4 (26.7%)</td>
+<td>0 (0.0%)</td>
+<td>1 (6.7%)</td>
+<td><strong>100%</strong></td>
+</tr>
+</tbody>
 </table>
-
-<p>Broker has the highest response rate (56%) and the highest confirmed helpfulness (49%). In Common and MSAL — where response rates are below 30% — nearly half of all comments are unresolved.</p>
-
-<!-- ==================== PER ENGINEER ==================== -->
-<h2>Results by Engineer</h2>
-<p style="font-size:14px;color:var(--text-secondary)">Each engineer has two GitHub accounts (personal + EMU). These have been merged. Names are anonymized.</p>
-
+<p>Every repository posts a precision above 96%. MSAL leads on both response rate (93%) and helpfulness (67%) with zero incorrect comments and only one unresolved. Broker carries the highest comment volume and the largest Declined bucket (16), reflecting a team that engages heavily and frequently makes deliberate design-tradeoff calls — those declines are not Copilot failures. Common sits in the middle. Notably, the &quot;Not Helpful&quot; column — the only one that reflects poorly on the AI — is at most a single comment in any repository.</p>
+<p>Coverage across the three repos:</p>
 <table>
-  <tr><th>Engineer</th><th class="right">Comments</th><th class="right">Replied</th><th class="right">Response Rate</th><th class="right" style="color:var(--green)">Helpful</th><th class="right" style="color:var(--red)">Not Helpful</th><th class="right" style="color:var(--amber)">Unresolved</th><th class="right">Helpfulness</th></tr>
-  <tr><td class="bold">Engineer A</td><td class="right">20</td><td class="right">20</td><td class="right bold">100%</td><td class="right">14</td><td class="right">6</td><td class="right">0</td><td class="right bold" style="color:var(--green)">70.0%</td></tr>
-  <tr><td class="bold">Engineer B</td><td class="right">83</td><td class="right">75</td><td class="right bold">90.4%</td><td class="right">57</td><td class="right">26</td><td class="right">0</td><td class="right bold" style="color:var(--green)">68.7%</td></tr>
-  <tr><td class="bold">Engineer C</td><td class="right">15</td><td class="right">4</td><td class="right">26.7%</td><td class="right">8</td><td class="right">2</td><td class="right">5</td><td class="right bold">53.3%</td></tr>
-  <tr><td class="bold">Engineer D</td><td class="right">40</td><td class="right">30</td><td class="right bold">75.0%</td><td class="right">19</td><td class="right">14</td><td class="right">7</td><td class="right bold">47.5%</td></tr>
-  <tr><td class="bold">Engineer E</td><td class="right">110</td><td class="right">37</td><td class="right">33.6%</td><td class="right">44</td><td class="right">18</td><td class="right" style="color:var(--amber)">48</td><td class="right">40.0%</td></tr>
-  <tr><td class="bold">Engineer F</td><td class="right">99</td><td class="right">20</td><td class="right">20.2%</td><td class="right">36</td><td class="right">11</td><td class="right" style="color:var(--amber)">52</td><td class="right">36.4%</td></tr>
-  <tr><td class="bold">Engineer G</td><td class="right">63</td><td class="right">22</td><td class="right">34.9%</td><td class="right">20</td><td class="right">12</td><td class="right" style="color:var(--amber)">31</td><td class="right">31.7%</td></tr>
-  <tr><td class="bold">Engineer H</td><td class="right">100</td><td class="right">24</td><td class="right">24.0%</td><td class="right">27</td><td class="right">12</td><td class="right" style="color:var(--amber)">61</td><td class="right">27.0%</td></tr>
-  <tr><td class="bold">Engineer I</td><td class="right">24</td><td class="right">6</td><td class="right">25.0%</td><td class="right">5</td><td class="right">0</td><td class="right" style="color:var(--amber)">19</td><td class="right">20.8%</td></tr>
-  <tr><td class="bold">Engineer J</td><td class="right">3</td><td class="right">1</td><td class="right">33.3%</td><td class="right">0</td><td class="right">0</td><td class="right" style="color:var(--amber)">3</td><td class="right">0%</td></tr>
+<thead>
+<tr>
+<th>Repository</th>
+<th>Human PRs</th>
+<th>PRs Reviewed by Copilot</th>
+<th>Coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Common</td>
+<td>38</td>
+<td>23</td>
+<td>61%</td>
+</tr>
+<tr>
+<td>MSAL</td>
+<td>14</td>
+<td>7</td>
+<td>50%</td>
+</tr>
+<tr>
+<td>Broker</td>
+<td>35</td>
+<td>23</td>
+<td>66%</td>
+</tr>
+</tbody>
 </table>
-
-<div class="callout insight">
-  <strong>Engagement drives value — and visibility.</strong>
-  Engineer A (100% response rate) and Engineer B (90%) have the highest helpfulness <em>and</em> zero unresolved comments. When you engage, you know exactly what the AI got right and wrong. Engineer F (20%) and Engineer H (24%) have 52 and 61 unresolved comments respectively — over half their feedback goes into a black hole.
-</div>
-
-<!-- ==================== RESPONSE DEEP DIVE ==================== -->
-<h2>Response Behavior Deep Dive</h2>
-
-<h3>What happens when engineers reply? (239 comments)</h3>
-<div class="stacked-bar">
-  <div class="stacked-segment" style="width:60.3%;background:var(--green)">60% helpful</div>
-  <div class="stacked-segment" style="width:39.7%;background:var(--red)">40% not helpful</div>
-</div>
-<p>When engineers engage, the majority of Copilot feedback turns out useful. This is the strongest signal that <strong>review quality is decent — the bottleneck is adoption</strong>.</p>
-
-<h3>What happens when engineers don't reply? (318 comments)</h3>
-<div class="stacked-bar">
-  <div class="stacked-segment" style="width:27%;background:var(--green)">27% silently fixed</div>
-  <div class="stacked-segment" style="width:1.9%;background:var(--red)"></div>
-  <div class="stacked-segment" style="width:71.1%;background:var(--amber)">71% unresolved</div>
-</div>
-
+<hr />
+<h2 id="results-by-engineer">Results by Engineer</h2>
+<p>Each engineer may have two GitHub accounts (a personal account for public repos and an EMU account for the private Broker repo). These have been merged. Names are anonymized and ordered by helpfulness (descending), with comment volume as a tie-break.</p>
 <table>
-  <tr><th>What happened</th><th class="right">Count</th><th class="right">% of ignored</th><th>Verdict</th></tr>
-  <tr><td>Suggestion code silently applied (verified via diff)</td><td class="right">50</td><td class="right">15.7%</td><td style="color:var(--green)">Confirmed Helpful</td></tr>
-  <tr><td>Exact commented lines modified in subsequent commit</td><td class="right">7</td><td class="right">2.2%</td><td style="color:var(--green)">Confirmed Helpful</td></tr>
-  <tr><td>Evidence of fix at nearby lines (re-audit)</td><td class="right">29</td><td class="right">9.1%</td><td style="color:var(--green)">Confirmed Helpful</td></tr>
-  <tr style="background:var(--light-amber)"><td>Merged without any subsequent commits</td><td class="right">122</td><td class="right">38.4%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
-  <tr style="background:var(--light-amber)"><td>File modified but not at the commented lines</td><td class="right">45</td><td class="right">14.2%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
-  <tr style="background:var(--light-amber)"><td>File modified but no line number to verify</td><td class="right">50</td><td class="right">15.7%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
-  <tr style="background:var(--light-amber)"><td>File never modified after the comment</td><td class="right">9</td><td class="right">2.8%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
-  <tr><td>Comment on stale/outdated code</td><td class="right">6</td><td class="right">1.9%</td><td style="color:var(--red)">Confirmed Not Helpful</td></tr>
+<thead>
+<tr>
+<th>Engineer</th>
+<th>Comments</th>
+<th>Replied</th>
+<th>Response Rate</th>
+<th>Helpful</th>
+<th>Declined</th>
+<th>Not Helpful</th>
+<th>Unresolved</th>
+<th>Helpfulness</th>
+<th>Precision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Engineer A</strong></td>
+<td>7</td>
+<td>7</td>
+<td><strong>100%</strong></td>
+<td>7</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td><strong>100%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer B</strong></td>
+<td>3</td>
+<td>3</td>
+<td><strong>100%</strong></td>
+<td>3</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td><strong>100%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer C</strong></td>
+<td>11</td>
+<td>9</td>
+<td><strong>81.8%</strong></td>
+<td>9</td>
+<td>0</td>
+<td>0</td>
+<td>2</td>
+<td><strong>81.8%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer D</strong></td>
+<td>6</td>
+<td>5</td>
+<td><strong>83.3%</strong></td>
+<td>4</td>
+<td>0</td>
+<td>1</td>
+<td>1</td>
+<td><strong>66.7%</strong></td>
+<td>80.0%</td>
+</tr>
+<tr>
+<td><strong>Engineer E</strong></td>
+<td>30</td>
+<td>23</td>
+<td><strong>76.7%</strong></td>
+<td>17</td>
+<td>7</td>
+<td>0</td>
+<td>6</td>
+<td><strong>56.7%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer F</strong></td>
+<td>9</td>
+<td>5</td>
+<td><strong>55.6%</strong></td>
+<td>5</td>
+<td>2</td>
+<td>0</td>
+<td>2</td>
+<td><strong>55.6%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer G</strong></td>
+<td>11</td>
+<td>6</td>
+<td><strong>54.5%</strong></td>
+<td>6</td>
+<td>0</td>
+<td>1</td>
+<td>4</td>
+<td><strong>54.5%</strong></td>
+<td>85.7%</td>
+</tr>
+<tr>
+<td><strong>Engineer H</strong></td>
+<td>6</td>
+<td>3</td>
+<td><strong>50.0%</strong></td>
+<td>3</td>
+<td>0</td>
+<td>0</td>
+<td>3</td>
+<td><strong>50.0%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer I</strong></td>
+<td>4</td>
+<td>4</td>
+<td><strong>100%</strong></td>
+<td>2</td>
+<td>2</td>
+<td>0</td>
+<td>0</td>
+<td><strong>50.0%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer J</strong></td>
+<td>19</td>
+<td>15</td>
+<td><strong>78.9%</strong></td>
+<td>8</td>
+<td>9</td>
+<td>0</td>
+<td>2</td>
+<td><strong>42.1%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer K</strong></td>
+<td>19</td>
+<td>15</td>
+<td><strong>78.9%</strong></td>
+<td>8</td>
+<td>7</td>
+<td>0</td>
+<td>4</td>
+<td><strong>42.1%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td><strong>Engineer L</strong></td>
+<td>3</td>
+<td>0</td>
+<td><strong>0%</strong></td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>3</td>
+<td><strong>0%</strong></td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><strong>Engineer M</strong></td>
+<td>3</td>
+<td>0</td>
+<td><strong>0%</strong></td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>3</td>
+<td><strong>0%</strong></td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><strong>Engineer N</strong></td>
+<td>1</td>
+<td>0</td>
+<td><strong>0%</strong></td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>1</td>
+<td><strong>0%</strong></td>
+<td>n/a</td>
+</tr>
+</tbody>
 </table>
-
-<p>The single largest category is the <strong>122 comments (38% of ignored)</strong> where the engineer merged the PR without pushing any additional commits after Copilot's review. These comments may have been valid, but we cannot tell because the engineer never evaluated them.</p>
-
-<!-- ==================== WHAT COPILOT IS GOOD AT ==================== -->
-<h2>What Copilot Is Good At</h2>
-
-<p><strong>Catching real bugs:</strong></p>
-<blockquote>
-  <p><em>PR #3050 (Common):</em> Copilot flagged that <code>"$it"</code> string wrapping doesn't JSON-escape the content, which could break consumers if contract values contain special characters.</p>
-  <p><strong>Engineer reply:</strong> "You're right. Making the change."</p>
-</blockquote>
-
-<p><strong>Stale documentation and naming inconsistencies:</strong></p>
-<blockquote>
-  <p><em>PR #64 (Broker):</em> Copilot identified four locations where KDoc still referenced the old flight constant <code>USE_TEE_ONLY_FOR_TOKEN_BINDING</code> after it was renamed. All four were silently fixed in the next commit.</p>
-</blockquote>
-
-<p><strong>Dead code and unused imports:</strong></p>
-<blockquote>
-  <p><em>PR #3040 (Common):</em> Copilot spotted an unused local variable <code>enabledSettingRaw</code>. Verified as fixed via diff — the suggested replacement code appeared in the commit additions.</p>
-</blockquote>
-
-<p><strong>CI/pipeline configuration issues:</strong></p>
-<blockquote>
-  <p><em>PR #3038 (Common):</em> Copilot warned that <code>vmImage: 'windows-latest'</code> makes the CD pipeline non-deterministic. The engineer changed to a pinned image version.</p>
-</blockquote>
-
-<p><strong>The <code>@copilot apply</code> workflow:</strong></p>
-<blockquote>
-  <p>In 16 instances (2.9%), engineers validated Copilot's feedback and then delegated the fix back with: <code>@copilot open a new pull request to apply changes based on [this feedback]</code>. An efficient pattern where AI identifies <em>and</em> fixes the issue.</p>
-</blockquote>
-
-<!-- ==================== WHAT COPILOT STRUGGLES WITH ==================== -->
-<h2>What Copilot Struggles With</h2>
-
-<p><strong>Lacking domain context:</strong></p>
-<blockquote>
-  <p><em>Copilot:</em> "<code>shared_device_id</code> could be used for tracking across apps — consider hashing before emission."</p>
-  <p><em>Engineer:</em> "The shared_device_id is a random UUID generated by one of the participating apps and is not PII."</p>
-</blockquote>
-
-<p><strong>Suggesting tests for trivial code:</strong></p>
-<blockquote>
-  <p><em>Copilot:</em> "New telemetry attributes lack test coverage..."</p>
-  <p><em>Engineer:</em> "These are just telemetry related changes and adding unit tests will be overdo here."</p>
-</blockquote>
-
-<p><strong>Misunderstanding APIs:</strong></p>
-<blockquote>
-  <p><em>Copilot:</em> "<code>00000003-0000-0ff1-ce00-000000000000</code> is the resource ID for Microsoft Graph, not SharePoint Online."</p>
-  <p><em>Engineer:</em> "00000003-0000-0ff1-ce00-000000000000 is SharePoint Online."</p>
-</blockquote>
-
-<p><strong>Commenting on intentional design choices:</strong></p>
-<blockquote>
-  <p><em>Copilot:</em> "<code>getPackageInfo() != null</code> is redundant since it either returns PackageInfo or throws..."</p>
-  <p><em>Engineer:</em> "This is fine. The verbosity makes the code clearer to understand."</p>
-</blockquote>
-
-<!-- ==================== KEY TAKEAWAYS ==================== -->
-<h2>Key Takeaways</h2>
-
+<p><em>Helpfulness = Confirmed Helpful / Total Comments. Precision = Helpful / (Helpful + Not Helpful), excluding Declined and Unresolved. Response Rate = Replied / Total Comments.</em></p>
+<p><strong>Key observation — the Declined column changes how we read this table.</strong> Under the old binary rubric, Engineer J (42.1% helpful, 9 declined) and Engineer K (42.1% helpful, 7 declined) would have looked like the engineers getting the <em>least</em> value from Copilot. But their large Declined buckets are not Copilot failures — they are experienced engineers who engage with nearly 80% of comments and make frequent, deliberate design-tradeoff calls. Both post a <strong>100% precision</strong>: Copilot was never actually wrong on their PRs. The real &quot;not helpful&quot; signal is tiny and concentrated — only Engineer D and Engineer G have a single incorrect comment each, and every other engineer who engaged has 100% precision. Engagement, not accuracy, remains the main lever: the engineers at a 0% response rate (Engineers L, M, and N) simply never evaluated the feedback, so it fell into the Unresolved bucket.</p>
+<hr />
+<h2 id="response-behavior-deep-dive">Response Behavior Deep Dive</h2>
+<p>Of the 132 total comments:</p>
+<ul>
+<li><strong>95 (72.0%) received a reply.</strong> Of those, <strong>69.5% were helpful</strong>, <strong>28.4% were declined</strong> (correct but not adopted), and only <strong>2.1% were incorrect</strong>. When engineers engage, the overwhelming majority of Copilot feedback is either acted on or acknowledged as reasonable — and almost none of it is wrong.</li>
+<li><strong>37 (28.0%) were not replied to.</strong> Of those, <strong>16.2% were silently addressed</strong> (verified via diff) and the remaining <strong>83.8% are unresolved</strong> — we cannot determine whether the comment was useful because the engineer never evaluated it.</li>
+</ul>
+<h3 id="what-happens-to-comments-engineers-reply-to">What happens to comments engineers reply to</h3>
 <table>
-  <tr><th style="width:30px">#</th><th>Finding</th></tr>
-  <tr><td class="bold">1</td><td><strong>57% of Copilot review comments receive no response from engineers.</strong> The majority of AI review feedback is never acknowledged. Of the ignored comments, only 27% are silently addressed — the remaining 71% are unresolved.</td></tr>
-  <tr><td class="bold">2</td><td><strong>41% of all comments led to a confirmed code improvement.</strong> But 41% are unresolved, meaning the true helpfulness rate lies between 41% (floor) and 82% (ceiling). We cannot narrow this range without engineer engagement.</td></tr>
-  <tr><td class="bold">3</td><td><strong>When engineers engage, 60% of comments are helpful.</strong> This suggests the AI review quality itself is decent — the bottleneck is adoption, not accuracy.</td></tr>
-  <tr><td class="bold">4</td><td><strong>Only 18% of comments are confirmed not helpful.</strong> When we restrict "not helpful" to comments with actual evidence of poor quality — explicit engineer dismissals — the rate is surprisingly low.</td></tr>
-  <tr><td class="bold">5</td><td><strong>Engagement is the strongest predictor of value.</strong> Engineers who reply to 75%+ of comments see 47-70% helpfulness with zero unresolved. Engineers who reply to &lt;35% see 20-40% helpfulness with massive unresolved buckets.</td></tr>
-  <tr><td class="bold">6</td><td><strong>38% of ignored comments are on the final commit before merge.</strong> These 122 comments represent the last review round being skipped — the feedback had zero chance of impact regardless of its quality.</td></tr>
-  <tr><td class="bold">7</td><td><strong>Broker gets the most value (49% helpful), Common is middling (36%), MSAL is lowest (26%).</strong> This correlates with response rate: Broker 56%, Common 30%, MSAL 25%.</td></tr>
-  <tr><td class="bold">8</td><td><strong>At ~5 comments per PR, the signal-to-noise question can't be settled without engagement.</strong> We confirmed ~2 useful comments per PR on average, but with 41% unresolved, the actual number could be higher.</td></tr>
+<thead>
+<tr>
+<th>Reply verdict</th>
+<th>Count</th>
+<th>% of replied</th>
+<th>Counts against Copilot?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Helpful — accepted or fixed</td>
+<td>66</td>
+<td>69.5%</td>
+<td>No — positive</td>
+</tr>
+<tr>
+<td>Declined — correct but not adopted</td>
+<td>27</td>
+<td>28.4%</td>
+<td><strong>No — neutral</strong></td>
+</tr>
+<tr>
+<td>Not Helpful — incorrect</td>
+<td>2</td>
+<td>2.1%</td>
+<td>Yes</td>
+</tr>
+</tbody>
 </table>
-
-<!-- ==================== METHODOLOGY ==================== -->
-<h2>How We Measured This</h2>
-
+<p>The takeaway is stark: among the 95 comments engineers actually engaged with, they judged Copilot <em>wrong</em> only twice. Everything else was either adopted or was a legitimate observation the engineer chose to handle differently.</p>
+<h3 id="what-happens-to-ignored-comments">What happens to ignored comments</h3>
 <table>
-  <tr><th>Phase</th><th>Method</th></tr>
-  <tr><td class="bold">1. Data collection</td><td>GitHub API extraction of all 557 Copilot inline review comments from 163 human-authored PRs. Excluded PRs by Copilot coding agent.</td></tr>
-  <tr><td class="bold">2. Reply classification</td><td>Automated keyword matching on 239 replied comments to classify as positive, negative, or ambiguous.</td></tr>
-  <tr><td class="bold">3. Diff verification</td><td>For 318 unreplied comments, used the GitHub compare API to check if suggestion tokens appeared as diff additions, or if the exact line range was modified in subsequent commits.</td></tr>
-  <tr><td class="bold">4. AI-assisted classification</td><td>All 133 ambiguous replies were individually read and classified by the AI conducting this analysis (Claude), based on reply text and domain context. These classifications were reviewed by the report author but not independently verified by the original PR engineers.</td></tr>
-  <tr><td class="bold">5. Cross-validation</td><td>All initially "not helpful" classifications were re-examined against diff evidence. 18 were reclassified where evidence was strong (e.g., typo fix + matching -1 line file change).</td></tr>
+<thead>
+<tr>
+<th>What happened</th>
+<th>Count</th>
+<th>% of ignored</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Suggestion code / exact lines silently applied (verified via diff)</td>
+<td>6</td>
+<td>16.2%</td>
+<td>Confirmed Helpful</td>
+</tr>
+<tr>
+<td>No reply and no diff evidence either way</td>
+<td>31</td>
+<td>83.8%</td>
+<td><strong>Unresolved</strong></td>
+</tr>
+</tbody>
 </table>
+<p>The 31 unresolved comments are the only real blind spot in this report. They are not confirmed failures — they are feedback that entered a void. If engineers engaged with even half of them, precision and helpfulness would both firm up further.</p>
+<hr />
+<h2 id="what-copilot-is-good-at">What Copilot Is Good At</h2>
+<p>The most valuable helpful comments this period, with real examples from our PRs:</p>
+<p><strong>Catching real initialization-ordering bugs:</strong></p>
+<blockquote>
+<p><em>PR #215 (Broker) — <code>AriaInitializer</code>:</em> Copilot flagged that a flight/telemetry provider was being read before it was initialized, an ordering problem that would silently drop data.
+<em>Engineer reply: &quot;Good catch — this is a fundamental ordering problem. Fixing it.&quot;</em></p>
+<p>This is exactly the kind of subtle, cross-method sequencing issue that is easy to miss in review but expensive in production. Copilot caught it from the diff alone.</p>
+</blockquote>
+<p><strong>Telemetry schema and contract discrepancies:</strong></p>
+<blockquote>
+<p><em>PR #204 (Broker) — <code>AccountChooser</code>:</em> Copilot noticed the emitted telemetry attribute didn't match the schema described in the PR, flagging a contract mismatch.
+<em>Engineer acknowledged and reconciled the schema.</em></p>
+</blockquote>
+<p><strong>Deprecated-API and compatibility issues:</strong></p>
+<blockquote>
+<p><em>PR #3147 (Common):</em> Copilot pointed out a newly-added overload shadowed a deprecated one and recommended <code>@JvmOverloads</code> / a default argument to preserve binary compatibility for Java callers.
+<em>Engineer reply: &quot;Fixed. Thanks for pointing this out.&quot;</em></p>
+</blockquote>
+<p><strong>Security and policy consistency:</strong></p>
+<blockquote>
+<p><em>PR #3156 (Common) — OWASP dependency check:</em> Copilot identified an inconsistency in how a CVE suppression was applied across modules.
+<em>Engineer reply: &quot;Implemented in commit a58b52dc9; remaining remediation tracked in AB#3667951.&quot;</em></p>
+<p>Copilot's comment didn't just get a thumbs-up — it produced a concrete fix and a tracked follow-up work item.</p>
+</blockquote>
+<p><strong>Behavior-vs-description correctness:</strong></p>
+<blockquote>
+<p><em>PR #3165 (Common) — Authority validation:</em> Copilot noted a URL comparison was matching on the full URL when only the host should matter.
+<em>Engineer reply: &quot;Good point — updated the code to check host only.&quot;</em></p>
+</blockquote>
+<hr />
+<h2 id="when-copilot-was-actually-wrong">When Copilot Was Actually Wrong</h2>
+<p>Only <strong>two</strong> comments this period were genuine errors. We reproduce both in full, because at 1.5% they are the exception that proves the rule:</p>
+<p><strong>Misjudging a library's behavior:</strong></p>
+<blockquote>
+<p><em>PR #3171 (Common):</em> Copilot warned that a Mockito varargs matcher would not behave as intended and could cause the test to pass incorrectly.
+<em>Engineer reply: &quot;Verified this isn't reproducible on Mockito 5.11.0 — the suite passes 12/12.&quot;</em></p>
+<p>Copilot applied a heuristic that held for older Mockito versions but not the one actually in use. A version-specific false positive.</p>
+</blockquote>
+<p><strong>Hallucinating a missing annotation:</strong></p>
+<blockquote>
+<p><em>PR #212 (Broker):</em> Copilot claimed a method was missing an <code>@Override</code> annotation.
+<em>Engineer reply: &quot;The override annotation is already there.&quot;</em></p>
+<p>The annotation was present in the code. This is a straightforward hallucination — the only category of error we truly want to drive to zero.</p>
+</blockquote>
+<hr />
+<h2 id="when-copilot-was-right-but-the-engineer-declined">When Copilot Was Right but the Engineer Declined</h2>
+<p>These comments were <strong>not wrong</strong> — the engineer understood the point and deliberately chose a different path. Under the old methodology, all of these would have been miscounted as &quot;not helpful.&quot; They are the heart of this report's fairness correction.</p>
+<p><strong>Deliberate notation choice (the flagship case):</strong></p>
+<blockquote>
+<p><em>PR #201 (Broker):</em> Copilot flagged the code comment <code>~1 per device</code> as potentially misleading, since the tilde could be read as an exact value.
+<em>Engineer reply: &quot;~ = approximate. i think this is ok.&quot;</em></p>
+<p>A perfectly reasonable readability observation. The author simply judged the notation clear enough in context. Copilot had no way to know that tolerance beforehand — this is neutral, not a failure.</p>
+</blockquote>
+<p><strong>Subjective naming preference:</strong></p>
+<blockquote>
+<p><em>PR #3151 (Common):</em> Copilot suggested encoding the &quot;prompt&quot; semantics into a span name for clarity.
+<em>Engineer reply: &quot;I think the current name is fine.&quot;</em></p>
+<p>A judgment call on naming. Both names are defensible; the author preferred the existing one.</p>
+</blockquote>
+<p><strong>Intentional verbosity for a new feature:</strong></p>
+<blockquote>
+<p><em>PR #223 (Broker):</em> Copilot suggested not logging a full stack trace for an expected exception type.
+<em>Engineer reply: &quot;Since this is a new feature, we want that stack trace for all exceptions.&quot;</em></p>
+<p>The engineer deliberately wants maximum diagnostic detail while the feature is new. Copilot's general &quot;don't log noisy stack traces&quot; heuristic was sound but didn't apply here.</p>
+</blockquote>
+<p><strong>Context Copilot couldn't have known:</strong></p>
+<blockquote>
+<p><em>PR #3177 (Common):</em> Copilot suggested removing an INFO-level log as noise.
+<em>Engineer reply: &quot;We need this to catch a regression in the COBO/COPE scenarios.&quot;</em></p>
+<p>The log is intentionally there to detect a specific device-management regression — context that isn't visible in the diff.</p>
+</blockquote>
+<hr />
+<h2 id="trend-over-time">Trend Over Time</h2>
+<p>This is the fourth analysis period. Response rate has recovered and comment volume has stabilized. Because the <strong>Declined vs. Incorrect</strong> split and the <strong>Precision</strong> metric were introduced this period, prior periods show only the old combined &quot;Dismissed&quot; figure — so the current period is broken out below the table.</p>
+<table>
+<thead>
+<tr>
+<th>Period</th>
+<th>Days</th>
+<th>Comments</th>
+<th>Comments/wk</th>
+<th>Response Rate</th>
+<th>Helpful</th>
+<th>Dismissed (combined)</th>
+<th>Unresolved</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Jan 24 – Mar 25</td>
+<td>60</td>
+<td>570</td>
+<td>66.3</td>
+<td>44.4%</td>
+<td>38.6%</td>
+<td>17.4%</td>
+<td>44.0%</td>
+</tr>
+<tr>
+<td>Mar 24 – Apr 19</td>
+<td>26</td>
+<td>170</td>
+<td>45.9</td>
+<td>78.8%</td>
+<td>62.9%</td>
+<td>21.2%</td>
+<td>15.9%</td>
+</tr>
+<tr>
+<td>Apr 20 – Jun 9</td>
+<td>50</td>
+<td>157</td>
+<td>22.1</td>
+<td>67.5%</td>
+<td>52.9%</td>
+<td>16.6%</td>
+<td>30.6%</td>
+</tr>
+<tr>
+<td><strong>Jun 10 – Jul 15</strong></td>
+<td><strong>35</strong></td>
+<td><strong>132</strong></td>
+<td><strong>26.4</strong></td>
+<td><strong>72.0%</strong></td>
+<td><strong>51.5%</strong></td>
+<td><strong>22.0%</strong></td>
+<td><strong>26.5%</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>What changed this period:</strong></p>
+<ul>
+<li><strong>Response rate rose from 67.5% to 72.0%</strong>, driven partly by engineers going back to reply to previously-unanswered comments.</li>
+<li><strong>Trend-series helpfulness dipped slightly</strong> (52.9% → 51.5%) while unresolved comments dropped (30.6% → 26.5%) — more feedback is being evaluated, even though normalized helpfulness was broadly stable.</li>
+<li><strong>The &quot;Dismissed&quot; number is misleading in isolation.</strong> This period's combined dismissal rate (22.0%) looks comparable to prior periods, but the new split reveals that <strong>20.5 of those 22.0 points are Declined (Copilot was right)</strong> and only <strong>1.5 points are genuine errors</strong>. Copilot's <strong>precision this period is 97.3%</strong>. Earlier periods almost certainly had a similar breakdown — we simply couldn't see it under the binary rubric, which means historical &quot;not helpful&quot; rates of 16–21% substantially overstated how often the AI was actually wrong.</li>
+</ul>
+<p><em>Note: the Declined/Incorrect split and Precision metric are only available from this period onward. For apples-to-apples trend comparison, the table shows the combined dismissal rate; the current period's true error rate is 1.5%.</em></p>
+<p><em>Trend continuity note: the historical series uses the same automated diff-evidence rules across all four periods (68 helpful / 35 unresolved this period). The authoritative report body additionally applies four manually re-audited diff flips, producing 72 helpful / 31 unresolved. This deliberate distinction preserves an apples-to-apples trend while keeping the current body classification maximally accurate.</em></p>
+<hr />
+<h2 id="key-takeaways">Key Takeaways</h2>
+<ol>
+<li><p><strong>Copilot is almost never wrong — precision is 97.3%.</strong> Of 132 comments, only 2 were genuine errors. When engineers engaged deeply enough for us to judge correctness, Copilot was right 72 times out of 74.</p>
+</li>
+<li><p><strong>&quot;Declined&quot; is not &quot;wrong,&quot; and it's now counted fairly.</strong> 27 comments (20.5%) were correct feedback the engineer deliberately chose not to adopt. Under the old binary rubric these would have dragged down Copilot's apparent quality. They are neutral — the AI had no way to know the author's intent.</p>
+</li>
+<li><p><strong>Response rate climbed to 72%.</strong> Up from 68% last period and 44% in the first analysis. Several engineers returned to reply to comments they had previously ignored — one reaching a 100% response rate across all seven of their comments.</p>
+</li>
+<li><p><strong>54.5% of comments led to a confirmed improvement.</strong> With only 1.5% confirmed wrong, the helpfulness ceiling is high; the remaining gap is the 23.5% unresolved comments that no one evaluated.</p>
+</li>
+<li><p><strong>Every repository posts 96%+ precision.</strong> MSAL 100%, Broker 97.1%, Common 96.7%. The &quot;not helpful&quot; column never exceeds one comment per repo.</p>
+</li>
+<li><p><strong>The Declined bucket concentrates in high-engagement engineers.</strong> Engineer J (9 declined) and Engineer K (7 declined) engage with ~80% of comments and make frequent design-tradeoff calls — both at 100% precision. Their lower &quot;helpfulness&quot; percentage is not a Copilot quality problem.</p>
+</li>
+<li><p><strong>Unresolved is the only real blind spot.</strong> 31 comments (23.5%) were never evaluated. This is the one lever entirely in the team's hands: engaging with even half of them would tighten every metric in this report.</p>
+</li>
+<li><p><strong>The bottleneck is adoption and engagement, not accuracy.</strong> The data is now unambiguous: Copilot's review quality is high. The variance in per-engineer &quot;value&quot; is almost entirely explained by how often each engineer reads and responds to the feedback.</p>
+</li>
+</ol>
+<hr />
+<h2 id="what-wed-recommend">What We'd Recommend</h2>
+<p>Based on this analysis, we see three opportunities:</p>
+<p><strong>1. Keep engaging — it's working.</strong> Response rate rose to 72% this period, and the payoff is visible: we can now tell that Copilot is wrong only 1.5% of the time. The engineers who went back to reply to old comments materially improved the fidelity of this report. A quick reply — even a decline with a one-line reason — is what lets us separate &quot;Copilot was wrong&quot; from &quot;I chose otherwise.&quot; That distinction is the entire value of this measurement.</p>
+<p><strong>2. Close the unresolved gap before merge.</strong> The 31 unresolved comments (23.5%) are feedback no one evaluated. Building a habit of scanning Copilot's last review round before clicking merge would convert most of these into a clear helpful/declined/incorrect verdict and give the feedback a chance to have impact.</p>
+<p><strong>3. Target the two real error patterns.</strong> The only genuine errors this period were a version-specific library assumption (Mockito) and a hallucinated annotation. Both are addressable by refining <code>copilot-instructions.md</code> — e.g., noting the Mockito version in use and reminding the reviewer to confirm an annotation is actually absent before flagging it. Because genuine errors are already so rare, small instruction tweaks can plausibly drive them to zero.</p>
+<hr />
+<h2 id="methodology-notes">Methodology Notes</h2>
+<ul>
+<li><strong>Scope.</strong> Only inline code review comments from the <code>Copilot</code> user were counted. PR-level summary comments were excluded from the helpfulness analysis.</li>
+<li><strong>Bot exclusions.</strong> PRs authored by <code>copilot-swe-agent</code> (Copilot coding agent), <code>dependabot[bot]</code>, and <code>github-actions[bot]</code> were excluded. Only PRs authored by human engineers were analyzed.</li>
+<li><strong>Three-way reply classification.</strong> Every replied comment was individually read and classified as Helpful, Declined, or Not Helpful (incorrect) by the AI conducting this analysis, based on the reply text and domain context. The dividing line between Declined and Not Helpful is <strong>whether Copilot was factually/technically wrong</strong>, not whether the engineer acted. These classifications were reviewed for accuracy by the report author but were not independently re-verified by the original PR engineers.</li>
+<li><strong>Precision.</strong> Defined as Helpful ÷ (Helpful + Not Helpful-incorrect). Declined and Unresolved comments are excluded from both numerator and denominator because neither represents a Copilot mistake.</li>
+<li><strong>Diff verification.</strong> For suggestion blocks, we extracted the suggested code tokens and checked if they appeared as <code>+</code> lines in the compare diff between the comment's commit and the PR head. For prose comments, we checked if the diff hunk line ranges overlapped the comment's target line range (±5 line tolerance). This is conservative — some fixes that refactored code differently than suggested may be missed.</li>
+<li><strong>Conservative &quot;Unresolved.&quot;</strong> Comments with no reply and no diff evidence are classified as Unresolved rather than assumed unhelpful. &quot;Unresolved&quot; ≠ &quot;Not Helpful.&quot;</li>
+<li><strong>Account merging.</strong> Engineers with separate public GitHub and EMU (Enterprise Managed User) accounts were merged based on known identity mappings.</li>
+<li><strong>Data availability.</strong> Raw data for all 132 comments (comment text, engineer replies, diff verification evidence, and final verdicts) is stored at <code>%TEMP%\copilot-review-analysis\</code> for independent verification.</li>
+</ul>
+<hr />
+<p><em>Analysis conducted July 15, 2026. Data covers all PRs created June 10 – July 15, 2026 in the Common, MSAL, and Broker repositories. This report introduces a three-way verdict methodology (Helpful / Declined / Not Helpful) and a Copilot precision metric to fairly distinguish AI errors from deliberate engineer judgment calls.</em></p>
 
-<p style="font-size:14px;margin-top:16px"><strong>Classification rules:</strong> A comment is "Confirmed Helpful" only with positive evidence (engineer acknowledgment or verified code change). "Confirmed Not Helpful" only with positive evidence of poor quality (explicit engineer dismissal). Comments where the engineer did not engage — including the final review round merged without evaluation — are classified as "Unresolved" rather than assumed unhelpful.</p>
-
-<hr>
-<div class="footer">
-  <p>Analysis conducted March 23–24, 2026. Data covers all PRs created January 23 – March 23, 2026 in the Common, MSAL, and Broker repositories.</p>
-  <p>Raw data (557 comments with full text, replies, diff evidence, and verdicts) available for independent verification.</p>
-</div>
 
 </body>
 </html>

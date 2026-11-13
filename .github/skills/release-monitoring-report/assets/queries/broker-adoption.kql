@@ -1,0 +1,15 @@
+// Broker — ADOPTION / version resolution. Distinct devices per broker_version over the
+// window. Doubles as the Broker version-resolution query: run it first to discover the
+// exact broker_version strings and pick the rolling-out version + previous version by
+// device volume. Also feeds the Broker adoption section of the report.
+//
+// Cluster:  https://idsharedeus2.kusto.windows.net
+// Database: ad-accounts-android-otel
+//
+// Placeholders: <START>, <END>.
+// HLL gotcha: dcount_hll(hll_merge(countDevicesHll)) — never sum countDevices.
+materialized_view('BrokerAdoptionStatsUpdated')
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| summarize Devices = dcount_hll(hll_merge(countDevicesHll)) by broker_version
+| where Devices > 50
+| order by Devices desc
