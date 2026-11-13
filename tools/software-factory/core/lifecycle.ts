@@ -696,6 +696,8 @@ export class Lifecycle {
                 async (marker) => jsonValue(await this.provider.createWorkItem(config, item, marker)), false, decision, undefined, undefined, executionId);
         }
         const workItems = this.workItems(featureId, artifact.id);
+        const sharedParentId = this.store.view(featureId).shared?.target.workItemId;
+        const linkConfig = sharedParentId ? { ...config, boards: { ...config.boards, parentId: sharedParentId } } : config;
         for (const item of plan.items) {
             if (executionId) this.assertFresh(featureId, executionId);
             const workItem = workItems.find((entry) => entry.key === item.id)!;
@@ -705,7 +707,7 @@ export class Lifecycle {
                 return dependency;
             });
             await this.operation(featureId, "links", item, "backlog", async () => null,
-                () => this.provider.linkWorkItem(config, workItem, dependencies), true, decision, undefined, undefined, executionId);
+                () => this.provider.linkWorkItem(linkConfig, workItem, dependencies), true, decision, undefined, undefined, executionId);
         }
         return jsonValue({ planId: artifact.id, items: workItems });
     }
@@ -1102,8 +1104,12 @@ export class Lifecycle {
             }
         }
         else if (wi && operation.kind === "dispatch_status") receipt = await this.provider.markDispatched(config, wi, `software-factory-${key}`);
-        else if (wi && operation.kind === "links") receipt = await this.provider.linkWorkItem(config, wi,
-            item.dependsOn.map((id) => this.workItems(featureId, artifact.id).find((entry) => entry.key === id)!));
+        else if (wi && operation.kind === "links") {
+            const sharedParentId = this.store.view(featureId).shared?.target.workItemId;
+            const linkConfig = sharedParentId ? { ...config, boards: { ...config.boards, parentId: sharedParentId } } : config;
+            receipt = await this.provider.linkWorkItem(linkConfig, wi,
+                item.dependsOn.map((id) => this.workItems(featureId, artifact.id).find((entry) => entry.key === id)!));
+        }
         else throw new FactoryError("reconciliation_required", "This operation needs an explicit target-specific recovery.", 409);
         if (!receipt) throw new FactoryError("reconciliation_required", "No unique remote receipt was found. No new mutation was sent.", 409);
         this.store.change(featureId, (state) => {

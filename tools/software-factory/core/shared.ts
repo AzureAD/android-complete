@@ -196,6 +196,10 @@ export class SharedAuthority {
             db.prepare("INSERT INTO factory_state VALUES (?, 1, ?) ON CONFLICT(feature_id) DO UPDATE SET content_json=excluded.content_json, version=version+1")
                 .run(snapshot.feature.id, serializedState);
         }
+        db.exec("CREATE TABLE IF NOT EXISTS shared_features (feature_id TEXT PRIMARY KEY, target_json TEXT NOT NULL, record_json TEXT NOT NULL)");
+        const serializedRecord = JSON.stringify(record);
+        db.prepare("INSERT INTO shared_features VALUES (?, ?, ?) ON CONFLICT(feature_id) DO UPDATE SET target_json=excluded.target_json, record_json=excluded.record_json")
+            .run(snapshot.feature.id, JSON.stringify(record.target), serializedRecord);
     }
 
     snapshot(app: Application, featureId: string, lock: SharedSnapshot["lock"] = null): SharedSnapshot {
