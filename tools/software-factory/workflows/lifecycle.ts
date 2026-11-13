@@ -146,7 +146,7 @@ async function open(ctx: Context, kind: WorkflowKind, provider?: Provider) {
                     detail: prompt.slice(0, 400),
                     status: "completed",
                     durationMs: Date.now() - startedAt,
-                    outputPreview: preview ? preview.slice(0, 1200) : "null",
+                    outputPreview: preview ? preview.slice(0, 30_000) : "null",
                 });
                 return result;
             } catch (err) {
@@ -405,7 +405,7 @@ export async function planRun(ctx: Context, dependencies?: { provider: Provider 
                 });
                 const checked = object(review, "Independent plan review");
                 const issues = strings(checked.findings, "Plan findings");
-                reviewHistory.push({ attempt, review: jsonValue(checked) });
+                reviewHistory.push({ attempt, candidate: jsonValue(parsed), review: jsonValue(checked) });
                 if (checked.pass === true && !issues.length) { plan = { ...parsed, reviewHistory }; break; }
                 if (attempt === 2) {
                     factory.store.artifact(featureId, "planning_attempt", execution.requirementsRevision, { recommendation: "NO-GO", reviewHistory }, design.id, executionId);

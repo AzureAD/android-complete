@@ -262,7 +262,54 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
         .reverse()
         .filter((a) => (a.kind === "plan" || a.kind === "planning_attempt") && a.requirementsRevision === feature.current.id);
     const currentPlanArtifact = latest("plan");
-    const planArtifact = allPlanArtifacts.find((a) => a.id === selectedPlanId) || currentPlanArtifact || allPlanArtifacts[0];
+    const livePlanArtifact = (() => {
+        const activePlanExec = [...feature.factory.executions].reverse().find((e) => e.kind === "plan" && (e.status === "running" || e.status === "starting"));
+        if (!activePlanExec?.trace?.length) return undefined;
+        const turns = activePlanExec.trace.filter((t) => t.kind === "agent_turn" && t.status === "completed" && t.outputPreview);
+        const parsedPlans = new Map<number, Record<string, Json>>();
+        const parsedReviews = new Map<number, Record<string, Json>>();
+        for (const t of turns) {
+            const plannerMatch = /^Factory:planner:(\d+)$/.exec(t.label || "");
+            const reviewMatch = /^Factory:plan-review:(\d+)$/.exec(t.label || "");
+            if (!plannerMatch && !reviewMatch) continue;
+            try {
+                const json = JSON.parse(t.outputPreview!) as Record<string, Json>;
+                if (plannerMatch && Array.isArray(json.items)) parsedPlans.set(Number(plannerMatch[1]), json);
+                if (reviewMatch && typeof json.pass === "boolean") parsedReviews.set(Number(reviewMatch[1]), json);
+            } catch {
+                // Ignore truncated or partial output previews.
+            }
+        }
+        const latestRound = Math.max(-1, ...parsedPlans.keys());
+        if (latestRound < 0) return undefined;
+        const latestPlan = parsedPlans.get(latestRound)!;
+        const reviewHistory: Json[] = [];
+        for (let i = 0; i <= latestRound; i++) {
+            const cand = parsedPlans.get(i);
+            const rev = parsedReviews.get(i);
+            if (cand || rev) {
+                reviewHistory.push({
+                    attempt: i,
+                    ...(cand ? { candidate: cand } : {}),
+                    ...(rev ? { review: rev } : {}),
+                });
+            }
+        }
+        return {
+            id: `live-${activePlanExec.id}`,
+            kind: "planning_attempt",
+            requirementsRevision: feature.current.id,
+            parentId: currentDesignArtifact?.id || null,
+            generation: activePlanExec.generation.plan,
+            configurationId: activePlanExec.configurationId,
+            analysisHash: "",
+            executionId: activePlanExec.id,
+            hash: "",
+            createdAt: activePlanExec.updatedAt,
+            content: { ...latestPlan, reviewHistory, liveInProgress: true },
+        } satisfies Artifact;
+    })();
+    const planArtifact = allPlanArtifacts.find((a) => a.id === selectedPlanId) || currentPlanArtifact || allPlanArtifacts[0] || livePlanArtifact;
 
     const codeArtifact = latestImpl();
     const monitorArtifact = latest("monitor");

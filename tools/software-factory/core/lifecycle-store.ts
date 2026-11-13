@@ -271,7 +271,17 @@ export class LifecycleStore {
                 if (idx >= 0) execution.trace[idx] = entry;
                 else {
                     execution.trace.push(entry);
-                    if (execution.trace.length > 200) execution.trace.splice(0, execution.trace.length - 200);
+                    const toolCount = execution.trace.reduce((acc, item) => acc + (item.kind === "tool_call" ? 1 : 0), 0);
+                    if (toolCount > 200) {
+                        let toDrop = toolCount - 200;
+                        execution.trace = execution.trace.filter((item) => {
+                            if (item.kind === "tool_call" && toDrop > 0) {
+                                toDrop--;
+                                return false;
+                            }
+                            return true;
+                        });
+                    }
                 }
             }, { localOnly: true });
         } catch {

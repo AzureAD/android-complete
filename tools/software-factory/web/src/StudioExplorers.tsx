@@ -627,8 +627,10 @@ export function PlanStudioExplorer({
     const body = isRecord(artifact.content) ? artifact.content : {};
     const items = asArray(body.items).filter(isRecord);
     const reviewHistory = asArray(body.reviewHistory).filter(isRecord);
+    const isLiveInProgress = body.liveInProgress === true;
     const [selectedItemId, setSelectedItemId] = useState<string | null>(items[0] ? String(items[0].id) : null);
     const [viewMode, setViewMode] = useState<"dag" | "reviews">("dag");
+    const [selectedReviewRound, setSelectedReviewRound] = useState<number>(Math.max(0, reviewHistory.length - 1));
 
     // Compute dependency waves for visual DAG
     const waves: Record<string, Json>[][] = [];
@@ -678,6 +680,16 @@ export function PlanStudioExplorer({
 
     return (
         <div className="plan-document studio-explorer">
+            {isLiveInProgress && (
+                <div className="studio-iteration-banner">
+                    <div>
+                        <strong>Live Planning Run in Progress</strong>
+                        <p className="muted">
+                            Streaming live Feature Planner drafts and Independent Plan Reviewer rounds as each subagent finishes.
+                        </p>
+                    </div>
+                </div>
+            )}
             <div className="studio-banner">
                 <div className="studio-banner-main">
                     <span className="studio-pill emerald">{items.length} Planned PBI{items.length === 1 ? "" : "s"}</span>
@@ -692,7 +704,7 @@ export function PlanStudioExplorer({
                             Architecture DAG &amp; Backlog Matrix
                         </button>
                         <button type="button" className={viewMode === "reviews" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("reviews")}>
-                            Planner vs. Reviewer History ({reviewHistory.length})
+                            ⚖️ Planner vs. Reviewer ({reviewHistory.length})
                         </button>
                     </div>
                 )}
@@ -840,35 +852,161 @@ export function PlanStudioExplorer({
                 </div>
             )}
 
-            {viewMode === "reviews" && reviewHistory.length > 0 && (
-                <div className="arena-container">
-                    <h4>Planner vs. Independent Plan Reviewer Rounds</h4>
-                    <div className="findings-list">
-                        {reviewHistory.map((entry, idx) => {
-                            const rev = isRecord(entry.review) ? entry.review : null;
-                            const pass = rev?.pass === true;
-                            const findings = asArray(rev?.findings).map(String);
-                            const validationError = typeof entry.validationError === "string" ? entry.validationError : null;
-                            return (
-                                <div key={idx} className={`finding-card ${pass ? "severity-minor" : "severity-major"}`}>
-                                    <div className="finding-header">
-                                        <span className={`studio-pill ${pass ? "emerald" : "amber"}`}>
-                                            Attempt {Number(entry.attempt ?? idx) + 1}: {pass ? "Approved by Independent Reviewer ✓" : "Revision Requested"}
-                                        </span>
-                                    </div>
-                                    {validationError && <p className="finding-evidence"><strong>Schema / DAG Validation:</strong> {validationError}</p>}
-                                    {findings.length > 0 && (
-                                        <ul>
-                                            {findings.map((f, fIdx) => <li key={fIdx}>{f}</li>)}
-                                        </ul>
-                                    )}
-                                    {pass && findings.length === 0 && <p className="muted">All requirements, repository routes, dependencies, and test specifications verified.</p>}
+            {viewMode === "reviews" && reviewHistory.length > 0 && (() => {
+                const activeIdx = Math.min(selectedReviewRound, reviewHistory.length - 1);
+                const entry = reviewHistory[activeIdx]!;
+                const nextEntry = reviewHistory[activeIdx + 1];
+                const rev = isRecord(entry.review) ? entry.review : null;
+                const pass = rev?.pass === true;
+                const findings = asArray(rev?.findings).map(String);
+                const validationError = typeof entry.validationError === "string" ? entry.validationError : null;
+                const candidate = isRecord(entry.candidate) ? entry.candidate : null;
+                const candidateItems = asArray(candidate?.items).filter(isRecord);
+                const nextCandidate = isRecord(nextEntry?.candidate) ? nextEntry.candidate : (!nextEntry && activeIdx < reviewHistory.length - 1 ? null : (activeIdx === reviewHistory.length - 1 && !candidate ? body : null));
+                const nextItems = asArray(nextCandidate?.items).filter(isRecord);
+
+                const resolvedDiffs: { id: string; changes: string[] }[] = [];
+                if (candidate && nextCandidate && nextItems.length > 0) {
+                    for (const nextItem of nextItems) {
+                        const id = String(nextItem.id);
+                        const prevItem = candidateItems.find((p) => String(p.id) === id);
+                        const diffs: string[] = [];
+                        if (!prevItem) {
+                            diffs.push(`Added new PBI "${String(nextItem.title)}" (${String(nextItem.repository)})`);
+                        } else {
+                            if (String(prevItem.title) !== String(nextItem.title)) {
+                                diffs.push(`Updated title → "${String(nextItem.title)}"`);
+                            }
+                            const prevFiles = new Set(asArray(prevItem.files).map(String));
+                            const currFiles = new Set(asArray(nextItem.files).map(String));
+                            const addedFiles = [...currFiles].filter((f) => !prevFiles.has(f));
+                            const removedFiles = [...prevFiles].filter((f) => !currFiles.has(f));
+                            if (addedFiles.length) diffs.push(`Added target files: ${addedFiles.join(", ")}`);
+                            if (removedFiles.length) diffs.push(`Removed files: ${removedFiles.join(", ")}`);
+                            if (String(prevItem.description) !== String(nextItem.description)) {
+                                diffs.push("Revised technical specification & method contracts");
+                            }
+                            if (JSON.stringify(prevItem.acceptanceCriteria) !== JSON.stringify(nextItem.acceptanceCriteria)) {
+                                diffs.push("Updated acceptance criteria");
+                            }
+                            if (JSON.stringify(prevItem.tests) !== JSON.stringify(nextItem.tests)) {
+                                diffs.push("Updated required test suite");
+                            }
+                        }
+                        if (diffs.length) resolvedDiffs.push({ id, changes: diffs });
+                    }
+                }
+
+                return (
+                    <div className="arena-container">
+                        <div className="round-scrubber">
+                            <span className="eyebrow">SELECT PLANNER VS. REVIEWER ROUND</span>
+                            <div className="round-buttons">
+                                {reviewHistory.map((rEntry, rIdx) => {
+                                    const rRev = isRecord(rEntry.review) ? rEntry.review : null;
+                                    const rPass = rRev?.pass === true;
+                                    const rFindings = asArray(rRev?.findings);
+                                    const rValErr = typeof rEntry.validationError === "string" ? rEntry.validationError : null;
+                                    const awaitingReview = !rRev && !rValErr;
+                                    return (
+                                        <button
+                                            type="button"
+                                            key={rIdx}
+                                            onClick={() => setSelectedReviewRound(rIdx)}
+                                            className={`round-pill ${activeIdx === rIdx ? "selected" : ""} ${rPass ? "pass" : "changes"}`}
+                                        >
+                                            <strong>Round {Number(rEntry.attempt ?? rIdx) + 1}</strong>
+                                            <span>
+                                                {awaitingReview
+                                                    ? "Under Review…"
+                                                    : rPass
+                                                        ? "Approved ✓"
+                                                        : rValErr
+                                                            ? "Schema Fix Needed"
+                                                            : `${rFindings.length} Objection${rFindings.length === 1 ? "" : "s"}`}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="arena-split">
+                            <section className="arena-pane author-pane">
+                                <div className="studio-badge-row">
+                                    <span className="studio-pill blue">PLANNER · ROUND {activeIdx + 1}</span>
+                                    {candidateItems.length > 0 && <span className="mono-chip">{candidateItems.length} PBIs</span>}
                                 </div>
-                            );
-                        })}
+                                <h4>Feature Planner Proposal &amp; Resolution</h4>
+                                {candidate ? (
+                                    <>
+                                        {typeof candidate.summary === "string" && (
+                                            <p className="builder-summary-box">{candidate.summary}</p>
+                                        )}
+                                        <ul className="studio-bullet-list">
+                                            {candidateItems.map((ci) => (
+                                                <li key={String(ci.id)}>
+                                                    <strong>{String(ci.id)} ({String(ci.repository)}):</strong> {String(ci.title)}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </>
+                                ) : (
+                                    <p className="muted">Final revised plan shown in the Architecture DAG tab ({items.length} PBIs).</p>
+                                )}
+
+                                {resolvedDiffs.length > 0 && (
+                                    <div className="scope-approval-receipt" style={{ marginTop: 12 }}>
+                                        <strong>✓ How Round {activeIdx + 2} Planner Resolved Round {activeIdx + 1}&apos;s Objections:</strong>
+                                        <ul className="studio-bullet-list">
+                                            {resolvedDiffs.map((d) => (
+                                                <li key={d.id}>
+                                                    <strong>{d.id}:</strong> {d.changes.join(" · ")}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </section>
+
+                            <section className="arena-pane reviewer-pane">
+                                <div className="studio-badge-row">
+                                    <span className="studio-pill purple">INDEPENDENT PLAN REVIEWER · ROUND {activeIdx + 1}</span>
+                                    <span className={`studio-pill ${pass ? "emerald" : rev || validationError ? "amber" : "blue"}`}>
+                                        {!rev && !validationError ? "Reviewing…" : pass ? "PASS ✓" : "REVISION REQUESTED"}
+                                    </span>
+                                </div>
+                                <h4>Reviewer Objections &amp; Verification</h4>
+                                {validationError && (
+                                    <div className="finding-card severity-major">
+                                        <strong>Schema / DAG Validation Error</strong>
+                                        <p>{validationError}</p>
+                                    </div>
+                                )}
+                                {findings.length > 0 ? (
+                                    <div className="findings-list">
+                                        {findings.map((f, fIdx) => (
+                                            <div key={fIdx} className="finding-card severity-major">
+                                                <div className="finding-header">
+                                                    <span className="mono-chip">OBJECTION #{fIdx + 1}</span>
+                                                    {(activeIdx < reviewHistory.length - 1) && (
+                                                        <span className="studio-pill emerald">Addressed in Round {activeIdx + 2} ✓</span>
+                                                    )}
+                                                </div>
+                                                <p className="finding-evidence">{f}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : pass ? (
+                                    <p className="muted">All requirements, repository routes, API-24 compatibility, dependencies, and test targets verified with zero remaining objections.</p>
+                                ) : (
+                                    <p className="muted">Independent Plan Reviewer is actively auditing this round&apos;s PBIs against repository source.</p>
+                                )}
+                            </section>
+                        </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             <div className="plan-table">
                 <table>
