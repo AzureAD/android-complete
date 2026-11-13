@@ -150,6 +150,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |
 | **s360-reporter** | `.github/skills/s360-reporter/SKILL.md` | "S360 report", "generate S360 report", "weekly S360", "S360 status", "what are our S360 items" |
 | **copilot-review-analyst** | `.github/skills/copilot-review-analyst/SKILL.md` | "analyze Copilot reviews", "Copilot review effectiveness", "review analysis report", "how helpful are Copilot reviews" |
+| **architect-reviewer** | `.github/skills/architect-reviewer/SKILL.md` | "review this design doc", "architect review", "is this design approvable", "review this spec", "what are the risks in this design", "prepare for design review", produce a structured brief for design review |
 | **oncall-weekly-telemetry-report** | `.github/skills/oncall-weekly-telemetry-report/SKILL.md` | "produce the OCE report", "weekly on-call report", "WoW telemetry report", "weekly broker health report", "generate this week's on-call summary" |
 
 ## 13. Azure DevOps Integration
