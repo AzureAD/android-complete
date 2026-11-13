@@ -3054,6 +3054,15 @@ function applySurgicalFileEdits(baseContent, edits) {
     return { content: hasCrlf ? working.replace(/\n/g, "\r\n") : working };
 }
 
+export function resolveSurgicalFileContent(baseContent, rawContent) {
+    const edits = parseSearchReplaceBlocks(rawContent);
+    if (!edits) return { content: rawContent };
+    if (typeof baseContent !== "string") {
+        return { error: "SEARCH/REPLACE blocks require an existing baseline file; provide full content for brand-new files." };
+    }
+    return applySurgicalFileEdits(baseContent, edits);
+}
+
 export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot = "", exec = defaultExec, previousImplementation = null, requireFullOrEditsContent = false } = {}) {
     if (!record(rawImpl) || !record(task)) return rawImpl;
     if (Array.isArray(rawImpl.targets)) {

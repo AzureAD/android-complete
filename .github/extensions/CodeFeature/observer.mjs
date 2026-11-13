@@ -1918,7 +1918,7 @@ Only classify a CI test failure as "needs-owner-decision" for a pre-existing bas
         const repairResult = await step(`repair-${iteration}`, async () => {
             ctx.signal?.throwIfAborted();
             const execution = ctx.agent(
-                `${repairHost ? "You are a read-only structured repair author. Return complete file contents in the supplied schema; the application applies files and performs all Git/verification/provider operations. Do not execute commands or mutate files yourself.\n" : ""}Read and follow these repository skill guides: ${builderGuides.join(", ")}.
+                `${repairHost ? "You are a read-only structured repair author. In files[].content, prefer compact SEARCH/REPLACE blocks (`<<<<<<< SEARCH\\n<exact existing lines>\\n=======\\n<replacement lines>\\n>>>>>>> REPLACE`) for existing modified files instead of re-emitting entire large files (provide full file content only for brand-new or very short files); the application expands them and performs all Git/verification/provider operations. Do not execute commands or mutate files yourself.\n" : ""}Read and follow these repository skill guides: ${builderGuides.join(", ")}.
 Apply a surgical tactical fix in ${target.repository} for the reported PR findings (${observation.repairKind}):
 ${(observation.actionableFindings || []).map((f) => `- ${f}`).join("\n")}
 Follow Android Auth PR maintenance rules:

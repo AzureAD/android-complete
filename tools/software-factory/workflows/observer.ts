@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WorkflowAgentOptions } from "@github/copilot-sdk";
@@ -18,7 +18,7 @@ import { workerGuidance } from "../runtime/guidance.ts";
 import { applyLocalFiles, type FactoryContext } from "./lifecycle.ts";
 import {
     capturePublicationSource, renderPublicationDiff, snapshotWorktree, runLocalVerificationGate,
-    verifyPublicationSource, isProtectedPipelineOrQualityPath,
+    verifyPublicationSource, isProtectedPipelineOrQualityPath, resolveSurgicalFileContent,
 } from "../../../.github/extensions/CodeFeature/workflow.mjs";
 import { MAX_OBSERVER_ITERATIONS, selectAddressedReviewThreads, staleAdoBuildPolicies } from "../../../.github/extensions/CodeFeature/observer.mjs";
 
@@ -272,17 +272,28 @@ export async function factoryObserver(input: {
                 await assertAuthority();
                 assertSource(iteration);
                 const result = object(repairResult, "Observer repair");
-                const files = parseCodeImplementation({ summary: result.summary, files: result.files, blockingUnknowns: [] }).files;
-                if (entry(iteration).repair!.mergeConflicts?.some((file) => !files.some((proposal) => proposal.path === file))) {
+                const rawFiles = parseCodeImplementation({ summary: result.summary, files: result.files, blockingUnknowns: [] }).files;
+                if (entry(iteration).repair!.mergeConflicts?.some((file) => !rawFiles.some((proposal) => proposal.path === file))) {
                     throw new FactoryError("merge_conflicts_unresolved", "Every merge-conflicted file must be explicitly resolved by the reviewed proposal.", 409);
                 }
+                const repairRoot = rootFor(iteration);
+                const files = rawFiles.map((file) => {
+                    if (file.action === "delete") return file;
+                    const existingPath = path.join(repairRoot, ...file.path.split("/"));
+                    const baseContent = existsSync(existingPath) ? readFileSync(existingPath, "utf8") : undefined;
+                    const resolved = resolveSurgicalFileContent(baseContent, file.content);
+                    if ("error" in resolved && resolved.error) {
+                        throw new FactoryError("invalid_implementation", `Repair file ${file.path}: ${resolved.error}`, 409);
+                    }
+                    return { ...file, content: String(resolved.content ?? file.content) };
+                });
                 for (const file of files) {
                     if (isProtectedPipelineOrQualityPath(file.path) || /(^|\/)(local\.properties|gradle\.properties)$/i.test(file.path) ||
                         /^(<{7}|={7}|>{7})(?: |$)/m.test(file.content)) {
                         throw new FactoryError("repair_scope_changed", `The repair contains protected configuration or unresolved conflict markers: ${file.path}.`, 409);
                     }
                 }
-                applyLocalFiles(rootFor(iteration), files, new Map());
+                applyLocalFiles(repairRoot, files, new Map());
                 const source = capturePublicationSource(rootFor(iteration), { id: item.id, baseBranch: repository.baseBranch }, { files });
                 await save(iteration, (operation) => {
                     operation.repair!.files = files; operation.repair!.source = source;
