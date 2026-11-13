@@ -125,8 +125,43 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                             });
                             cIdx++;
                         }
-                    } else if (typeof parsed.pass === "boolean" && Array.isArray(parsed.criteria) && Array.isArray(parsed.findings)) {
-                        const itemTag = "PBI-1";
+                    } else if (
+                        (typeof parsed.pass === "boolean" && Array.isArray(parsed.criteria) && Array.isArray(parsed.findings)) ||
+                        (Array.isArray(parsed.acceptanceCriteria) && Array.isArray(parsed.criteria) && Array.isArray(parsed.findings))
+                    ) {
+                        const firstAc = Array.isArray(parsed.acceptanceCriteria) && parsed.acceptanceCriteria[0] && typeof parsed.acceptanceCriteria[0] === "object" && !Array.isArray(parsed.acceptanceCriteria[0])
+                            ? parsed.acceptanceCriteria[0] as Record<string, Json>
+                            : null;
+                        const itemTag = typeof firstAc?.targetId === "string" && firstAc.targetId ? firstAc.targetId : "PBI-1";
+                        let normalizedReview: Record<string, Json> = parsed;
+                        if (typeof parsed.pass !== "boolean" && Array.isArray(parsed.acceptanceCriteria)) {
+                            const mappedCriteria = parsed.acceptanceCriteria
+                                .filter((ac): ac is Record<string, Json> => Boolean(ac) && typeof ac === "object" && !Array.isArray(ac))
+                                .map((ac) => ({
+                                    criterion: typeof ac.criterion === "string" ? ac.criterion : "",
+                                    status: ac.passed === true ? "addressed" : "partial",
+                                    evidence: typeof ac.evidence === "string" ? ac.evidence : "",
+                                }));
+                            const mappedFindings = parsed.findings
+                                .filter((fn): fn is Record<string, Json> => Boolean(fn) && typeof fn === "object" && !Array.isArray(fn))
+                                .map((fn) => ({
+                                    ...fn,
+                                    category: typeof fn.category === "string" ? fn.category : typeof fn.rubricId === "string" ? fn.rubricId : "correctness",
+                                }));
+                            const allRubricPass = parsed.criteria
+                                .filter((c): c is Record<string, Json> => Boolean(c) && typeof c === "object" && !Array.isArray(c))
+                                .every((c) => c.pass === true);
+                            const allAcPass = mappedCriteria.every((c) => c.status === "addressed");
+                            const pass = allRubricPass && allAcPass && mappedFindings.length === 0;
+                            normalizedReview = {
+                                pass,
+                                summary: pass
+                                    ? `Independent code review passed (${mappedCriteria.length}/${mappedCriteria.length} acceptance criteria verified, 0 findings).`
+                                    : `Independent code review requested ${mappedFindings.length} fix(es) (${mappedCriteria.filter((c) => c.status === "addressed").length}/${mappedCriteria.length} acceptance criteria verified).`,
+                                criteria: mappedCriteria,
+                                findings: mappedFindings,
+                            };
+                        }
                         syntheticImplTurns.push({
                             id: `${exec.id}:journal:code-review:${itemTag}:${crIdx}`,
                             kind: "agent_turn",
@@ -135,7 +170,7 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                             label: `Factory:code-review:${itemTag}:${crIdx}`,
                             target: "software-factory-code-reviewer",
                             status: "completed",
-                            outputPreview: rawJson.slice(0, 30_000),
+                            outputPreview: JSON.stringify(normalizedReview),
                         });
                         crIdx++;
                     }
