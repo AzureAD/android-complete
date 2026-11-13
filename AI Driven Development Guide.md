@@ -45,9 +45,33 @@ Design → Plan → Backlog → Dispatch → Monitor
 
 The pipeline **stops between stages** and asks for your approval before proceeding. You stay in control — the AI proposes, you decide.
 
+### Default-off feature isolation
+
+Every Android-complete **runtime feature** requires a flag that defaults to
+Boolean false in code, configuration-failure handling and the planned production
+configuration. Small or single-repository features are not exemptions. Explicitly
+non-runtime/documentation, regression-only or deferred changes need a reasoned
+no-runtime-impact declaration; every feature still needs its pre-mortem.
+
+The Design Doc Dynamic Workflow generates a structured flag register and
+**Feature flags and isolation** section, maps runtime changes to pinned,
+source-evidenced contracts, deterministically rejects missing/non-false defaults
+and incomplete mappings, and independently reviews isolation. Contracts name the
+actual framework/key/owner, every guarded entry point, zero new off-path side
+effects, configuration/cache/override policy, approved enabled E2E cohort,
+active-attempt rollback and owned verification. New keys are proposals; workflow
+workers do not create flags or inspect/change live production configuration.
+
+Planning and PBI creation retain the exact contracts and code-review/CI acceptance
+evidence; gaps return for design/plan approval rather than silent scope expansion.
+Implementation owners prove actual false defaults, configuration failure handling,
+unchanged off behavior, enabled behavior and rollback. Release owners separately
+approve enablement. **Design approval is not implemented isolation or activation
+permission**; an approved enabled test cohort does not require broad rollout.
+
 ### Feature pre-mortem
 
-Every Android-complete feature, including features without flags, requires a
+Every Android-complete feature, including non-runtime features, requires a
 design-linked pre-mortem and a dedicated child PBI to author/review it. Planning
 includes the item; approved backlog creation verifies and reuses a suitable
 existing item rather than duplicating it, confirms the parent Feature and normal

@@ -26,8 +26,10 @@ descriptions in plain Markdown; the PBI creator converts them to HTML.
 <p>[Why this change is needed. How it fits into the larger feature. What user problem it solves.]</p>
 
 <h2>Feature Flag</h2>
-<p>[If applicable, wrap new behavior behind <code>ExperimentationFeatureFlag.[FLAG_NAME]</code>.
-Otherwise state "N/A" with the agreed activation/release mechanism; do not invent a flag.]</p>
+<p>[Required for runtime features: inline the approved flag key, owning repo/framework,
+Boolean default=false, configuration-failure and production defaults=false, owner,
+guarded entry points, off-path isolation, cohort enablement, rollback and verification.
+Only non-runtime work may use a reasoned "N/A"; do not invent a flag API.]</p>
 
 <h2>Technical Requirements</h2>
 <ul>
@@ -58,7 +60,9 @@ Otherwise state "N/A" with the agreed activation/release mechanism; do not inven
 <ul>
   <li>[ ] [Functional criterion 1]</li>
   <li>[ ] [Functional criterion 2]</li>
-  <li>[ ] If flagged: behavior is off when flag is disabled</li>
+  <li>[ ] Runtime feature: actual flag default and configuration-failure fallback are false; production remains off until separately approved enablement</li>
+  <li>[ ] Runtime feature: all entry points preserve existing behavior with zero new side effects when disabled</li>
+  <li>[ ] Runtime feature: tests cover default/missing/invalid/unavailable/expired configuration, disabled/enabled behavior and rollback including active attempts</li>
   <li>[ ] Unit tests added for new/modified logic</li>
   <li>[ ] No new lint warnings introduced</li>
   <li>[ ] Compile check passes: <code>./gradlew :[module]:compile[Variant]Kotlin</code></li>
@@ -75,9 +79,37 @@ Otherwise state "N/A" with the agreed activation/release mechanism; do not inven
 
 ---
 
+## Required Default-off Feature Contract
+
+Every Android-complete runtime feature, including small/single-repo features,
+must have an approved default-off flag contract. Carry the exact design flag IDs,
+keys, repository/framework, owner and change mappings into implementation PBIs
+and coding instructions; do not replace it with generic "if flagged" wording.
+Use the source-verified framework in the owning repository, not a universal enum
+name or an enabled existing flag. Verify reuse scope/ownership; new keys are
+proposals until implemented. Multiple flags may be needed across repositories.
+
+The contract includes code `defaultValue: false`, `configurationFailureValue: false`
+and `productionDefaultValue: false` as Booleans, guarded entry points and placement,
+source evidence, and disabled behavior with **zero new side effects** beyond the
+minimal flag read. Cover missing/invalid/unavailable/expired configuration and
+cached/remote override precedence; preserve off unless valid authorized cohort
+enablement applies. Name production enablement/approval and rollback owners,
+approved enabled E2E test cohort, rollback triggers/propagation, active attempts
+and persisted/partial-state recovery. Do not require broad production enablement.
+
+Implementation/review owners must attach code-review/CI evidence for actual false
+defaults, configuration failures, unchanged off-path behavior, enabled behavior
+and rollback before release; release-owner approval remains separate. Design
+approval, PBI creation and documentation completion are not implemented isolation
+or activation permission. Non-runtime/documentation, regression-only and deferred
+work needs an explicit no-runtime-impact reason; size/convenience is not an exemption.
+Return missing/contradictory contracts to design/planning for approval rather than
+silently adding flags or changing an approved plan.
+
 ## Required Feature Pre-mortem PBI
 
-For **every feature in Android-complete**, including unflagged and single-repo features,
+For **every feature in Android-complete**, including non-runtime and single-repo features,
 include one dedicated child PBI titled `[Feature name] - Author and review pre-mortem`.
 Reuse a suitable existing child item after verifying its scope; do not create a duplicate.
 This is documentation/review work, not an application-code or automatic coding-agent task.
@@ -105,8 +137,9 @@ Dependencies and Additional Context headings, replacing code/build criteria with
 - **Operations**: Name the monitoring owner, review cadence, observation window,
   thresholds/stop criteria and escalation/response owner. Mark unconfirmed values
   explicitly and assign their resolution rather than inventing approved thresholds.
-- **Rollback**: State triggers, decision/execution owner, mechanism (flag or non-flag
-  alternative), propagation limits, active/in-flight attempts, persisted/partial state,
+- **Rollback**: State triggers, decision/execution owner, default-off flag mechanism
+  for runtime features (non-flag mechanisms supplement it or apply to non-runtime work),
+  propagation limits, active/in-flight attempts, persisted/partial state,
   cleanup/recovery and verification of preserved existing behavior.
 - **Validation and release prerequisites**: Identify test cases, instrumentation/
   query validation, approvals and release gates, with a named owner and tracking item
@@ -147,7 +180,11 @@ heavy load. Adding retry logic at the IPC layer in Common will transparently imp
 reliability for all consumers (MSAL, OneAuth) without requiring changes in each client.</p>
 
 <h2>Feature Flag</h2>
-<p>Wrap all new behavior behind <code>ExperimentationFeatureFlag.IPC_RETRY_ENABLED</code>.</p>
+<p>Use the source-verified Common flight framework with proposed key
+<code>IPC_RETRY_ENABLED</code>; verify the actual API before implementation.
+Default, configuration-failure and production values are false. Gate all entry points
+before retry state or telemetry; feature owner controls approved test-cohort enablement
+and rollback, and release owner approves production enablement separately.</p>
 
 <h2>Technical Requirements</h2>
 <ul>
@@ -187,6 +224,8 @@ reliability for all consumers (MSAL, OneAuth) without requiring changes in each 
   <li>[ ] Respects max retry count of 3</li>
   <li>[ ] Backoff timing: 500ms, 1s, 2s</li>
   <li>[ ] Feature flag disables all retry behavior when off</li>
+  <li>[ ] Code-review/CI evidence verifies false defaults and missing/invalid/unavailable/expired configuration</li>
+  <li>[ ] Disabled path has no new retry state or telemetry; enabled tests and active-attempt rollback pass</li>
   <li>[ ] Logger output includes correlation ID and retry attempt number</li>
   <li>[ ] Unit tests cover: success first try, retry-then-success, max-retries-exceeded</li>
   <li>[ ] Compile check passes: <code>./gradlew :common:compileDebugKotlin</code></li>

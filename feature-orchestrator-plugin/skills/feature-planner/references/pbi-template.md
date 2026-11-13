@@ -51,6 +51,9 @@ class ExistingPattern {
 - [ ] All existing tests pass
 - [ ] New unit tests cover the happy path and error cases
 - [ ] Code follows project conventions (from copilot-instructions.md)
+- [ ] Android-complete runtime feature: false code/configuration-failure defaults; production stays off until separately approved enablement
+- [ ] Android-complete runtime feature: zero new off-path side effects across all entry points
+- [ ] Android-complete runtime feature: default/missing/invalid/unavailable/expired configuration, off/on and active-attempt rollback test evidence
 
 ## Files to Modify
 
@@ -70,9 +73,37 @@ class ExistingPattern {
 - Integration tests for [cross-component interaction] (if applicable)
 - Test file location: `path/to/tests/`
 
+## Android-complete Default-off Feature Contract
+
+Every Android-complete runtime feature, including small/single-repo features,
+must have an approved default-off flag contract. Carry the exact design flag IDs,
+keys, repository/framework, owner and change mappings into implementation PBIs
+and coding instructions; do not replace it with generic "if flagged" wording.
+Use the source-verified framework in the owning repository, not a universal enum
+name or an enabled existing flag. Verify reuse scope/ownership; new keys are
+proposals until implemented. Multiple flags may be needed across repositories.
+
+The contract includes code `defaultValue: false`, `configurationFailureValue: false`
+and `productionDefaultValue: false` as Booleans, guarded entry points and placement,
+source evidence, and disabled behavior with **zero new side effects** beyond the
+minimal flag read. Cover missing/invalid/unavailable/expired configuration and
+cached/remote override precedence; preserve off unless valid authorized cohort
+enablement applies. Name production enablement/approval and rollback owners,
+approved enabled E2E test cohort, rollback triggers/propagation, active attempts
+and persisted/partial-state recovery. Do not require broad production enablement.
+
+Implementation/review owners must attach code-review/CI evidence for actual false
+defaults, configuration failures, unchanged off-path behavior, enabled behavior
+and rollback before release; release-owner approval remains separate. Design
+approval, PBI creation and documentation completion are not implemented isolation
+or activation permission. Non-runtime/documentation, regression-only and deferred
+work needs an explicit no-runtime-impact reason; size/convenience is not an exemption.
+Return missing/contradictory contracts to design/planning for approval rather than
+silently adding flags or changing an approved plan.
+
 ## Android-complete Feature Pre-mortem PBI
 
-For every Android-complete feature, including unflagged and single-repo features,
+For every Android-complete feature, including non-runtime and single-repo features,
 include one dedicated child PBI, `[Feature name] - Author and review pre-mortem`.
 Verify and reuse a suitable existing item instead of duplicating it. Assign one
 owning repository, author and reviewer; keep the work right-sized and preserve
@@ -92,7 +123,8 @@ Replace application-code/build acceptance criteria with document-review criteria
   deduplication/sampling and coverage gaps. No data is not proof of health.
 - Name monitoring/response owners, cadence, observation window, thresholds,
   stop criteria and escalation; assign unresolved values rather than inventing them.
-- Document rollback triggers, decision/execution owner, flag or non-flag mechanism,
+- Document rollback triggers, decision/execution owner, default-off flag mechanism
+  for runtime features (non-flag mechanisms supplement it or apply to non-runtime work),
   propagation limits, active/in-flight attempts, persisted/partial state,
   cleanup/recovery and verification of preserved behavior.
 - Record validation and release prerequisites with named owners and tracking

@@ -51,11 +51,15 @@ Before decomposing into PBIs, check if an approved design spec exists:
    > `design-author` skill? This is recommended for features that span multiple repos or
    > introduce new APIs."
 4. If the developer wants a design first, hand off to the `design-author` skill and stop.
-5. Every feature, including small/single-repo and unflagged features, needs a
+5. Every feature, including small/single-repo and non-runtime features, needs a
    reviewable design-linked pre-mortem and its dedicated child PBI. An explicitly
    scoped non-feature bug fix may skip feature design; do not use that exception
    to omit these requirements from a feature. If design/pre-mortem context is
    missing, return to design authoring/review before claiming the plan is ready.
+6. Runtime features must also have the approved
+   [default-off flag contract](references/pbi-template.md#required-default-off-feature-contract).
+   Missing flags, enabled defaults or unjustified N/A return to design review;
+   do not silently amend the approved design or invent a flag framework.
 
 ### Step 2: Understand the Feature
 
@@ -95,6 +99,11 @@ Break the feature into PBIs following these rules:
    appropriate; reserve `copilot-agent-ready` for actually dispatchable coding work.
    Include documentation review in the plan's sequencing without making it depend
    on production activation; record only actual implementation/release dependencies.
+8. **Carry default-off isolation** — inline the exact approved flag IDs/keys,
+   owners/frameworks, false defaults, entry-point guards, configuration policy,
+   cohort enablement, rollback and verification in each runtime implementation PBI.
+   Retain code-review/CI evidence and separate release approval as acceptance gates.
+   Non-runtime items need a reasoned no-runtime-impact declaration, not blanket N/A.
 
 ### Step 5: Write PBI Descriptions
 
@@ -127,7 +136,7 @@ The output MUST contain these sections in this order:
 ```markdown
 ## Feature Plan: [Feature Name]
 
-**Feature flag**: `[flag_name]` (or "N/A")
+**Feature flag**: `[approved flag keys; default=false; owning frameworks]` (reasoned N/A only for non-runtime work)
 **Design PR**: [link] (or "N/A")
 **Pre-mortem**: [exact design section/artifact revision URL; planned PBI-N or existing AB#]
 **Total PBIs**: [N]
@@ -244,8 +253,9 @@ For end-to-end features affecting the full auth flow:
 4. PBI-4: (optional) Integration test PBI
 
 ### Feature Flag Convention
-When a feature has a flag, its PBIs should use the **same feature flag name** across repos:
-- Flag name format: `ExperimentationFeatureFlag.<FEATURE_NAME>`
-- Include the flag name in each PBI description
-- Unflagged features use `N/A` and document their release/rollback mechanism;
-  they still require the design-linked pre-mortem child PBI.
+Every runtime feature requires the approved default-off contract. Use each
+owning repo's source-verified framework and consistent approved keys/mappings,
+not a universal enum name. Multiple coordinated flags may be required across
+repos. Include relevant keys and full isolation/verification criteria in each
+implementation PBI; only non-runtime work can use reasoned N/A. All features
+still require the design-linked pre-mortem child PBI.

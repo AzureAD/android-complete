@@ -62,7 +62,7 @@ options and avoid path errors.
 
 ### Step 2a: Verify the Feature Pre-mortem Item
 
-For every feature, including unflagged and single-repo features, verify that the
+For every feature, including non-runtime and single-repo features, verify that the
 approved plan contains one dedicated pre-mortem authoring/review child PBI using
 the [required contract](../feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi).
 If missing or incomplete, return the proposed amendment to feature planning for
@@ -74,6 +74,19 @@ design revision, scope, ownership and current state. Propose reuse and any requi
 description/link updates for approval rather than creating a duplicate or silently
 reparenting/reopening unrelated or completed work. If suitability is unclear, stop
 for a decision. Recheck before creation and preserve IDs on recovery.
+
+### Step 2b: Verify Default-off Feature Contracts
+
+Before creating or updating runtime implementation PBIs, verify their exact
+approved design flag IDs/keys, owning framework/repo and owner, Boolean false
+code/configuration-failure/production defaults, entry-point isolation, configuration/
+override policy, approved test cohort, active-attempt rollback and owned code-review/
+CI verification using the [contract](../feature-planner/references/pbi-template.md#required-default-off-feature-contract).
+Non-runtime items require a no-runtime-impact reason. Missing/contradictory
+contracts return to design/planning for developer approval; do not silently add
+flags, change defaults, activate anything or expand an approved plan. Preserve
+the contract during HTML conversion and existing-item updates. Design approval
+and PBI creation are not implemented isolation or release/activation permission.
 
 ### Step 3: Present Options for Confirmation
 

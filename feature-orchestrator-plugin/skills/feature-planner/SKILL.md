@@ -52,6 +52,10 @@ Work items target a **module name**. To find the repo: `modules.<name>.repo` →
    the project's feature requirements permit it. In Android-complete, every feature
    needs a reviewable design-linked pre-mortem; only explicitly scoped non-feature
    fixes may skip feature design. Missing feature context returns to design review.
+5. Android-complete runtime features also need the approved
+   [default-off flag contract](references/pbi-template.md#android-complete-default-off-feature-contract).
+   Missing flags, enabled defaults or unjustified N/A return to design review,
+   not silent design amendments or invented APIs.
 
 ### Step 2: Understand the Feature
 
@@ -78,13 +82,18 @@ Rules:
 4. **Self-contained description** — everything the coding agent needs, inline
 5. **No local file paths** — the coding agent runs in the cloud with only the target repo cloned
 6. **Android-complete pre-mortem** — include one dedicated child PBI for every feature,
-   including unflagged/single-repo features, using the
+   including non-runtime/single-repo features, using the
    [contract](references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
    Record a suitable known existing AB# and reuse intent for backlog verification.
    Keep one owning repository and normal sizing/metadata; identify later query-
    validation/release owners separately. Mark this `documentation/review` and
    keep human-review-only work out of coding-agent dispatch and `copilot-agent-ready`
    tags. Record actual dependencies, not production activation as an authoring blocker.
+7. **Android-complete default-off isolation** — inline the approved flag IDs/keys,
+   owning repo/framework, owner, false defaults, all guards, configuration policy,
+   test cohort, active-attempt rollback and owned code-review/CI evidence into each
+   runtime implementation item's acceptance criteria. Release approval is separate;
+   non-runtime items require a reasoned no-runtime-impact declaration.
 
 ### Step 5: Write Descriptions
 
@@ -211,7 +220,7 @@ renders markdown only. HTML tags appear as raw text.
 ```markdown
 ## Feature Plan: [Feature Name]
 
-**Feature flag**: `[flag_name]` (or "N/A")
+**Feature flag**: `[flag_name]` (Android-complete: approved keys/frameworks, default=false; reasoned N/A only for non-runtime work)
 **Design spec**: [path] (or "N/A")
 **Pre-mortem**: [Android-complete: exact design/artifact revision URL; WI-N or existing AB#]
 **Total work items**: [N]
@@ -295,6 +304,9 @@ For Android-complete features, also include or reuse the dedicated pre-mortem ch
 4. WI-4: (optional) Integration tests
 
 ### Feature Flag Convention
-When flagged, all work items for a feature should use the **same feature flag name**
-across repos. Include it in each description; otherwise use `N/A` and document the
-release/rollback mechanism. Unflagged Android-complete features still need a pre-mortem.
+For Android-complete, every runtime feature requires the approved default-off
+contract. Use source-verified owning frameworks and consistent approved keys/
+mappings, not a universal enum name; multiple coordinated flags may be needed.
+Inline relevant contracts and verification criteria in each implementation item.
+Only non-runtime work can use reasoned N/A; all features still need a pre-mortem.
+Other projects follow their own approved flag conventions.

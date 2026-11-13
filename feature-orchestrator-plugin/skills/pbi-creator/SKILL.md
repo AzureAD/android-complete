@@ -68,7 +68,7 @@ If no plan found, ask: "Run the `feature-planner` skill first, or paste PBI deta
 
 ### Step 3: Present Options for Confirmation
 
-For Android-complete features (flagged or not), first verify the approved plan
+For Android-complete features (including non-runtime work), first verify the approved plan
 contains the dedicated design-linked pre-mortem child PBI using the
 [contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
 Return missing/incomplete scope to planning for approval; do not silently add work.
@@ -79,6 +79,17 @@ reopening work. Preserve IDs on recovery and recheck before creating a new item.
 The parent confirmation must select an existing or new Feature for these features;
 "no parent" is valid only for explicitly scoped non-feature work. Resolve a conflicting
 selection before writes without bypassing any metadata/approval confirmation below.
+
+Before creating/updating Android-complete runtime implementation items, also
+verify the approved [default-off contract](../feature-planner/references/pbi-template.md#android-complete-default-off-feature-contract):
+exact flag IDs/keys, owning framework/repo and owner, Boolean false code/
+configuration-failure/production defaults, entry-point isolation, configuration/
+override policy, test cohort, active-attempt rollback and owned code-review/CI
+verification. Only reasoned non-runtime work can use N/A. Return missing or
+contradictory scope to design/planning for approval; do not silently add flags,
+change defaults, activate anything or expand the approved plan. Preserve contracts
+in descriptions and existing-item updates. Design approval/PBI creation are not
+implemented isolation or release/activation permission.
 
 ## ⛔ HARD STOP — DO NOT SKIP THIS STEP
 

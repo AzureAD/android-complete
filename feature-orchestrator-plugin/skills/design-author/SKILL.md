@@ -30,7 +30,7 @@ Key sections every design spec should include:
 7. **Solution Decision** — Recommended option with reasoning
 8. **API surface** — Public/internal classes, methods (if applicable)
 9. **Data flow** — Request/response flow across components
-10. **Feature flag** — Flag name and gating strategy (if applicable)
+10. **Feature flag** — Android-complete runtime features require default-off isolation; reasoned N/A only for non-runtime work
 11. **Telemetry** — Key metrics, span names, success/failure signals
 12. **Testing strategy** — Unit tests, integration tests, E2E coverage
 13. **Rollout plan** — Staged rollout, feature flag configuration
@@ -38,10 +38,21 @@ Key sections every design spec should include:
 
 If a template file exists at the configured `design.templatePath`, follow that instead.
 
+For Android-complete runtime features, retain a **Feature flags and isolation**
+section using the [default-off contract](../feature-planner/references/pbi-template.md#android-complete-default-off-feature-contract):
+source-verified owning framework, key/owner, Boolean false code/configuration-failure/
+production defaults, all guarded entry points, zero new off-path side effects,
+override/cache behavior, approved enabled E2E cohort, active-attempt rollback and
+owned code-review/CI verification. Map runtime changes to flags; documentation/
+regression-only/deferred work needs an explicit no-runtime-impact reason. Small
+features cannot be exempted. Carry the contract into implementation PBI acceptance
+criteria. Do not invent APIs or inspect/change live production configuration;
+design approval is not code verification or activation permission.
+
 For Android-complete, supplement either template with a **Pre-mortem and operational
 readiness** section or an exact-revision link to a companion artifact. Follow the
 [pre-mortem content and acceptance contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
-This applies to every feature, including those without flags. Include a
+This applies to every feature, including non-runtime work. Include a
 **Pre-mortem child PBI** field (`Pending feature planning`, or existing AB# and URL);
 planning includes the dedicated authoring/review child item, reusing a suitable
 existing item, and approved backlog creation adds reciprocal design/PBI links.

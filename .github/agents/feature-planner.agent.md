@@ -16,8 +16,16 @@ Read the skill file at `.github/skills/feature-planner/SKILL.md` and follow its 
 
 - Read the approved design spec from `design-docs/` first
 - Include a dedicated design-linked pre-mortem authoring/review child PBI for every
-  feature, including unflagged features; propose reuse of a suitable existing item.
+  feature, including non-runtime features; propose reuse of a suitable existing item.
   Follow the template's content and separate query-validation/release-gate contract.
+- Runtime features require the approved
+  [default-off contract](../skills/feature-planner/references/pbi-template.md#required-default-off-feature-contract).
+  Inline exact keys/mappings, source-verified owning frameworks and owners,
+  false code/configuration-failure/production defaults, all guards/off-path
+  isolation, configuration policy, test cohort, active-attempt rollback and
+  owned code-review/CI evidence in implementation PBIs. Only non-runtime work
+  may use reasoned N/A. Missing/contradictory contracts return to design review,
+  not silently expanded plans; creation/design approval do not authorize activation.
 - One PBI per repo — never create a PBI spanning multiple repos
 - PBI descriptions must be self-contained — no local file paths, no references to design-docs
 - Use the PBI template at `.github/skills/feature-planner/references/pbi-template.md`

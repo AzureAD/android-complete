@@ -16,8 +16,17 @@ Read the skill file at `.github/skills/design-author/SKILL.md` and follow its wo
 
 - Follow the template at `design-docs/Template/template.md`
 - Add the skill's mandatory Pre-mortem and operational readiness section for every
-  feature, including unflagged features, with a child-PBI linkage field and separate
+  feature, including non-runtime features, with a child-PBI linkage field and separate
   document-review, enabled-E2E query-validation and release gates.
+- Every runtime feature also needs a **Feature flags and isolation** section using
+  the [default-off contract](../skills/feature-planner/references/pbi-template.md#required-default-off-feature-contract):
+  source-verified keys/frameworks/owners, Boolean false code/configuration-failure/
+  production defaults, all guarded entry points, zero new off-path side effects,
+  configuration/override policy, approved test cohort, active-attempt rollback and
+  owned code-review/CI evidence. Map runtime changes to flags; non-runtime work
+  needs a reasoned exemption, never a size/repository exemption. Carry the exact
+  contract into PBI acceptance criteria. Do not inspect/change live production
+  configuration; design approval is not code verification or activation permission.
 - Include: Problem description, Requirements, 2+ Solution Options with pseudo code and pros/cons, Recommended Solution, API surface, Data flow, Feature flag, Telemetry, Testing strategy, Cross-repo impact
 - Save the spec to `design-docs/[Android] <Feature Name>/<spec-name>.md`
 - **After writing the spec, STOP and present 5 explicit choices** using the `askQuestion`

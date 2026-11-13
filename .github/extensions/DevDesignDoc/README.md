@@ -81,15 +81,18 @@ session storage. A request to draft is not automatically requirements approval.
 3. Author structured design sections, requirement traceability, and a visible
    per-change necessity register: baseline trace, existing behavior, requested delta,
    necessity, counterevidence search, classification and verification. Generate the
-   required pre-mortem and operational-readiness document in the same artifact.
+   required default-off flag register/isolation section and pre-mortem and
+   operational-readiness document in the same artifact.
 4. Check sections, revision, exact evidence digest, links and trace/necessity coverage.
    Already-handled behavior is `preserve-existing` / `regression-only`; optional
    improvements are deferred. Required work needs a `confirmed-gap`. Unresolved
    claims cannot become implementation mandates or a review-ready artifact.
+   Validate flag contracts and change mappings before independent review.
 5. Spawn a separate independent reviewer against the fixed rubric in `workflow.mjs`.
    The reviewer reads pinned sources, seeks disconfirming paths for every proposed
    change, and checks for mandates missing from the register. Per-change checks and
    the review bind to the exact design digest; every check must pass.
+   `defaultOffFeatureIsolation` and `preMortemAndReleaseGates` are mandatory.
    Reviewers return `references` (empty if none) for discoveries outside the initial
    reference list, with fresh IDs and full repository/revision/path/locator metadata.
    Discoveries must match exact `sourceManifest` pairs; malformed, duplicate,
@@ -120,11 +123,46 @@ fresh independent review, even if the discovering review otherwise passes.
 Repaired traceability and change/counterevidence records may cite discovered IDs.
 Original claims are retained for provenance, not silently endorsed over findings.
 
+### Required default-off flag contracts
+
+Every runtime feature needs a required `featureFlags` register and
+`featureFlagsAndIsolation` section. Each change declares `runtimeBehaviorChange`,
+`flagIds` and `noFlagReason`. Required runtime changes map to one or more flags;
+non-runtime/documentation, regression-only and deferred work requires a reasoned
+no-runtime-impact declaration with no flag mapping. Small/single-repo features
+cannot be exempted. Independent review challenges false non-runtime declarations.
+
+Each flag has `id`, `key`, pinned owning `repository`, source-verified `framework`,
+`owner`, `evidenceIds`, guarded `entryPoints` (repository, entry point, placement,
+disabled behavior and source evidence), `configurationPolicy`,
+`productionEnablement`, `testCohort`, `rollback` and `verification`.
+`defaultValue`, `configurationFailureValue` and `productionDefaultValue` must
+all be **Boolean false**, enforced by schema and manual validation. Validation
+also rejects missing fields, unknown/duplicate mappings, orphan flags, unpinned
+repositories and evidence that does not cover each declaring repository.
+Suitable existing default-off flags may be reused with verified scope/ownership;
+new keys remain proposals, not created configuration.
+
+Authors/reviewers cover all entry points/direct callers, zero new disabled-path
+side effects except the minimal flag read, missing/invalid/unavailable/expired
+configuration and cache/override precedence. Contracts name owners, separately
+approved production enablement, approved enabled E2E cohort, rollback propagation,
+active attempts and persisted state, and later code-review/CI evidence. Turning
+a flag off does not automatically cancel admitted work.
+
+The human packet carries these contracts into planning/PBI coding acceptance
+criteria. Missing/contradictory scope returns for approval, not silent flag
+creation. The independent `defaultOffFeatureIsolation` criterion is mandatory.
+These are design-contract checks, **not verification of implemented isolation or
+production settings**. Workers do not inspect/change live configuration, execute
+application tests or activate features; implementation and release owners verify
+code/configuration/test evidence and authorize enablement separately.
+
 ### Generated feature pre-mortem
 
 The executable template is the JSON `design.sections` schema in `workflow.mjs`,
 not the external `design-docs/Template/template.md`. Every design must contain a
-nonblank `preMortemAndOperationalReadiness` section, including unflagged and
+nonblank `preMortemAndOperationalReadiness` section, including non-runtime and
 single-repository features. Author and revision prompts generate a self-contained
 Markdown pre-mortem in that section; the human gate packet carries the content,
 not merely instructions to write it later or a link to a missing document.
@@ -174,7 +212,7 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v7` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v8` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
@@ -185,8 +223,8 @@ not recheck a mutable branch or re-read edited local snapshots; do not alter sna
 in place. Start a fresh run with new pins if the source/evidence changes; change the key version when workflow semantics,
 schemas, prompts, or rubric change. Steps have no intentional external side effects,
 so replay does not publish duplicate artifacts.
-Pre-mortem schema/prompt/rubric changes do not reuse prior v5 outputs or the
-accessibility-only v6 outputs from the separate accessibility change.
+Default-off schema/prompt/rubric changes do not reuse prior v5 outputs,
+accessibility-only v6 outputs or pre-mortem-only v7 outputs.
 
 ## Checks
 
@@ -203,15 +241,19 @@ agents. They cover approval gates, rejection of mutable/abbreviated source revis
 before checkpoint creation, full SHA-1/SHA-256 pins, source/trace validation, ordinary/hard failures,
 fixed rubric/per-change coverage, bounded fixes, recommendation semantics, and
 source/evidence-bound checkpoint identity. Pre-mortem regressions cover missing/
-blank output, flagged/unflagged generated-section handoff, omitted/failed review
+blank output, runtime/non-runtime generated-section handoff, omitted/failed review
 criteria, repair/re-review, owned pre-flight gaps without production activation,
-and stale v5/v6 checkpoint isolation. Synthetic executable completion fixtures
+and stale v5/v6/v7 checkpoint isolation. Default-off regressions cover missing/
+non-false contracts, invalid mappings/source ownership, non-runtime declarations,
+shared/multiple flags, schema/prompt handoff, mandatory independent criteria and
+repair/re-review. Synthetic executable completion fixtures
 also cover new pinned reviewer references, repair/re-review, invalid discoveries,
 stale digest rejection and journal replay with preserved provenance. Completion fixtures
 cover indirect handling (reuse/regression-only) and a genuinely missing handler
 (verified defect), plus a disputed false gap that must be fixed and re-reviewed.
 These are deterministic gate tests with mocked agent judgments, **not semantic
-quality eval results**. For a live agent eval, present both synthetic variants
+quality eval results**, actual Android isolation tests or live production
+configuration verification. For a live agent eval, present both synthetic variants
 without telling the reviewer the expected classification; confirm it follows the
 terminal chain, rejects unnecessary forwarding, and identifies the genuine gap.
 Separately verify extension discovery and a human-approved representative run in

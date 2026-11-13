@@ -42,15 +42,28 @@ For Android-specific designs, also include:
 - **API surface** — Public/internal classes, methods, parameters
 - **Data flow** — Request/response flow across repos (MSAL → Common → Broker → eSTS)
 - **IPC contract changes** — Any AIDL/Bundle schema changes
-- **Feature flag** — Flag name and gating strategy
+- **Feature flag** — Required default-off runtime flag contract; reasoned N/A only for non-runtime work
 - **Telemetry** — Span names, attributes, success/failure signals
 - **Testing strategy** — Unit test approach, instrumented test needs, E2E coverage
 - **Rollout plan** — Feature flag stages, ECS configuration
 - **Cross-repo impact** — Which repos need changes and in what order
 
+### Required default-off feature flags
+
+Every runtime feature, including small/single-repo features, needs the
+[default-off contract](../feature-planner/references/pbi-template.md#required-default-off-feature-contract).
+Retain a **Feature flags and isolation** section: source-verified owning framework,
+flag key/owner, Boolean false code/configuration-failure/production defaults, all
+guarded entry points, zero new off-path side effects, override/cache behavior,
+approved enabled E2E cohort, rollback including active attempts and owned verification.
+Map each runtime change to its flag(s); documentation/regression-only/deferred
+work needs an explicit no-runtime-impact reason. Carry the contract into coding
+PBI acceptance criteria. Do not invent APIs or inspect/change live production
+configuration; design approval is not code verification or activation permission.
+
 ### Required pre-mortem and PBI linkage
 
-For every Android-complete feature, including features without flags, add a
+For every Android-complete feature, including non-runtime features, add a
 **Pre-mortem and operational readiness** section to the design or link a reviewable
 companion artifact at an exact revision. Follow the content and acceptance contract
 in [Required Feature Pre-mortem PBI](../feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi):

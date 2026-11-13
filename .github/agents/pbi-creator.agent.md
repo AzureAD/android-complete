@@ -17,9 +17,17 @@ Read the skill file at `.github/skills/pbi-creator/SKILL.md` and follow its work
 
 - **Parse the feature plan** from the chat context — extract titles, repos, priorities,
   dependencies, tags, and descriptions from the structured plan format
-- For every feature (flagged or not), verify a dedicated design-linked pre-mortem
+- For every feature (including non-runtime work), verify a dedicated design-linked pre-mortem
   child PBI. Follow the skill's completeness, existing-item reuse and confirmed-parent
   checks; seek approval for missing work rather than silently changing the plan.
+- Runtime implementation PBIs must retain the exact approved
+  [default-off contract](../skills/feature-planner/references/pbi-template.md#required-default-off-feature-contract):
+  source-verified keys/frameworks/owners, false code/configuration-failure/
+  production defaults, all guards/off-path isolation, configuration policy,
+  test cohort, active-attempt rollback and owned code-review/CI evidence.
+  Only non-runtime work may use reasoned N/A. Return missing/contradictory
+  scope to design/planning for approval, not silent flag additions or expanded
+  plans. PBI creation is not implemented isolation or activation permission.
 - Keep pre-mortem documentation/review completion separate from enabled-E2E query
   validation and release approval; do not auto-dispatch human-review-only work.
 - **Discover ADO defaults first** — use `mcp_ado_wit_my_work_items` and
