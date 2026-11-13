@@ -19,6 +19,7 @@ import type { Provider } from "../providers/provider.ts";
 import type { WorkItem } from "../core/lifecycle-contracts.ts";
 import { actor, requirements } from "./helpers.ts";
 import { nextStep } from "../core/progress.ts";
+import { startServer } from "../server/server.ts";
 
 
 test("real chat boundary requires confirmation and persists the authenticated approval in ADO", async () => {
@@ -1127,6 +1128,67 @@ test("reconnected chat controller automatically resumes an idle-evicted halted w
         assert.equal(resumeCount, 1);
     } finally {
         await appRef?.shutdown();
+        f.cleanup();
+    }
+});
+
+test("feature listings hide superseded pre-publish local drafts and uncommitted publish attempts while surfacing new local edits", async () => {
+    const f = teamFixture();
+    try {
+        const app = f.create("dedupe-published-drafts");
+        const draft = app.execute({
+            kind: "create_feature",
+            requestId: "draft-1",
+            input: { ...requirements(), title: "Duplicate Draft Test" },
+        }, actor);
+        assert.deepEqual(app.cachedFeatures().map((entry) => entry.id), [draft.id]);
+        assert.deepEqual((await app.features()).map((entry) => entry.id), [draft.id]);
+
+        // A failed publish attempt leaves an uncommitted publish:... row without hiding the draft.
+        f.provider.canEdit = false;
+        const failedTarget = { ...target, workItemId: 999 };
+        await assert.rejects(() => app.shared.publish(draft.id, failedTarget, actor), /permission denied/i);
+        assert.ok(app.registry.list().length >= 2, "failed publish created an uncommitted publish:... row in registry");
+        assert.deepEqual(app.cachedFeatures().map((entry) => entry.id), [draft.id]);
+        assert.deepEqual((await app.features()).map((entry) => entry.id), [draft.id]);
+
+        // Publishing to ADO hides the untouched pre-publish local draft and surfaces only the ADO-backed feature.
+        f.provider.canEdit = true;
+        await submit(app, { kind: "publish_feature", featureId: draft.id, target });
+        const published = (await f.provider.read(target))!.snapshot.feature;
+        assert.notEqual(published.id, draft.id);
+        assert.deepEqual(app.cachedFeatures().map((entry) => entry.id), [published.id]);
+        assert.deepEqual((await app.features()).map((entry) => entry.id), [published.id]);
+        assert.equal(app.registry.get(draft.id).id, draft.id, "historical draft remains directly addressable for audit");
+
+        const assets = mkdtempSync(path.join(os.tmpdir(), "dedupe-assets-"));
+        writeFileSync(path.join(assets, "index.html"), "<!doctype html><title>Software Factory</title>");
+        const server = await startServer({ application: app, assets });
+        try {
+            const sessionRes = await fetch(`${server.url}/api/session`);
+            const cookie = sessionRes.headers.get("set-cookie")?.split(";")[0] || "";
+            const fullRes = await fetch(`${server.url}/api/features`, { headers: { Cookie: cookie } });
+            const cachedRes = await fetch(`${server.url}/api/features?cached=1`, { headers: { Cookie: cookie } });
+            const fullPayload = await fullRes.json() as { features: Array<{ id: string }> };
+            const cachedPayload = await cachedRes.json() as { features: Array<{ id: string }> };
+            assert.deepEqual(fullPayload.features.map((entry) => entry.id), [published.id]);
+            assert.deepEqual(cachedPayload.features.map((entry) => entry.id), [published.id]);
+        } finally {
+            await server.close();
+            rmSync(assets, { recursive: true, force: true });
+        }
+
+        // If the local draft is explicitly revised later, it resurfaces so unsaved local edits are never hidden.
+        const revised = app.execute({
+            kind: "revise_requirements",
+            featureId: draft.id,
+            expectedRevision: draft.current.id,
+            input: { ...requirements(), title: "Duplicate Draft Test (local fork)" },
+        }, actor);
+        assert.notEqual(revised.current.id, draft.current.id);
+        assert.deepEqual(new Set(app.cachedFeatures().map((entry) => entry.id)), new Set([published.id, draft.id]));
+        assert.deepEqual(new Set((await app.features()).map((entry) => entry.id)), new Set([published.id, draft.id]));
+    } finally {
         f.cleanup();
     }
 });

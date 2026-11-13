@@ -98,7 +98,7 @@ export function App() {
         if (sequence !== refreshSequence.current) return data.features;
         setProject(data.project);
         setFeatures((previous) => JSON.stringify(previous) === JSON.stringify(data.features) ? previous : data.features);
-        setSelectedId((previous) => previous || data.features[0]?.id);
+        setSelectedId((previous) => (previous && data.features.some((feature) => feature.id === previous)) ? previous : data.features[0]?.id);
         setSyncedAt(Date.now());
         setSyncError("");
         return data.features;

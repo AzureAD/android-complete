@@ -348,7 +348,7 @@ export async function startServer(options: { application: Application; port?: nu
             if (!matches(cookie, sessionToken)) throw new FactoryError("session_required", "Reload the local application to establish a session.", 401);
             if (request.method === "GET" && url.pathname === "/api/features") {
                 const rawFeatures = url.searchParams.get("cached") === "1"
-                    ? options.application.registry.list().map((feature) => options.application.cachedFeature(feature.id))
+                    ? options.application.cachedFeatures()
                     : await options.application.features();
                 json(response, 200, { project: options.application.registry.project,
                     features: rawFeatures.map(hydrateStudioFeature),

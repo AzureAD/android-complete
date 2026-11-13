@@ -312,6 +312,46 @@ export class SharedAuthority {
         return { outcome: "shared_references_updated", feature: jsonValue(this.app.cachedFeature(featureId)) };
     }
 
+    hiddenFeatureIds(): Set<string> {
+        const rows = this.app.registry.connection.prepare(`
+            SELECT f.id, f.request_id, f.current_revision,
+                   CASE WHEN sf.feature_id IS NOT NULL THEN 1 ELSE 0 END AS is_shared
+            FROM features f
+            LEFT JOIN shared_features sf ON sf.feature_id = f.id
+            WHERE f.project_id = ?
+        `).all(this.app.registry.project.id);
+        const publishedRevisionsByDraft = new Map<string, Set<string>>();
+        const hidden = new Set<string>();
+        for (const row of rows) {
+            const id = String(row.id);
+            const requestId = String(row.request_id);
+            const isShared = Number(row.is_shared) === 1;
+            if (!requestId.startsWith("publish:")) continue;
+            if (!isShared) {
+                hidden.add(id);
+                continue;
+            }
+            const parts = requestId.split(":");
+            if (parts.length === 4 && parts[1] && parts[3]) {
+                let revisions = publishedRevisionsByDraft.get(parts[1]);
+                if (!revisions) {
+                    revisions = new Set();
+                    publishedRevisionsByDraft.set(parts[1], revisions);
+                }
+                revisions.add(parts[3]);
+            }
+        }
+        for (const row of rows) {
+            const id = String(row.id);
+            const currentRevision = String(row.current_revision);
+            const isShared = Number(row.is_shared) === 1;
+            if (!isShared && publishedRevisionsByDraft.get(id)?.has(currentRevision)) {
+                hidden.add(id);
+            }
+        }
+        return hidden;
+    }
+
     async open(target: SharedTarget) {
         const record = await this.provider.read(sharedTarget(target));
         if (!record) throw new FactoryError("shared_not_found", "This ADO Feature has no published Software Factory record.", 404);

@@ -113,9 +113,18 @@ export class Application {
         return this.cachedFeature(featureId);
     }
 
+    visibleFeatures(): Feature[] {
+        const hidden = this.shared.hiddenFeatureIds();
+        return this.registry.list().filter((feature) => !hidden.has(feature.id));
+    }
+
+    cachedFeatures(): FactoryFeature[] {
+        return this.visibleFeatures().map((feature) => this.cachedFeature(feature.id));
+    }
+
     async features() {
         const result = [];
-        for (const feature of this.registry.list()) result.push(await this.feature(feature.id));
+        for (const feature of this.visibleFeatures()) result.push(await this.feature(feature.id));
         return result;
     }
 
