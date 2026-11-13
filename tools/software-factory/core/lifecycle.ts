@@ -296,7 +296,7 @@ export class Lifecycle {
                 const parent = this.gate(featureId, "plan");
                 if (!parent.approved) blockers.push("Approve the exact plan before creating remote work.");
                 const parentDecision = state.decisions.filter((entry) => entry.stage === "plan" && entry.scopeHash === parent.scopeHash).at(-1);
-                for (const field of ["organization", "project", "workItemType", "areaPath", "iterationPath"] as const) {
+                for (const field of ["organization", "project", "workItemType"] as const) {
                     if (!config.value.boards[field]) blockers.push(`Configure the ADO boards ${field} before creating remote work.`);
                 }
                 for (const operation of state.operations.filter((entry) => entry.planId === targetId && entry.kind === "work_item")) {

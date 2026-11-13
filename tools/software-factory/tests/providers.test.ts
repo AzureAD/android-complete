@@ -81,6 +81,15 @@ test("ADO creation uses the board context, HTML escaping, and a durable correlat
     const patch: { path: string; value: string }[] = JSON.parse(String(captured.init?.body));
     assert.match(patch.find((entry) => entry.path === "/fields/System.Description")?.value || "", /&lt;script&gt;/);
     assert.match(patch.find((entry) => entry.path === "/fields/System.Tags")?.value || "", /unique-operation/);
+    assert.equal(patch.find((entry) => entry.path === "/fields/System.IterationPath")?.value, "Engineering\\Current");
+
+    const defaultBoardConfig = config();
+    defaultBoardConfig.boards.iterationPath = "";
+    defaultBoardConfig.boards.areaPath = "";
+    await provider.createWorkItem(defaultBoardConfig, item, "default-iteration-op");
+    const defaultPatch: { path: string; value: string }[] = JSON.parse(String(captured.init?.body));
+    assert.equal(defaultPatch.some((entry) => entry.path === "/fields/System.IterationPath"), false);
+    assert.equal(defaultPatch.some((entry) => entry.path === "/fields/System.AreaPath"), false);
 });
 
 test("idempotent dispatch-status repair preserves existing tags and never reopens resolved work", async () => {

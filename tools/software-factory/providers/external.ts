@@ -232,9 +232,10 @@ export class ExternalProvider implements Provider {
             "System.Title": item.title,
             "System.Description": `<pre>${escapeHtml(item.description)}\n\n${escapeHtml(JSON.stringify({ requirementIds: item.requirementIds, acceptanceCriteria: item.acceptanceCriteria, files: item.files, tests: item.tests }, null, 2))}</pre>`,
             "Microsoft.VSTS.Common.AcceptanceCriteria": `<ul>${item.acceptanceCriteria.map((criterion) => `<li>${escapeHtml(criterion)}</li>`).join("")}</ul>`,
-            "System.AreaPath": config.boards.areaPath, "System.IterationPath": config.boards.iterationPath,
             "System.Tags": `ai-generated; copilot-agent-ready; ${marker}`,
         };
+        if (config.boards.areaPath.trim()) fields["System.AreaPath"] = config.boards.areaPath.trim();
+        if (config.boards.iterationPath.trim()) fields["System.IterationPath"] = config.boards.iterationPath.trim();
         if (config.boards.assignee) fields["System.AssignedTo"] = config.boards.assignee;
         const value = await this.ado(config.boards.organization, config.boards.project,
             `wit/workitems/$${segment(config.boards.workItemType)}`, "POST",
