@@ -6,12 +6,11 @@ import { parseRequirements, parseSuccessCriteria, type Command, type Feature, ty
 import { parseIntakeProposal, type Artifact, type FactoryFeature, type Json, type ConfigRevision } from "../../core/lifecycle-contracts.ts";
 import type { SharedTarget } from "../../core/shared-contracts.ts";
 import { FactoryPanel, FactorySettings } from "./FactoryPanel";
-import { SubagentFlightRecorder } from "./StudioExplorers";
 import { Confirmation, type ConfirmationRequest } from "./Confirmation";
 import { nextStep } from "../../core/progress.ts";
 import type { runtimeReport } from "../../core/doctor.ts";
 import type { DecisionPresentation } from "../../core/contracts.ts";
-import { request } from "./api";
+import { onSessionRefreshed, request, setCsrfToken } from "./api";
 
 interface Draft { title: string; description: string; requirements: string; unknowns: string; designTasks: string }
 const emptyDraft = (): Draft => ({ title: "", description: "", requirements: "", unknowns: "", designTasks: "" });
@@ -83,6 +82,7 @@ export function App() {
     const [syncError, setSyncError] = useState("");
     const [theme, setTheme] = useState<"light" | "dark">("dark");
     const [featureFilter, setFeatureFilter] = useState("");
+    const [activeStageIdx, setActiveStageIdx] = useState<number>(0);
     const refreshing = useRef(false);
     const refreshSequence = useRef(0);
     const authorityReadAt = useRef(0);
@@ -98,21 +98,27 @@ export function App() {
         setProject(data.project);
         setFeatures((previous) => JSON.stringify(previous) === JSON.stringify(data.features) ? previous : data.features);
         setSelectedId((previous) => previous || data.features[0]?.id);
-        if (authoritative) { setSyncedAt(Date.now()); setSyncError(""); }
+        setSyncedAt(Date.now());
+        setSyncError("");
         return data.features;
     }
 
     useEffect(() => {
         let cancelled = false;
+        const unsubscribe = onSessionRefreshed((freshCsrf) => {
+            csrf.current = freshCsrf;
+            if (!cancelled) setSyncError("");
+        });
         void request<{ csrf: string; project: Project }>("/api/session").then(async (session) => {
             if (cancelled) return;
             csrf.current = session.csrf;
+            setCsrfToken(session.csrf);
             const items = await refresh();
             if (!cancelled) setSelectedId(items[0]?.id);
         }).catch((failure: unknown) => {
             if (!cancelled) setError(failure instanceof Error ? failure.message : "Could not connect to the local registry.");
         }).finally(() => { if (!cancelled) setBusy(false); });
-        return () => { cancelled = true; };
+        return () => { cancelled = true; unsubscribe(); };
     }, []);
 
     useEffect(() => {
@@ -418,11 +424,8 @@ export function App() {
                     )}
                 </section>}
                 {doctor !== undefined && <section className="card preflight"><div className="card-heading"><h2>{doctor.runtime.ready ? "Local runtime ready" : "Local runtime needs repair"}</h2><button className="text-button" onClick={() => setDoctor(undefined)}>Close</button></div>
-                    <p>{doctor.runtime.message}</p>{doctor.runtime.recoveryCommand && <><p>Run this from the repository root, then explicitly retry. No AI work runs during repair.</p><pre>{doctor.runtime.recoveryCommand}</pre></>}
-                    <details><summary>Full setup diagnostics</summary><pre>{JSON.stringify(doctor, null, 2)}</pre></details></section>}
-
-                {!formOpen && selected && <FactoryPanel key={selected.id} feature={selected} execute={execute} onEdit={edit} onReviewSuggestions={reviewSuggestions}
-                    onCheckSetup={() => void act(async () => { setDoctor(await request("/api/doctor")); })} />}
+                    <p>{doctor.runtime.message}</p>{doctor.runtime.recoveryCommand && <><p>Run this from the repository root, then explicitly retry. No AI work runs during repair.</p><pre className="code-snippet-box">{doctor.runtime.recoveryCommand}</pre></>}
+                </section>}
 
                 {formOpen ? <section className="card editor">
                     <div className="card-heading"><div><span className="eyebrow">FEATURE BRIEF</span><h2>{creating ? "Start with the problem." : "Refine the brief and success criteria."}</h2></div><span className="tag">DRAFT</span></div>
@@ -440,48 +443,120 @@ export function App() {
                         <textarea id="design-tasks" rows={3} value={draft.designTasks} onChange={(event) => setDraft({ ...draft, designTasks: event.target.value })} placeholder="Engineering obligations to resolve during design." disabled={busy} />
                         <div className="form-actions"><button type="button" className="secondary" onClick={() => navigate(selectedId)} disabled={busy}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? "Saving..." : creating ? "Create feature" : "Save new revision"}</button></div>
                     </form>
-                </section> : selected ? <div className="detail-grid">
-                    <section className="card feature-detail">
-                        <div className="card-heading"><span className="eyebrow">FEATURE BRIEF / REVISION {selected.current.number}</span><span className={selected.status === "ready_for_design" ? "tag approved" : "tag"}>{displayStatus(selected)}</span></div>
-                        <h2>{selected.current.title}</h2><p className="muted">The saved brief and criteria. Changes from chat appear automatically.</p>
-                        {selected.current.description && <section className="feature-brief"><h3>The idea</h3><p>{selected.current.description}</p></section>}
-                        <div className="criteria-heading"><h3>What does done look like?</h3><button className="secondary" disabled={busy || intakeRunning || selected.factory.cancelled || selected.lifecycleStatus === "completed"} onClick={() => void act(async () => {
-                            const result = await execute({ kind: "start_workflow", featureId: selected.id, workflow: "intake" });
-                            if (result.outcome === "workflow_requested") setNotice("Draft requested. Progress and any errors appear above.");
-                        })}>{intakeRunning ? "Factory is drafting..." : "Ask Factory for another draft"}</button></div>
-                        <p className="field-help">Optional AI help uses Copilot usage and asks for confirmation first. It never approves or replaces your criteria automatically.</p>
-                        {intake && <IntakeSuggestion artifact={intake} disabled={busy} onReview={reviewSuggestions} />}
-                        {!selected.current.requirements.length && <p className="muted">No success criteria yet. Add your own or ask Factory for a draft. You can keep refining the idea without starting design.</p>}
-                        <div className="requirements-list">{selected.current.requirements.map((requirement) => <div key={requirement.id} className="requirement"><span>{requirement.id}</span><p>{requirement.text}</p></div>)}</div>
-                        {!!selected.current.designTasks?.length && <section className="design-obligations" aria-label="Design obligations"><h3>Work for the design agents</h3>
-                            <ul>{selected.current.designTasks.map((task) => <li key={task}>{task}</li>)}</ul>
-                            <p className="field-help">Approval authorizes design of this scope; it does not require these engineering tasks to be solved already. They must be addressed in the design and independent review.</p></section>}
-                        <div className="unknowns"><h3>Open questions saved in this brief</h3>{selected.current.blockingUnknowns.length ? <ul>{selected.current.blockingUnknowns.map((unknown, index) => <li key={index}>{unknown}</li>)}</ul> : <p><span className="checkmark" aria-hidden="true">+</span> {selected.currentProgress?.question ? "No additional questions saved in the brief. Chat questions are tracked separately in shared activity." : "No open questions saved in the brief."}</p>}</div>
-                        <div className="revision-receipt"><span>REVISION ID</span><code>{selected.current.id}</code><span>FEATURE ID</span><code>{selected.id}</code></div>
-                        <div className="form-actions"><button className="secondary" disabled={busy} onClick={edit}>Edit brief and criteria</button>
-                            <button className="primary" disabled={busy || !selected.shared || selected.status === "ready_for_design" || !selected.current.requirements.length || selected.current.blockingUnknowns.length > 0} onClick={() => approve(selected)}>{!selected.shared ? "Publish before approving" : selected.status === "ready_for_design" ? "Approved for design" : "Approve for design"}</button>
-                        </div>
-                        <p className="approval-help">Approval applies only to this revision. It does not start a workflow or authorize remote changes.</p>
+                </section> : selected ? <>
+                    <FactoryPanel
+                        key={selected.id}
+                        feature={selected}
+                        execute={execute}
+                        onEdit={edit}
+                        onReviewSuggestions={reviewSuggestions}
+                        onCheckSetup={() => void act(async () => { setDoctor(await request("/api/doctor")); })}
+                        onActiveStageChange={setActiveStageIdx}
+                        stage1View={
+                            <section className="feature-detail">
+                                <div className="card-heading">
+                                    <span className="eyebrow">FEATURE BRIEF / REVISION {selected.current.number}</span>
+                                    <span className={selected.status === "ready_for_design" ? "tag approved" : "tag"}>{displayStatus(selected)}</span>
+                                </div>
+                                <h2>{selected.current.title}</h2>
+                                <p className="muted">The saved brief and success criteria. Changes from chat appear automatically.</p>
+                                {selected.current.description && <section className="feature-brief"><h3>The idea</h3><p>{selected.current.description}</p></section>}
+                                <div className="criteria-heading">
+                                    <h3>What does done look like?</h3>
+                                    <button className="secondary" disabled={busy || intakeRunning || selected.factory.cancelled || selected.lifecycleStatus === "completed"} onClick={() => void act(async () => {
+                                        const result = await execute({ kind: "start_workflow", featureId: selected.id, workflow: "intake" });
+                                        if (result.outcome === "workflow_requested") setNotice("Draft requested. Progress and any errors appear above.");
+                                    })}>{intakeRunning ? "Factory is drafting..." : "Ask Factory for another draft"}</button>
+                                </div>
+                                <p className="field-help">Optional AI help uses Copilot usage and asks for confirmation first. It never approves or replaces your criteria automatically.</p>
+                                {intake && <IntakeSuggestion artifact={intake} disabled={busy} onReview={reviewSuggestions} />}
+                                {!selected.current.requirements.length && <p className="muted">No success criteria yet. Add your own or ask Factory for a draft. You can keep refining the idea without starting design.</p>}
+                                <div className="requirements-list">
+                                    {selected.current.requirements.map((requirement) => (
+                                        <div key={requirement.id} className="requirement">
+                                            <span>{requirement.id}</span>
+                                            <p>{requirement.text}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                                {!!selected.current.designTasks?.length && <section className="design-obligations" aria-label="Design obligations">
+                                    <h3>Work for the design agents</h3>
+                                    <ul>{selected.current.designTasks.map((task) => <li key={task}>{task}</li>)}</ul>
+                                    <p className="field-help">Approval authorizes design of this scope; it does not require these engineering tasks to be solved already. They must be addressed in the design and independent review.</p>
+                                </section>}
+                                <div className="unknowns">
+                                    <h3>Open questions saved in this brief</h3>
+                                    {selected.current.blockingUnknowns.length
+                                        ? <ul>{selected.current.blockingUnknowns.map((unknown, index) => <li key={index}>{unknown}</li>)}</ul>
+                                        : <p><span className="checkmark" aria-hidden="true">+</span> {selected.currentProgress?.question ? "No additional questions saved in the brief. Chat questions are tracked separately in shared activity." : "No open questions saved in the brief."}</p>}
+                                </div>
+                                {(() => {
+                                    const stage0Approval = [...selected.approvals].reverse().find((a) => a.revisionId === selected.current.id) || selected.approvals.at(-1);
+                                    if (!stage0Approval) return null;
+                                    return (
+                                        <div className="scope-approval-receipt" style={{ marginBottom: 14 }}>
+                                            <strong>✓ Stage 0 Scope Approval Recorded</strong>
+                                            <span>
+                                                Approved by {stage0Approval.actor?.ado?.displayName || stage0Approval.actor?.reference || "authenticated operator"} via {stage0Approval.actor?.channel || "studio"} on{" "}
+                                                {new Date(stage0Approval.createdAt).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    );
+                                })()}
+                                <div className="revision-receipt">
+                                    <span>REVISION</span><code>{selected.current.id.slice(0, 12)}…</code>
+                                    <span>FEATURE</span><code>{selected.id.slice(0, 12)}…</code>
+                                </div>
+                                <div className="form-actions">
+                                    <button className="secondary" disabled={busy} onClick={edit}>Edit brief and criteria</button>
+                                    <button className="primary" disabled={busy || !selected.shared || selected.status === "ready_for_design" || !selected.current.requirements.length || selected.current.blockingUnknowns.length > 0} onClick={() => approve(selected)}>
+                                        {!selected.shared ? "Publish before approving" : selected.status === "ready_for_design" ? "Approved for design" : "Approve for design"}
+                                    </button>
+                                </div>
+                                <p className="approval-help">Approval applies only to this revision. It does not start a workflow or authorize remote changes.</p>
+                            </section>
+                        }
+                    />
+
+                    <section className="card activity" aria-label="Feature activity">
+                        <details open={activeStageIdx === 0}>
+                            <summary className="activity-summary-header">
+                                <div>
+                                    <span className="eyebrow">SHARED ACTIVITY TIMELINE</span>
+                                    <h3>Chat and UI Audit History ({selected.activity.length})</h3>
+                                </div>
+                                <span className="muted">Toggle timeline ▾</span>
+                            </summary>
+                            <p className="field-help" style={{ marginTop: 10 }}>Saved scope changes, approvals, runs and failures across Copilot chat and Web Studio.</p>
+                            <ol className="timeline">
+                                {selected.activity.slice(0, 20).map((event) => (
+                                    <li key={event.id}>
+                                        <strong>{event.title}</strong>
+                                        <span>{event.source} · {new Date(event.createdAt).toLocaleString()}</span>
+                                        {event.detail && <details><summary>What changed</summary><p>{event.detail}</p></details>}
+                                    </li>
+                                ))}
+                            </ol>
+                            {selected.activity.length > 20 && (
+                                <details>
+                                    <summary>Earlier activity ({selected.activity.length - 20})</summary>
+                                    <ol className="timeline">
+                                        {selected.activity.slice(20).map((event) => (
+                                            <li key={event.id}>
+                                                <strong>{event.title}</strong>
+                                                <span>{event.source} · {new Date(event.createdAt).toLocaleString()}</span>
+                                                <p>{event.detail}</p>
+                                            </li>
+                                        ))}
+                                    </ol>
+                                </details>
+                            )}
+                        </details>
                     </section>
-                    <aside className="detail-aside">
-                        <section className="card flight-dock-card" aria-label="Live subagents and transcripts">
-                            <span className="eyebrow">AGENT TELEMETRY &amp; TRANSCRIPTS</span>
-                            <h3>Subagent Flight Recorder</h3>
-                            <SubagentFlightRecorder feature={selected} />
-                        </section>
-                        <section className="card activity" aria-label="Feature activity"><span className="eyebrow">SHARED ACTIVITY</span><h3>Chat and UI, one history</h3>
-                        <p className="field-help">Saved scope changes, approvals, runs and failures. Not a chat transcript.</p>
-                        <ol className="timeline">{selected.activity.slice(0, 20).map((event) => <li key={event.id}><strong>{event.title}</strong>
-                            <span>{event.source} / {new Date(event.createdAt).toLocaleString()}</span>
-                            {event.detail && <details><summary>What changed</summary><p>{event.detail}</p></details>}</li>)}</ol>
-                        {selected.activity.length > 20 && <details><summary>Earlier activity</summary><ol className="timeline">{selected.activity.slice(20).map((event) =>
-                            <li key={event.id}><strong>{event.title}</strong><span>{event.source} / {new Date(event.createdAt).toLocaleString()}</span><p>{event.detail}</p></li>)}</ol></details>}
-                    </section>
-                    </aside>
-                </div> : <section className="card empty-state"><span className="empty-mark"><FactoryMark /></span><span className="eyebrow">{busy ? "CONNECTING" : "A GOOD START IS A CLEAR SCOPE"}</span><h2>{busy ? "Opening your local registry..." : "Give your next idea a home."}</h2><p>Create a feature here, or capture its requirements in Copilot chat.<br />The same record will be waiting in both places.</p><button className="primary" onClick={newFeature} disabled={busy}>Create your first feature</button></section>}
+                </> : <section className="card empty-state"><span className="empty-mark"><FactoryMark /></span><span className="eyebrow">{busy ? "CONNECTING" : "A GOOD START IS A CLEAR SCOPE"}</span><h2>{busy ? "Opening your local registry..." : "Give your next idea a home."}</h2><p>Create a feature here, or capture its requirements in Copilot chat.<br />The same record will be waiting in both places.</p><button className="primary" onClick={newFeature} disabled={busy}>Create your first feature</button></section>}
                 <footer className="page-footer"><span>SOFTWARE FACTORY</span><span>Explicit decisions. Shared context. No silent automation.</span></footer>
             </div>
         </main>
-        {confirmation && <Confirmation request={confirmation} finish={finishConfirmation} />}
+        {confirmation && <Confirmation request={confirmation} finish={finishConfirmation} theme={theme} />}
     </div>;
 }

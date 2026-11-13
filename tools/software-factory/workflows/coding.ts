@@ -136,6 +136,9 @@ export async function prepareFactoryCode(input: {
     const rounds = Array.isArray(packet.reviews) ? packet.reviews.map((entry) => object(entry, "CodeFeature round")) : [];
     const reviewHistory: Json[] = rounds.map((entry) => jsonValue({
         round: entry.round, mode: "local", engine: "code-feature",
+        ...(typeof entry.builderSummary === "string" && entry.builderSummary ? { builderSummary: entry.builderSummary } : {}),
+        ...(Array.isArray(entry.files) ? { files: entry.files.filter((file): file is string => typeof file === "string" && Boolean(file)) } : {}),
+        ...(Array.isArray(entry.testsAddedOrUpdated) ? { testsAddedOrUpdated: entry.testsAddedOrUpdated.filter((item): item is string => typeof item === "string" && Boolean(item)) } : {}),
         ...(entry.review ? { review: mapReview(entry.review), codeFeatureReview: entry.review }
             : { validationError: Array.isArray(entry.validationErrors) ? entry.validationErrors.join("\n") : "No usable review." }),
     }));

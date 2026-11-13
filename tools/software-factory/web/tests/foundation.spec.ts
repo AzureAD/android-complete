@@ -520,13 +520,29 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
             app.lifecycle.store.artifact(feature.id, "implementation", feature.current.id, {
                 mode: "local", maxRounds: 3,
                 items: [{
-                    itemId: "PBI-1", mode: "local", status: "published", branch: "factory/ab-101-pbi-1",
+                    itemId: "PBI-1", mode: "local", status: "published", observerStatus: "ready-for-human-merge",
+                    branch: "factory/ab-101-pbi-1",
                     roundsCompleted: 3, maxRounds: 3,
-                    receipt: { pr: { number: 42, url: "https://github.com/example/repo/pull/42", status: "open" }, files: ["common/src/BrokerController.kt"] },
+                    receipt: { prNumber: 42, headSha: "2f28e37c76810daf213c2db8df05b027e97c3ce0", url: "https://github.com/example/repo/pull/42", files: ["common/src/BrokerController.kt"] },
+                    observer: {
+                        status: "ready-for-human-merge",
+                        prUrl: "https://github.com/example/repo/pull/42",
+                        summary: "PR #42 passes all 37 CI checks (36 SUCCESS, 1 SKIPPED) and all review threads are resolved.",
+                        evidence: ["Common4j - Build & Test passed.", "Copilot inline thread resolved in commit 2f28e37c."]
+                    },
+                    repairs: [{
+                        key: "repair-op-1", kind: "repair", itemId: "PBI-1", status: "completed",
+                        updatedAt: new Date().toISOString(),
+                        receipt: { headSha: "2f28e37c76810daf213c2db8df05b027e97c3ce0", prNumber: 42 },
+                        repair: {
+                            round: 0, expectedHead: "4b84dfb358966defb3e728a0637260366cebcdca",
+                            builder: { verdict: "pass", summary: "Fixed null-header edge case in BrokerController.", files: ["common/src/BrokerController.kt"] },
+                            review: { verdict: "pass", summary: "Independently verified tactical repair before push." }
+                        }
+                    }],
                     reviewHistory: [
                         {
-                            round: 1, mode: "local", builderSummary: "Initial retry header implementation.",
-                            files: ["common/src/BrokerController.kt"], testsAddedOrUpdated: ["BrokerControllerTest"],
+                            round: 1, mode: "local",
                             review: {
                                 pass: false, summary: "Missing null-safety guard on legacy header.",
                                 criteria: [{ criterion: "Existing callers receive identical envelope keys.", status: "partial", evidence: "Null header throws NPE." }],
@@ -558,6 +574,15 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
                     ]
                 }]
             }, planArt.id);
+            app.lifecycle.store.artifact(feature.id, "monitor", feature.current.id, {
+                observedAt: new Date().toISOString(),
+                delivered: false,
+                items: [{ key: "PBI-1", adoId: 101, title: "Add IPC retry envelope header in Common", repository: "example", status: "Committed", url: "https://dev.azure.com/org/proj/_workitems/edit/101" }],
+                prs: [{ key: "PBI-1", repository: "example/repo", number: 42, url: "https://github.com/example/repo/pull/42", status: "open", head: "2f28e37c76810daf213c2db8df05b027e97c3ce0", title: "Retry envelope", baseBranch: "dev", workItemIds: [101], checks: "pending" }],
+                validation: [{ itemId: "PBI-1", criterion: "Existing callers receive identical envelope keys.", status: "partial", evidence: "Verify off-flight flag." }],
+                reviews: [{ itemId: "PBI-1", prNumber: 42, head: "2f28e37c76810daf213c2db8df05b027e97c3ce0", round: 1, maxRounds: 3, pass: false, status: "changes_requested", suggestedFeedback: "@copilot Verify off-flight flag." }],
+                errors: []
+            }, planArt.id);
         } finally { app.close(); }
     `, application, new URL("../../tests/team-provider.ts", import.meta.url).href], {
         env: { ...process.env, SOFTWARE_FACTORY_HOME: directory }, encoding: "utf8",
@@ -566,7 +591,13 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await page.goto(url);
     await page.getByRole("navigation", { name: "Features" }).getByRole("button", { name: /Studio Control Plane Showcase/ }).click();
 
-    // 1. Verify Design Studio & Author vs. Reviewer Arena
+    // Ensure competing second tab bar and duplicate bottom deliverables hub are gone
+    await expect(page.locator(".studio-lens-bar")).toHaveCount(0);
+    await expect(page.locator(".deliverables-hub")).toHaveCount(0);
+
+    const stageNav = page.getByRole("group", { name: "Feature progress" });
+
+    // 1. Verify Design Studio & Author vs. Reviewer Arena (active step = Design)
     const designReview = page.getByRole("region", { name: "Review design" });
     await expect(designReview.getByText("Stage 0 Provenance Verified")).toBeVisible();
     await designReview.getByRole("button", { name: /Author vs\. Reviewer/ }).click();
@@ -579,40 +610,49 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await designReview.getByRole("button", { name: /Traceability & Evidence/ }).click();
     await expect(designReview.locator(".evidence-card")).toContainText("BrokerController serializes IPC envelopes with versioned headers.");
 
-    // 3. Verify Studio Workspace Lens Bar -> Plan & DAG Studio
-    await page.getByRole("navigation", { name: "Feature studio workspaces" }).getByRole("button", { name: "Plan & DAG Studio" }).click();
+    // 3. Verify Unified Stage 3 -> Plan & DAG Studio (no duplicate bottom table/ASCII graph)
+    await stageNav.getByRole("button", { name: /Plan/ }).click();
     const planStudio = page.getByRole("region", { name: "Plan Studio" });
     await expect(planStudio.getByText("WAVE 1", { exact: true })).toBeVisible();
     await expect(planStudio.getByText("WAVE 2", { exact: true })).toBeVisible();
+    await expect(planStudio.locator(".dependency-graph")).toHaveCount(0);
     await planStudio.locator(".dag-node-card", { hasText: "PBI-2" }).click();
     await expect(planStudio.getByRole("complementary", { name: "Selected PBI Inspector" })).toContainText("Record retry_count on IPC spans.");
 
-    // 4. Verify Code Builder vs. Reviewer Arena
-    await page.getByRole("navigation", { name: "Feature studio workspaces" }).getByRole("button", { name: "Code Builder vs. Reviewer" }).click();
+    // 4. Verify Stage 5 -> Code Builder vs. Reviewer (including Round 1 file fallback) + PR Observer & CI Repairs
+    await stageNav.getByRole("button", { name: /Implementation/ }).click();
     const codeArena = page.getByRole("region", { name: "Code Arena Studio" });
     await expect(codeArena.getByText("branch: factory/ab-101-pbi-1")).toBeVisible();
     await codeArena.getByRole("button", { name: /Round 1/ }).click();
     await expect(codeArena.locator(".finding-card")).toContainText("Unchecked header cast.");
+    await expect(codeArena.locator(".builder-pane")).toContainText("BrokerController.kt");
     await expect(codeArena.getByRole("button", { name: /Round 2/ })).toContainText("Changes required");
     await codeArena.getByRole("button", { name: /Round 3/ }).click();
     await expect(codeArena.locator(".reviewer-pane")).toContainText("All acceptance criteria and compatibility checks passed.");
 
-    // 5. Verify Interactive Stage Track, Sticky Sidebar, Rich Artifact Cards & Subagent Playbook Inspector
-    await page.evaluate(() => window.scrollTo(0, 900));
-    const sidebarBox = await page.locator(".sidebar").boundingBox();
-    expect(sidebarBox?.y).toBe(0);
+    // Inspect PR Observer & Tactical Repair timeline
+    await codeArena.getByRole("button", { name: /PR Observer & CI Repairs/ }).click();
+    const observerPanel = codeArena.getByRole("region", { name: "PR Observer and Tactical Repair Timeline" });
+    await expect(observerPanel).toContainText("Post-PR CI Supervision & Review Resolution");
+    await expect(observerPanel).toContainText("TACTICAL REPAIR ROUND #1");
+    await expect(observerPanel).toContainText("Fixed null-header edge case in BrokerController.");
+    await expect(observerPanel).toContainText("Independently verified tactical repair before push.");
 
-    await page.getByRole("group", { name: "Feature progress" }).getByRole("button", { name: /Define success/ }).click();
+    // 5. Verify Stage 6 -> Delivery Studio resolves observer-verified CI: PASSING & contextual sign-off drawer
+    await stageNav.getByRole("button", { name: /Verify & finish/ }).click();
+    const deliveryStudio = page.getByRole("region", { name: "Delivery Studio" });
+    await expect(deliveryStudio).toContainText("CI: PASSING ✓");
+    await deliveryStudio.getByRole("button", { name: "Sign off gap…" }).click();
+    await expect(deliveryStudio.getByLabel("Criterion Text")).toHaveValue("Existing callers receive identical envelope keys.");
+
+    // 6. Verify Stage 1 Scope Studio & Header Flight Recorder Drawer
+    await stageNav.getByRole("button", { name: /Define success/ }).click();
     const scopeStudio = page.getByRole("region", { name: "Scope and Criteria Studio" });
     await expect(scopeStudio).toContainText("Stage 0 Scope Approval Recorded");
 
-    const deliverablesHub = page.getByRole("region", { name: "Saved deliverables and run controls" });
-    await expect(deliverablesHub.getByText(/Technical Design Specification/)).toBeVisible();
-    await deliverablesHub.locator(".artifact-summary-card", { hasText: "Implementation Plan & PBI DAG" }).getByRole("button", { name: "Open in Studio ↑" }).click();
-    await expect(page.getByRole("region", { name: "Plan Studio" })).toBeVisible();
-
+    await page.getByRole("button", { name: /Flight Recorder & Runs/ }).click();
     const flightDock = page.getByRole("region", { name: "Live subagents and transcripts" });
-    await expect(flightDock.getByText("48,500")).toBeVisible();
+    await expect(flightDock.getByLabel("Subagent Flight Recorder").getByText("48,500")).toBeVisible();
     await flightDock.locator(".swimlane-card").first().click();
     const specialistInspector = flightDock.getByRole("region", { name: "Selected Specialist Inspector" });
     await expect(specialistInspector).toContainText("ENFORCED REPOSITORY STANDARDS (DOMAIN PLAYBOOKS)");
@@ -621,12 +661,35 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await flightDock.getByText("common/src/BrokerController.kt:10-90").click();
     await expect(flightDock.getByText("class BrokerController { fun execute() {} }")).toBeVisible();
 
-    // 6. Verify Dark Studio default theme, Light Mode toggle & Visual Connections Mapper
+    // 7. Verify HTTP 401 session_required auto-rehandshakes /api/session transparently
+    let injected401 = false;
+    await page.route("**/api/features*", async (route) => {
+        if (!injected401) {
+            injected401 = true;
+            await route.fulfill({
+                status: 401,
+                contentType: "application/json",
+                body: JSON.stringify({ error: { code: "session_required", message: "Reload the local application to establish a session." } }),
+            });
+            return;
+        }
+        await route.continue();
+    });
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    expect(injected401).toBe(true);
+    await expect(page.getByText(/^Synced /)).toBeVisible();
+    await page.unroute("**/api/features*");
+
+    // 8. Verify Dark Studio default theme, Light Mode toggle, Mobile viewport overflow safety & Connections Mapper
     await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "Light Mode", exact: true }).click();
     await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "light");
     await page.getByRole("button", { name: "Dark Studio", exact: true }).click();
     await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "dark");
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     await page.getByRole("button", { name: "Connections", exact: true }).click();
     await expect(page.getByRole("heading", { name: /Target Repositories/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /Read-only Evidence Sources/ })).toBeVisible();

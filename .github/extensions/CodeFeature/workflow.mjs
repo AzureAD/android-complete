@@ -5451,7 +5451,20 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                     if (Array.isArray(review.blockingUnknowns) && review.blockingUnknowns.length > 0) {
                         review.blockingUnknowns = review.blockingUnknowns.filter((item) => !isLocalBuildEnvBlocker(item));
                     }
-                    history.push({ round: round + 1, review });
+                    const roundTarget = Array.isArray(implementation?.targets) ? implementation.targets[0] : null;
+                    history.push({
+                        round: round + 1,
+                        review,
+                        ...(roundTarget ? {
+                            builderSummary: typeof roundTarget.summary === "string" ? roundTarget.summary : "",
+                            files: Array.isArray(roundTarget.files)
+                                ? roundTarget.files.map((file) => (record(file) && typeof file.path === "string" ? file.path : "")).filter(Boolean)
+                                : [],
+                            testsAddedOrUpdated: Array.isArray(roundTarget.testsAddedOrUpdated)
+                                ? roundTarget.testsAddedOrUpdated.filter((entry) => typeof entry === "string")
+                                : [],
+                        } : {}),
+                    });
                     await recordMilestone(ctx, {
                         id: `${prefix}-review-${round}`,
                         title: `Independent source review, round ${round + 1}`,

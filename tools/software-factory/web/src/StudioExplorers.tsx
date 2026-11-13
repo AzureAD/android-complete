@@ -21,6 +21,93 @@ function formatSectionTitle(key: string): string {
         .trim();
 }
 
+export function formatDuration(ms: number): string {
+    const totalSec = Math.max(0, ms / 1000);
+    if (totalSec < 60) return `${totalSec.toFixed(1)}s`;
+    const mins = Math.floor(totalSec / 60);
+    const secs = Math.round(totalSec % 60);
+    return `${mins}m ${secs}s`;
+}
+
+export function formatAiUsage(nanoAiu: number): string {
+    if (nanoAiu >= 10_000_000) {
+        return `${(nanoAiu / 1_000_000_000).toFixed(1)} credits`;
+    }
+    return nanoAiu.toLocaleString();
+}
+
+function splitFilePath(filePath: string): { prefix: string; name: string } {
+    const clean = filePath.replaceAll("\\", "/");
+    const parts = clean.split("/").filter(Boolean);
+    if (parts.length <= 1) return { prefix: "", name: clean };
+    const name = parts[parts.length - 1]!;
+    if (parts.length <= 3) return { prefix: `${parts.slice(0, -1).join("/")}/`, name };
+    return { prefix: `${parts[0]}/…/${parts[parts.length - 2]}/`, name };
+}
+
+function summarizePlainPreview(textValue: string, maxChars = 240): { preview: string; truncated: boolean } {
+    const stripped = textValue.replace(/`([^`]+)`/g, "$1").replace(/\s+/g, " ").trim();
+    if (stripped.length <= maxChars) return { preview: stripped, truncated: false };
+    const cut = stripped.slice(0, maxChars);
+    const lastSpace = cut.lastIndexOf(" ");
+    return { preview: `${(lastSpace > 120 ? cut.slice(0, lastSpace) : cut).trim()}…`, truncated: true };
+}
+
+function resolveVerifiedChecks(
+    feature: FactoryFeature | undefined,
+    itemId: string,
+    prNumber: number,
+    prHead: string | undefined,
+    rawChecks: string,
+): string {
+    if (rawChecks !== "pending" && rawChecks !== "unknown") return rawChecks;
+    if (!feature) return rawChecks;
+    const implArt = [...feature.factory.artifacts].reverse().find(
+        (a) => a.kind === "implementation" && a.requirementsRevision === feature.current.id,
+    );
+    if (!implArt || !isRecord(implArt.content)) return rawChecks;
+    const implItems = asArray(implArt.content.items).filter(isRecord);
+    const match = implItems.find((entry) => String(entry.itemId) === itemId);
+    if (!match || match.observerStatus !== "ready-for-human-merge") return rawChecks;
+    const receipt = isRecord(match.receipt) ? match.receipt : null;
+    const receiptPr = Number(receipt?.prNumber || (isRecord(receipt?.pr) ? receipt.pr.number : 0));
+    const receiptHead = typeof receipt?.headSha === "string" ? receipt.headSha : "";
+    if (receiptPr === prNumber && (!prHead || !receiptHead || prHead === receiptHead)) {
+        return "passing";
+    }
+    return rawChecks;
+}
+
+function StructuredOutputPreview({ raw }: { raw: string }) {
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (isRecord(parsed)) {
+            const entries = Object.entries(parsed).slice(0, 8);
+            return (
+                <div className="structured-preview-grid">
+                    {entries.map(([key, val]) => {
+                        let summary = "";
+                        if (typeof val === "string") summary = val.length > 220 ? `${val.slice(0, 220)}…` : val;
+                        else if (typeof val === "number" || typeof val === "boolean") summary = String(val);
+                        else if (Array.isArray(val)) summary = `${val.length} item${val.length === 1 ? "" : "s"}`;
+                        else if (isRecord(val)) summary = Object.keys(val).map(formatSectionTitle).join(", ");
+                        else summary = "—";
+                        return (
+                            <div key={key} className="structured-preview-row">
+                                <span className="structured-preview-key">{formatSectionTitle(key)}</span>
+                                <span className="structured-preview-val">{summary}</span>
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+    } catch {
+        // Plain code or text snippet — render as clean code block.
+    }
+    return <pre className="code-snippet-box">{raw}</pre>;
+}
+
 function describeGuidanceFile(filePath: string): { title: string; summary: string } {
     if (filePath.includes("research-standards.md")) {
         return {
@@ -133,12 +220,29 @@ function roleDisplayName(role?: string, label?: string): {
             guideKey: "codeReview",
         };
     }
-    if (raw.includes("coder") || raw.includes("local builder")) {
+    if (raw.includes("coder") || raw.includes("local builder") || raw.includes("tactical repair")) {
         return {
-            title: "Coding Builder",
+            title: raw.includes("repair") ? "Tactical Repair Builder" : "Coding Builder",
             badge: "BUILDER",
-            purpose: "Implements scoped code changes and unit tests inside an isolated repository worktree and iterates on reviewer findings.",
+            purpose: raw.includes("repair")
+                ? "Applies minimal, surgical source and test repairs to resolve CI pipeline failures or actionable PR review threads."
+                : "Implements scoped code changes and unit tests inside an isolated repository worktree and iterates on reviewer findings.",
             guideKey: "code",
+        };
+    }
+    if (raw.includes("verify tactical") || raw.includes("repair review")) {
+        return {
+            title: "Independent Repair Reviewer",
+            badge: "REVIEWER",
+            purpose: "Independently audits tactical PR repairs before any commit is pushed to the open pull request.",
+            guideKey: "codeReview",
+        };
+    }
+    if (raw.includes("observe pr") || raw.includes("observer")) {
+        return {
+            title: "PR & CI Observer",
+            badge: "OBSERVER",
+            purpose: "Monitors live CI pipelines, mergeability, and PR review threads to classify readiness or trigger bounded tactical repairs.",
         };
     }
     return {
@@ -604,11 +708,6 @@ export function DesignStudioExplorer({
                     </div>
                 </div>
             )}
-
-            <details>
-                <summary>Full evidence, traceability, and review packet</summary>
-                <pre>{JSON.stringify(body, null, 2)}</pre>
-            </details>
         </article>
     );
 }
@@ -631,6 +730,8 @@ export function PlanStudioExplorer({
     const [selectedItemId, setSelectedItemId] = useState<string | null>(items[0] ? String(items[0].id) : null);
     const [viewMode, setViewMode] = useState<"dag" | "reviews">("dag");
     const [selectedReviewRound, setSelectedReviewRound] = useState<number>(Math.max(0, reviewHistory.length - 1));
+    const [summaryExpanded, setSummaryExpanded] = useState(false);
+    const [roundSummaryExpanded, setRoundSummaryExpanded] = useState(false);
 
     // Compute dependency waves for visual DAG
     const waves: Record<string, Json>[][] = [];
@@ -672,11 +773,36 @@ export function PlanStudioExplorer({
 
     const prFor = (id: string) => {
         const fromMonitor = monitorPrs.find((p) => String(p.key) === id);
-        if (fromMonitor) return { number: Number(fromMonitor.number), status: String(fromMonitor.status), checks: String(fromMonitor.checks), url: String(fromMonitor.url) };
+        if (fromMonitor) {
+            const num = Number(fromMonitor.number);
+            const rawChecks = String(fromMonitor.checks);
+            const head = typeof fromMonitor.head === "string" ? fromMonitor.head : undefined;
+            return {
+                number: num,
+                status: String(fromMonitor.status),
+                checks: resolveVerifiedChecks(feature, id, num, head, rawChecks),
+                url: String(fromMonitor.url),
+            };
+        }
+        const implArt = feature ? [...feature.factory.artifacts].reverse().find((a) => a.kind === "implementation" && a.requirementsRevision === feature.current.id) : undefined;
+        const implContent = isRecord(implArt?.content) ? implArt.content : null;
+        const implMatch = asArray(implContent?.items).filter(isRecord).find((entry) => String(entry.itemId) === id);
+        const receipt = isRecord(implMatch?.receipt) ? implMatch.receipt : null;
+        if (receipt && typeof receipt.prNumber === "number" && typeof receipt.url === "string") {
+            return {
+                number: receipt.prNumber,
+                status: "open",
+                checks: implMatch?.observerStatus === "ready-for-human-merge" ? "passing" : "pending",
+                url: receipt.url,
+            };
+        }
         const binding = feature?.factory.prBindings.find((b) => b.itemId === id);
         if (binding) return { number: binding.number, status: "bound", checks: "unknown", url: "" };
         return null;
     };
+
+    const rawPlanSummary = typeof body.summary === "string" ? body.summary.trim() : "";
+    const planSummaryPreview = summarizePlainPreview(rawPlanSummary, 240);
 
     return (
         <div className="plan-document studio-explorer">
@@ -701,16 +827,34 @@ export function PlanStudioExplorer({
                 {reviewHistory.length > 0 && (
                     <div className="studio-subnav">
                         <button type="button" className={viewMode === "dag" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("dag")}>
-                            Architecture DAG &amp; Backlog Matrix
+                            Execution Waves &amp; PBI Specs
                         </button>
                         <button type="button" className={viewMode === "reviews" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("reviews")}>
-                            ⚖️ Planner vs. Reviewer ({reviewHistory.length})
+                            Planner vs. Reviewer ({reviewHistory.length})
                         </button>
                     </div>
                 )}
             </div>
 
-            <p className="plan-summary-lead">{typeof body.summary === "string" ? body.summary : ""}</p>
+            {rawPlanSummary && (
+                <div className="plan-overview-card">
+                    <div className="plan-overview-head">
+                        <span className="eyebrow">ARCHITECTURE &amp; ROLLOUT OVERVIEW</span>
+                        {planSummaryPreview.truncated && (
+                            <button type="button" className="ghost-chip-btn" onClick={() => setSummaryExpanded(!summaryExpanded)}>
+                                {summaryExpanded ? "Collapse overview ▴" : "Read full overview ▾"}
+                            </button>
+                        )}
+                    </div>
+                    {summaryExpanded || !planSummaryPreview.truncated ? (
+                        <div className="markdown-prose compact-prose">
+                            <Markdown remarkPlugins={[remarkGfm]} skipHtml>{rawPlanSummary}</Markdown>
+                        </div>
+                    ) : (
+                        <p className="plan-overview-preview">{planSummaryPreview.preview}</p>
+                    )}
+                </div>
+            )}
 
             {viewMode === "dag" && waves.length > 0 && (
                 <div className="dag-studio-grid">
@@ -833,16 +977,23 @@ export function PlanStudioExplorer({
                                 <div>
                                     <h5>Target Files ({asArray(selectedItem.files).length})</h5>
                                     <div className="chip-wrap">
-                                        {asArray(selectedItem.files).length ? asArray(selectedItem.files).map((f, i) => (
-                                            <code key={i} className="file-path-chip">{String(f)}</code>
-                                        )) : <span className="muted">Repository-scoped</span>}
+                                        {asArray(selectedItem.files).length ? asArray(selectedItem.files).map((f, i) => {
+                                            const full = String(f);
+                                            const parts = splitFilePath(full);
+                                            return (
+                                                <code key={i} className="file-path-chip" title={full}>
+                                                    {parts.prefix && <span className="path-prefix">{parts.prefix}</span>}
+                                                    <strong>{parts.name}</strong>
+                                                </code>
+                                            );
+                                        }) : <span className="muted">Repository-scoped</span>}
                                     </div>
                                 </div>
                                 <div>
-                                    <h5>Required Tests ({asArray(selectedItem.tests).length})</h5>
-                                    <ul>
+                                    <h5>Verification Suites ({asArray(selectedItem.tests).length})</h5>
+                                    <ul className="compact-test-list">
                                         {asArray(selectedItem.tests).map((t, i) => (
-                                            <li key={i}><code>{String(t)}</code></li>
+                                            <li key={i}>{String(t)}</li>
                                         ))}
                                     </ul>
                                 </div>
@@ -940,9 +1091,25 @@ export function PlanStudioExplorer({
                                 <h4>Feature Planner Proposal &amp; Resolution</h4>
                                 {candidate ? (
                                     <>
-                                        {typeof candidate.summary === "string" && (
-                                            <p className="builder-summary-box">{candidate.summary}</p>
-                                        )}
+                                        {typeof candidate.summary === "string" && candidate.summary.trim() && (() => {
+                                            const cPrev = summarizePlainPreview(candidate.summary, 220);
+                                            return (
+                                                <div className="builder-summary-box">
+                                                    {roundSummaryExpanded || !cPrev.truncated ? (
+                                                        <div className="markdown-prose compact-prose">
+                                                            <Markdown remarkPlugins={[remarkGfm]} skipHtml>{candidate.summary}</Markdown>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="plan-overview-preview">{cPrev.preview}</p>
+                                                    )}
+                                                    {cPrev.truncated && (
+                                                        <button type="button" className="ghost-chip-btn" style={{ marginTop: 8 }} onClick={() => setRoundSummaryExpanded(!roundSummaryExpanded)}>
+                                                            {roundSummaryExpanded ? "Show less ▴" : "Expand round summary ▾"}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
                                         <ul className="studio-bullet-list">
                                             {candidateItems.map((ci) => (
                                                 <li key={String(ci.id)}>
@@ -952,7 +1119,7 @@ export function PlanStudioExplorer({
                                         </ul>
                                     </>
                                 ) : (
-                                    <p className="muted">Final revised plan shown in the Architecture DAG tab ({items.length} PBIs).</p>
+                                    <p className="muted">Final revised plan shown in the Execution Waves tab ({items.length} PBIs).</p>
                                 )}
 
                                 {resolvedDiffs.length > 0 && (
@@ -1007,67 +1174,6 @@ export function PlanStudioExplorer({
                     </div>
                 );
             })()}
-
-            <div className="plan-table">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>PBI</th>
-                            <th>Repository</th>
-                            <th>Dependencies</th>
-                            <th>Acceptance criteria</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items.map((raw, index) => (
-                            <tr
-                                key={String(raw.id || index)}
-                                className={String(selectedItem?.id) === String(raw.id) ? "interactive-row selected" : "interactive-row"}
-                                onClick={() => setSelectedItemId(String(raw.id))}
-                            >
-                                <td>
-                                    <strong>{String(raw.id)}</strong>
-                                    <br />
-                                    {String(raw.title)}
-                                </td>
-                                <td><span className="mono-chip blue">{String(raw.repository)}</span></td>
-                                <td>
-                                    {Array.isArray(raw.dependsOn) && raw.dependsOn.length
-                                        ? raw.dependsOn.map(String).join(", ")
-                                        : "Independent"}
-                                </td>
-                                <td>
-                                    <ul>
-                                        {Array.isArray(raw.acceptanceCriteria) &&
-                                            raw.acceptanceCriteria.map((criterion, criterionIndex) => (
-                                                <li key={criterionIndex}>{String(criterion)}</li>
-                                            ))}
-                                    </ul>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            <section aria-label="Dependency graph" className="dependency-graph">
-                <h3>Dependency graph</h3>
-                {items.map((raw, index) => (
-                    <p key={index}>
-                        <code>
-                            {Array.isArray(raw.dependsOn) && raw.dependsOn.length
-                                ? `${raw.dependsOn.map(String).join(" + ")} -> `
-                                : "Start -> "}
-                            {String(raw.id)}
-                        </code>
-                    </p>
-                ))}
-            </section>
-
-            <details>
-                <summary>Complete PBI specifications, files, tests, and traceability</summary>
-                <pre>{JSON.stringify(body, null, 2)}</pre>
-            </details>
         </div>
     );
 }
@@ -1083,16 +1189,35 @@ export function CodeArenaExplorer({ artifact }: { artifact: Artifact }) {
     const reviewHistory = asArray(activeItem?.reviewHistory).filter(isRecord);
     const [selectedRoundIdx, setSelectedRoundIdx] = useState(Math.max(0, reviewHistory.length - 1));
     const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+    const [codeViewTab, setCodeViewTab] = useState<"arena" | "observer">("arena");
 
     const currentRound = reviewHistory[selectedRoundIdx] || reviewHistory.at(-1) || null;
     const review = isRecord(currentRound?.review) ? currentRound.review : null;
     const criteria = asArray(review?.criteria).filter(isRecord);
     const findings = asArray(review?.findings).filter(isRecord);
     const receipt = isRecord(activeItem?.receipt) ? activeItem.receipt : null;
-    const pr = isRecord(receipt?.pr) ? receipt.pr : null;
+    const prObj = isRecord(receipt?.pr) ? receipt.pr : null;
+    const prNumber = typeof receipt?.prNumber === "number" ? receipt.prNumber : (typeof prObj?.number === "number" ? prObj.number : null);
+    const prUrl = typeof receipt?.url === "string" ? receipt.url : (typeof prObj?.url === "string" ? prObj.url : "");
+    const observer = isRecord(activeItem?.observer) ? activeItem.observer : null;
+    const repairs = asArray(activeItem?.repairs).filter(isRecord);
+    const observerStatus = typeof activeItem?.observerStatus === "string"
+        ? activeItem.observerStatus
+        : (typeof observer?.status === "string" ? observer.status : "");
+    const hasObserverDetails = Boolean(observer || repairs.length > 0);
+
     const committedFiles = asArray(receipt?.files).map(String);
+    const fallbackRoundWithFiles = [...reviewHistory].reverse().find((r) => asArray(r.files).length > 0);
+    const fallbackFiles = fallbackRoundWithFiles ? asArray(fallbackRoundWithFiles.files).map(String) : committedFiles;
     const roundFiles = asArray(currentRound?.files).map(String);
+    const effectiveFiles = roundFiles.length > 0 ? roundFiles : fallbackFiles;
+    const usingFallbackFiles = roundFiles.length === 0 && effectiveFiles.length > 0;
+
+    const fallbackRoundWithTests = [...reviewHistory].reverse().find((r) => asArray(r.testsAddedOrUpdated).length > 0);
     const testsUpdated = asArray(currentRound?.testsAddedOrUpdated).map(String);
+    const effectiveTests = testsUpdated.length > 0
+        ? testsUpdated
+        : (fallbackRoundWithTests ? asArray(fallbackRoundWithTests.testsAddedOrUpdated).map(String) : []);
 
     return (
         <div className="code-arena-explorer studio-explorer" aria-label="Code Builder vs Independent Reviewer Arena">
@@ -1109,20 +1234,38 @@ export function CodeArenaExplorer({ artifact }: { artifact: Artifact }) {
                             {activeItem.status.replaceAll("_", " ")}
                         </span>
                     )}
-                    {typeof activeItem?.observerStatus === "string" && (
-                        <span className={`studio-pill ${activeItem.observerStatus === "ready-for-human-merge" ? "emerald" : "amber"}`}>
-                            PR Observer: {activeItem.observerStatus}
+                    {observerStatus && (
+                        <span className={`studio-pill ${observerStatus === "ready-for-human-merge" ? "emerald" : "amber"}`}>
+                            PR Observer: {observerStatus}
                         </span>
                     )}
                     {typeof activeItem?.branch === "string" && (
                         <code className="commit-pill">branch: {activeItem.branch}</code>
                     )}
-                    {pr && typeof pr.url === "string" && (
-                        <a href={pr.url} target="_blank" rel="noreferrer" className="studio-pill purple">
-                            PR #{String(pr.number)} ({String(pr.status)})
+                    {prNumber && prUrl && (
+                        <a href={prUrl} target="_blank" rel="noreferrer" className="studio-pill purple">
+                            PR #{prNumber} ↗
                         </a>
                     )}
                 </div>
+                {hasObserverDetails && (
+                    <div className="studio-subnav" role="tablist" aria-label="Implementation and Observer views">
+                        <button
+                            type="button"
+                            className={codeViewTab === "arena" ? "studio-tab active" : "studio-tab"}
+                            onClick={() => setCodeViewTab("arena")}
+                        >
+                            Builder vs. Reviewer ({reviewHistory.length})
+                        </button>
+                        <button
+                            type="button"
+                            className={codeViewTab === "observer" ? "studio-tab active" : "studio-tab"}
+                            onClick={() => setCodeViewTab("observer")}
+                        >
+                            PR Observer &amp; CI Repairs ({repairs.length ? `${repairs.length} repair · ` : ""}{observerStatus === "ready-for-human-merge" ? "All Green ✓" : observerStatus || "Tracked"})
+                        </button>
+                    </div>
+                )}
             </div>
 
             {items.length > 1 && (
@@ -1145,135 +1288,303 @@ export function CodeArenaExplorer({ artifact }: { artifact: Artifact }) {
                 </div>
             )}
 
-            {reviewHistory.length > 0 && (
-                <div className="round-scrubber">
-                    <span className="eyebrow">BUILDER VS. INDEPENDENT CODE REVIEWER ROUNDS</span>
-                    <div className="round-buttons">
-                        {reviewHistory.map((roundEntry, idx) => {
-                            const rev = isRecord(roundEntry.review) ? roundEntry.review : null;
-                            const criteria = asArray(rev?.criteria).filter(isRecord);
-                            const findings = asArray(rev?.findings);
-                            const pass = rev?.pass === true && findings.length === 0 && criteria.length > 0 &&
-                                criteria.every((criterion) => criterion.status === "addressed");
-                            const valErr = typeof roundEntry.validationError === "string";
-                            return (
-                                <button
-                                    type="button"
-                                    key={idx}
-                                    className={`round-pill ${selectedRoundIdx === idx ? "selected" : ""} ${pass ? "pass" : "changes"}`}
-                                    onClick={() => setSelectedRoundIdx(idx)}
-                                >
-                                    <strong>Round {Number(roundEntry.round ?? idx + 1)}</strong>
-                                    <span>{pass ? "✓ Approved" : valErr ? "Schema Error" : findings.length ? `${findings.length} Finding(s)` : "Changes required"}</span>
-                                </button>
-                            );
-                        })}
+            {codeViewTab === "arena" && hasObserverDetails && (
+                <div className={`studio-callout ${observerStatus === "ready-for-human-merge" ? "success" : "info"} observer-teaser-bar`}>
+                    <div>
+                        <strong>
+                            {observerStatus === "ready-for-human-merge"
+                                ? `✓ PR Observer verified PR #${prNumber || ""} ready for human merge`
+                                : `PR Observer status: ${observerStatus}`}
+                        </strong>
+                        <span className="muted">
+                            {" "}— {repairs.length > 0
+                                ? `completed ${repairs.length} verified tactical CI/review repair round${repairs.length === 1 ? "" : "s"} and confirmed CI pipelines passing.`
+                                : "verified live CI pipelines and PR review threads."}
+                        </span>
                     </div>
+                    <button type="button" className="secondary" onClick={() => setCodeViewTab("observer")}>
+                        View PR Observer &amp; CI Work →
+                    </button>
                 </div>
             )}
 
-            <div className="arena-split">
-                <div className="arena-pane builder-pane">
-                    <div className="arena-pane-header">
-                        <span className="studio-pill blue">STAGE 3 CODER</span>
-                        <h4>Builder Output — {String(activeItem?.itemId || "PBI")}</h4>
-                    </div>
-                    {typeof currentRound?.builderSummary === "string" && (
-                        <p className="builder-summary-box">{currentRound.builderSummary}</p>
-                    )}
-                    {typeof currentRound?.validationError === "string" && (
-                        <div className="studio-callout warning">
-                            <strong>Builder Validation Error:</strong> {currentRound.validationError}
-                        </div>
-                    )}
-                    <div className="pbi-inspector-split">
-                        <div>
-                            <h5>Modified / Created Files ({roundFiles.length || committedFiles.length})</h5>
-                            <div className="chip-wrap">
-                                {(roundFiles.length ? roundFiles : committedFiles).map((file) => (
-                                    <button
-                                        type="button"
-                                        key={file}
-                                        className={`file-path-chip ${selectedFilePath === file ? "active" : ""}`}
-                                        onClick={() => setSelectedFilePath(selectedFilePath === file ? null : file)}
-                                    >
-                                        📄 {file}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                        <div>
-                            <h5>Tests Added or Updated ({testsUpdated.length})</h5>
-                            <div className="chip-wrap">
-                                {testsUpdated.length ? testsUpdated.map((t) => (
-                                    <code key={t} className="mono-chip emerald">🧪 {t}</code>
-                                )) : <span className="muted">Tracked in acceptance criteria</span>}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="arena-pane reviewer-pane">
-                    <div className="arena-pane-header">
-                        <span className="studio-pill purple">INDEPENDENT CODE REVIEWER</span>
-                        <h4>Review Verdict &amp; Criteria Scorecard</h4>
-                        {review && (
-                            <span className={`studio-pill ${review.pass === true ? "emerald" : "amber"}`}>
-                                {review.pass === true ? "PASSED ✓" : "CHANGES REQUESTED"}
-                            </span>
-                        )}
-                    </div>
-                    {typeof review?.summary === "string" && <p className="muted">{review.summary}</p>}
-
-                    {criteria.length > 0 && (
-                        <div className="criteria-scorecard">
-                            <h5>Acceptance Criteria Verification ({criteria.filter((c) => c.status === "addressed").length}/{criteria.length})</h5>
-                            {criteria.map((c, idx) => {
-                                const status = String(c.status || "unknown");
-                                return (
-                                    <div key={idx} className={`criterion-check-row status-${status}`}>
-                                        <span className={`studio-pill ${status === "addressed" ? "emerald" : status === "partial" ? "amber" : "crimson"}`}>
-                                            {status.toUpperCase()}
+            {codeViewTab === "observer" && hasObserverDetails && (
+                <section className="observer-studio" aria-label="PR Observer and Tactical Repair Timeline">
+                    {observer && (
+                        <section className="studio-doc-section observer-verdict-card">
+                            <div className="studio-doc-section-header">
+                                <div>
+                                    <div className="studio-badge-row">
+                                        <span className={`studio-pill ${observerStatus === "ready-for-human-merge" ? "emerald" : "amber"}`}>
+                                            {observerStatus === "ready-for-human-merge" ? "✓ READY FOR HUMAN MERGE" : observerStatus.toUpperCase()}
                                         </span>
-                                        <div>
-                                            <strong>{String(c.criterion)}</strong>
-                                            <p className="muted">{String(c.evidence)}</p>
+                                        {typeof receipt?.headSha === "string" && (
+                                            <code className="commit-pill">Verified Head: {receipt.headSha.slice(0, 10)}</code>
+                                        )}
+                                        {repairs.length > 0 && (
+                                            <span className="studio-pill blue">
+                                                {repairs.length} Tactical Repair Commit{repairs.length === 1 ? "" : "s"} Pushed
+                                            </span>
+                                        )}
+                                    </div>
+                                    <h3>Post-PR CI Supervision &amp; Review Resolution</h3>
+                                </div>
+                                {typeof observer.prUrl === "string" && (
+                                    <a href={observer.prUrl} target="_blank" rel="noreferrer" className="secondary ado-link-btn">
+                                        Open PR on GitHub ↗
+                                    </a>
+                                )}
+                            </div>
+                            {typeof observer.summary === "string" && (
+                                <div className="markdown-prose compact-prose">
+                                    <Markdown remarkPlugins={[remarkGfm]} skipHtml>{observer.summary}</Markdown>
+                                </div>
+                            )}
+                            {asArray(observer.evidence).length > 0 && (
+                                <div className="observer-evidence-block">
+                                    <h5>Verified CI Pipelines &amp; Review Threads ({asArray(observer.evidence).length})</h5>
+                                    <ul className="observer-evidence-list">
+                                        {asArray(observer.evidence).map((ev, idx) => (
+                                            <li key={idx}>
+                                                <span className="checkmark">✓</span>
+                                                <span>{String(ev)}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </section>
+                    )}
+
+                    {repairs.length > 0 && (
+                        <section className="observer-repairs-section">
+                            <div className="studio-section-head">
+                                <h4>Tactical CI &amp; Review Repairs ({repairs.length})</h4>
+                                <span className="muted">Autonomous post-PR fixes verified by an independent reviewer before pushing to the PR branch.</span>
+                            </div>
+                            {repairs.map((op, idx) => {
+                                const rep = isRecord(op.repair) ? op.repair : {};
+                                const builder = isRecord(rep.builder) ? rep.builder : {};
+                                const rev = isRecord(rep.review) ? rep.review : {};
+                                const repReceipt = isRecord(op.receipt) ? op.receipt : {};
+                                const fromSha = typeof rep.expectedHead === "string" ? rep.expectedHead.slice(0, 8) : "initial";
+                                const toSha = typeof repReceipt.headSha === "string"
+                                    ? repReceipt.headSha.slice(0, 8)
+                                    : (typeof rep.headSha === "string" ? rep.headSha.slice(0, 8) : "pushed");
+                                const modFiles = asArray(builder.files).length > 0 ? asArray(builder.files) : asArray(rep.files);
+                                return (
+                                    <div key={String(op.key || idx)} className="repair-round-card">
+                                        <div className="repair-round-head">
+                                            <div className="studio-badge-row">
+                                                <span className="studio-pill blue">TACTICAL REPAIR ROUND #{Number(rep.round ?? idx) + 1}</span>
+                                                <span className={`studio-pill ${op.status === "completed" ? "emerald" : "amber"}`}>
+                                                    {op.status === "completed" ? "✓ Verified & Pushed" : String(op.status)}
+                                                </span>
+                                                <code className="commit-pill">{fromSha} → {toSha}</code>
+                                            </div>
+                                            {typeof op.updatedAt === "string" && (
+                                                <span className="muted">{new Date(op.updatedAt).toLocaleString()}</span>
+                                            )}
+                                        </div>
+                                        <div className="arena-split">
+                                            <div className="arena-pane">
+                                                <div className="arena-pane-header">
+                                                    <span className="studio-pill blue">REPAIR BUILDER</span>
+                                                    <h4>Root-Cause Fix</h4>
+                                                    {typeof builder.verdict === "string" && (
+                                                        <span className="studio-pill emerald">{builder.verdict.toUpperCase()}</span>
+                                                    )}
+                                                </div>
+                                                {typeof builder.summary === "string" && (
+                                                    <div className="markdown-prose compact-prose">
+                                                        <Markdown remarkPlugins={[remarkGfm]} skipHtml>{builder.summary}</Markdown>
+                                                    </div>
+                                                )}
+                                                {modFiles.length > 0 && (
+                                                    <div style={{ marginTop: 10 }}>
+                                                        <h5>Patched Files ({modFiles.length})</h5>
+                                                        <div className="chip-wrap">
+                                                            {modFiles.map((f, fIdx) => {
+                                                                const rawPath = isRecord(f) ? String(f.path || "") : String(f);
+                                                                const parts = splitFilePath(rawPath);
+                                                                return (
+                                                                    <code key={fIdx} className="file-path-chip" title={rawPath}>
+                                                                        {parts.prefix && <span className="path-prefix">{parts.prefix}</span>}
+                                                                        <strong>{parts.name}</strong>
+                                                                    </code>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="arena-pane">
+                                                <div className="arena-pane-header">
+                                                    <span className="studio-pill purple">INDEPENDENT REPAIR REVIEWER</span>
+                                                    <h4>Pre-Push Audit</h4>
+                                                    {typeof rev.verdict === "string" && (
+                                                        <span className={`studio-pill ${rev.verdict === "pass" ? "emerald" : "amber"}`}>
+                                                            {rev.verdict.toUpperCase()} ✓
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {typeof rev.summary === "string" && (
+                                                    <div className="markdown-prose compact-prose">
+                                                        <Markdown remarkPlugins={[remarkGfm]} skipHtml>{rev.summary}</Markdown>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 );
                             })}
-                        </div>
+                        </section>
                     )}
+                </section>
+            )}
 
-                    {findings.length > 0 && (
-                        <div className="findings-list">
-                            <h5>Code Review Findings ({findings.length})</h5>
-                            {findings
-                                .filter((f) => !selectedFilePath || String(f.file) === selectedFilePath)
-                                .map((finding) => {
-                                    const severity = String(finding.severity || "major");
+            {codeViewTab === "arena" && (
+                <>
+                    {reviewHistory.length > 0 && (
+                        <div className="round-scrubber">
+                            <span className="eyebrow">BUILDER VS. INDEPENDENT CODE REVIEWER ROUNDS</span>
+                            <div className="round-buttons">
+                                {reviewHistory.map((roundEntry, idx) => {
+                                    const rev = isRecord(roundEntry.review) ? roundEntry.review : null;
+                                    const rCriteria = asArray(rev?.criteria).filter(isRecord);
+                                    const rFindings = asArray(rev?.findings);
+                                    const pass = rev?.pass === true && rFindings.length === 0 && rCriteria.length > 0 &&
+                                        rCriteria.every((criterion) => criterion.status === "addressed");
+                                    const valErr = typeof roundEntry.validationError === "string";
                                     return (
-                                        <div key={String(finding.id)} className={`finding-card severity-${severity}`}>
-                                            <div className="finding-header">
-                                                <span className={`severity-badge ${severity}`}>{severity.toUpperCase()}</span>
-                                                <code className="mono-chip">{String(finding.id)}</code>
-                                                <span className="mono-chip blue">{String(finding.category || "correctness")}</span>
-                                                <code className="location-chip">{String(finding.file)}:{String(finding.location)}</code>
-                                            </div>
-                                            <p className="finding-evidence"><strong>Evidence:</strong> {String(finding.evidence)}</p>
-                                            <p className="finding-fix"><strong>Required Fix:</strong> {String(finding.requiredChange)}</p>
-                                        </div>
+                                        <button
+                                            type="button"
+                                            key={idx}
+                                            className={`round-pill ${selectedRoundIdx === idx ? "selected" : ""} ${pass ? "pass" : "changes"}`}
+                                            onClick={() => setSelectedRoundIdx(idx)}
+                                        >
+                                            <strong>Round {Number(roundEntry.round ?? idx + 1)}</strong>
+                                            <span>{pass ? "✓ Approved" : valErr ? "Schema Error" : rFindings.length ? `${rFindings.length} Finding(s)` : "Changes required"}</span>
+                                        </button>
                                     );
                                 })}
+                            </div>
                         </div>
                     )}
-                </div>
-            </div>
 
-            <details>
-                <summary>Full implementation &amp; review history JSON</summary>
-                <pre>{JSON.stringify(body, null, 2)}</pre>
-            </details>
+                    <div className="arena-split">
+                        <div className="arena-pane builder-pane">
+                            <div className="arena-pane-header">
+                                <span className="studio-pill blue">CODING BUILDER</span>
+                                <h4>Builder Output — {String(activeItem?.itemId || "PBI")} (Round {selectedRoundIdx + 1})</h4>
+                            </div>
+                            {typeof currentRound?.builderSummary === "string" && currentRound.builderSummary ? (
+                                <div className="builder-summary-box markdown-prose compact-prose">
+                                    <Markdown remarkPlugins={[remarkGfm]} skipHtml>{currentRound.builderSummary}</Markdown>
+                                </div>
+                            ) : usingFallbackFiles && (
+                                <p className="muted">
+                                    Initial implementation authored across {effectiveFiles.length} target files and submitted to Independent Code Review.
+                                </p>
+                            )}
+                            {typeof currentRound?.validationError === "string" && (
+                                <div className="studio-callout warning">
+                                    <strong>Builder Validation Error:</strong> {currentRound.validationError}
+                                </div>
+                            )}
+                            <div className="pbi-inspector-split">
+                                <div>
+                                    <h5>{usingFallbackFiles ? `PBI Implementation Files (${effectiveFiles.length})` : `Modified / Created Files (${effectiveFiles.length})`}</h5>
+                                    <div className="chip-wrap">
+                                        {effectiveFiles.length ? effectiveFiles.map((file) => {
+                                            const parts = splitFilePath(file);
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    key={file}
+                                                    title={file}
+                                                    className={`file-path-chip ${selectedFilePath === file ? "active" : ""}`}
+                                                    onClick={() => setSelectedFilePath(selectedFilePath === file ? null : file)}
+                                                >
+                                                    {parts.prefix && <span className="path-prefix">{parts.prefix}</span>}
+                                                    <strong>{parts.name}</strong>
+                                                </button>
+                                            );
+                                        }) : <span className="muted">No modified files recorded</span>}
+                                    </div>
+                                </div>
+                                <div>
+                                    <h5>Tests Added or Updated ({effectiveTests.length})</h5>
+                                    <div className="chip-wrap">
+                                        {effectiveTests.length ? effectiveTests.map((t) => {
+                                            const parts = splitFilePath(t);
+                                            return (
+                                                <code key={t} className="mono-chip emerald" title={t}>🧪 {parts.name}</code>
+                                            );
+                                        }) : <span className="muted">Verified via acceptance criteria</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="arena-pane reviewer-pane">
+                            <div className="arena-pane-header">
+                                <span className="studio-pill purple">INDEPENDENT CODE REVIEWER</span>
+                                <h4>Review Verdict &amp; Criteria Scorecard</h4>
+                                {review && (
+                                    <span className={`studio-pill ${review.pass === true ? "emerald" : "amber"}`}>
+                                        {review.pass === true ? "PASSED ✓" : "CHANGES REQUESTED"}
+                                    </span>
+                                )}
+                            </div>
+                            {typeof review?.summary === "string" && <p className="muted">{review.summary}</p>}
+
+                            {criteria.length > 0 && (
+                                <div className="criteria-scorecard">
+                                    <h5>Acceptance Criteria Verification ({criteria.filter((c) => c.status === "addressed").length}/{criteria.length})</h5>
+                                    {criteria.map((c, idx) => {
+                                        const status = String(c.status || "unknown");
+                                        return (
+                                            <div key={idx} className={`criterion-check-row status-${status}`}>
+                                                <span className={`studio-pill ${status === "addressed" ? "emerald" : status === "partial" ? "amber" : "crimson"}`}>
+                                                    {status.toUpperCase()}
+                                                </span>
+                                                <div className="criterion-check-body">
+                                                    <strong>{String(c.criterion)}</strong>
+                                                    <p className="muted">{String(c.evidence)}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {findings.length > 0 && (
+                                <div className="findings-list">
+                                    <h5>Code Review Findings ({findings.length})</h5>
+                                    {findings
+                                        .filter((f) => !selectedFilePath || String(f.file) === selectedFilePath)
+                                        .map((finding) => {
+                                            const severity = String(finding.severity || "major");
+                                            return (
+                                                <div key={String(finding.id)} className={`finding-card severity-${severity}`}>
+                                                    <div className="finding-header">
+                                                        <span className={`severity-badge ${severity}`}>{severity.toUpperCase()}</span>
+                                                        <code className="mono-chip">{String(finding.id)}</code>
+                                                        <span className="mono-chip blue">{String(finding.category || "correctness")}</span>
+                                                        <code className="location-chip">{String(finding.file)}:{String(finding.location)}</code>
+                                                    </div>
+                                                    <p className="finding-evidence"><strong>Evidence:</strong> {String(finding.evidence)}</p>
+                                                    <p className="finding-fix"><strong>Required Fix:</strong> {String(finding.requiredChange)}</p>
+                                                </div>
+                                            );
+                                        })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     );
 }
@@ -1287,7 +1598,7 @@ export function DeliveryCommandCenter({
     artifact: Artifact;
     feature: FactoryFeature;
     onPrefillWaiver?: (itemId: string, criterion: string) => void;
-    onPrefillPrFeedback?: (itemId: string, feedbackBody: string) => void;
+    onPrefillPrFeedback?: (itemId: string, feedbackBody: string, prNumber?: number) => void;
 }) {
     const body = isRecord(artifact.content) ? artifact.content : {};
     const items = asArray(body.items).filter(isRecord);
@@ -1296,7 +1607,14 @@ export function DeliveryCommandCenter({
     const reviews = asArray(body.reviews).filter(isRecord);
     const errors = asArray(body.errors).map(String);
     const delivered = body.delivered === true;
-    const addressedCount = validation.filter((v) => v.status === "addressed").length;
+    const waivedCount = validation.filter((v) =>
+        v.status !== "addressed" &&
+        feature.factory.waivers.some(
+            (w) => w.monitorId === artifact.id && w.itemId === String(v.itemId) && w.criterion === String(v.criterion),
+        ),
+    ).length;
+    const addressedCount = validation.filter((v) => v.status === "addressed").length + waivedCount;
+    const hasPartialGaps = validation.length > 0 && addressedCount < validation.length;
 
     return (
         <div className="delivery-command-center studio-explorer" aria-label="Delivery and PR Command Center">
@@ -1316,6 +1634,13 @@ export function DeliveryCommandCenter({
                 )}
             </div>
 
+            {hasPartialGaps && (
+                <div className="studio-callout info">
+                    <strong>Why {addressedCount}/{validation.length} criteria show verified:</strong>{" "}
+                    Stage 6 runs an independent post-PR audit against live repository state. Rows marked <code>PARTIAL</code> indicate edge-case findings for your judgment — either click <strong>Review &amp; Post PR Comment</strong> to request a code change on the PR, or click <strong>Sign off gap…</strong> to record a reasoned human sign-off if intentional.
+                </div>
+            )}
+
             {errors.length > 0 && (
                 <div className="studio-callout warning">
                     <strong>Delivery Observation Alerts:</strong>
@@ -1329,10 +1654,15 @@ export function DeliveryCommandCenter({
                     const pr = prs.find((p) => String(p.key) === key);
                     const itemValidation = validation.filter((v) => String(v.itemId) === key);
                     const review = reviews.find((r) => String(r.itemId) === key);
+                    const prNumber = pr ? Number(pr.number) : undefined;
+                    const prHead = pr && typeof pr.head === "string" ? pr.head : (review && typeof review.head === "string" ? review.head : undefined);
+                    const resolvedChecks = pr && prNumber
+                        ? resolveVerifiedChecks(feature, key, prNumber, prHead, String(pr.checks))
+                        : "";
                     return (
                         <div key={key} className="delivery-pbi-card">
                             <div className="delivery-pbi-head">
-                                <div>
+                                <div className="studio-badge-row">
                                     <span className="mono-chip emerald">{key}</span>
                                     <span className="mono-chip blue">{String(item.repository)}</span>
                                     <a href={String(item.url)} target="_blank" rel="noreferrer" className="mono-chip">
@@ -1340,11 +1670,16 @@ export function DeliveryCommandCenter({
                                     </a>
                                 </div>
                                 {pr ? (
-                                    <a href={String(pr.url)} target="_blank" rel="noreferrer" className={`studio-pill ${pr.status === "merged" ? "emerald" : "purple"}`}>
-                                        PR #{String(pr.number)}: {String(pr.status).toUpperCase()} · CI: {String(pr.checks).toUpperCase()} ↗
+                                    <a
+                                        href={String(pr.url)}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className={`studio-pill ${pr.status === "merged" || resolvedChecks === "passing" ? "emerald" : resolvedChecks === "failing" ? "crimson" : "purple"}`}
+                                    >
+                                        PR #{String(pr.number)}: {String(pr.status).toUpperCase()} · CI: {resolvedChecks.toUpperCase()} {resolvedChecks === "passing" ? "✓ " : ""}↗
                                     </a>
                                 ) : (
-                                    <span className="studio-pill amber">Awaiting PR</span>
+                                    <span className="studio-pill amber">Not Dispatched Yet (Wave Dependency)</span>
                                 )}
                             </div>
                             <h4>{String(item.title)}</h4>
@@ -1353,16 +1688,16 @@ export function DeliveryCommandCenter({
                                 <div className="delivery-review-box">
                                     <div className="finding-header">
                                         <span className={`studio-pill ${review.pass === true ? "emerald" : "amber"}`}>
-                                            AI Review Round {String(review.round)}/{String(review.maxRounds)}: {String(review.status).replaceAll("_", " ")}
+                                            Post-PR Audit {String(review.round)}/{String(review.maxRounds)}: {String(review.status).replaceAll("_", " ")}
                                         </span>
                                         <code className="commit-pill">head: {String(review.head).slice(0, 8)}</code>
                                         {typeof review.suggestedFeedback === "string" && onPrefillPrFeedback && (
                                             <button
                                                 type="button"
                                                 className="ghost-chip-btn"
-                                                onClick={() => onPrefillPrFeedback(key, String(review.suggestedFeedback))}
+                                                onClick={() => onPrefillPrFeedback(key, String(review.suggestedFeedback), prNumber)}
                                             >
-                                                Load into PR Feedback Composer →
+                                                Review &amp; Post PR Comment →
                                             </button>
                                         )}
                                     </div>
@@ -1380,7 +1715,7 @@ export function DeliveryCommandCenter({
                                         return (
                                             <div key={i} className={`criterion-check-row status-${status}`}>
                                                 <span className={`studio-pill ${status === "addressed" || waived ? "emerald" : status === "partial" ? "amber" : "crimson"}`}>
-                                                    {waived ? "WAIVED" : status.toUpperCase()}
+                                                    {waived ? "SIGNED OFF ✓" : status.toUpperCase()}
                                                 </span>
                                                 <div className="criterion-check-body">
                                                     <strong>{criterionText}</strong>
@@ -1390,9 +1725,10 @@ export function DeliveryCommandCenter({
                                                     <button
                                                         type="button"
                                                         className="ghost-chip-btn"
+                                                        title="Record a reasoned human sign-off if this edge case is intentional or tracked separately"
                                                         onClick={() => onPrefillWaiver(key, criterionText)}
                                                     >
-                                                        Waive gap…
+                                                        Sign off gap…
                                                     </button>
                                                 )}
                                             </div>
@@ -1404,11 +1740,6 @@ export function DeliveryCommandCenter({
                     );
                 })}
             </div>
-
-            <details>
-                <summary>Full monitor report JSON</summary>
-                <pre>{JSON.stringify(body, null, 2)}</pre>
-            </details>
         </div>
     );
 }
@@ -1514,7 +1845,7 @@ export function SubagentFlightRecorder({
                 </div>
                 <div className="telemetry-stat">
                     <span>ACTIVE TIME</span>
-                    <strong>{activeExec.usage ? `${(activeExec.usage.activeMs / 1000).toFixed(1)}s` : "—"}</strong>
+                    <strong>{activeExec.usage ? formatDuration(activeExec.usage.activeMs) : "—"}</strong>
                 </div>
                 <div className="telemetry-stat">
                     <span>SUBAGENTS</span>
@@ -1524,9 +1855,9 @@ export function SubagentFlightRecorder({
                     <span>SCOPED READS</span>
                     <strong>{toolEntries.length}</strong>
                 </div>
-                <div className="telemetry-stat">
-                    <span>NANO-AIU</span>
-                    <strong>{activeExec.usage ? activeExec.usage.nanoAiu.toLocaleString() : "—"}</strong>
+                <div className="telemetry-stat" title={activeExec.usage ? `${activeExec.usage.nanoAiu.toLocaleString()} nano-AIU` : undefined}>
+                    <span>AI USAGE</span>
+                    <strong>{activeExec.usage ? formatAiUsage(activeExec.usage.nanoAiu) : "—"}</strong>
                 </div>
             </div>
 
@@ -1621,8 +1952,8 @@ export function SubagentFlightRecorder({
 
                             {selectedLane.turn?.outputPreview ? (
                                 <div className="swimlane-turn-preview">
-                                    <span className="eyebrow">RECORDED SPECIALIST OUTPUT PREVIEW</span>
-                                    <pre>{selectedLane.turn.outputPreview}</pre>
+                                    <span className="eyebrow">RECORDED SPECIALIST OUTPUT SUMMARY</span>
+                                    <StructuredOutputPreview raw={selectedLane.turn.outputPreview} />
                                 </div>
                             ) : (
                                 <p className="field-help">
@@ -1678,10 +2009,10 @@ export function SubagentFlightRecorder({
                                     {inspectedTrace?.id === entry.id && entry.outputPreview && (
                                         <div className="trace-transcript-drawer" onClick={(e) => e.stopPropagation()}>
                                             <div className="trace-drawer-head">
-                                                <span>{isTurn ? "Structured Agent Output / Transcript Preview" : "Scoped Read Output Preview"}</span>
+                                                <span>{isTurn ? "Structured Agent Output Summary" : "Scoped Read Snippet"}</span>
                                                 <button type="button" className="ghost-chip-btn" onClick={() => setInspectedTrace(null)}>Close</button>
                                             </div>
-                                            <pre>{entry.outputPreview}</pre>
+                                            <StructuredOutputPreview raw={entry.outputPreview} />
                                         </div>
                                     )}
                                 </div>

@@ -550,6 +550,52 @@ test("lost GitHub receipts reconcile only the unique original PR and publisher",
     } finally { h.cleanup(); }
 });
 
+test("inspectPr treats completed success + skipped/neutral GitHub check-runs as passing while keeping in-progress pending", async () => {
+    const githubRepo: RepositoryTarget = {
+        provider: "github", hostname: "github.com", slug: "AzureAD/common",
+        baseBranch: "dev", localPath: ".", account: "fixture-user",
+    };
+    let checkRuns: Array<{ status: string; conclusion: string | null }> = [
+        { status: "completed", conclusion: "success" },
+        { status: "completed", conclusion: "skipped" },
+        { status: "completed", conclusion: "neutral" },
+    ];
+    const provider = new ExternalProvider({
+        run: async (_command, args) => {
+            if (args[0] === "auth") return "fixture-token";
+            const endpoint = args[5]!;
+            if (endpoint === "repos/AzureAD/common/pulls/3353") {
+                return JSON.stringify({
+                    number: 3353, title: "Throttle support", html_url: "https://github.com/AzureAD/common/pull/3353",
+                    state: "open", merged_at: null, body: "Fixes AB#3821916",
+                    head: { sha: "2f28e37c76810daf213c2db8df05b027e97c3ce0" },
+                    base: { ref: "dev" },
+                });
+            }
+            if (endpoint.endsWith("/status")) {
+                return JSON.stringify({ total_count: 0, state: "pending" });
+            }
+            if (endpoint.includes("/check-runs")) {
+                return JSON.stringify({ total_count: checkRuns.length, check_runs: checkRuns });
+            }
+            throw new Error(`Unexpected endpoint: ${endpoint}`);
+        },
+    });
+    const passingPr = await provider.inspectPr(githubRepo, 3353, "PBI-1");
+    assert.equal(passingPr.checks, "passing");
+
+    checkRuns = [
+        { status: "completed", conclusion: "success" },
+        { status: "in_progress", conclusion: null },
+    ];
+    const pendingPr = await provider.inspectPr(githubRepo, 3353, "PBI-1");
+    assert.equal(pendingPr.checks, "pending");
+
+    checkRuns = [{ status: "completed", conclusion: "skipped" }];
+    const skippedOnlyPr = await provider.inspectPr(githubRepo, 3353, "PBI-1");
+    assert.equal(skippedOnlyPr.checks, "pending");
+});
+
 interface AdoPr {
     pullRequestId: number;
     status: string;

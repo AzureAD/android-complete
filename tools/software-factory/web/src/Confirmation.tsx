@@ -48,13 +48,13 @@ export function ScopeSummary({ scope }: { scope: Json }) {
     </>;
 }
 
-export function Confirmation({ request, finish }: { request: ConfirmationRequest; finish: (approved: boolean) => void }) {
+export function Confirmation({ request, finish, theme = "dark" }: { request: ConfirmationRequest; finish: (approved: boolean) => void; theme?: "light" | "dark" }) {
     const dialog = useRef<HTMLDialogElement>(null);
     useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
     const decision = request.decision;
     const scope = request.scope && typeof request.scope === "object" && !Array.isArray(request.scope) ? request.scope : {};
     const brief = scope.requirements || scope.brief;
-    return <dialog ref={dialog} className="confirmation" onCancel={(event) => { event.preventDefault(); finish(false); }} aria-labelledby="confirmation-title">
+    return <dialog ref={dialog} className="confirmation" data-theme={theme} onCancel={(event) => { event.preventDefault(); finish(false); }} aria-labelledby="confirmation-title">
         <form method="dialog" onSubmit={(event) => { event.preventDefault(); finish(true); }}>
             <span className="eyebrow">YOUR DECISION</span><h2 id="confirmation-title">{decision.title}?</h2>
             <p><strong>{decision.subject}</strong> / {decision.context}</p>
@@ -68,9 +68,10 @@ export function Confirmation({ request, finish }: { request: ConfirmationRequest
                 {Array.isArray(brief.designTasks) && brief.designTasks.length > 0 && <><h3>Work for the design agents</h3><ul>{brief.designTasks.map((task, index) => <li key={index}>{String(task)}</li>)}</ul></>}
             </section></details>}
             <ScopeSummary scope={request.scope} />
-            <details><summary>Technical scope and approval reference</summary><pre>{JSON.stringify({
-                scope: request.scope, scopeHash: request.consentKey,
-            }, null, 2)}</pre></details>
+            <div className="approval-ref-row">
+                <span className="eyebrow">SCOPE REFERENCE</span>
+                <code className="mono-chip">{request.consentKey.slice(0, 16)}…</code>
+            </div>
             <div className="form-actions"><button type="button" className="secondary" autoFocus onClick={() => finish(false)}>Not now</button>
                 <button type="submit" className="primary">{decision.approveLabel}</button></div>
         </form>

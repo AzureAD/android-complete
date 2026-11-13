@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type { Artifact, Configuration, ConfigRevision, FactoryFeature, Json, RepositoryTarget } from "../../core/lifecycle-contracts.ts";
 import { request } from "./api";
 import { nextStep, stageLabels, type AvailableGate } from "../../core/progress.ts";
@@ -11,6 +12,8 @@ import {
     DesignStudioExplorer,
     PlanStudioExplorer,
     SubagentFlightRecorder,
+    formatAiUsage,
+    formatDuration,
 } from "./StudioExplorers";
 
 type Execute = (command: Record<string, unknown>) => Promise<Record<string, Json>>;
@@ -29,10 +32,12 @@ export function ArtifactDocument({
     onAppendFeedback?: (snippet: string) => void;
     onSelectItemForOps?: (itemId: string) => void;
     onPrefillWaiver?: (itemId: string, criterion: string) => void;
-    onPrefillPrFeedback?: (itemId: string, feedbackBody: string) => void;
+    onPrefillPrFeedback?: (itemId: string, feedbackBody: string, prNumber?: number) => void;
 }) {
     const body = artifact.content;
-    if (!body || typeof body !== "object" || Array.isArray(body)) return <pre>{JSON.stringify(body, null, 2)}</pre>;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return <p className="muted">Structured artifact recorded ({artifact.kind}).</p>;
+    }
     if (artifact.kind === "design" && body.design && typeof body.design === "object" && !Array.isArray(body.design)) {
         const sections = body.design.sections;
         if (sections && typeof sections === "object" && !Array.isArray(sections)) {
@@ -62,119 +67,60 @@ export function ArtifactDocument({
             />
         );
     }
-    return <pre>{JSON.stringify(body, null, 2)}</pre>;
+    return <p className="muted">Artifact {artifact.id.slice(0, 8)} saved ({artifact.kind}).</p>;
 }
 
-function summarizeArtifactCard(artifact: Artifact): {
-    stageBadge: string;
-    pillColor: "blue" | "purple" | "emerald" | "amber" | "red";
-    title: string;
-    verdict: string;
-    verdictColor: "emerald" | "amber" | "red" | "blue";
-    summary: string;
-    targetLens?: "scope" | "design" | "plan" | "code" | "delivery";
-} {
+function summarizeArtifactOption(artifact: Artifact): string {
     const body = artifact.content && typeof artifact.content === "object" && !Array.isArray(artifact.content)
         ? artifact.content as Record<string, Json>
         : {};
     if (artifact.kind === "design") {
         const rec = typeof body.recommendation === "string" ? body.recommendation : "Saved";
-        const designObj = body.design && typeof body.design === "object" && !Array.isArray(body.design) ? body.design as Record<string, Json> : {};
-        const sectionsCount = designObj.sections && typeof designObj.sections === "object" && !Array.isArray(designObj.sections)
-            ? Object.keys(designObj.sections).length
-            : 0;
-        const evidenceObj = body.evidence && typeof body.evidence === "object" && !Array.isArray(body.evidence) ? body.evidence as Record<string, Json> : {};
-        const refsCount = Array.isArray(evidenceObj.references) ? evidenceObj.references.length : 0;
-        const reviewsCount = Array.isArray(body.reviews) ? body.reviews.length : 0;
-        const verdictColor = rec === "GO to Planning" ? "emerald" : rec === "NO-GO" ? "red" : "amber";
-        return {
-            stageBadge: "STAGE 2 · DESIGN",
-            pillColor: "blue",
-            title: `Technical Design Specification (Gen ${(artifact.generation ?? 0) + 1})`,
-            verdict: rec,
-            verdictColor,
-            summary: `${sectionsCount} architecture sections · ${refsCount} pinned source refs · ${reviewsCount} adversarial review round${reviewsCount === 1 ? "" : "s"}`,
-            targetLens: "design",
-        };
+        return `${rec} · ${new Date(artifact.createdAt).toLocaleString()}`;
     }
     if (artifact.kind === "plan" || artifact.kind === "planning_attempt") {
-        const itemsCount = Array.isArray(body.items) ? body.items.length : 0;
-        const summaryText = typeof body.summary === "string" && body.summary ? body.summary : `${itemsCount} planned backlog item(s)`;
-        const isFinal = artifact.kind === "plan";
-        return {
-            stageBadge: "STAGE 3 · PLAN",
-            pillColor: "purple",
-            title: isFinal ? `Implementation Plan & PBI DAG (Gen ${(artifact.generation ?? 0) + 1})` : "Planning Draft Attempt",
-            verdict: isFinal ? `${itemsCount} PBI${itemsCount === 1 ? "" : "s"} Ready` : "Needs Revision",
-            verdictColor: isFinal ? "emerald" : "amber",
-            summary: summaryText,
-            targetLens: "plan",
-        };
+        const count = Array.isArray(body.items) ? body.items.length : 0;
+        return `${count} PBI${count === 1 ? "" : "s"} · ${new Date(artifact.createdAt).toLocaleString()}`;
     }
-    if (artifact.kind === "implementation" || artifact.kind === "implementation_attempt") {
-        const items = Array.isArray(body.items) ? body.items : [];
-        const isFinal = artifact.kind === "implementation";
-        return {
-            stageBadge: "STAGE 5 · CODE",
-            pillColor: "emerald",
-            title: isFinal ? "Implementation & Code Review Bundle" : "Coding Attempt Snapshot",
-            verdict: isFinal ? "Reviewed" : "In Progress / Attempt",
-            verdictColor: isFinal ? "emerald" : "amber",
-            summary: `${items.length} implemented work item${items.length === 1 ? "" : "s"} recorded`,
-            targetLens: "code",
-        };
-    }
-    if (artifact.kind === "monitor") {
-        const items = Array.isArray(body.items) ? body.items : [];
-        return {
-            stageBadge: "STAGE 6 · DELIVERY",
-            pillColor: "amber",
-            title: "Delivery & PR Verification Report",
-            verdict: "Snapshot",
-            verdictColor: "blue",
-            summary: `${items.length} tracked PBI/PR delivery item${items.length === 1 ? "" : "s"}`,
-            targetLens: "delivery",
-        };
-    }
-    if (artifact.kind === "intake") {
-        const draftReqs = Array.isArray(body.requirements) ? body.requirements.length : 0;
-        return {
-            stageBadge: "STAGE 1 · SCOPE",
-            pillColor: "emerald",
-            title: "AI-Drafted Success Criteria Suggestions",
-            verdict: `${draftReqs} Suggested Criteria`,
-            verdictColor: "blue",
-            summary: "Draft scope criteria and open questions proposed for human review",
-            targetLens: "scope",
-        };
-    }
-    return {
-        stageBadge: artifact.kind.toUpperCase(),
-        pillColor: "blue",
-        title: `${artifact.kind} artifact`,
-        verdict: "Recorded",
-        verdictColor: "blue",
-        summary: `Revision ${artifact.requirementsRevision.slice(0, 8)}`,
-    };
+    return new Date(artifact.createdAt).toLocaleString();
 }
 
-type StudioLens = "gate" | "scope" | "design" | "plan" | "backlog" | "code" | "delivery" | "flight";
-
-const stageIndexToLens: StudioLens[] = ["scope", "design", "plan", "backlog", "code", "delivery"];
-
-export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, onCheckSetup }: {
-    feature: FactoryFeature; execute: Execute; onEdit: () => void; onReviewSuggestions: () => void; onCheckSetup: () => void;
+export function FactoryPanel({
+    feature,
+    execute,
+    onEdit,
+    onReviewSuggestions,
+    onCheckSetup,
+    stage1View,
+    onActiveStageChange,
+}: {
+    feature: FactoryFeature;
+    execute: Execute;
+    onEdit: () => void;
+    onReviewSuggestions: () => void;
+    onCheckSetup: () => void;
+    stage1View?: ReactNode;
+    onActiveStageChange?: (stageIndex: number) => void;
 }) {
     const [gates, setGates] = useState<GateResult[]>([]);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
     const [gatesLoaded, setGatesLoaded] = useState(false);
-    const deliverablesRef = useRef<HTMLElement>(null);
     const studioViewportRef = useRef<HTMLDivElement>(null);
+    const prComposerRef = useRef<HTMLDetailsElement>(null);
+    const waiverComposerRef = useRef<HTMLDetailsElement>(null);
+    const feedbackInputRef = useRef<HTMLTextAreaElement>(null);
+
     const [result, setResult] = useState<Record<string, Json>>();
     const [feedback, setFeedback] = useState("");
+    const [revisionDrawerOpen, setRevisionDrawerOpen] = useState(false);
+    const [prDrawerOpen, setPrDrawerOpen] = useState(false);
+    const [waiverDrawerOpen, setWaiverDrawerOpen] = useState(false);
+    const [flightOpen, setFlightOpen] = useState(false);
     const [minutes, setMinutes] = useState("60");
-    const [limits, setLimits] = useState("{}");
+    const [maxCreditsCap, setMaxCreditsCap] = useState("");
+    const [timeoutMinutesCap, setTimeoutMinutesCap] = useState("");
+    const [clearCreditCap, setClearCreditCap] = useState(false);
     const [itemId, setItemId] = useState("");
     const [prNumber, setPrNumber] = useState("");
     const [prFeedback, setPrFeedback] = useState("");
@@ -182,12 +128,25 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     const [waiverReason, setWaiverReason] = useState("");
     const [recoveryReason, setRecoveryReason] = useState("");
     const feedbackRequest = useRef(crypto.randomUUID());
-    const [tab, setTab] = useState<"artifacts" | "runs" | "operations">("artifacts");
-    const [studioLens, setStudioLens] = useState<StudioLens>("gate");
+
+    const progress = nextStep(feature, gates);
+    const currentGate = progress.gate;
+
+    const [selectedStage, setSelectedStage] = useState<number>(progress.stage);
+    const [userPinnedStage, setUserPinnedStage] = useState(false);
     const [selectedExecId, setSelectedExecId] = useState<string>();
     const [selectedDesignId, setSelectedDesignId] = useState<string>();
     const [selectedPlanId, setSelectedPlanId] = useState<string>();
-    const feedbackInputRef = useRef<HTMLTextAreaElement>(null);
+
+    useEffect(() => {
+        if (!userPinnedStage) {
+            setSelectedStage(progress.stage);
+        }
+    }, [progress.stage, userPinnedStage]);
+
+    useEffect(() => {
+        onActiveStageChange?.(selectedStage);
+    }, [selectedStage, onActiveStageChange]);
 
     useEffect(() => {
         let cancelled = false;
@@ -197,6 +156,21 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
             .catch((failure: unknown) => { if (!cancelled) setError(failure instanceof Error ? failure.message : "Approval previews could not be loaded."); });
         return () => { cancelled = true; };
     }, [feature]);
+
+    function buildLimitOverrides(): Record<string, number | null> {
+        const out: Record<string, number | null> = {};
+        if (clearCreditCap) {
+            out.maxAiCredits = null;
+        } else if (maxCreditsCap.trim()) {
+            const parsed = Number(maxCreditsCap);
+            if (Number.isFinite(parsed) && parsed > 0) out.maxAiCredits = parsed;
+        }
+        if (timeoutMinutesCap.trim()) {
+            const mins = Number(timeoutMinutesCap);
+            if (Number.isFinite(mins) && mins > 0) out.timeoutSeconds = Math.round(mins * 60);
+        }
+        return out;
+    }
 
     async function run(command: Record<string, unknown>) {
         setBusy(true); setError(""); setResult(undefined);
@@ -208,39 +182,53 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     const latest = (kind: "design" | "plan" | "monitor") => feature.factory.artifacts.find((artifact) => artifact.id === feature.currentArtifacts[kind]);
     const latestImpl = () => [...feature.factory.artifacts].reverse().find((a) =>
         (a.kind === "implementation" || a.kind === "implementation_attempt") && a.requirementsRevision === feature.current.id);
-    const start = (workflow: string) => {
-        try { return run({ kind: "start_workflow", featureId: feature.id, workflow, limits: JSON.parse(limits) }); }
-        catch { setError("Execution limit overrides must be valid JSON."); return Promise.resolve(); }
+    const start = (workflow: string) => run({ kind: "start_workflow", featureId: feature.id, workflow, limits: buildLimitOverrides() });
+
+    const pickStage = (idx: number) => {
+        setSelectedStage(idx);
+        setUserPinnedStage(idx !== progress.stage);
     };
-    const progress = nextStep(feature, gates);
-    const currentGate = progress.gate;
+
+    const returnToActiveStep = () => {
+        setSelectedStage(progress.stage);
+        setUserPinnedStage(false);
+    };
+
     const showRuns = () => {
-        setTab("runs");
-        deliverablesRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        setFlightOpen(true);
     };
+
     const appendFeedback = (snippet: string) => {
         setFeedback((prev) => (prev.trim() ? `${prev.trim()}\n${snippet}` : snippet));
-        setTab("artifacts");
-        setTimeout(() => feedbackInputRef.current?.focus(), 50);
+        setRevisionDrawerOpen(true);
+        setTimeout(() => feedbackInputRef.current?.focus(), 60);
     };
+
     const selectItemForOps = (targetItemId: string) => {
         setItemId(targetItemId);
-        setTab("operations");
-        deliverablesRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        setPrDrawerOpen(true);
+        pickStage(5);
+        setTimeout(() => prComposerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
     };
+
     const prefillWaiver = (targetItemId: string, targetCriterion: string) => {
         setItemId(targetItemId);
         setCriterion(targetCriterion);
-        setTab("artifacts");
-        deliverablesRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        setWaiverDrawerOpen(true);
+        pickStage(5);
+        setTimeout(() => waiverComposerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
     };
-    const prefillPrFeedback = (targetItemId: string, bodyText: string) => {
+
+    const prefillPrFeedback = (targetItemId: string, bodyText: string, detectedPrNumber?: number) => {
         setItemId(targetItemId);
+        if (detectedPrNumber && detectedPrNumber > 0) setPrNumber(String(detectedPrNumber));
         setPrFeedback(bodyText);
         feedbackRequest.current = crypto.randomUUID();
-        setTab("operations");
-        deliverablesRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        setPrDrawerOpen(true);
+        pickStage(5);
+        setTimeout(() => prComposerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
     };
+
     const actNext = () => {
         const action = progress.action;
         if (action?.target === "edit") onEdit();
@@ -277,7 +265,7 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                 if (plannerMatch && Array.isArray(json.items)) parsedPlans.set(Number(plannerMatch[1]), json);
                 if (reviewMatch && typeof json.pass === "boolean") parsedReviews.set(Number(reviewMatch[1]), json);
             } catch {
-                // Ignore truncated or partial output previews.
+                // Ignore truncated previews.
             }
         }
         const latestRound = Math.max(-1, ...parsedPlans.keys());
@@ -363,8 +351,6 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
     const codeArtifact = latestImpl() || liveCodeArtifact;
     const monitorArtifact = latest("monitor");
 
-    const stage0Approval = [...feature.approvals].reverse().find((a) => a.revisionId === feature.current.id) || feature.approvals.at(-1);
-    const backlogOperations = feature.factory.operations.filter((op) => op.kind === "work_item" || op.kind === "links" || op.kind === "dispatch");
     const provisionedWorkItems = feature.factory.operations
         .filter((op) => op.kind === "work_item" && op.status === "completed" && op.receipt && typeof op.receipt === "object" && !Array.isArray(op.receipt))
         .map((op) => {
@@ -385,31 +371,82 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                     : "",
             };
         });
-    const inspectedStageIndex = stageIndexToLens.indexOf(studioLens);
 
-    const openArtifactInStudio = (artifact: Artifact) => {
-        const meta = summarizeArtifactCard(artifact);
-        if (artifact.kind === "design") setSelectedDesignId(artifact.id);
-        if (artifact.kind === "plan" || artifact.kind === "planning_attempt") setSelectedPlanId(artifact.id);
-        if (meta.targetLens) {
-            setStudioLens(meta.targetLens);
-            studioViewportRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    const stageStatusSubtitle = (index: number): string => {
+        if (index === 0) {
+            const count = feature.current.requirements.length;
+            return feature.status === "ready_for_design" ? `${count} Criteria Approved` : `${count} Criteria Draft`;
         }
+        if (index === 1) {
+            if (designArtifact && typeof designArtifact.content === "object" && designArtifact.content && !Array.isArray(designArtifact.content)) {
+                const rec = typeof designArtifact.content.recommendation === "string" ? designArtifact.content.recommendation : "Ready";
+                return rec === "GO to Planning" ? "Approved Spec" : rec;
+            }
+            return progress.stage === 1 ? "Current Step" : "Pending";
+        }
+        if (index === 2) {
+            if (planArtifact && typeof planArtifact.content === "object" && planArtifact.content && !Array.isArray(planArtifact.content)) {
+                const planObj = planArtifact.content as Record<string, Json>;
+                const count = Array.isArray(planObj.items) ? planObj.items.length : 0;
+                return `${count} Planned PBI${count === 1 ? "" : "s"}`;
+            }
+            return progress.stage === 2 ? "Current Step" : "Pending";
+        }
+        if (index === 3) {
+            return provisionedWorkItems.length > 0 ? `${provisionedWorkItems.length} ADO Items` : progress.stage === 3 ? "Current Step" : "Pending";
+        }
+        if (index === 4) {
+            if (codeArtifact && typeof codeArtifact.content === "object" && codeArtifact.content && !Array.isArray(codeArtifact.content)) {
+                const items = Array.isArray(codeArtifact.content.items) ? codeArtifact.content.items : [];
+                const first = items[0] && typeof items[0] === "object" && !Array.isArray(items[0]) ? items[0] as Record<string, Json> : null;
+                if (first?.observerStatus === "ready-for-human-merge") return "PR Ready ✓";
+                return `${items.length || 1} PBI Built`;
+            }
+            return progress.stage === 4 ? "Current Step" : "Pending";
+        }
+        if (monitorArtifact && typeof monitorArtifact.content === "object" && monitorArtifact.content && !Array.isArray(monitorArtifact.content)) {
+            const val = Array.isArray(monitorArtifact.content.validation) ? monitorArtifact.content.validation : [];
+            const ok = val.filter((v) => v && typeof v === "object" && !Array.isArray(v) && (v as Record<string, Json>).status === "addressed").length;
+            return val.length > 0 ? `${ok}/${val.length} Verified` : "Observed";
+        }
+        return progress.stage === 5 ? "Current Step" : "Preview";
     };
+
+    const anyRunActive = feature.factory.executions.some((e) => e.status === "running" || e.status === "starting");
+    const viewingActiveStep = selectedStage === progress.stage;
+    const gateStageIndex = currentGate?.stage === "design" ? 1
+        : currentGate?.stage === "plan" ? 2
+            : currentGate?.stage === "backlog" ? 3
+                : currentGate?.stage === "dispatch" ? 4
+                    : currentGate?.stage === "complete" ? 5 : -1;
 
     return <section className="card factory-panel" aria-label="Workflow lifecycle">
         <div className="phase-track-header">
-            <span className="eyebrow">LIFECYCLE STAGES · CLICK ANY STEP TO INSPECT</span>
-            {studioLens !== "gate" && (
-                <button type="button" className="ghost-chip-btn" onClick={() => setStudioLens("gate")}>
-                    ← Back to Active Step ({stageLabels[progress.stage]})
+            <div className="phase-track-header-left">
+                <span className="eyebrow">LIFECYCLE PIPELINE · SELECT ANY STAGE</span>
+                {!viewingActiveStep && (
+                    <button type="button" className="ghost-chip-btn" onClick={returnToActiveStep}>
+                        ← Return to Active Step ({stageLabels[progress.stage]})
+                    </button>
+                )}
+            </div>
+            <div className="phase-track-header-right">
+                <button
+                    type="button"
+                    aria-expanded={flightOpen}
+                    className={`flight-drawer-toggle ${flightOpen ? "active" : ""}`}
+                    onClick={() => setFlightOpen(!flightOpen)}
+                >
+                    <span className={`status-dot ${anyRunActive ? "pulse" : "ready"}`} />
+                    <span>Flight Recorder &amp; Runs ({feature.factory.executions.length})</span>
+                    <span>{flightOpen ? "▴" : "▾"}</span>
                 </button>
-            )}
+            </div>
         </div>
+
         <div className="phase-track" role="group" aria-label="Feature progress">
             {stageLabels.map((label, index) => {
-                const targetLens: StudioLens = stageIndexToLens[index] || "gate";
-                const isInspected = inspectedStageIndex === index;
+                const isSelected = selectedStage === index;
                 const isCurrent = index === progress.stage;
                 const isPast = index < progress.stage;
                 return (
@@ -417,150 +454,230 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                         type="button"
                         key={label}
                         aria-current={isCurrent ? "step" : undefined}
-                        aria-pressed={isInspected}
-                        onClick={() => setStudioLens(isInspected ? "gate" : targetLens)}
-                        className={`phase ${isCurrent ? "current" : isPast ? "past" : ""} ${isInspected ? "inspecting" : ""}`}
+                        aria-pressed={isSelected}
+                        onClick={() => pickStage(index)}
+                        className={`phase ${isCurrent ? "current" : isPast ? "past" : ""} ${isSelected ? "selected-stage" : ""}`}
                     >
-                        <span>{isPast ? "✓" : index + 1}</span>
-                        <strong>{label}</strong>
-                        <small>{isInspected ? "INSPECTING" : isCurrent ? "CURRENT STEP" : isPast ? "COMPLETED · VIEW" : "PREVIEW"}</small>
+                        <div className="phase-top-row">
+                            <span className="phase-step-badge">{isPast ? "✓" : index + 1}</span>
+                            <strong>{label}</strong>
+                        </div>
+                        <small>{stageStatusSubtitle(index)}</small>
                     </button>
                 );
             })}
         </div>
 
-        <div className={`next-action ${progress.failed ? "failed" : ""}`} aria-label="Next step">
-            <span className="eyebrow">{progress.failed ? "NEEDS ATTENTION" : progress.report ? "CHAT PROGRESS" : progress.run?.status === "running" || progress.run?.status === "starting" ? "IN PROGRESS" : "NEXT STEP"}</span>
-            <h2>{progress.title}</h2><p role={progress.failed ? "alert" : undefined}>{progress.description}</p>
-            {progress.run && <p className="run-origin">{progress.run.requestedBy?.channel === "chat" || progress.run.parentSessionId ? `${progress.failed ? "Requested" : "Started"} in Copilot chat` : progress.run.requestedBy?.channel === "web" ? "Requested in the dashboard" : "Recorded workflow"} / {new Date(progress.run.updatedAt).toLocaleString()}</p>}
-            {progress.report && <section className="chat-progress" aria-label="Current chat progress">
-                <dl><dt>Expected result</dt><dd>{progress.report.expectedOutput}</dd>
-                    <dt>Next step</dt><dd>{progress.report.nextStep}</dd></dl>
-                {progress.report.question && <div className="question-context"><h3>{progress.report.question.text}</h3>
-                    <p><strong>Why your input matters:</strong> {progress.report.question.whyNeeded}</p>
-                    <p><strong>Recommendation:</strong> {progress.report.question.recommendation}</p>
-                    <p className="field-help">Answer in the originating Copilot chat. This saved question does not grant approval or start work.</p></div>}
-                <p className="field-help">Last reported in {progress.report.actor.channel === "chat" ? "Copilot chat" : "the dashboard"} at {new Date(progress.report.createdAt).toLocaleString()}.
-                    {" "}This is a conversational update, not proof of a running background agent.</p>
-            </section>}
-            <div className="factory-actions">
-                {progress.action && <button className="primary" disabled={busy || !gatesLoaded} onClick={actNext}>{progress.action.label}</button>}
-                {(progress.run?.status === "running" || progress.run?.status === "starting") && studioLens !== "flight" && (
-                    <button type="button" className="secondary" onClick={() => {
-                        setSelectedExecId(progress.run?.id);
-                        setStudioLens("flight");
-                    }}>
-                        Inspect live subagents ({progress.run.usage?.subagents ?? 0})
+        {flightOpen && (
+            <section className="flight-drawer-panel" aria-label="Live subagents and transcripts">
+                <div className="flight-drawer-head">
+                    <div>
+                        <span className="eyebrow">AGENT TELEMETRY, PLAYBOOKS &amp; EXECUTION CONTROLS</span>
+                        <h3>Subagent Flight Recorder</h3>
+                    </div>
+                    <button type="button" className="ghost-chip-btn" onClick={() => setFlightOpen(false)}>
+                        Close Flight Recorder ✕
                     </button>
-                )}
-                {progress.stage === 0 && progress.action?.target !== "edit" && !progress.run && !progress.report && <button className="secondary" disabled={busy} onClick={onEdit}>Write or edit criteria myself</button>}
-                {progress.failed && <button className="secondary" disabled={busy} onClick={onCheckSetup}>Check setup</button>}
-                {progress.failed && progress.run?.runtimeId === null && <span className="field-help">No native run ID was recorded. Retrying creates a new, explicitly confirmed attempt; it never replays remote writes.</span>}
-            </div>
-        </div>
-        {error && <div role="alert" className="message error">{error}</div>}
-        {result?.outcome === "not_approved" && <p className="message notice" role="status">Not started. You chose not to approve this action.</p>}
+                </div>
+                <SubagentFlightRecorder feature={feature} selectedExecutionId={selectedExecId} onSelectExecution={setSelectedExecId} />
 
-        <div ref={studioViewportRef} className="studio-workspace-shell">
-            <div className="studio-lens-bar" role="navigation" aria-label="Feature studio workspaces">
-                <span className="eyebrow">INSPECT WORKSPACE VIEW</span>
-                <div className="studio-lens-buttons">
-                    <button type="button" className={studioLens === "gate" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("gate")}>
-                        Active Gate &amp; Next Step
-                    </button>
-                    <button type="button" className={studioLens === "scope" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("scope")}>
-                        1. Scope &amp; Criteria {feature.status === "ready_for_design" ? "✓" : ""}
-                    </button>
-                    <button type="button" className={studioLens === "design" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("design")}>
-                        Design Studio {designArtifact ? "✓" : ""}
-                    </button>
-                    <button type="button" className={studioLens === "plan" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("plan")}>
-                        Plan &amp; DAG Studio {planArtifact ? "✓" : ""}
-                    </button>
-                    <button type="button" className={studioLens === "code" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("code")}>
-                        Code Builder vs. Reviewer {codeArtifact ? "✓" : ""}
-                    </button>
-                    <button type="button" className={studioLens === "delivery" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("delivery")}>
-                        Delivery &amp; PR Center {monitorArtifact ? "✓" : ""}
-                    </button>
-                    <button type="button" className={studioLens === "flight" ? "lens-btn active" : "lens-btn"} onClick={() => setStudioLens("flight")}>
-                        Subagent Flight Recorder ({feature.factory.executions.length})
+                {feature.factory.executions.length > 0 && (
+                    <details className="run-controls-drawer">
+                        <summary>Workflow Run History, Controls &amp; Optional Guardrails ({feature.factory.executions.length})</summary>
+                        <div className="guardrails-row">
+                            <label>
+                                Max AI Credits (optional)
+                                <input
+                                    type="number"
+                                    min="1"
+                                    placeholder="Uncapped by default"
+                                    value={maxCreditsCap}
+                                    disabled={clearCreditCap}
+                                    onChange={(e) => setMaxCreditsCap(e.target.value)}
+                                />
+                            </label>
+                            <label>
+                                Timeout in Minutes (optional)
+                                <input
+                                    type="number"
+                                    min="1"
+                                    placeholder="Default stage timeout"
+                                    value={timeoutMinutesCap}
+                                    onChange={(e) => setTimeoutMinutesCap(e.target.value)}
+                                />
+                            </label>
+                            <label className="checkbox-inline">
+                                <input
+                                    type="checkbox"
+                                    checked={clearCreditCap}
+                                    onChange={(e) => setClearCreditCap(e.target.checked)}
+                                />
+                                Clear existing credit cap on resume
+                            </label>
+                        </div>
+                        <div className="runs-compact-list">
+                            {[...feature.factory.executions].reverse().map((execution) => {
+                                const isActive = execution.status === "running" || execution.status === "starting";
+                                const canResume = ["paused", "halted", "error"].includes(execution.status);
+                                const execControls = feature.factory.controls.filter((control) => control.executionId === execution.id);
+                                const latestControl = execControls.at(-1);
+                                return (
+                                    <div className="run-compact-card" key={execution.id}>
+                                        <div className="run-compact-main">
+                                            <div className="studio-badge-row">
+                                                <strong>{execution.kind.toUpperCase()}</strong>
+                                                <span className={`studio-pill ${execution.status === "completed" ? "emerald" : isActive ? "blue" : execution.status === "error" ? "crimson" : "amber"}`}>
+                                                    {execution.status}
+                                                </span>
+                                                <span className="muted">{execution.phase}</span>
+                                            </div>
+                                            <div className="run-compact-metrics">
+                                                {execution.usage && (
+                                                    <>
+                                                        <span className="mono-chip">{formatDuration(execution.usage.activeMs)}</span>
+                                                        <span className="mono-chip">{execution.usage.subagents} subagents</span>
+                                                        <span className="mono-chip emerald">{formatAiUsage(execution.usage.nanoAiu)}</span>
+                                                    </>
+                                                )}
+                                                <span className="muted">{new Date(execution.updatedAt).toLocaleString()}</span>
+                                            </div>
+                                            {execution.observationError && <p className="message error">{execution.observationError}</p>}
+                                            {execution.status === "error" && execution.error && <p className="message error">{execution.error}</p>}
+                                            {latestControl?.error && <p className="message error">{latestControl.action}: {latestControl.error}</p>}
+                                        </div>
+                                        <div className="run-compact-actions">
+                                            <button
+                                                type="button"
+                                                className="ghost-chip-btn"
+                                                disabled={busy}
+                                                onClick={() => void run({ kind: "control_run", featureId: feature.id, executionId: execution.id, action: "refresh", limits: buildLimitOverrides() })}
+                                            >
+                                                Refresh
+                                            </button>
+                                            {isActive && (
+                                                <button
+                                                    type="button"
+                                                    className="ghost-chip-btn"
+                                                    disabled={busy}
+                                                    onClick={() => void run({ kind: "control_run", featureId: feature.id, executionId: execution.id, action: "pause", limits: buildLimitOverrides() })}
+                                                >
+                                                    Pause
+                                                </button>
+                                            )}
+                                            {canResume && (
+                                                <button
+                                                    type="button"
+                                                    className="secondary"
+                                                    disabled={busy}
+                                                    onClick={() => void run({ kind: "control_run", featureId: feature.id, executionId: execution.id, action: "resume", limits: buildLimitOverrides() })}
+                                                >
+                                                    Resume
+                                                </button>
+                                            )}
+                                            {(isActive || execution.status === "paused") && (
+                                                <button
+                                                    type="button"
+                                                    className="ghost-chip-btn"
+                                                    disabled={busy}
+                                                    onClick={() => void run({ kind: "control_run", featureId: feature.id, executionId: execution.id, action: "cancel", limits: buildLimitOverrides() })}
+                                                >
+                                                    Cancel
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </details>
+                )}
+            </section>
+        )}
+
+        {viewingActiveStep || progress.failed || progress.report ? (
+            <div className={`next-action ${progress.failed ? "failed" : ""}`} aria-label="Next step">
+                <span className="eyebrow">{progress.failed ? "NEEDS ATTENTION" : progress.report ? "CHAT PROGRESS" : progress.run?.status === "running" || progress.run?.status === "starting" ? "IN PROGRESS" : "ACTIVE STEP"}</span>
+                <h2>{progress.title}</h2>
+                <p role={progress.failed ? "alert" : undefined}>{progress.description}</p>
+                {progress.run && (
+                    <p className="run-origin">
+                        {progress.run.requestedBy?.channel === "chat" || progress.run.parentSessionId
+                            ? `${progress.failed ? "Requested" : "Started"} in Copilot chat`
+                            : progress.run.requestedBy?.channel === "web"
+                                ? "Requested in the dashboard"
+                                : "Recorded workflow"} · {new Date(progress.run.updatedAt).toLocaleString()}
+                    </p>
+                )}
+                {progress.report && <section className="chat-progress" aria-label="Current chat progress">
+                    <dl><dt>Expected result</dt><dd>{progress.report.expectedOutput}</dd>
+                        <dt>Next step</dt><dd>{progress.report.nextStep}</dd></dl>
+                    {progress.report.question && <div className="question-context"><h3>{progress.report.question.text}</h3>
+                        <p><strong>Why your input matters:</strong> {progress.report.question.whyNeeded}</p>
+                        <p><strong>Recommendation:</strong> {progress.report.question.recommendation}</p>
+                        <p className="field-help">Answer in the originating Copilot chat. This saved question does not grant approval or start work.</p></div>}
+                    <p className="field-help">Last reported in {progress.report.actor.channel === "chat" ? "Copilot chat" : "the dashboard"} at {new Date(progress.report.createdAt).toLocaleString()}.
+                        {" "}This is a conversational update, not proof of a running background agent.</p>
+                </section>}
+                <div className="factory-actions">
+                    {progress.action && <button className="primary" disabled={busy || !gatesLoaded} onClick={actNext}>{progress.action.label}</button>}
+                    {(progress.run?.status === "running" || progress.run?.status === "starting") && !flightOpen && (
+                        <button type="button" className="secondary" onClick={() => {
+                            setSelectedExecId(progress.run?.id);
+                            setFlightOpen(true);
+                        }}>
+                            Inspect live subagents ({progress.run.usage?.subagents ?? 0})
+                        </button>
+                    )}
+                    {progress.stage === 0 && progress.action?.target !== "edit" && !progress.run && !progress.report && (
+                        <button className="secondary" disabled={busy} onClick={onEdit}>Write or edit criteria myself</button>
+                    )}
+                    {progress.failed && <button className="secondary" disabled={busy} onClick={onCheckSetup}>Check setup</button>}
+                    {progress.failed && progress.run?.runtimeId === null && (
+                        <span className="field-help">No native run ID was recorded. Retrying creates a new, explicitly confirmed attempt; it never replays remote writes.</span>
+                    )}
+                </div>
+            </div>
+        ) : (
+            <div className="compact-active-step-bar" aria-label="Next step">
+                <div className="compact-active-step-info">
+                    <span className="studio-pill emerald">ACTIVE: {(stageLabels[progress.stage] || "Stage").toUpperCase()}</span>
+                    <strong>{progress.title}</strong>
+                </div>
+                <div className="compact-active-step-actions">
+                    {progress.action && (
+                        <button className="primary compact-btn" disabled={busy || !gatesLoaded} onClick={actNext}>
+                            {progress.action.label}
+                        </button>
+                    )}
+                    <button type="button" className="secondary compact-btn" onClick={returnToActiveStep}>
+                        Open Active Step →
                     </button>
                 </div>
             </div>
+        )}
 
-            {studioLens === "scope" && (
-                <section className="studio-spotlight" aria-label="Scope and Criteria Studio">
-                    <div className="scope-inspector-card">
-                        <div className="studio-header-top">
-                            <div>
-                                <div className="studio-badge-row">
-                                    <span className="studio-pill emerald">STAGE 1 · DEFINE SUCCESS</span>
-                                    <span className={`studio-pill ${feature.status === "ready_for_design" ? "emerald" : "amber"}`}>
-                                        {feature.status === "ready_for_design" ? "Scope Approved ✓" : "Draft / Awaiting Approval"}
-                                    </span>
-                                    <span className="mono-chip">Revision #{feature.current.number}</span>
-                                </div>
-                                <h3>{feature.current.title}</h3>
-                            </div>
-                            <button type="button" className="secondary" disabled={busy} onClick={onEdit}>
-                                Edit brief &amp; criteria
-                            </button>
-                        </div>
-                        {feature.current.description && (
-                            <div className="scope-inspector-block">
-                                <span className="eyebrow">PROBLEM STATEMENT &amp; GOAL</span>
-                                <p>{feature.current.description}</p>
-                            </div>
-                        )}
-                        <div className="scope-inspector-block">
-                            <span className="eyebrow">APPROVED SUCCESS CRITERIA ({feature.current.requirements.length})</span>
-                            {feature.current.requirements.length > 0 ? (
-                                <div className="requirements-list">
-                                    {feature.current.requirements.map((req) => (
-                                        <div key={req.id} className="requirement">
-                                            <span>{req.id}</span>
-                                            <p>{req.text}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <p className="muted">No success criteria saved yet.</p>
-                            )}
-                        </div>
-                        {!!feature.current.designTasks?.length && (
-                            <div className="scope-inspector-block">
-                                <span className="eyebrow">ENGINEERING OBLIGATIONS FOR DESIGN AGENTS ({feature.current.designTasks.length})</span>
-                                <ul className="studio-bullet-list">
-                                    {feature.current.designTasks.map((task) => <li key={task}>{task}</li>)}
-                                </ul>
-                            </div>
-                        )}
-                        {stage0Approval && (
-                            <div className="scope-approval-receipt">
-                                <strong>✓ Stage 0 Scope Approval Recorded</strong>
-                                <span>
-                                    Approved by {stage0Approval.actor?.ado?.displayName || stage0Approval.actor?.reference || "authenticated operator"} via {stage0Approval.actor?.channel || "studio"} on{" "}
-                                    {new Date(stage0Approval.createdAt).toLocaleString()}
-                                </span>
-                            </div>
-                        )}
-                    </div>
+        {error && <div role="alert" className="message error">{error}</div>}
+        {result?.outcome === "not_approved" && <p className="message notice" role="status">Not started. You chose not to approve this action.</p>}
+
+        <div ref={studioViewportRef} className="studio-stage-viewport">
+            {selectedStage === 0 && (
+                <section className="stage-1-workspace" aria-label="Scope and Criteria Studio">
+                    {stage1View}
                 </section>
             )}
 
-            {studioLens === "design" && currentGate?.stage !== "design" && (
-                <section className="studio-spotlight" aria-label="Design Studio">
+            {selectedStage === 1 && (
+                <section className="studio-spotlight" aria-label={currentGate?.stage === "design" ? "Review design" : "Design Studio"}>
                     {!currentDesignArtifact && designArtifact && (
                         <div className="studio-iteration-banner">
                             <div>
-                                <strong>Revision run in progress — viewing saved Design Iteration</strong>
+                                <strong>Revision run in progress — viewing latest saved Design</strong>
                                 <p className="muted">
-                                    A newer Design run is currently active. Below is the most recent completed design packet ({new Date(designArtifact.createdAt).toLocaleString()}) including its full 10-section spec and reviewer findings.
+                                    A newer Design run is active. Below is the most recent completed design specification ({new Date(designArtifact.createdAt).toLocaleString()}).
                                 </p>
                             </div>
                             {progress.run && (
-                                <button type="button" className="secondary" onClick={() => { setSelectedExecId(progress.run?.id); setStudioLens("flight"); }}>
+                                <button type="button" className="secondary" onClick={() => { setSelectedExecId(progress.run?.id); setFlightOpen(true); }}>
                                     Watch live run →
                                 </button>
                             )}
@@ -568,94 +685,178 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                     )}
                     {fallbackDesignArtifacts.length > 1 && (
                         <div className="artifact-version-bar">
-                            <label htmlFor="design-version-select" className="eyebrow">DESIGN ITERATION</label>
+                            <label htmlFor="design-version-select" className="eyebrow">DESIGN REVISION</label>
                             <select
                                 id="design-version-select"
                                 value={designArtifact?.id || ""}
                                 onChange={(e) => setSelectedDesignId(e.target.value)}
                             >
-                                {fallbackDesignArtifacts.map((art, idx) => {
-                                    const meta = summarizeArtifactCard(art);
-                                    return (
-                                        <option key={art.id} value={art.id}>
-                                            Iteration #{fallbackDesignArtifacts.length - idx} — {meta.verdict} · {new Date(art.createdAt).toLocaleString()} ({art.id.slice(0, 8)})
-                                        </option>
-                                    );
-                                })}
+                                {fallbackDesignArtifacts.map((art, idx) => (
+                                    <option key={art.id} value={art.id}>
+                                        Revision #{fallbackDesignArtifacts.length - idx} — {summarizeArtifactOption(art)}
+                                    </option>
+                                ))}
                             </select>
                         </div>
                     )}
                     {designArtifact ? (
-                        <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} />
-                    ) : (
-                        <div className="studio-empty-lens">
-                            <span className="studio-pill blue">STAGE 2 · GUARDED DESIGN STUDIO</span>
-                            <h3>{progress.run?.kind === "design" && progress.run.status === "running" ? `Design Run Active: ${progress.run.phase}` : "Design Author vs. Independent Reviewer Arena"}</h3>
-                            <p className="muted">
-                                {progress.run?.kind === "design" && progress.run.status === "running"
-                                    ? "The guarded design workflow is actively researching repository evidence, authoring the 10-section architecture specification, and running adversarial design reviews. As soon as the run settles, the complete interactive specification appears here."
-                                    : "Once your feature brief and success criteria are approved, starting a Guarded Design run dispatches the Repository Researcher, Design Author, and Independent Design Reviewer across up to 3 adversarial rounds, producing a full 10-section specification, Requirement Traceability Matrix, and verified Source Evidence Ledger."}
-                            </p>
-                            {progress.run?.kind === "design" && progress.run.status === "running" && (
-                                <button type="button" className="secondary" onClick={() => { setSelectedExecId(progress.run?.id); setStudioLens("flight"); }}>
-                                    Open Subagent Flight Recorder →
-                                </button>
+                        <>
+                            <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} />
+                            {currentGate?.stage === "design" && (
+                                <div className="gate-decision-bar">
+                                    {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
+                                    {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
+                                    <div className="factory-actions">
+                                        <button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
+                                            kind: "approve_stage", featureId: feature.id, stage: "design", expectedScopeHash: currentGate.scopeHash, approved: true,
+                                        })}>Approve design</button>
+                                        <button className="secondary" disabled={busy} onClick={() => void run({
+                                            kind: "approve_stage", featureId: feature.id, stage: "design", expectedScopeHash: currentGate.scopeHash, approved: false,
+                                        })}>Reject this scope</button>
+                                    </div>
+                                </div>
                             )}
+                            <details className="contextual-action-drawer" open={revisionDrawerOpen} onToggle={(e) => setRevisionDrawerOpen((e.currentTarget as HTMLDetailsElement).open)}>
+                                <summary>Request AI Changes to This Design Specification</summary>
+                                <div className="drawer-body">
+                                    <p className="field-help">Describe architectural changes needed. Tip: click &ldquo;+ Comment on section&rdquo; above to quote a specific section.</p>
+                                    <textarea
+                                        ref={feedbackInputRef}
+                                        id={`design-feedback-${feature.id}`}
+                                        value={feedback}
+                                        onChange={(event) => setFeedback(event.target.value)}
+                                        rows={3}
+                                        placeholder="What should the Design Author revise?"
+                                    />
+                                    <div className="factory-actions">
+                                        <button className="secondary" disabled={busy || !feedback.trim() || !latest("design")} onClick={() => void run({
+                                            kind: "request_revision", featureId: feature.id, stage: "design", expectedArtifactId: latest("design")?.id, feedback,
+                                        })}>Request design revision</button>
+                                    </div>
+                                </div>
+                            </details>
+                        </>
+                    ) : progress.run?.kind === "design" && (progress.run.status === "running" || progress.run.status === "starting") ? (
+                        <div className="studio-empty-lens">
+                            <span className="studio-pill blue">STAGE 2 · DESIGN IN PROGRESS</span>
+                            <h3>Design Run Active: {progress.run.phase}</h3>
+                            <p className="muted">
+                                Repository Researcher, Design Author, and Independent Design Reviewer are actively building and auditing the 10-section specification.
+                            </p>
+                            <button type="button" className="secondary" onClick={() => { setSelectedExecId(progress.run?.id); setFlightOpen(true); }}>
+                                Open Flight Recorder →
+                            </button>
                         </div>
+                    ) : (
+                        stage1View || (
+                            <div className="studio-empty-lens">
+                                <span className="studio-pill blue">STAGE 2 · GUARDED DESIGN</span>
+                                <h3>Ready to Author Technical Design</h3>
+                                <p className="muted">Click &ldquo;Run guarded design&rdquo; above to dispatch repository research, architecture synthesis, and independent review.</p>
+                            </div>
+                        )
                     )}
                 </section>
             )}
 
-            {studioLens === "plan" && currentGate?.stage !== "plan" && (
-                <section className="studio-spotlight" aria-label="Plan Studio">
+            {selectedStage === 2 && (
+                <section className="studio-spotlight" aria-label={currentGate?.stage === "plan" ? "Review plan" : "Plan Studio"}>
                     {allPlanArtifacts.length > 1 && (
                         <div className="artifact-version-bar">
-                            <label htmlFor="plan-version-select" className="eyebrow">PLAN ITERATION</label>
+                            <label htmlFor="plan-version-select" className="eyebrow">PLAN REVISION</label>
                             <select
                                 id="plan-version-select"
                                 value={planArtifact?.id || ""}
                                 onChange={(e) => setSelectedPlanId(e.target.value)}
                             >
-                                {allPlanArtifacts.map((art, idx) => {
-                                    const meta = summarizeArtifactCard(art);
-                                    return (
-                                        <option key={art.id} value={art.id}>
-                                            Plan #{allPlanArtifacts.length - idx} — {meta.verdict} · {new Date(art.createdAt).toLocaleString()} ({art.id.slice(0, 8)})
-                                        </option>
-                                    );
-                                })}
+                                {allPlanArtifacts.map((art, idx) => (
+                                    <option key={art.id} value={art.id}>
+                                        Revision #{allPlanArtifacts.length - idx} — {summarizeArtifactOption(art)}
+                                    </option>
+                                ))}
                             </select>
                         </div>
                     )}
                     {planArtifact ? (
-                        <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+                        <>
+                            <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+                            {currentGate?.stage === "plan" && (
+                                <div className="gate-decision-bar">
+                                    {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
+                                    {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
+                                    <div className="factory-actions">
+                                        <button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
+                                            kind: "approve_stage", featureId: feature.id, stage: "plan", expectedScopeHash: currentGate.scopeHash, approved: true,
+                                        })}>Approve plan</button>
+                                        <button className="secondary" disabled={busy} onClick={() => void run({
+                                            kind: "approve_stage", featureId: feature.id, stage: "plan", expectedScopeHash: currentGate.scopeHash, approved: false,
+                                        })}>Reject this scope</button>
+                                    </div>
+                                </div>
+                            )}
+                            {latest("plan") && (
+                                <details className="contextual-action-drawer" open={revisionDrawerOpen} onToggle={(e) => setRevisionDrawerOpen((e.currentTarget as HTMLDetailsElement).open)}>
+                                    <summary>Request AI Changes to This PBI Plan</summary>
+                                    <div className="drawer-body">
+                                        <p className="field-help">Describe how PBIs, boundaries, or dependencies should be adjusted.</p>
+                                        <textarea
+                                            ref={feedbackInputRef}
+                                            id={`plan-feedback-${feature.id}`}
+                                            value={feedback}
+                                            onChange={(event) => setFeedback(event.target.value)}
+                                            rows={3}
+                                            placeholder="What should the Feature Planner revise?"
+                                        />
+                                        <div className="factory-actions">
+                                            <button className="secondary" disabled={busy || !feedback.trim() || !latest("plan")} onClick={() => void run({
+                                                kind: "request_revision", featureId: feature.id, stage: "plan", expectedArtifactId: latest("plan")?.id, feedback,
+                                            })}>Request plan revision</button>
+                                        </div>
+                                    </div>
+                                </details>
+                            )}
+                        </>
                     ) : (
                         <div className="studio-empty-lens">
-                            <span className="studio-pill purple">STAGE 3 · PLAN &amp; DAG STUDIO</span>
-                            <h3>Interactive Execution Wave DAG &amp; PBI Inspector</h3>
+                            <span className="studio-pill purple">STAGE 3 · IMPLEMENTATION PLAN &amp; DAG</span>
+                            <h3>Execution Waves &amp; Repository-Scoped PBIs</h3>
                             <p className="muted">
-                                After design approval, the <strong>Feature Planner</strong> and <strong>Independent Plan Reviewer</strong> decompose the architecture into repository-targeted PBIs with a verified dependency DAG, target file list, and unit/instrumented test suite.
+                                Once design is approved, the Feature Planner and Independent Plan Reviewer decompose the specification into ordered PBIs with target files and test suites.
                             </p>
                         </div>
                     )}
                 </section>
             )}
 
-            {studioLens === "backlog" && (
+            {selectedStage === 3 && (
                 <section className="studio-spotlight" aria-label="Backlog Studio">
                     <div className="scope-inspector-card">
                         <div className="studio-badge-row">
-                            <span className="studio-pill purple">STAGE 4 · BACKLOG &amp; WORK ITEMS</span>
-                            <span className="mono-chip">{provisionedWorkItems.length} ADO PBI(s) · {backlogOperations.length} recorded operation(s)</span>
+                            <span className="studio-pill purple">STAGE 4 · AZURE DEVOPS BACKLOG</span>
+                            <span className="mono-chip">{provisionedWorkItems.length} Provisioned PBI{provisionedWorkItems.length === 1 ? "" : "s"}</span>
                         </div>
-                        <h3>Azure DevOps Backlog &amp; PBI Provisioning</h3>
-                        {provisionedWorkItems.length > 0 && (
-                            <div className="delivery-cards-grid" style={{ marginBottom: 14 }}>
+                        <h3>Provisioned Azure DevOps Work Items</h3>
+                        {currentGate?.stage === "backlog" && (
+                            <div className="gate-decision-bar">
+                                {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
+                                {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
+                                <div className="factory-actions">
+                                    <button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
+                                        kind: "approve_stage", featureId: feature.id, stage: "backlog", expectedScopeHash: currentGate.scopeHash, approved: true,
+                                    })}>Approve backlog</button>
+                                    <button className="secondary" disabled={busy} onClick={() => void run({
+                                        kind: "approve_stage", featureId: feature.id, stage: "backlog", expectedScopeHash: currentGate.scopeHash, approved: false,
+                                    })}>Reject this scope</button>
+                                </div>
+                            </div>
+                        )}
+                        {provisionedWorkItems.length > 0 ? (
+                            <div className="delivery-cards-grid">
                                 {provisionedWorkItems.map((wi) => (
                                     <div key={wi.key} className="delivery-pbi-card">
                                         <div className="delivery-pbi-head">
                                             <div className="studio-badge-row">
-                                                <strong>{wi.key}</strong>
+                                                <span className="mono-chip emerald">{wi.key}</span>
                                                 {wi.url ? (
                                                     <a href={wi.url} target="_blank" rel="noreferrer" className="studio-pill purple">
                                                         ADO #{wi.adoId} ↗
@@ -663,12 +864,12 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                                                 ) : (
                                                     <span className="mono-chip">ADO #{wi.adoId}</span>
                                                 )}
-                                                {wi.repository && <span className="studio-pill blue">repo: {wi.repository}</span>}
+                                                {wi.repository && <span className="mono-chip blue">{wi.repository}</span>}
                                             </div>
                                             <div className="studio-badge-row">
                                                 <span className="studio-pill neutral">{wi.status}</span>
                                                 <span className={`studio-pill ${wi.linked ? "emerald" : "amber"}`}>
-                                                    {wi.linked ? "✓ Linked to Feature & DAG" : "Pending links"}
+                                                    {wi.linked ? "✓ Linked to Feature & Predecessors" : "Pending links"}
                                                 </span>
                                                 {wi.prUrl && (
                                                     <a href={wi.prUrl} target="_blank" rel="noreferrer" className="studio-pill emerald">
@@ -681,325 +882,225 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                                     </div>
                                 ))}
                             </div>
-                        )}
-                        {backlogOperations.length > 0 ? (
-                            <details>
-                                <summary>Raw provider operation receipts ({backlogOperations.length})</summary>
-                                <div className="artifact-cards-list" style={{ marginTop: 10 }}>
-                                    {backlogOperations.map((op) => (
-                                        <div key={op.key} className="run-card">
-                                            <div className="card-heading">
-                                                <strong>{op.itemId} · {op.kind}</strong>
-                                                <span className={`studio-pill ${op.status === "completed" ? "emerald" : "amber"}`}>{op.status}</span>
-                                            </div>
-                                            <code>{op.key}</code>
-                                            <details><summary>Provider receipt</summary><pre>{JSON.stringify(op.receipt, null, 2)}</pre></details>
-                                        </div>
-                                    ))}
-                                </div>
-                            </details>
                         ) : planArtifact ? (
                             <p className="muted">
-                                Plan is drafted ({Array.isArray((planArtifact.content as Record<string, Json>)?.items) ? ((planArtifact.content as Record<string, Json>).items as Json[]).length : 0} PBIs). Once the plan gate is approved, confirming Backlog Creation creates and links the ADO Product Backlog Items here.
+                                Plan is ready. Approving and running Backlog Creation provisions these PBIs under your Azure DevOps Feature and links their predecessor dependencies automatically.
                             </p>
                         ) : (
                             <p className="muted">
-                                Complete Design (Stage 2) and Implementation Planning (Stage 3) first; approved PBIs are then created in Azure DevOps under Stage 4.
+                                Complete Design (Stage 2) and Plan (Stage 3) first; approved PBIs are then created and linked in Azure DevOps here.
                             </p>
                         )}
                     </div>
                 </section>
             )}
 
-            {studioLens === "code" && (
+            {selectedStage === 4 && (
                 <section className="studio-spotlight" aria-label="Code Arena Studio">
+                    {currentGate?.stage === "dispatch" && (
+                        <div className="gate-decision-bar" style={{ marginBottom: 16 }}>
+                            {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
+                            {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
+                            <div className="factory-actions">
+                                <button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
+                                    kind: "approve_stage", featureId: feature.id, stage: "dispatch", expectedScopeHash: currentGate.scopeHash, approved: true,
+                                })}>Approve dispatch</button>
+                                <button className="secondary" disabled={busy} onClick={() => void run({
+                                    kind: "approve_stage", featureId: feature.id, stage: "dispatch", expectedScopeHash: currentGate.scopeHash, approved: false,
+                                })}>Reject this scope</button>
+                            </div>
+                        </div>
+                    )}
                     {codeArtifact ? (
                         <ArtifactDocument artifact={codeArtifact} feature={feature} />
                     ) : (
                         <div className="studio-empty-lens">
-                            <span className="studio-pill emerald">STAGE 5 · CODE BUILDER VS. REVIEWER ARENA</span>
-                            <h3>Multi-Round Coding Builder vs. Independent Code Reviewer</h3>
+                            <span className="studio-pill emerald">STAGE 5 · IMPLEMENTATION &amp; PR OBSERVER</span>
+                            <h3>Coding Builder, Independent Code Reviewer &amp; Autonomous PR Observer</h3>
                             <p className="muted">
-                                During Stage 5 implementation, the <strong>Coding Builder</strong> and <strong>Independent Code Reviewer</strong> iterate across rounds until every acceptance criterion is verified and zero blocker/major/minor findings remain before opening a PR.
+                                Implements dependency-ready PBIs, verifies every acceptance criterion via independent review, publishes the pull request, and supervises live CI checks and tactical repairs until ready for human merge.
                             </p>
                         </div>
                     )}
                 </section>
             )}
-            {studioLens === "delivery" && (
+
+            {selectedStage === 5 && (
                 <section className="studio-spotlight" aria-label="Delivery Studio">
                     {monitorArtifact ? (
-                        <ArtifactDocument artifact={monitorArtifact} feature={feature} onPrefillWaiver={prefillWaiver} onPrefillPrFeedback={prefillPrFeedback} />
-                    ) : (
-                        <div className="studio-empty-lens">
-                            <span className="studio-pill amber">STAGE 6 · DELIVERY &amp; PR COMMAND CENTER</span>
-                            <h3>Live ADO Work Item, PR Status &amp; Acceptance Criteria Verification</h3>
-                            <p className="muted">
-                                Tracks live Azure DevOps PBIs, GitHub/ADO Pull Requests, CI status checks, and AI review rounds with one-click PR feedback composition and reasoned human gap waivers.
-                            </p>
-                        </div>
-                    )}
-                </section>
-            )}
-            {studioLens === "flight" && (
-                <section className="studio-spotlight" aria-label="Flight Recorder Studio">
-                    <SubagentFlightRecorder feature={feature} selectedExecutionId={selectedExecId} onSelectExecution={setSelectedExecId} />
-                </section>
-            )}
-
-            {studioLens === "gate" && !currentGate && progress.run?.kind === "plan" && planArtifact && (
-                <section className="studio-spotlight" aria-label="Live Plan Studio">
-                    <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
-                </section>
-            )}
-            {studioLens === "gate" && !currentGate && progress.run?.kind === "implement" && codeArtifact && (
-                <section className="studio-spotlight" aria-label="Live Code Arena Studio">
-                    <ArtifactDocument artifact={codeArtifact} feature={feature} />
-                </section>
-            )}
-
-            {(studioLens === "gate" || (currentGate && studioLens === currentGate.stage)) && currentGate && (
-                <section className="current-review" aria-label={`Review ${currentGate.stage}`}>
-                    {["design", "plan"].includes(currentGate.stage) && latest(currentGate.stage as "design" | "plan") &&
-                        <ArtifactDocument
-                            artifact={latest(currentGate.stage as "design" | "plan")!}
-                            feature={feature}
-                            onAppendFeedback={appendFeedback}
-                            onSelectItemForOps={selectItemForOps}
-                        />}
-                    {currentGate.stage === "complete" && monitorArtifact && (
                         <ArtifactDocument
                             artifact={monitorArtifact}
                             feature={feature}
                             onPrefillWaiver={prefillWaiver}
                             onPrefillPrFeedback={prefillPrFeedback}
                         />
+                    ) : (
+                        <div className="studio-empty-lens">
+                            <span className="studio-pill amber">STAGE 6 · VERIFY &amp; FINISH</span>
+                            <h3>Live PR Status, Acceptance Criteria Audit &amp; Human Sign-Off</h3>
+                            <p className="muted">
+                                Click &ldquo;Check delivery status&rdquo; above to verify live ADO work items, GitHub/ADO pull requests, CI checks, and acceptance criteria before final completion sign-off.
+                            </p>
+                        </div>
                     )}
-                    {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
-                    <details><summary>Exact approval scope and targets</summary><pre>{JSON.stringify({ scope: currentGate.scope, context: currentGate.context || null }, null, 2)}</pre></details>
-                    {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
-                    <div className="factory-actions"><button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
-                        kind: "approve_stage", featureId: feature.id, stage: currentGate.stage, expectedScopeHash: currentGate.scopeHash, approved: true,
-                    })}>Approve {currentGate.stage === "complete" ? "completion" : currentGate.stage}</button>
-                        <button className="secondary" disabled={busy} onClick={() => void run({
-                            kind: "approve_stage", featureId: feature.id, stage: currentGate.stage, expectedScopeHash: currentGate.scopeHash, approved: false,
-                        })}>Reject this scope</button></div>
+
+                    {currentGate?.stage === "complete" && (
+                        <div className="gate-decision-bar">
+                            {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
+                            {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
+                            <div className="factory-actions">
+                                <button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
+                                    kind: "approve_stage", featureId: feature.id, stage: "complete", expectedScopeHash: currentGate.scopeHash, approved: true,
+                                })}>Approve completion</button>
+                                <button className="secondary" disabled={busy} onClick={() => void run({
+                                    kind: "approve_stage", featureId: feature.id, stage: "complete", expectedScopeHash: currentGate.scopeHash, approved: false,
+                                })}>Reject this scope</button>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="stage6-tools-grid">
+                        <details
+                            ref={prComposerRef}
+                            className="contextual-action-drawer"
+                            open={prDrawerOpen}
+                            onToggle={(e) => setPrDrawerOpen((e.currentTarget as HTMLDetailsElement).open)}
+                        >
+                            <summary>Post Staged PR Review Comment or Link an External PR</summary>
+                            <div className="drawer-body">
+                                <p className="field-help">
+                                    Nothing posts to GitHub or Azure DevOps automatically. Review and edit any staged AI comment below before confirming, or link a manually opened PR to its PBI.
+                                </p>
+                                <div className="pr-ops-split">
+                                    <div className="pr-ops-subcard">
+                                        <h4>Post Reviewed Comment to PR</h4>
+                                        <label htmlFor="pr-item">PBI Key</label>
+                                        <input id="pr-item" placeholder="e.g. PBI-1" value={itemId} onChange={(event) => setItemId(event.target.value)} />
+                                        <label htmlFor="pr-feedback">Comment body (editable before posting)</label>
+                                        <textarea
+                                            id="pr-feedback"
+                                            rows={4}
+                                            placeholder="Click 'Review & Post PR Comment →' on a PBI above, or write feedback here."
+                                            value={prFeedback}
+                                            onChange={(event) => { setPrFeedback(event.target.value); feedbackRequest.current = crypto.randomUUID(); }}
+                                        />
+                                        <div className="factory-actions">
+                                            <button type="button" className="secondary" disabled={busy || !itemId} onClick={() => void run({ kind: "review_pr", featureId: feature.id, itemId })}>
+                                                Load live PR threads
+                                            </button>
+                                            <button type="button" className="primary" disabled={busy || !itemId || !prFeedback.trim()} onClick={() => void run({
+                                                kind: "post_pr_feedback", featureId: feature.id, itemId, requestId: feedbackRequest.current, body: prFeedback,
+                                            })}>
+                                                Confirm &amp; post comment
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="pr-ops-subcard">
+                                        <h4>Link Externally Created PR</h4>
+                                        <p className="field-help">Use only if a developer or external agent opened a PR outside this run.</p>
+                                        <label htmlFor="pr-link-item">PBI Key</label>
+                                        <input id="pr-link-item" placeholder="e.g. PBI-2" value={itemId} onChange={(event) => setItemId(event.target.value)} />
+                                        <label htmlFor="pr-number">Pull Request Number</label>
+                                        <input id="pr-number" type="number" min="1" placeholder="e.g. 3353" value={prNumber} onChange={(event) => setPrNumber(event.target.value)} />
+                                        <div className="factory-actions">
+                                            <button type="button" className="secondary" disabled={busy || !itemId || !prNumber} onClick={() => void run({ kind: "attach_pr", featureId: feature.id, itemId, number: Number(prNumber) })}>
+                                                Verify &amp; link PR
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        {monitorArtifact && (
+                            <details
+                                ref={waiverComposerRef}
+                                className="contextual-action-drawer"
+                                open={waiverDrawerOpen}
+                                onToggle={(e) => setWaiverDrawerOpen((e.currentTarget as HTMLDetailsElement).open)}
+                            >
+                                <summary>Sign Off an Intentional Partial Criterion Gap</summary>
+                                <div className="drawer-body">
+                                    <p className="field-help">
+                                        Records an audited human sign-off for one partial criterion in the current verification report (for example, an edge case deferred to a follow-up PBI). Cannot bypass unmerged PRs or failing CI.
+                                    </p>
+                                    <div className="waiver-fields-grid">
+                                        <label htmlFor="waiver-item">PBI Key
+                                            <input id="waiver-item" placeholder="e.g. PBI-1" value={itemId} onChange={(event) => setItemId(event.target.value)} />
+                                        </label>
+                                        <label htmlFor="waiver-criterion">Criterion Text
+                                            <input id="waiver-criterion" placeholder="Click 'Sign off gap…' above to prefill" value={criterion} onChange={(event) => setCriterion(event.target.value)} />
+                                        </label>
+                                    </div>
+                                    <label htmlFor="waiver-reason">Engineering Rationale for Sign-Off</label>
+                                    <textarea id="waiver-reason" rows={2} placeholder="Why is this partial finding acceptable or where is it tracked?" value={waiverReason} onChange={(event) => setWaiverReason(event.target.value)} />
+                                    <div className="factory-actions">
+                                        <button type="button" className="secondary" disabled={busy || !latest("monitor") || !itemId || !criterion || !waiverReason.trim()} onClick={() => void run({
+                                            kind: "accept_validation_gap", featureId: feature.id, monitorId: latest("monitor")?.id, itemId, criterion, reason: waiverReason,
+                                        })}>
+                                            Confirm criterion sign-off
+                                        </button>
+                                    </div>
+                                </div>
+                            </details>
+                        )}
+                    </div>
                 </section>
+            )}
+
+            {gateStageIndex >= 0 && selectedStage !== gateStageIndex && currentGate && (
+                <div className="studio-callout info" style={{ marginTop: 14 }}>
+                    <strong>Approval ready on Stage {gateStageIndex + 1} ({stageLabels[gateStageIndex]}):</strong>{" "}
+                    <button type="button" className="ghost-chip-btn" onClick={() => pickStage(gateStageIndex)}>
+                        Review &amp; approve {currentGate.stage} →
+                    </button>
+                </div>
             )}
         </div>
 
-        <section ref={deliverablesRef} className="deliverables-hub" aria-label="Saved deliverables and run controls">
-            <div className="deliverables-hub-header">
-                <div>
-                    <span className="eyebrow">SAVED DELIVERABLES &amp; EXECUTION HISTORY</span>
-                    <h3>Artifacts, Workflow Runs &amp; Remote Operations</h3>
-                </div>
-                <div className="factory-tabs" role="group" aria-label="Lifecycle details">
-                    <button type="button" className={tab === "artifacts" ? "secondary active" : "secondary"} onClick={() => setTab("artifacts")}>
-                        Saved Artifacts ({feature.factory.artifacts.length})
-                    </button>
-                    <button type="button" className={tab === "runs" ? "secondary active" : "secondary"} onClick={() => setTab("runs")}>
-                        Workflow Runs ({feature.factory.executions.length})
-                    </button>
-                    <button type="button" className={tab === "operations" ? "secondary active" : "secondary"} onClick={() => setTab("operations")}>
-                        Backlog &amp; PR Ops ({feature.factory.operations.length})
-                    </button>
-                </div>
-            </div>
-
-            {tab === "artifacts" && <>
-                <div className="factory-artifacts">
-                    {feature.factory.artifacts.length ? [...feature.factory.artifacts].reverse().map((artifact) => {
-                        const meta = summarizeArtifactCard(artifact);
-                        return (
-                            <article key={artifact.id} className="artifact-summary-card">
-                                <div className="artifact-card-top">
-                                    <div>
-                                        <div className="studio-badge-row">
-                                            <span className={`studio-pill ${meta.pillColor}`}>{meta.stageBadge}</span>
-                                            <span className={`studio-pill ${meta.verdictColor}`}>{meta.verdict}</span>
-                                            <span className="mono-chip">#{artifact.id.slice(0, 8)}</span>
-                                        </div>
-                                        <h4>{meta.title}</h4>
-                                        <p className="muted">{meta.summary}</p>
-                                    </div>
-                                    <div className="artifact-card-actions">
-                                        <span className="artifact-timestamp">{new Date(artifact.createdAt).toLocaleString()}</span>
-                                        {meta.targetLens && (
-                                            <button type="button" className="secondary" onClick={() => openArtifactInStudio(artifact)}>
-                                                Open in Studio ↑
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                                <details className="artifact-inline-expand">
-                                    <summary>Expand full artifact inline</summary>
-                                    <ArtifactDocument
-                                        artifact={artifact}
-                                        feature={feature}
-                                        onAppendFeedback={appendFeedback}
-                                        onSelectItemForOps={selectItemForOps}
-                                        onPrefillWaiver={prefillWaiver}
-                                        onPrefillPrFeedback={prefillPrFeedback}
-                                    />
-                                </details>
-                            </article>
-                        );
-                    }) : (
-                        <p className="muted">No generated artifacts yet. Ask Factory for draft success criteria above, or approve your own criteria before starting design.</p>
-                    )}
-                </div>
-
-                {(designArtifact || planArtifact) && (
-                    <div className="revision-composer-card">
-                        <label htmlFor={`feedback-${feature.id}`}>Request a Design or Plan Revision</label>
-                        <p className="field-help">Describe what should change in the architecture or plan. Approved Stage 0 requirements remain immutable unless you edit the brief.</p>
-                        <textarea ref={feedbackInputRef} id={`feedback-${feature.id}`} value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={3} placeholder="What should change? Tip: click '+ Add to revision feedback' on any reviewer finding in Design Studio." />
-                        <div className="factory-actions">{(["design", "plan"] as const).map((stage) => <button key={stage} className="secondary" disabled={busy || !feedback.trim() || !latest(stage)} onClick={() => void run({
-                            kind: "request_revision", featureId: feature.id, stage, expectedArtifactId: latest(stage)?.id, feedback,
-                        })}>Request {stage} revision</button>)}</div>
+        {feature.factory.operations.some((op) => op.status === "reconciliation_required") && (
+            <div className="studio-callout warning" style={{ marginTop: 16 }}>
+                <strong>Uncertain remote operation needs reconciliation:</strong>
+                {feature.factory.operations.filter((op) => op.status === "reconciliation_required").map((operation) => (
+                    <div key={operation.key} className="reconcile-inline-row">
+                        <span><code>{operation.itemId}</code> · {operation.kind}</span>
+                        <button type="button" className="secondary" disabled={busy} onClick={() => void run({ kind: "reconcile_operation", featureId: feature.id, operationKey: operation.key })}>
+                            Reconcile without redispatch
+                        </button>
+                        <input
+                            placeholder="Reason if confirmed not sent"
+                            value={recoveryReason}
+                            onChange={(event) => setRecoveryReason(event.target.value)}
+                        />
+                        <button type="button" className="ghost-chip-btn" disabled={busy || !recoveryReason.trim()} onClick={() => void run({
+                            kind: "confirm_operation_not_sent", featureId: feature.id, operationKey: operation.key, reason: recoveryReason,
+                        })}>
+                            Attest not sent
+                        </button>
                     </div>
-                )}
-
-                {monitorArtifact && (
-                    <details><summary>Accept an explicitly reviewed validation gap</summary>
-                        <p className="muted">This records a reasoned human waiver for one criterion in the current report. It cannot waive unmerged PRs, incomplete work items, failed CI, or provider errors.</p>
-                        <label htmlFor="waiver-item">Work item key</label><input id="waiver-item" value={itemId} onChange={(event) => setItemId(event.target.value)} />
-                        <label htmlFor="waiver-criterion">Exact criterion text</label><input id="waiver-criterion" value={criterion} onChange={(event) => setCriterion(event.target.value)} />
-                        <label htmlFor="waiver-reason">Reason for accepting the gap</label><textarea id="waiver-reason" value={waiverReason} onChange={(event) => setWaiverReason(event.target.value)} />
-                        <button className="secondary" disabled={busy || !latest("monitor") || !itemId || !criterion || !waiverReason} onClick={() => void run({
-                            kind: "accept_validation_gap", featureId: feature.id, monitorId: latest("monitor")?.id, itemId, criterion, reason: waiverReason,
-                        })}>Review &amp; accept this gap</button>
-                    </details>
-                )}
-            </>}
-            {tab === "runs" && <>
-                <SubagentFlightRecorder feature={feature} selectedExecutionId={selectedExecId} onSelectExecution={setSelectedExecId} />
-                <label htmlFor="resume-limits">Explicit execution/resume-limit overrides (JSON, optional)</label><input id="resume-limits" value={limits} onChange={(event) => setLimits(event.target.value)} />
-                <p className="field-help">New runs have no AI-credit cap unless you set one. Copilot usage is still metered. To remove an existing run&apos;s credit cap, use {"{\"maxAiCredits\":null}"} in a confirmed resume.</p>
-                {feature.factory.executions.length ? [...feature.factory.executions].reverse().map((execution) => <section className="run-card" key={execution.id}>
-                    <div className="card-heading"><h3>{execution.kind} / {execution.status}</h3><span>{execution.phase}</span></div>
-                    <dl><dt>Execution</dt><dd>{execution.id}</dd><dt>Owning session</dt><dd>{execution.sessionId}</dd><dt>Native run</dt><dd>{execution.runtimeId || "Awaiting admission"}</dd></dl>
-                    <p className="field-help">{execution.sessionKind === "chat"
-                        ? "Runs in its original Copilot chat. Dashboard controls go to that resident owner; reconnect the original chat if it is offline."
-                        : "Runs in a Factory-owned SDK session. App discovery/attachment of this session is not yet verified."}</p>
-                    {feature.factory.sessionBinding?.sessionId === execution.sessionId && execution.sessionKind !== "chat" && <details>
-                        <summary>App handoff status</summary>
-                        {feature.factory.sessionBinding.publicationError
-                            ? <p className="message error">{feature.factory.sessionBinding.publicationError}</p>
-                            : <p className="field-help">Host catalog publication does not prove app discovery or attachment. Use only supported host connection controls; this is not an app deep link.</p>}
-                        <dl><dt>Stable host identity</dt><dd>{feature.factory.sessionBinding.hostComputeId || "Not published"}</dd>
-                            <dt>Native session resource</dt><dd>{feature.factory.sessionBinding.publishedSessionUri || "Unavailable"}</dd></dl>
-                    </details>}
-                    {execution.launchContext && <details><summary>Runtime and extension interpreter</summary><dl>
-                        <dt>Chat host</dt><dd>{execution.launchContext.hostExecutable}</dd>
-                        <dt>Extension Node</dt><dd>{execution.launchContext.extensionNode} ({execution.launchContext.nodeVersion})</dd>
-                        <dt>Native runtime</dt><dd>{execution.launchContext.nativeRuntime}</dd>
-                    </dl></details>}
-                    {execution.registration && <details><summary>Workflow registration verified in this owning session</summary>
-                        <p className="field-help">Session: {execution.registration.sessionId}. This verifies registration, not design quality or delivery.</p>
-                        <ul>{execution.registration.workflowNames.map((name) => <li key={name}>{name}</li>)}</ul>
-                        <code>{execution.registration.runtimeFingerprint}</code>
-                    </details>}
-                    {execution.usage ? <>
-                        <dl><dt>Active runtime</dt><dd>{(execution.usage.activeMs / 1000).toFixed(1)} seconds</dd>
-                            <dt>Workflow subagents</dt><dd>{execution.usage.subagents}</dd>
-                            <dt>AI usage (nano-AIU)</dt><dd>{execution.usage.nanoAiu.toLocaleString()}</dd>
-                            <dt>Measured</dt><dd>{new Date(execution.usage.observedAt).toLocaleString()}</dd></dl>
-                        <details><summary>Native resource ceilings and effective agent models</summary><pre>{JSON.stringify({
-                            declaredLimits: execution.usage.declaredLimits, approvedLimits: execution.usage.approvedLimits, agents: execution.usage.agents,
-                        }, null, 2)}</pre></details>
-                        <p className="field-help">Native workflow usage only, in the runtime&apos;s reported units; remote coding-task usage is separate. Refresh for current measurements. Credit limits are soft, not exact spending guarantees.</p>
-                    </> : <p className="muted">Native usage has not been observed. Refresh this run; missing measurements do not mean zero usage.</p>}
-                    {execution.observationError && <p className="message error">{execution.observationError}</p>}
-                    {execution.status === "error" && execution.error && <p className="message error">{execution.error}</p>}
-                    {(() => {
-                        const execControls = feature.factory.controls.filter((control) => control.executionId === execution.id);
-                        const latestControl = execControls.at(-1);
-                        return latestControl?.error ? <p className="message error" key={latestControl.id}>{latestControl.action}: {latestControl.error}</p> : null;
-                    })()}
-                    <div className="factory-actions">{(["refresh", "pause", "resume", "cancel"] as const).map((action) => <button className="secondary" disabled={busy} key={action} onClick={() => {
-                        try {
-                            const overrides: unknown = JSON.parse(limits);
-                            void run({ kind: "control_run", featureId: feature.id, executionId: execution.id, action, limits: overrides });
-                        } catch { setError("Resume limit overrides must be valid JSON."); }
-                    }}>{action}</button>)}</div>
-                    {execution.outcome !== null && <details><summary>Full outcome</summary><pre>{JSON.stringify(execution.outcome, null, 2)}</pre></details>}
-                    {!["completed", "cancelled", "superseded"].includes(execution.status) && <details><summary>Operator recovery when native ownership cannot be recovered</summary>
-                        <p className="muted">Revoke local authority without pretending to cancel or resume the native run. Reconcile all in-flight effects before a successor; paid work may still finish.</p>
-                        <label htmlFor={`supersede-${execution.id}`}>Recovery reason</label><textarea id={`supersede-${execution.id}`} value={recoveryReason} onChange={(event) => setRecoveryReason(event.target.value)} />
-                        <button className="secondary" disabled={busy || !recoveryReason.trim()} onClick={() => void run({
-                            kind: "supersede_execution", featureId: feature.id, executionId: execution.id, reason: recoveryReason,
-                        })}>Review local authority revocation</button>
-                    </details>}
-                </section>) : <p className="muted">No workflow has been started. No agents or credits have been consumed for this feature.</p>}
-                <label htmlFor="schedule-minutes">Local monitor cadence, in minutes</label><input id="schedule-minutes" type="number" min="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} />
-                <p className="field-help">Opt-in schedules may consume AI credits and run only while an owning host is online.</p>
-                <div className="factory-actions"><button className="secondary" disabled={busy} onClick={() => void run({ kind: "set_schedule", featureId: feature.id, minutes: Number(minutes) })}>Enable schedule</button>
-                    <button className="text-button" disabled={busy || !feature.factory.schedule} onClick={() => void run({ kind: "set_schedule", featureId: feature.id, minutes: null })}>Disable schedule</button></div>
-                {feature.factory.schedule && <p className="muted">Next local check: {new Date(feature.factory.schedule.nextAt).toLocaleString()}</p>}
-            </>}
-            {tab === "operations" && <div className="factory-artifacts">
-                <details open={Boolean(itemId || prFeedback)}><summary>Associate a canonical PR or post reviewed feedback</summary>
-                    <label htmlFor="pr-item">Planned work item key</label><input id="pr-item" value={itemId} onChange={(event) => setItemId(event.target.value)} />
-                    <label htmlFor="pr-number">PR number in its configured repository</label><input id="pr-number" type="number" min="1" value={prNumber} onChange={(event) => setPrNumber(event.target.value)} />
-                    <button className="secondary" disabled={busy || !itemId || !prNumber} onClick={() => void run({ kind: "attach_pr", featureId: feature.id, itemId, number: Number(prNumber) })}>Verify &amp; associate PR</button>
-                    <button className="secondary" disabled={busy || !itemId} onClick={() => void run({ kind: "review_pr", featureId: feature.id, itemId })}>Load all review feedback</button>
-                    <label htmlFor="pr-feedback">Exact feedback body</label><textarea id="pr-feedback" rows={5} value={prFeedback} onChange={(event) => { setPrFeedback(event.target.value); feedbackRequest.current = crypto.randomUUID(); }} />
-                    <p className="field-help">Monitor first to bind feedback to the reviewed head. Mentions may activate a coding agent. Nothing posts automatically.</p>
-                    <button className="secondary" disabled={busy || !itemId || !prFeedback} onClick={() => void run({
-                        kind: "post_pr_feedback", featureId: feature.id, itemId, requestId: feedbackRequest.current, body: prFeedback,
-                    })}>Review &amp; post exact feedback</button>
-                </details>
-                {feature.factory.operations.length ? feature.factory.operations.map((operation) => <section key={operation.key} className="run-card">
-                    <h3>{operation.itemId} / {operation.kind} / {operation.status}</h3><code>{operation.key}</code>
-                    {operation.error && <p className="message error">{operation.error}</p>}
-                    <details><summary>Remote receipt</summary><pre>{JSON.stringify(operation.receipt, null, 2)}</pre></details>
-                    {operation.status === "reconciliation_required" && <>
-                        <button className="secondary" disabled={busy} onClick={() => void run({ kind: "reconcile_operation", featureId: feature.id, operationKey: operation.key })}>Reconcile without redispatch</button>
-                        <details><summary>Operator recovery when the provider proves nothing was sent</summary>
-                            <p className="muted">This is an explicit human attestation, not automatic retry. A wrong assessment can duplicate remote work.</p>
-                            <label htmlFor={`recovery-${operation.key}`}>Investigation and reason</label><textarea id={`recovery-${operation.key}`} value={recoveryReason} onChange={(event) => setRecoveryReason(event.target.value)} />
-                            <button className="secondary" disabled={busy || !recoveryReason.trim()} onClick={() => void run({
-                                kind: "confirm_operation_not_sent", featureId: feature.id, operationKey: operation.key, reason: recoveryReason,
-                            })}>Review no-effect attestation</button>
-                        </details>
-                    </>}
-                </section>) : <p className="muted">No remote operations. Creating or dispatching work requires its own approved scope.</p>}
-            </div>}
-            {result && <details><summary>Technical command result</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>}
-        </section>
+                ))}
+            </div>
+        )}
 
         <details className="advanced-controls">
-            <summary>Manual stage triggers, additional gates &amp; audit trail</summary>
-            <p className="muted">Low-level manual overrides and full lifecycle audit JSON. Use the Next Step card above for standard progression.</p>
+            <summary>Advanced Stage Re-runs, Schedule &amp; Export</summary>
+            <p className="muted">Manual workflow triggers, periodic delivery polling, and portable feature export.</p>
             <div className="factory-actions">
-                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || feature.status !== "ready_for_design"} onClick={() => void start("design")}>Start a design run</button>
-                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || feature.status !== "ready_for_design"} onClick={() => void start("plan")}>Start a planning run</button>
-                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || !latest("plan")} onClick={() => void start("implement")}>Start a coding &amp; review run</button>
-                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || !latest("plan")} onClick={() => void start("monitor")}>Start a monitoring run</button>
-                <button className="secondary" disabled={busy} onClick={() => void run({ kind: "export_feature", featureId: feature.id })}>Export feature</button>
-                <button className="text-button" disabled={busy || feature.factory.cancelled} onClick={() => void run({ kind: "cancel_feature", featureId: feature.id })}>Cancel feature</button>
+                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || feature.status !== "ready_for_design"} onClick={() => void start("design")}>Re-run Design</button>
+                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || feature.status !== "ready_for_design"} onClick={() => void start("plan")}>Re-run Planning</button>
+                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || !latest("plan")} onClick={() => void start("implement")}>Run Next Ready PBI</button>
+                <button className="secondary" disabled={busy || Boolean(feature.configurationMismatch || feature.recovery) || !latest("plan")} onClick={() => void start("monitor")}>Refresh Delivery Audit</button>
+                <button className="secondary" disabled={busy} onClick={() => void run({ kind: "export_feature", featureId: feature.id })}>Export Feature Bundle</button>
+                <button className="text-button" disabled={busy || feature.factory.cancelled} onClick={() => void run({ kind: "cancel_feature", featureId: feature.id })}>Cancel Feature</button>
             </div>
-            <div className="gate-grid">{gates.filter((gate) => gate.available && gate.stage !== currentGate?.stage).map((gate) => <section key={gate.stage} className="gate-card">
-                <h3>{gate.stage === "complete" ? "Completion" : gate.stage} approval</h3>
-                {!gate.available ? <p>{gate.reason}</p> : <>
-                    <p>{gate.approved ? "Approved for this exact scope." : gate.ready ? "Ready for your decision." : gate.blockers?.join(" ")}</p>
-                    <details><summary>Review complete scope</summary><pre>{JSON.stringify({ scope: gate.scope, context: gate.context || null }, null, 2)}</pre></details>
-                    <div className="factory-actions">
-                        <button className="secondary" disabled={busy || !gate.ready || gate.approved} onClick={() => void run({
-                            kind: "approve_stage", featureId: feature.id, stage: gate.stage, expectedScopeHash: gate.scopeHash, approved: true,
-                        })}>Approve {gate.stage}</button>
-                        <button className="text-button" disabled={busy} onClick={() => void run({
-                            kind: "approve_stage", featureId: feature.id, stage: gate.stage, expectedScopeHash: gate.scopeHash, approved: false,
-                        })}>Reject</button>
-                    </div>
-                </>}
-            </section>)}</div>
-            <details><summary>Complete approval and lifecycle audit</summary><pre>{JSON.stringify({
-                decisions: feature.factory.decisions, events: feature.factory.events,
-                validationWaivers: feature.factory.waivers, canonicalPrBindings: feature.factory.prBindings,
-            }, null, 2)}</pre></details>
+            <div className="schedule-inline-row">
+                <label htmlFor="schedule-minutes">Auto-monitor interval (minutes)</label>
+                <input id="schedule-minutes" type="number" min="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} />
+                <button className="secondary" disabled={busy} onClick={() => void run({ kind: "set_schedule", featureId: feature.id, minutes: Number(minutes) })}>Enable schedule</button>
+                <button className="text-button" disabled={busy || !feature.factory.schedule} onClick={() => void run({ kind: "set_schedule", featureId: feature.id, minutes: null })}>Disable</button>
+                {feature.factory.schedule && <span className="muted">Next check: {new Date(feature.factory.schedule.nextAt).toLocaleString()}</span>}
+            </div>
         </details>
     </section>;
 }
@@ -1324,33 +1425,34 @@ export function FactorySettings({ execute }: { execute: Execute }) {
             </div>
         )}
 
-        <h3>Read-only evidence sources</h3>
-        <p className="field-help">Add optional <code>referenceRepositories</code> in the settings JSON using the same repository fields. They are pinned research sources, never backlog or coding targets. Saving changed source scope requires confirmation and invalidates prior run scope.</p>
-        {parsedConfig?.referenceRepositories && <ul>{Object.entries(parsedConfig.referenceRepositories).map(([alias, repo]) =>
-            <li key={alias}><strong>{alias}</strong>: {repo.hostname}/{repo.slug} ({repo.localPath}) — evidence only</li>)}</ul>}
-        <label htmlFor="configuration-json">Repository and ADO settings</label><textarea id="configuration-json" rows={12} value={configuration} onChange={(event) => setConfiguration(event.target.value)} spellCheck={false} />
+        <label htmlFor="configuration-json">Repository and ADO settings</label><textarea id="configuration-json" rows={8} value={configuration} onChange={(event) => setConfiguration(event.target.value)} spellCheck={false} />
         <div className="factory-actions"><button className="primary" disabled={busy} onClick={() => {
             try { void run({ kind: "configure", configuration: JSON.parse(configuration) }); }
             catch { setError("Configuration must be valid JSON."); }
         }}>Review &amp; save configuration</button><button className="secondary" disabled={busy} onClick={() => void run({ kind: "preflight" })}>Verify provider connections</button></div>
-        <h3>Import historical features</h3><p className="muted">Preview is read-only. Import requires explicit requirements for every selected legacy feature. Historical approvals are never trusted.</p>
-        <label htmlFor="legacy-file">Local legacy JSON path</label><input id="legacy-file" value={file} onChange={(event) => { setFile(event.target.value); setImportHash(""); }} />
-        <button className="secondary" disabled={busy || !file.trim()} onClick={() => void run({ kind: "preview_import", path: file })}>Preview import</button>
-        <label htmlFor="legacy-mappings">Explicit mappings: [{"{ legacyId, input: { title, requirements, blockingUnknowns } }"}]</label><textarea id="legacy-mappings" rows={5} value={mappings} onChange={(event) => setMappings(event.target.value)} />
-        <button className="secondary" disabled={busy || !importHash} onClick={() => {
-            try { void run({ kind: "import_legacy", path: file, expectedHash: importHash, mappings: JSON.parse(mappings) }); }
-            catch { setError("Import mappings must be valid JSON."); }
-        }}>Review &amp; import selected features</button>
-        <h3>Consistent registry backup and isolated restore</h3>
-        <button className="secondary" disabled={busy} onClick={() => void run({ kind: "backup_registry" })}>Create private SQLite backup</button>
-        <label htmlFor="backup-path">Backup snapshot path</label><input id="backup-path" value={backupPath} onChange={(event) => { setBackupPath(event.target.value); setBackupHash(""); }} />
-        <button className="secondary" disabled={busy || !backupPath} onClick={() => void run({ kind: "inspect_backup", path: backupPath })}>Inspect integrity &amp; hash</button>
-        <label><input type="checkbox" checked={hostsStopped} onChange={(event) => setHostsStopped(event.target.checked)} /> Original execution hosts have been stopped.</label>
-        <button className="secondary" disabled={busy || !backupHash || !hostsStopped} onClick={() => void run({
-            kind: "restore_backup_clone", path: backupPath, expectedHash: backupHash, originalHostsStopped: hostsStopped,
-        })}>Review isolated restore</button>
-        <p className="field-help">Restore never overwrites the live registry. It disables schedules and returns a new data directory; native journals and ownership are not copied.</p>
+        <details className="advanced-controls">
+            <summary>Migration &amp; Registry Backup Tools</summary>
+            <h4>Import historical features</h4><p className="muted">Preview is read-only. Import requires explicit requirements for every selected legacy feature. Historical approvals are never trusted.</p>
+            <label htmlFor="legacy-file">Local legacy JSON path</label><input id="legacy-file" value={file} onChange={(event) => { setFile(event.target.value); setImportHash(""); }} />
+            <button className="secondary" disabled={busy || !file.trim()} onClick={() => void run({ kind: "preview_import", path: file })}>Preview import</button>
+            <label htmlFor="legacy-mappings">Explicit mappings</label><textarea id="legacy-mappings" rows={4} value={mappings} onChange={(event) => setMappings(event.target.value)} />
+            <button className="secondary" disabled={busy || !importHash} onClick={() => {
+                try { void run({ kind: "import_legacy", path: file, expectedHash: importHash, mappings: JSON.parse(mappings) }); }
+                catch { setError("Import mappings must be valid JSON."); }
+            }}>Review &amp; import selected features</button>
+            <h4>Consistent registry backup and isolated restore</h4>
+            <button className="secondary" disabled={busy} onClick={() => void run({ kind: "backup_registry" })}>Create private SQLite backup</button>
+            <label htmlFor="backup-path">Backup snapshot path</label><input id="backup-path" value={backupPath} onChange={(event) => { setBackupPath(event.target.value); setBackupHash(""); }} />
+            <button className="secondary" disabled={busy || !backupPath} onClick={() => void run({ kind: "inspect_backup", path: backupPath })}>Inspect integrity &amp; hash</button>
+            <label><input type="checkbox" checked={hostsStopped} onChange={(event) => setHostsStopped(event.target.checked)} /> Original execution hosts have been stopped.</label>
+            <button className="secondary" disabled={busy || !backupHash || !hostsStopped} onClick={() => void run({
+                kind: "restore_backup_clone", path: backupPath, expectedHash: backupHash, originalHostsStopped: hostsStopped,
+            })}>Review isolated restore</button>
+            <p className="field-help">Restore never overwrites the live registry. It disables schedules and returns a new data directory; native journals and ownership are not copied.</p>
+        </details>
         {error && <div className="message error" role="alert">{error}</div>}
-        {result && <details open><summary>Complete result / preview</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>}
+        {result && typeof result.outcome === "string" && (
+            <div className="message notice" role="status">Operation completed: {result.outcome.replaceAll("_", " ")}.</div>
+        )}
     </section>;
 }

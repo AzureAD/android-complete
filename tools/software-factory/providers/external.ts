@@ -1012,7 +1012,8 @@ export class ExternalProvider implements Provider {
             const failed = (hasLegacy && ["failure", "error"].includes(String(checks.state))) ||
                 checkRuns.some((entry) => ["failure", "timed_out", "cancelled", "action_required"].includes(String(entry.conclusion)));
             const passing = (hasLegacy || checkRuns.length > 0) && (!hasLegacy || checks.state === "success") &&
-                checkRuns.every((entry) => entry.status === "completed" && entry.conclusion === "success");
+                checkRuns.every((entry) => entry.status === "completed" && ["success", "skipped", "neutral"].includes(String(entry.conclusion))) &&
+                (hasLegacy || checkRuns.some((entry) => entry.conclusion === "success"));
             const url = new URL(text(pr.html_url, "PR URL"));
             if (url.hostname !== repo.hostname || url.pathname.replace(/\/$/, "").toLowerCase() !== `/${repo.slug}/pull/${number}`.toLowerCase()) throw new FactoryError("invalid_provider_response", "PR belongs to a different configured target.", 502);
             return {
