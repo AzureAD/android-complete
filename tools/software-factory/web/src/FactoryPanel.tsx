@@ -406,9 +406,12 @@ export function FactoryPanel({ feature, execute, onEdit, onReviewSuggestions, on
                     <p className="field-help">Native workflow usage only, in the runtime's reported units; remote coding-task usage is separate. Refresh for current measurements. Credit limits are soft, not exact spending guarantees.</p>
                 </> : <p className="muted">Native usage has not been observed. Refresh this run; missing measurements do not mean zero usage.</p>}
                 {execution.observationError && <p className="message error">{execution.observationError}</p>}
-                {execution.error && <p className="message error">{execution.error}</p>}
-                {feature.factory.controls.filter((control) => control.executionId === execution.id && control.error).map((control) =>
-                    <p className="message error" key={control.id}>{control.action}: {control.error}</p>)}
+                {execution.status === "error" && execution.error && <p className="message error">{execution.error}</p>}
+                {(() => {
+                    const execControls = feature.factory.controls.filter((control) => control.executionId === execution.id);
+                    const latestControl = execControls.at(-1);
+                    return latestControl?.error ? <p className="message error" key={latestControl.id}>{latestControl.action}: {latestControl.error}</p> : null;
+                })()}
                 <div className="factory-actions">{(["refresh", "pause", "resume", "cancel"] as const).map((action) => <button className="secondary" disabled={busy} key={action} onClick={() => {
                     try {
                         const overrides: unknown = JSON.parse(limits);

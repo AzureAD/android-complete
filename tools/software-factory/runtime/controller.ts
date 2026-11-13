@@ -396,7 +396,7 @@ export class NativeRuntime {
                                 this.factory.assertFresh(feature.id, execution.id);
                                 await this.registration(feature.id, execution, session);
                                 if (execution.kind !== "check") await this.shared?.assertRun(feature.id, execution.id);
-                                this.factory.store.updateExecution(feature.id, execution.id, { status: "running" });
+                                this.factory.store.updateExecution(feature.id, execution.id, { status: "running", error: null, errorCode: null });
                                 this.markControl(feature.id, control.id);
                                 const currentApproved = execution.usage?.approvedLimits ?? {};
                                 const effectiveLimits = Object.fromEntries(
