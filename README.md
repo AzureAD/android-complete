@@ -19,6 +19,12 @@ This repo supports an AI-driven development pipeline powered by GitHub Copilot a
 .\scripts\setup-ai-orchestrator.ps1
 ```
 
+For guided human input in the GitHub Copilot app, use the shared
+[Requirements Builder canvas](.github/extensions/RequirementsBuilder/README.md).
+It provides examples, reviewable AI suggestions, private saved drafts and
+Markdown export using the existing version-3 requirements template. It does
+not create work items or start workflows automatically.
+
 ### Shared MCP configuration
 
 The repository declares the same ten integrations for each supported client:
