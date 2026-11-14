@@ -19,6 +19,7 @@ Adding a scout step is now: write ONE module under steps/<phase>/ (auto-discover
 — no CLI command, no registry, no skill-reference edits.
 """
 from __future__ import annotations
+from dataclasses import MISSING, asdict
 import json as _json
 
 from orchestrator import cli_common as C, delivery as D
@@ -26,6 +27,7 @@ from orchestrator import mocks as mocks_mod
 from orchestrator import knowledge as kb
 from orchestrator.handlers import HandlerCatalog
 from orchestrator.outcomes import Blocked, Done, InProgress, as_dict
+from orchestrator.step_context import thaw
 from orchestrator.transitions import TransitionIntent
 from orchestrator.workflow import WorkflowDefinition
 import steps
@@ -97,13 +99,13 @@ def prepare_step(args, st, orch):
     forced_reopen = False
     if force_reopen:
         reopen_reason = (getattr(args, "owner_force_reason", "") or "").strip()
-        reopen_result = orch.reopen(
-            args.phase,
-            args.step,
-            reopen_reason,
-            force_owner=True,
+        reopen_result = orch.rerun_task(
+            args.phase, args.step, reason=reopen_reason,
+            confirmed_by=getattr(args, "confirmed_by", None) or st.owner_email,
+            parameters=_parse_params(getattr(args, "param", None)), cli=True,
+            prior_writer_stopped=bool(getattr(args, "prior_writer_stopped", False)),
         )
-        if not reopen_result.changed and "already pending" not in reopen_result.message:
+        if not reopen_result.changed:
             raise ValueError(reopen_result.message)
         forced_reopen = reopen_result.changed
     from orchestrator.write_review import continuation
@@ -123,7 +125,8 @@ def prepare_step(args, st, orch):
         raise ValueError("Agent steps run in-process via next, not step-action")
     intent = orch.step_action_intent(args.phase, args.step)
     refreshing = intent == TransitionIntent.REFRESH
-    params = handler.parse_parameters(values=_parse_params(getattr(args, "param", None)), cli=True)
+    pairs = getattr(args, "param", None)
+    params = handler.parse_parameters(values=_parse_params(pairs), cli=True) if pairs and not force_reopen else None
     spec = mocks_mod.load_mocks().get(f"{args.phase}.{args.step}") or {}
     outcome = orch.step_action_guard(args.phase, args.step)
     built = outcome is None
@@ -248,12 +251,57 @@ def cmd_step_action(args):
         out = prepare_step(args, st, orch)
         if out.get("execution_id") or out.get("state_changed"):
             C.save_state(st, args.runs_root, args.release)
-        out["work_dispatch"] = orch.status_report()["work_dispatch"]
+        out.update(C.guided_followup(orch))
+        out["status"] = {
+            "done": "done", "blocked": "failed", "in_progress": "waiting",
+            "needs_human": "needs_input", "needs_skill": "waiting",
+        }[out["kind"]]
         print(_json.dumps(out))
         return 0
     except ValueError as exc:
-        print(_json.dumps({"error": str(exc)}))
+        print(_json.dumps({"status": "failed", "error": str(exc), "permission_to_execute": False}))
         return 1
+
+
+def cmd_task(args):
+    state, orch = C.load_orch(args.runs_root, args.release, args.config)
+    handler = orch.handler(args.phase, args.step)
+    definition = handler.definition
+    rerun = getattr(args, "rerun", False) or args.cmd == "rerun"
+    if rerun:
+        if args.retry:
+            raise ValueError("--retry reconciles the same attempt; do not combine it with --rerun")
+        transition = orch.rerun_task(
+            args.phase, args.step, reason=args.reason or "",
+            confirmed_by=args.confirmed_by or state.owner_email,
+            parameters=_parse_params(args.param), cli=True,
+            prior_writer_stopped=args.prior_writer_stopped,
+        )
+        if not transition.changed:
+            raise ValueError(transition.message)
+        C.save_state(state, args.runs_root, args.release)
+        C.elog(args.runs_root, args.release).log(
+            "task_rerun", phase=args.phase, step=args.step, driver=args.reason)
+        args.param = []
+    if definition.kind.value != "auto":
+        return cmd_step_action(args)
+    parameters = (handler.parse_parameters(
+        handler.task_parameter_role, values=_parse_params(args.param), cli=True) if args.param else None)
+    action = orch.run_task(args.phase, args.step, retry=args.retry, parameters=parameters)
+    C.save_state(state, args.runs_root, args.release)
+    C.log_actions(C.elog(args.runs_root, args.release), [action], state=state)
+    status = ("done" if action.kind == "ran" else "needs_input"
+              if definition.implementation.value == "dummy" else "waiting"
+              if action.kind in ("waiting", "scheduled", "in_flight") else "failed")
+    print(_json.dumps({
+        "status": status, "summary": action.message,
+        "phase": args.phase, "step": args.step,
+        "attempt_id": (state.task_attempts.get(definition.key) or {}).get("id"),
+        "links": state.get_step(args.phase, args.step).links,
+        "permission_to_execute": False, "permission_to_send": False,
+        **C.guided_followup(orch),
+    }))
+    return 1 if status == "failed" else 0
 
 
 def cmd_reserve_step(args):
@@ -388,13 +436,77 @@ def cmd_step_info(args):
     step questions so the info is accurate (not guessed)."""
     k = kb.get_knowledge(args.phase, args.step)
     if getattr(args, "json", False):
-        print(_json.dumps({"phase": args.phase, "step": args.step, "knowledge": k}))
+        handler = _handler_info(args.config, args.phase, args.step)
+        print(_json.dumps({"phase": args.phase, "step": args.step, "knowledge": k,
+                           "owner_controls": handler}))
         return 0
+    controls = _handler_info(args.config, args.phase, args.step)
     if not k:
         print(f"No knowledge entry yet for {args.phase}.{args.step}. "
               f"Add one to config/knowledge.yaml.")
-        return 0
-    print(kb.render_knowledge(args.phase, args.step, k))
+    else:
+        print(kb.render_knowledge(args.phase, args.step, k))
+    print("Owner controls: rerun" + (", skip, complete-manually" if controls["skip"]
+                                    else "; approval gates still require their genuine decision"))
+    print("Public task inputs: " + (", ".join(item["name"] for item in controls["parameters"]) or "(none)"))
+    return 0
+
+
+def _handler_info(config_path, phase, step):
+    import yaml
+    with open(config_path, "r", encoding="utf-8") as fh:
+        workflow = WorkflowDefinition.compile(yaml.safe_load(fh))
+    handler = HandlerCatalog.compile(workflow, steps.get_step).get(phase, step)
+    schema = handler.parameters[handler.task_parameter_role]
+    return {
+        "rerun": True, "skip": not handler.definition.is_gate,
+        "complete_manually": not handler.definition.is_gate,
+        "approval_required": handler.definition.is_gate,
+        "parameters": [
+            {"name": item.name, "type": str(item.annotation),
+             "required": item.default is MISSING,
+             **({"default": thaw(item.default)} if item.default is not MISSING else {})}
+            for item in schema.fields
+        ],
+        "input_role": handler.task_parameter_role.value,
+        "commands": {"rerun": "rerun", "skip": "skip", "complete_manually": "complete-manually"},
+        "manual_outputs": "Owner-attested context only; provider bindings use the owning adoption/readback command.",
+    }
+
+def cmd_task_history(args):
+    state = C.load_state(args.runs_root, args.release)
+    key = state.key(args.phase, args.step)
+    attempt = state.task_attempts.get(key)
+    if not attempt and not any(
+            key in phase["step_keys"] for phase in (state.workflow_revision or {}).get("phases", [])):
+        raise ValueError(f"No such task in this release: {key}")
+    record = state.get_step(args.phase, args.step)
+    if args.details:
+        payload = {"attempt": attempt, "step": asdict(record)}
+    else:
+        def brief(value):
+            if not value:
+                return None
+            result = value.get("result")
+            return {
+                **{name: item for name, item in value.items() if name not in ("history", "result")},
+                "result": ({name: result[name] for name in ("verification", "machine_verified", "links")}
+                           if result else None),
+            }
+        payload = {
+            "attempt": brief(attempt),
+            "step": {"status": record.status, "note": record.note, "links": record.links},
+            "history": [
+                {"attempt": brief(entry.get("attempt")), "at": entry["at"],
+                 "status": entry["step"]["status"], "note": entry["step"]["note"],
+                 "links": entry["step"]["links"], "writer_stopped": entry["writer_stopped"],
+                 "unsettled_notifications": entry["notifications"],
+                 "execution_id": (entry["step"].get("execution") or {}).get("id")}
+                for entry in (attempt or {}).get("history", [])
+            ],
+        }
+    print(_json.dumps({"release": args.release, "phase": args.phase, "step": args.step, **payload,
+                       "permission_to_execute": False, "permission_to_send": False}))
     return 0
 
 
@@ -416,6 +528,27 @@ def cmd_gate_info(args):
 
 
 def register(sub):
+    task = sub.add_parser("task", aliases=["rerun"], help="Run one task; rerun starts a fresh, audited attempt")
+    task.add_argument("--release", required=True)
+    task.add_argument("--phase", required=True)
+    task.add_argument("--step", required=True)
+    task.add_argument("--param", action="append", default=[])
+    task.add_argument("--execution-id")
+    task.add_argument("--retry", action="store_true", help="Explicitly retry this task after repair")
+    task.add_argument("--rerun", action="store_true", help="Start a fresh attempt, retaining prior inputs/results")
+    task.add_argument("--reason", help="Owner's reason for a new attempt (required for rerun)")
+    task.add_argument("--confirmed-by", help="Confirming release owner; defaults to the configured owner")
+    task.add_argument("--prior-writer-stopped", action="store_true",
+                      help="Owner confirms the previous runner stopped; uncertain results remain in history")
+    task.set_defaults(func=cmd_task)
+
+    history = sub.add_parser("task-history", help="Inspect owner requests and preserved attempt results")
+    history.add_argument("--release", required=True)
+    history.add_argument("--phase", required=True)
+    history.add_argument("--step", required=True)
+    history.add_argument("--details", action="store_true", help="Include original outputs and receipts")
+    history.set_defaults(func=cmd_task_history)
+
     sp = sub.add_parser(
         "step-action",
         help="Resolve a migrated step into its uniform outcome JSON "
@@ -433,6 +566,8 @@ def register(sub):
                     help="Owner override: force-reopen the step before resolving action output")
     sp.add_argument("--owner-force-reason", default="",
                     help="Audit reason recorded when --owner-force-rerun is used")
+    sp.add_argument("--confirmed-by")
+    sp.add_argument("--prior-writer-stopped", action="store_true")
     sp.set_defaults(func=cmd_step_action)
 
     reserve = sub.add_parser(

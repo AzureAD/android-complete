@@ -219,7 +219,7 @@ def test_real_engine_preserves_named_test_input_and_recovers_without_duplicate_p
     assert step.data["suite_id"] == 800
     assert step.data["creations"]["parent"]["status"] == "created"
     suites.read_failure = None
-    orch.run_until_gate()
+    orch.run_until_gate(pending_only=False)
     step = st.get_step("bug_bash", C.ID)
     assert step.status == "done" and len(suites.posts) == 3
     assert suites.posts[0]["name"] == name

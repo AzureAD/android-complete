@@ -25,7 +25,10 @@ def cmd_checklist(args):
         # Keep the full checklist and deterministic card on the same snapshot.
         # Tool output alone is not a user-visible table: the skill must paste it.
         if attest:
-            print(_json.dumps(render.attest_prompt_payload(chk, args.release), indent=2))
+            payload = render.attest_prompt_payload(chk, args.release)
+            payload["progression_policy"] = runtime_report["progression_policy"]
+            payload["display_before_prompt"] = runtime_report["handoff_ready"]
+            print(_json.dumps(payload, indent=2))
         else:
             print(_json.dumps(chk, indent=2))
         return code
@@ -86,7 +89,7 @@ def cmd_sign(args):
     if chk["signed"]:
         print(f"Readiness signed at {chk['signed_at']}. Entry gate cleared — you can now start Phase 0.")
     else:
-        pending = [i["id"] for i in chk["items"] if not i["satisfied"]]
+        pending = [i["id"] for i in chk["items"] if i["required"] and not i["satisfied"]]
         print(f"Recorded {', '.join(ids)}. Still pending: {', '.join(pending)}")
         print(render.readiness_followup(chk, args.release))
     return 0

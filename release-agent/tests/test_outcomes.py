@@ -141,14 +141,14 @@ def test_input_mock_reaches_direct_build(tmp_path, monkeypatch):
     assert mockctx.mock_input("message", None) is None
 
 
-def test_dummy_shell_advances_without_approving_gate(tmp_path, monkeypatch):
+def test_dummy_shell_requires_actual_manual_completion_and_never_approves_gate(tmp_path, monkeypatch):
     orch = _orchestrator(tmp_path, monkeypatch, None)
     actions = orch.run_until_gate()
     record = orch.state.get_step("phase", "check")
 
-    assert [action.kind for action in actions] == ["ran", "gate"]
-    assert record.status == "done"
-    assert record.note == "[DUMMY] Check: no operation performed; implementation deferred."
+    assert [action.kind for action in actions] == ["reminder"]
+    assert record.status == "blocked"
+    assert "Manual-only" in record.note
     assert record.links == []
     assert record.data == {}
     assert record.execution is None

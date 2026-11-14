@@ -310,7 +310,7 @@ def test_amended_target_full_p3s3_downstream_and_manual_resolution_survive_retry
         assert escape(link["url"], quote=True) in invitation.payload["body"]
         assert N._plans(context(st))[0]["monthly"] == link
         matches = I.source_matches(context(st), "clone_plans_auth")
-        assert any(m["path"][-1] == "monthly_amendment" for m in matches)
+        assert any("monthly_amendment" in m["path"] and m["path"][-1] == "suite_id" for m in matches)
         reminder = UR.reminder_preconditions(effect_context(U.build, st, {"id": "unit-fill"}))
         assert any(m["path"][-1] == "monthly_amendment" for m in reminder)
         assert E.base_clone(st) == base

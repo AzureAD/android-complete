@@ -6,6 +6,7 @@ def _context(state):
     return _unit_context(state, role=HookRole.PREPARE, step_key="phase.effect")
 """Generic in-process effect ownership and crash-recovery contract."""
 from copy import deepcopy
+from dataclasses import dataclass
 
 import pytest
 import yaml
@@ -16,6 +17,8 @@ from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.handlers import HandlerCatalog
 from orchestrator.outcomes import Blocked, Done, InProgress, NeedsSkill
 from orchestrator.state import ReleaseState, StepState
+from orchestrator.authority import OwnStepData
+from orchestrator.evidence import StepData
 from orchestrator.workflow import (
     WorkflowConfigError,
     WorkflowDefinition,
@@ -101,6 +104,105 @@ def test_read_only_auto_step_keeps_direct_execution_path(tmp_path, monkeypatch):
     assert action.kind == "ran"
     assert orch.state.get_step("phase", "effect").status == "done"
     assert orch.state.get_step("phase", "effect").execution is None
+
+@dataclass(frozen=True)
+class _NamedTaskParameters:
+    name: str = "Original"
+
+
+def test_new_effect_attempt_accepts_public_inputs_and_preserves_original_results(tmp_path, monkeypatch):
+    calls = []
+
+    class Handler:
+        ID = "effect"
+        KIND = "agent"
+        EFFECT_MODE = "transactional"
+        EFFECT_RECOVERY = "frozen"
+        EVIDENCE = (OwnStepData(),)
+        PARAMETERS = {"prepare_effect": _NamedTaskParameters}
+        build = staticmethod(lambda context: pytest.fail("Use the effect protocol"))
+        prepare_effect = staticmethod(lambda context: {"name": context.parameters.name})
+
+        @staticmethod
+        def execute(context):
+            name = context.effect.execution["effect_input"]["name"]
+            calls.append(name)
+            return Done(name, updates=(StepData({"name": name, "resource_id": len(calls)}),))
+
+        reconcile = execute
+
+    state = ReleaseState(release_id="r", owner_email="owner@example.test")
+    orch = _orchestrator(tmp_path, monkeypatch, Handler, "transactional", state)
+    assert orch.run_task("phase", "effect", parameters={"name": "First plan"}).kind == "ran"
+    previous = state.get_step("phase", "effect")
+    with pytest.raises(ValueError, match="Use rerun"):
+        orch.run_task("phase", "effect", parameters={"name": "Second plan"})
+    before = deepcopy(state)
+    with pytest.raises(ValueError, match="unknown parameter"):
+        orch.rerun_task("phase", "effect", reason="New name", confirmed_by=state.owner_email,
+                        parameters={"typo": "Second plan"})
+    assert state == before
+
+    assert orch.rerun_task(
+        "phase", "effect", reason="Create a separately named plan", confirmed_by=state.owner_email,
+        parameters={"name": "Second plan"}).changed
+    assert calls == ["First plan"]
+    path = tmp_path / "release-state.json"
+    state.save(str(path))
+    loaded = ReleaseState.load(str(path))
+    orch = _orchestrator(tmp_path, monkeypatch, Handler, "transactional", loaded)
+    assert orch.run_task("phase", "effect").kind == "ran"
+    assert calls == ["First plan", "Second plan"]
+    assert loaded.get_step("phase", "effect").data["name"] == "Second plan"
+    assert loaded.task_attempts["phase.effect"]["history"][0]["step"]["data"] == previous.data
+    assert loaded.task_attempts["phase.effect"]["parameters"]["prepare_effect"]["name"] == "Second plan"
+    first_generation = loaded.task_attempts["phase.effect"]["generation"]
+    assert orch.rerun_task(
+        "phase", "effect", reason="Repeat without reentering the name",
+        confirmed_by=loaded.owner_email).changed
+    assert loaded.task_attempts["phase.effect"]["generation"] != first_generation
+    assert orch.run_task("phase", "effect").kind == "ran"
+    assert calls == ["First plan", "Second plan", "Second plan"]
+    assert len(loaded.task_attempts["phase.effect"]["history"]) == 2
+
+
+@pytest.mark.parametrize("mode", ("rerun", "manual", "skip"))
+def test_stopped_writer_override_archives_uncertainty_and_rejects_late_results(tmp_path, monkeypatch, mode):
+    calls = []
+
+    class Handler:
+        ID = "effect"
+        KIND = "agent"
+        EFFECT_MODE = "transactional"
+        EFFECT_RECOVERY = "frozen"
+        build = staticmethod(lambda context: pytest.fail("Use the effect protocol"))
+        prepare_effect = staticmethod(lambda context: {"name": "First plan"})
+
+        @staticmethod
+        def execute(context):
+            calls.append(True)
+            return Blocked("Provider acknowledgement lost")
+
+        reconcile = execute
+
+    state = ReleaseState(release_id="r", owner_email="owner@example.test")
+    orch = _orchestrator(tmp_path, monkeypatch, Handler, "transactional", state)
+    assert orch.run_task("phase", "effect").kind != "ran"
+    old_execution = deepcopy(state.get_step("phase", "effect").execution)
+    kernel = orch._transition_kernel()
+    before = deepcopy(state)
+    options = dict(mode=mode, reason="Owner checked and stopped the original runner",
+                   confirmed_by=state.owner_email)
+    assert not kernel.owner_control("phase", "effect", **options).changed
+    assert state == before
+    assert kernel.owner_control("phase", "effect", prior_writer_stopped=True, **options).changed
+    archived = state.task_attempts["phase.effect"]["history"][0]
+    assert archived["step"]["execution"] == old_execution
+    assert archived["writer_stopped"] is True
+    assert len(calls) == 1
+    assert not kernel.settle_execution("phase", "effect", old_execution["id"], Done("Late result")).changed
+    assert state.get_step("phase", "effect").status == {"rerun": "pending", "manual": "done",
+                                                      "skip": "skipped"}[mode]
 
 
 @pytest.mark.parametrize("mode", ["idempotent", "transactional"])
@@ -348,9 +450,9 @@ def test_owner_force_reopen_can_clear_blocked_transactional_effect(tmp_path, mon
     forced = _orchestrator(
         tmp_path, monkeypatch, Handler, "transactional", state
     ).reopen_step("phase", "effect", "owner override", force_owner=True)
-    assert forced.kind == "ran"
-    assert state.get_step("phase", "effect").status == "pending"
-    assert state.get_step("phase", "effect").execution is None
+    assert forced.kind == "idle"
+    assert state.get_step("phase", "effect").status == "blocked"
+    assert state.get_step("phase", "effect").execution is not None
 
 
 def test_parallel_dispatch_recovers_owned_transactional_effect(

@@ -14,6 +14,21 @@ from orchestrator.revision import revision_checked
 
 
 class StatusViewMixin:
+    def _completion_provenance(self, selection) -> dict:
+        counts = {"verified": 0, "owner_attested": 0, "waived": 0, "manual_only": 0}
+        for step in self._workflow_definition().step_by_key.values():
+            if not selection.phase(step.phase_id).included:
+                continue
+            record = self.state.get_step(step.phase_id, step.id)
+            if step.implementation.value == "dummy":
+                counts["manual_only"] += 1
+            if record.status == "skipped":
+                counts["waived"] += 1
+            elif record.status == "done" and selection.step(step.phase_id, step.id).complete:
+                counts["owner_attested" if record.by == "human"
+                       or record.data.get("manual_adoption") else "verified"] += 1
+        return counts
+
     def _active_phase_report(self, selection=None) -> Optional[dict]:
         """The first incomplete included phase, with its outstanding steps and
         whether its time-window is open (due). This is what the daily phase
@@ -49,7 +64,7 @@ class StatusViewMixin:
                 is_scout = kind == "scout"
                 is_attest = kind == "attest"
                 if s_done:
-                    status = "done"
+                    status = "skipped" if stp.status == "skipped" else "done"
                 elif continuing:
                     status = "scout"
                 elif s_blocked:
@@ -82,6 +97,9 @@ class StatusViewMixin:
                     "note": stp.note,          # agent result / block reason / detail
                     "execution": self.step_execution(phase["id"], sid) if not s_done else {},
                     "links": list(getattr(stp, "links", None) or []),  # durable refs to items evaluated
+                    "verification": ("waived" if stp.status == "skipped" else
+                                     "owner_attested" if stp.by == "human" else
+                                     "verified" if s_done else None),
                     "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_attest or s_blocked)),
                 })
             opens = selection.phase(phase["id"]).opens
@@ -210,6 +228,9 @@ class StatusViewMixin:
                 "execution": self.step_execution(current_phase_obj["id"], s["id"])
                              if s_state not in ("done", "skipped") else {},
                 "links": rec.get("links") or [],  # durable refs (wiki page, CG alerts)
+                "verification": ("waived" if rec.get("status") == "skipped" else
+                                 "owner_attested" if rec.get("by") == "human" else
+                                 "verified" if step_readiness.complete else None),
             })
         return out
 
@@ -341,6 +362,14 @@ class StatusViewMixin:
         chk = startup_checklist(chk, work_dispatch)
         report = {
             "release_id": self.state.release_id,
+            "execution_mode": self.state.execution_mode,
+            "completion_provenance": self._completion_provenance(selection),
+            "task_attempts": {
+                key: {"id": attempt["id"], "mode": attempt["mode"], "by": attempt["by"],
+                      "reason": attempt["reason"], "previous_attempts": len(attempt["history"]),
+                      "verification": (attempt["result"] or {}).get("verification")}
+                for key, attempt in self.state.task_attempts.items()
+            },
             "status": projected_status,
             "workflow_revision": revision_id(self.state.workflow_revision),
             "workflow_revision_problem": revision_problem or None,
@@ -358,7 +387,8 @@ class StatusViewMixin:
             "readiness_dispatch": readiness_dispatch,
             "work_dispatch": work_dispatch,
             "startup_automation": startup,
-            "readiness_pending": [i["id"] for i in chk["items"] if not i["satisfied"]],
+            "readiness_pending": [i["id"] for i in chk["items"]
+                                  if i["required"] and not i["satisfied"]],
             "blocked": chk["blocked"] or bool(revision_problem),
             "blocked_items": list(chk["blocked_items"]),
             "blocked_message": revision_problem or chk.get("blocked_message", ""),

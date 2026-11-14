@@ -1,6 +1,7 @@
 # Release readiness checklist — the ENTRY GATE.
-# The engine blocks (status = readiness_gate) until EVERY item is satisfied.
-# All items are equally required — there is no per-item priority.
+# Required release-policy checks block progression until satisfied.
+# `required: false` capabilities are checked at their consuming operations,
+# not as admission requirements for unrelated interactive work.
 #
 # The ONLY distinction is WHO resolves an item (the `verify` field):
 #   auto    -> Scout resolves it (verifies programmatically). Result is pass or fail;
@@ -18,9 +19,9 @@
 
 title: "Release readiness — entry gate"
 instructions: >
-  Clear every item before Phase 0 can start. Scout verifies the auto items; you
-  attest the rest. Every item is required — the release cannot start until all are
-  satisfied.
+  Complete the required release-policy checks and explicit human confirmations.
+  Integration capabilities marked "when used" do not block unrelated tasks.
+  Status and fact recording never authorize a send, upload, or release approval.
 blocked_message: >
   This item is required and is not satisfied, so the release cannot start. Resolve
   it — or, if you cannot, hand the release to another engineer who can (notify your
@@ -34,6 +35,7 @@ items:
   #   (list of {name,url}) and are rendered as a clickable reference list BELOW the table.
   #   For build_access the detail + links are generated from the live check results.
   - id: build_access
+    required: false
     label: "Build definitions accessible"
     text: "Release build definitions are accessible"
     verify: auto
@@ -64,6 +66,7 @@ items:
     verifier: ccd_confirmed
 
   - id: mcp_servers
+    required: false
     label: "MCP servers registered"
     text: "The MCP servers the release needs (ICM on-call, Kusto/ADX telemetry, Teams comms) are registered in Scout"
     detail: "Scout checks the ICM + Kusto/ADX + Teams MCP servers are registered in your Scout config (needed for the on-call and telemetry checks, and to fill Teams comms gaps WorkIQ lacks)."
@@ -71,6 +74,7 @@ items:
     verifier: mcp_servers
 
   - id: m365_access
+    required: false
     label: "M365 connector capabilities"
     text: "Scout can read the owner's profile/calendar, complete configured roster, Teams membership and report site/library"
     detail: "Scout discovers each user's actual tools and structured fetch route (exposed MCP OR existing native WorkIQ CLI), then runs m365-capabilities with fresh account/target-bound profile/calendar, exact roster/all member pages, Teams and report site/library observations. Registration, CLI fetch help, az login or a saved routing recipe alone is not access proof. Missing/failed evidence holds; never substitute people search or WorkIQ Ask. The removed custom remote Hosted WorkIQ registration stays removed. Future meeting/chat access and actual sends/uploads are checked at their owning steps."
@@ -79,6 +83,7 @@ items:
     verifier: m365_capabilities
 
   - id: silent_perms
+    required: false
     label: "Silent-run permissions"
     text: "Permissions allow fully unattended runs — shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are auto-approved so scheduled work and the on-call/telemetry checks never stall on a prompt"
     detail: "Scout checks shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are all auto-approved so the daily automation and the readiness on-call/telemetry checks run silently when Scout isn't focused."
@@ -98,6 +103,7 @@ items:
     opt_out: true
 
   - id: teams_notify
+    required: false
     label: "Scout Teams notifications"
     text: "The daily release digest can reach you over the Scout Teams bot (in addition to email)"
     detail: "Scout checks the Teams relay is connected and the Scout bot is reachable, so the hourly `tick` digest can be delivered to you in Teams as well as email. Falls back to email-only if Teams isn't reachable."
@@ -113,6 +119,7 @@ items:
   # `detail` is the table-cell text and MAY contain inline markdown links
   # (they render fine inside Scout table cells).
   - id: adx_access
+    required: false
     label: "ADX release dashboard"
     text: "You can query the ADX release-telemetry cluster (Scout verifies via Kusto)"
     detail: "Scout verifies you can query the [ADX release dashboard](https://dataexplorer.azure.com/dashboards/ab7abd7e-c36f-4ff0-88a7-aaa3ec014bd7)'s cluster."

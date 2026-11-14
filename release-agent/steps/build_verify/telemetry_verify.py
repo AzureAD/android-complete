@@ -18,6 +18,7 @@ skill runs it, reads the row count, and calls the `record-telemetry` follow-up (
 else `attention` — which surfaces the Android-Core-Team heads-up as a blocked task).
 """
 from __future__ import annotations
+from dataclasses import dataclass
 
 from orchestrator.step_context import StepContext, thaw
 
@@ -29,6 +30,17 @@ from steps.lib.mockctx import MISSING
 
 ID = "telemetry_verify"
 KIND = "scout"
+
+@dataclass(frozen=True)
+class BuildParameters:
+    version: str | None = None
+
+    def __post_init__(self):
+        if self.version is not None and not re.fullmatch(r"\d+\.\d+\.\d+", self.version):
+            raise ValueError("Version must be the numeric three-part APK version")
+
+
+PARAMETERS = {"build": BuildParameters}
 
 # The telemetry table + version column are this step's QUERY CONTRACT (coupled 1:1 to the
 # parsing below), so they live here. The CLUSTER + database are the same ADX target the
@@ -82,7 +94,9 @@ def _query(version: str) -> str:
 def _version(context):
     """Use the current verified ECS RC APK, stripping its build-number RC suffix. A `version`
     mock overrides discovery. Returns (version, detail) — version is None on failure."""
-    ov = context.input("version", MISSING)
+    ov = getattr(context.parameters, "version", None)
+    if ov is None:
+        ov = context.input("version", MISSING)
     if ov is not MISSING and ov:
         return (str(ov).strip(), "")
     from steps.build_verify._common import latest_rc
@@ -122,7 +136,9 @@ def build(context: StepContext):
         "ui_test_build_id": (auth.get("test") or {}).get("run_id"),
         "version_source": "ADO buildNumber: <AppInfo_Version>-rc<build_id>",
     }
-    if context.input("version", MISSING) is not MISSING:
+    if getattr(context.parameters, "version", None) is not None:
+        source = {"version_source": "explicit owner selection"}
+    elif context.input("version", MISSING) is not MISSING:
         source = {"version_source": "explicit test override"}
     return NeedsSkill(
         tool="kusto_query",

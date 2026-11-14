@@ -40,11 +40,11 @@ def _markdown_url(value: str) -> str:
 
 def _execution_guidance(execution: dict, status=None) -> str:
     if execution.get("notification_id"):
-        return ("Scout needs to check whether the previous notification was delivered. "
-                "It will not resend a message whose outcome is unknown.")
+        return ("Do not repeat automatically. Check the previous notification's delivery. "
+                "A new attempt or manual closure requires the owner's stopped-runner confirmation.")
     if execution.get("effect_mode"):
-        return ("Scout needs to reconcile the previous automatic action. "
-                "It will retry only when the action's recovery rules prove that safe.")
+        return ("Do not repeat automatically. Reconcile the previous action, or explicitly request "
+                "a fresh attempt/manual closure after confirming the prior runner stopped.")
     if execution.get("approval"):
         return ("Scout needs to check the existing pipeline approval. "
                 "It will recover that decision rather than submit another approval.")
@@ -145,6 +145,8 @@ def readiness_table(chk: dict, release_id: str) -> str:
         status = "pending" if stale else it["status"]
         box = _ICON.get(status, "⬜")
         typ = "`[auto]`" if it["verify"] == "auto" else "`[attest]`"
+        if not it.get("required", True):
+            typ += " (when used)"
         label = it.get("label") or it["id"]
         if it.get("checks") and not stale:
             parts = [f"[{c['name']}]({c['url']}) {'✓' if c.get('ok') else '✗'}"
@@ -170,9 +172,9 @@ def readiness_table(chk: dict, release_id: str) -> str:
         lines.append("⛔ **Blocked** — cannot start: " + ", ".join(labels) + ".")
         lines.append(_cell(chk["blocked_message"]))
     elif chk["signed"]:
-        lines.append("✅ **All items satisfied — entry gate cleared.** Ready to start Phase 0.")
+        lines.append("✅ **Required readiness satisfied — entry gate cleared.** Capabilities are checked when used.")
     else:
-        pending = [i["label"] for i in chk["items"] if not i["satisfied"]]
+        pending = [i["label"] for i in chk["items"] if i.get("required", True) and not i["satisfied"]]
         lines.append("**Outstanding:** " + ", ".join(pending))
     if not chk["signed"]:
         lines.extend(["", readiness_followup(chk, release_id)])
@@ -214,7 +216,7 @@ def attest_prompt(chk: dict) -> str:
         return "Readiness is blocked; resolve the recorded decline before attesting."
     # auto checks not yet complete
     auto_pending = [i["label"] for i in chk["items"]
-                    if i["verify"] == "auto" and not i["satisfied"]]
+                    if i.get("required", True) and i["verify"] == "auto" and not i["satisfied"]]
     if auto_pending:
         return ("Automated checks still pending: " + ", ".join(auto_pending)
                 + " — resolve these before the attestations.")
@@ -227,7 +229,7 @@ def _attest_prompt_block(chk: dict) -> str:
     at least one attest item is still outstanding."""
     if chk.get("blocked"):
         return ""
-    auto = [i for i in chk["items"] if i["verify"] == "auto"]
+    auto = [i for i in chk["items"] if i.get("required", True) and i["verify"] == "auto"]
     if auto and not all(i["satisfied"] for i in auto):
         return ""  # auto checks not finished — don't prompt for attestations yet
     outstanding = [i for i in chk["items"]
@@ -426,6 +428,43 @@ def work_followup(plan: dict) -> str:
             f"Run `{item['command']}`."
             for item in startup["recoveries"] if item["slug"] not in queued_startup)
         lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
+    return "\n".join(lines)
+
+
+def status_brief(r: dict) -> str:
+    """Local inspection result; the full checklist is an explicit detail view."""
+    focus = r.get("gate") or r.get("action") or {}
+    next_step = focus.get("step_name") or r.get("current_step_name")
+    label = ("Unattended setup needed" if r["status"] == "automation"
+             else _STATE_LABEL.get(r["status"], r["status"]))
+    lines = [
+        f"Release {r['release_id']} ({r.get('execution_mode', 'interactive')})",
+        f"Checklist: {r['done']}/{r['total']} ({r['percent']}%). "
+        + label,
+    ]
+    if r.get("current_phase_name"):
+        lines.append(f"Phase: {r['current_phase_name']}")
+    startup = r.get("startup_automation")
+    if startup is not None and not startup["complete"]:
+        lines.append("Next: reconcile the unattended worker, or select interactive mode with set-mode.")
+    elif r.get("readiness") and not r["readiness_signed"]:
+        pending = [item["label"] for item in r["readiness"]["items"]
+                   if item.get("required", True) and not item["satisfied"]]
+        if pending:
+            lines.append("Required: " + ", ".join(pending))
+    elif next_step:
+        lines.append(f"Next: {next_step}")
+    if r.get("workflow_revision_problem"):
+        lines.append(r["workflow_revision_problem"])
+    elif r.get("halt_reason"):
+        lines.append(f"Hold: {r['halt_reason']}")
+    counts = r.get("completion_provenance") or {}
+    if counts.get("waived") or counts.get("owner_attested") or counts.get("manual_only"):
+        lines.append(
+            f"Provenance: {counts.get('verified', 0)} verified, "
+            f"{counts.get('owner_attested', 0)} owner-attested, "
+            f"{counts.get('waived', 0)} waived; {counts.get('manual_only', 0)} manual-only tasks."
+        )
     return "\n".join(lines)
 
 

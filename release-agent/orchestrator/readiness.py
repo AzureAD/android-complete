@@ -7,10 +7,11 @@ and declines, and decides whether the gate is signed/blocked.
 Returns structured data only. Rendering lives in render.py so a different
 interface (web UI, other frontend) can present the same data its own way.
 
-Model: every item is equally required. The only distinction is WHO resolves it:
+Required release policy blocks progression; integration capabilities are checked
+when their consuming operation needs them. Each item also declares WHO resolves it:
   auto   -> Scout verifies it programmatically (pass/fail)
   attest -> the engineer confirms it
-If any item is unsatisfied the gate is not signed. If the engineer declares they
+If a required item is unsatisfied the gate is not signed. If the engineer declares they
 cannot satisfy an item (decline), the gate is blocked until resolved / handed off.
 """
 from __future__ import annotations
@@ -21,7 +22,8 @@ from .state import ReleaseState, _now
 
 def dispatch_plan(chk: dict, release_id: str, *, suspension: str = "") -> dict:
     """One host-executed readiness queue for every CLI/presentation surface."""
-    auto = [item for item in chk["items"] if item["verify"] == "auto" and not item["satisfied"]]
+    auto = [item for item in chk["items"] if item.get("required", True)
+            and item["verify"] == "auto" and not item["satisfied"]]
     # A previously passing read with an invalidated binding needs a fresh probe.
     pending = [item for item in auto if item["status"] in ("pending", "pass", "degraded")]
     failed = [item["id"] for item in auto if item["status"] == "fail"]
@@ -164,6 +166,7 @@ class ReadinessGate:
                 "detail": it.get("detail"),
                 "links": links,
                 "verify": it.get("verify", "attest"),   # auto | attest (who resolves it)
+                "required": it.get("required", True),
                 "source": it.get("source"),              # None (python) | "scout" (skill runs it via MCP)
                 "verifier": it.get("verifier"),
                 "team_id": it.get("team_id"),            # for scout-assisted checks (e.g. on-call team)
@@ -203,7 +206,7 @@ class ReadinessGate:
     @property
     def signed(self) -> bool:
         items = self.config.get("items", []) if self.config else []
-        return all(self._item_satisfied(item) for item in items)
+        return all(self._item_satisfied(item) for item in items if item.get("required", True))
 
     @property
     def signed_at(self):
@@ -212,6 +215,7 @@ class ReadinessGate:
         times = [
             (self.state.readiness_items.get(item["id"], {}) or {}).get("at")
             for item in (self.config or {}).get("items", [])
+            if item.get("required", True)
         ]
         return max((value for value in times if value), default=None)
 
@@ -224,7 +228,8 @@ class ReadinessGate:
         return [
             item["id"]
             for item in (self.config or {}).get("items", [])
-            if (self.state.readiness_items.get(item["id"], {}) or {}).get("status")
+            if item.get("required", True)
+            and (self.state.readiness_items.get(item["id"], {}) or {}).get("status")
             == "unable"
         ]
 
@@ -305,14 +310,13 @@ class ReadinessGate:
         return self.checklist()
 
     def sign(self, item_ids=None, note=None) -> dict:
-        """Attest human (attest) items and run auto verifiers. item_ids=None
+        """Record human facts without probing integrations. item_ids=None
         attests every attest item (library convenience — the CLI never does this;
         it requires explicit item ids). Auto items are only set by verification —
         they cannot be hand-waved through. `note` records the human's confirmation
         as evidence on each attested item. Signs when all items are satisfied."""
         if not self.config:
             return self.checklist()
-        self.verify()  # auto items (pass/fail)
         all_items = self.config.get("items", [])
         attest_ids = [it["id"] for it in all_items if it.get("verify", "attest") == "attest"]
         targets = attest_ids if item_ids is None else [i for i in item_ids if i in attest_ids]
@@ -325,8 +329,7 @@ class ReadinessGate:
         return self.checklist()
 
     def decline(self, item_ids: list) -> dict:
-        """The engineer declares they CANNOT satisfy one or more items. Every item
-        is required, so any declined item blocks the gate until resolved / handed off.
+        """Record inability to satisfy items; only required items block progression.
         Unknown IDs reject the whole request without changing readiness facts."""
         by_id = {it["id"]: it for it in (self.config or {}).get("items", [])}
         targets = item_ids or []

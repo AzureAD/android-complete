@@ -43,6 +43,7 @@ class StepDefinition:
     approval_command: Optional[str]
     write_command: Optional[str]
     write_precondition: str
+    manual_result: bool
     repeatable: bool
     pollable: bool
     refresh_invalidation: str
@@ -150,7 +151,7 @@ class WorkflowDefinition:
                     {
                         "id", "name", "kind", "owner", "source", "gate",
                         "attest", "depends_on", "maps_to", "approval_command",
-                        "write_command", "write_precondition", "repeatable",
+                        "write_command", "write_precondition", "manual_result", "repeatable",
                         "pollable", "refresh_invalidation", "effect_mode",
                         "effect_recovery", "effect_retry", "implementation",
                     },
@@ -162,6 +163,9 @@ class WorkflowDefinition:
                     )
                 step_ids.add(step_id)
                 kind = _classify_step(phase_id, step_id, raw_step)
+                manual_result = raw_step.get("manual_result", False)
+                if type(manual_result) is not bool or manual_result and kind != StepKind.EXTERNAL:
+                    raise WorkflowConfigError(f"Only external steps may declare manual_result: {phase_id}.{step_id}")
                 try:
                     implementation = StepImplementation(
                         raw_step.get("implementation", StepImplementation.HANDLER.value)
@@ -338,6 +342,7 @@ class WorkflowDefinition:
                     approval_command=approval_command,
                     write_command=write_command,
                     write_precondition=write_precondition,
+                    manual_result=manual_result,
                     repeatable=repeatable,
                     pollable=pollable,
                     refresh_invalidation=refresh_invalidation,
@@ -350,7 +355,6 @@ class WorkflowDefinition:
                 steps.append(step)
                 step_by_key[step.key] = step
 
-            _validate_dependencies(phase_id, execution, steps)
             phases.append(
                 PhaseDefinition(
                     id=phase_id,
@@ -363,6 +367,7 @@ class WorkflowDefinition:
                 )
             )
 
+        _validate_dependencies(phases)
         phase_by_id = {phase.id: phase for phase in phases}
         return cls(
             version=int(config.get("version", 1)),
@@ -378,6 +383,11 @@ class WorkflowDefinition:
     def step(self, phase_id: str, step_id: str) -> Optional[StepDefinition]:
         return self.step_by_key.get(f"{phase_id}.{step_id}")
 
+    @staticmethod
+    def dependency_keys(step: StepDefinition) -> tuple[str, ...]:
+        return tuple(dep if "." in dep else f"{step.phase_id}.{dep}"
+                     for dep in step.depends_on)
+
     def invalidation_closure(
         self, phase_id: str, step_id: str
     ) -> tuple[StepDefinition, ...]:
@@ -386,36 +396,17 @@ class WorkflowDefinition:
         target = self.step(phase_id, step_id)
         if not phase or not target:
             return ()
-        phase_index = next(
-            index for index, candidate in enumerate(self.phases)
-            if candidate.id == phase_id
-        )
         affected = {target.key}
         changed = True
         while changed:
             changed = False
-            for candidate in phase.steps:
+            for candidate in self.step_by_key.values():
                 if candidate.key in affected:
                     continue
-                if phase.execution == "sequential":
-                    target_index = next(
-                        index for index, item in enumerate(phase.steps)
-                        if item.id == step_id
-                    )
-                    dependent = next(
-                        index for index, item in enumerate(phase.steps)
-                        if item.id == candidate.id
-                    ) > target_index
-                else:
-                    dependent = any(
-                        f"{phase_id}.{dependency}" in affected
-                        for dependency in candidate.depends_on
-                    )
+                dependent = any(key in affected for key in self.dependency_keys(candidate))
                 if dependent:
                     affected.add(candidate.key)
                     changed = True
-        for later in self.phases[phase_index + 1:]:
-            affected.update(step.key for step in later.steps)
         return tuple(
             step
             for phase_def in self.phases
@@ -531,23 +522,25 @@ def _validate_compatibility_metadata(
         )
 
 
-def _validate_dependencies(
-    phase_id: str, execution: str, steps: list[StepDefinition]
-) -> None:
-    by_id = {step.id: step for step in steps}
-    positions = {step.id: index for index, step in enumerate(steps)}
-    for step in steps:
-        for dependency in step.depends_on:
+def _validate_dependencies(phases: list[PhaseDefinition]) -> None:
+    by_id = {step.key: step for phase in phases for step in phase.steps}
+    positions = {step.key: (pi, si) for pi, phase in enumerate(phases)
+                 for si, step in enumerate(phase.steps)}
+    by_phase = {phase.id: phase for phase in phases}
+    for step in by_id.values():
+        for dependency in WorkflowDefinition.dependency_keys(step):
             if dependency not in by_id:
                 raise WorkflowConfigError(
-                    f"Step {step.key} depends on unknown step {phase_id}.{dependency}."
+                    f"Step {step.key} depends on unknown step {dependency}."
                 )
-            if dependency == step.id:
+            if dependency == step.key:
                 raise WorkflowConfigError(f"Step {step.key} cannot depend on itself.")
-            if execution == "sequential" and positions[dependency] > positions[step.id]:
+            phase = by_phase[step.phase_id]
+            if (positions[dependency][0] > positions[step.key][0]
+                    or phase.execution == "sequential" and positions[dependency] > positions[step.key]):
                 raise WorkflowConfigError(
                     f"Sequential step {step.key} cannot depend on later step "
-                    f"{phase_id}.{dependency}."
+                    f"{dependency}."
                 )
 
     visiting: set[str] = set()
@@ -556,14 +549,14 @@ def _validate_dependencies(
     def visit(step_id: str, path: tuple[str, ...]) -> None:
         if step_id in visiting:
             cycle = " -> ".join((*path, step_id))
-            raise WorkflowConfigError(f"Dependency cycle in phase {phase_id}: {cycle}")
+            raise WorkflowConfigError(f"Dependency cycle: {cycle}")
         if step_id in visited:
             return
         visiting.add(step_id)
-        for dependency in by_id[step_id].depends_on:
+        for dependency in WorkflowDefinition.dependency_keys(by_id[step_id]):
             visit(dependency, (*path, step_id))
         visiting.remove(step_id)
         visited.add(step_id)
 
-    for step in steps:
-        visit(step.id, ())
+    for step in by_id.values():
+        visit(step.key, ())

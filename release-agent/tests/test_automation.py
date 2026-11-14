@@ -36,7 +36,7 @@ def test_teams_notify_is_scout_optout_item():
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
-    assert not orch.gate.signed
+    assert orch.gate.signed and not tn["required"]
     # degraded (Teams unreachable → email only) satisfies the opt-out item
     res = orch.gate.record_check("teams_notify", "degraded", "Teams unreachable — email only")
     assert "error" not in res
@@ -206,7 +206,7 @@ def test_on_demand_obligation_survives_trigger_worker_race():
 
     st = ReleaseState(
         release_id="2026-09", ccd="2026-09-09",
-        timezone="America/Los_Angeles")
+        timezone="America/Los_Angeles", execution_mode="unattended")
     Orchestrator(CONFIG, st, mocks={})
     st.set_step(
         "ccd", "localization",
@@ -286,7 +286,8 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
     from orchestrator import cli
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
-        state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles")
+        state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles",
+                             execution_mode="unattended")
         state.readiness_items["ccd_confirmed"] = {"status": "pass"}
         C.save_state(state, d, rid)
         base = ["--runs-root", d, "automation", "plan", "--release", rid, "--json"]
@@ -515,7 +516,7 @@ def test_tick_advances_and_reports(tmp=None):
         # signed release, CCD reached so Phase 0 is open
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com")
+                          ccd_source="default", owner_email="o@x.com", execution_mode="unattended")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
@@ -558,7 +559,7 @@ def test_tick_dedup_same_day():
         rid = "2026-07"
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com")
+                          ccd_source="default", owner_email="o@x.com", execution_mode="unattended")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
@@ -591,7 +592,7 @@ def test_tick_payload_carries_teams_block_when_enabled():
         rid = "2026-07"
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com")
+                          ccd_source="default", owner_email="o@x.com", execution_mode="unattended")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
@@ -666,7 +667,7 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
         rid = "2026-09"
         st = ReleaseState(release_id=rid, ccd="2026-09-09", target_month="2026-10",
                           owner_email="owner@microsoft.com",
-                          owner_name="Release Owner")
+                          owner_name="Release Owner", execution_mode="unattended")
         _ready_state(st)
         cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
         preflight = next(p for p in cfg["phases"] if p["id"] == "preflight")

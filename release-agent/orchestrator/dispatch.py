@@ -6,6 +6,8 @@ from orchestrator.release_contract import DispatchAction, LifecycleStatus
 
 def _held_resume_command(release: str, step, execution: dict | None) -> str:
     execution = execution or {}
+    if step.kind.value == "auto":
+        return f"task --release {release} --phase {step.phase_id} --step {step.id} --retry"
     execution_id = execution.get("id")
     if not execution_id:
         return f"step-action --release {release} --phase {step.phase_id} --step {step.id}"
@@ -26,7 +28,7 @@ def phase_plan(orch, selection, readiness):
         "phase": selection.frontier.id if selection.frontier else None,
         "as_of": orch.as_of.isoformat(),
         "pending_work": [], "held_work": [], "deferred_work": [],
-        "handoff_command": f"status --release {release} --handoff --json --no-pipeline-check",
+        "handoff_command": f"status --release {release} --details --handoff --json --no-pipeline-check",
         "permission_to_execute": False, "permission_to_send": False,
     }
     if selection.suspension in (
@@ -198,9 +200,19 @@ def owner_prompt_payload(report: dict) -> dict | None:
             ),
             "answers": [
                 {
-                    "title": "Fixed — rerun",
-                    "description": "Rerun the owning check after a real fix.",
+                    "title": "Fixed — retry",
+                    "description": "Recheck/reconcile the same attempt after a real fix.",
+                    "action": "retry",
+                },
+                {
+                    "title": "New attempt / inputs",
+                    "description": "Start a new audited attempt, keeping prior results.",
                     "action": "rerun",
+                },
+                {
+                    "title": "Completed manually",
+                    "description": "Record owner-attested completion without claiming provider verification.",
+                    "action": "complete-manually",
                 },
                 {
                     "title": "Override",
@@ -213,7 +225,7 @@ def owner_prompt_payload(report: dict) -> dict | None:
                     "action": "hold",
                 },
             ],
-            "recommendedIndex": 2,
+            "recommendedIndex": 4,
         }
     if action.get("execution"):
         return None
@@ -228,7 +240,7 @@ def owner_prompt_payload(report: dict) -> dict | None:
         "answers": [
             {
                 "title": "Completed",
-                "description": "Mark the step done and continue.",
+                "description": "Record completion of this task without starting other work.",
                 "action": "done",
             },
             {
@@ -249,20 +261,28 @@ def owner_prompt_payload(report: dict) -> dict | None:
 def decorate_handoff_contract(report: dict) -> dict:
     """Attach machine-readable handoff cues to a status snapshot."""
     plan = report.get("work_dispatch") or {}
+    report["progression_policy"] = "automatic_until_input_or_wait"
     report["handoff_ready"] = bool(plan.get("may_return_to_user"))
     report["must_continue_automatic_work"] = not report["handoff_ready"]
+    report["display_before_prompt"] = report["handoff_ready"]
     owner_prompt = owner_prompt_payload(report)
     if owner_prompt:
+        owner_prompt["display_before_prompt"] = True
         report["owner_prompt"] = owner_prompt
     else:
         report.pop("owner_prompt", None)
+    if report["handoff_ready"]:
+        from orchestrator.render import status_view
+        report["display_markdown"] = status_view(report)
+    else:
+        report.pop("display_markdown", None)
     return report
 
 
 def startup_plan(orch, selection):
     """Registry-backed startup bookkeeping, not a live provider availability claim."""
     reader = orch.automation_entries
-    if reader is None:
+    if reader is None or orch.state.execution_mode != "unattended":
         return None
     from orchestrator.automations import load_defs, _provider_defaults
     from orchestrator.registry import has_creation_receipt

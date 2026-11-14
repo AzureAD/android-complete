@@ -252,7 +252,13 @@ def _prompt_for(spec: dict, release: str) -> str:
         f"intents need owner-reviewed abandon-prepared with fresh absence evidence. "
         f"This is a finally block: "
         f"execute it even on silence, stopped work, or errors. Halts suspend, not delete.")
-    protocol = delivery.PROTOCOL.replace("<release>", release) + (
+    protocol = (
+        "Before every release command, pass the global --scheduled flag before its subcommand. "
+        "If it reports interactive mode, stop new scheduled work. Owning receipt acknowledgement "
+        "remains permitted; never discard an in-flight result. Path discovery is read-only and "
+        "does not need --scheduled. Attempt each operation at most once per unchanged progress "
+        "snapshot; no progress returns a concrete wait/input/failure instead of another loop.\n"
+        + delivery.PROTOCOL.replace("<release>", release)) + (
         "\nFor every release-advancing task, inspect work_dispatch after each result. "
         "A sibling failure/owner gate does not cancel independent pending_work. "
         "Drain only eligible work through its owning protocol; never bypass scope, consent, "
@@ -494,6 +500,8 @@ def _producer_applied(state, spec):
 
 def ensure_reason(state, spec, config_path, selection=None, *, ignore_holds=False):
     """Why a declared worker is not desired now; no provider calls or mutations."""
+    if state.execution_mode != "unattended":
+        return "Interactive mode does not provision unattended workers"
     if selection is None:
         from orchestrator.engine import Orchestrator
         selection = Orchestrator(config_path, state, mocks={}).scheduling()

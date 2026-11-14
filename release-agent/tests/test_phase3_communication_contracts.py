@@ -1,18 +1,19 @@
 """Focused Phase-3 communication regressions; provider calls are never required."""
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
+import json
 from html import escape
 
 import pytest
 
-from orchestrator import delivery as D
+from orchestrator import delivery as D, cli, cli_common as C
 from steps.bug_bash import send_invite as S
 from steps.bug_bash import activate_chat as A
 from steps.bug_bash import notify_native_auth as N
 from tests._context import context, invoke
 from tests._context import fresh_orchestrator
 from tests._harness import _invite_state, _active_step, CONFIG
-from orchestrator.state import StepState
+from orchestrator.state import ReleaseState, StepState
 from steps.lib import mockctx
 from tools import invite as I
 from tools import bugbash_meeting as M
@@ -23,6 +24,75 @@ from tests.test_bugbash_chat_binding import observations as chat_observations
 def invitation(st=None):
     with mockctx.active({"now": "2026-09-11T10:00:00-07:00", "flags": "{}"}):
         return invoke(S.build, st or _invite_state())
+
+
+def existing_invitation_result(state):
+    event_id = "owner-existing-event"
+    event = {
+        "id": event_id, "subject": "Owner's existing release Bug Bash",
+        "isCancelled": False, "isOnlineMeeting": True,
+        "organizer": {"emailAddress": {"address": state.owner_email}},
+        "attendees": [{"type": "required", "emailAddress": {"address": "team@example.test"}}],
+        "start": {"dateTime": "2026-09-11T09:00:00", "timeZone": "UTC"},
+        "end": {"dateTime": "2026-09-11T10:00:00", "timeZone": "UTC"},
+        "onlineMeeting": {"joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_owner%40thread.v2/0"},
+    }
+
+    def observation(tool, arguments, result):
+        return {"version": 1, "tool": tool, "arguments": arguments,
+                "account": state.owner_email, "observed_at": datetime.now(timezone.utc).isoformat(),
+                "result": result}
+
+    return {
+        "release": state.release_id, "ccd": state.ccd, "event_id": event_id,
+        "profile": observation(M.PROFILE_TOOL, {}, {"id": "owner-id", "mail": state.owner_email}),
+        "event": observation(M.EVENT_TOOL, M.event_arguments({"event_id": event_id}), event),
+    }
+
+
+def test_existing_invitation_adoption_preserves_provenance_without_sending(tmp_path, capsys):
+    state = _active_step(ReleaseState(
+        release_id="2026-09", ccd="2026-09-09", owner_email="owner@example.test"),
+        "bug_bash", S.ID)
+    state.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": 900}))
+    state.set_step("bug_bash", "clone_plans_auth", StepState(
+        status="done", data={"plan_id": 901, "suite_id": 902}))
+    C.save_state(state, str(tmp_path), state.release_id)
+    value = existing_invitation_result(state)
+    path = tmp_path / "existing-invite.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    assert cli.main(["--runs-root", str(tmp_path), "adopt-bugbash-invite",
+                     "--release", state.release_id, "--result-file", str(path),
+                     "--confirmed-by", state.owner_email, "--reason",
+                     "Use the invitation I sent for this release"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    saved = C.load_state(str(tmp_path), state.release_id)
+    invite = S.delivered_invite(context(saved))
+    assert result["status"] == "done" and not result["permission_to_send"]
+    assert invite["event_id"] == value["event_id"] and invite["adoption_hash"]
+    assert "notification_id" not in invite
+    assert not saved.notification_deliveries
+    assert A.build(context(saved)).kind == "needs_skill"
+    conditions = A.binding_preconditions(context(saved), invite)
+    assert any(item["path"] == ["steps", "bug_bash.send_invite", "data", "external_adoption"]
+               for item in conditions)
+    assert not any(item["path"][0] == "notification_deliveries" for item in conditions)
+
+
+@pytest.mark.parametrize("damage", ["release", "owner", "attendees", "time"])
+def test_existing_invitation_adoption_rejects_mismatched_provider_evidence(damage):
+    state = ReleaseState(release_id="2026-09", ccd="2026-09-09", owner_email="owner@example.test")
+    value = existing_invitation_result(state)
+    if damage == "release":
+        value["release"] = "another-release"
+    elif damage == "owner":
+        value["event"]["result"]["organizer"]["emailAddress"]["address"] = "other@example.test"
+    elif damage == "attendees":
+        value["event"]["result"]["attendees@odata.count"] = 2
+    else:
+        value["event"]["result"]["start"]["dateTime"] = None
+    with pytest.raises(ValueError):
+        M.adopt_invitation(value, state.owner_email, state.release_id, state.ccd)
 
 
 @pytest.mark.parametrize("step,field", [

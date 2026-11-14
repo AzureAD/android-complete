@@ -16,7 +16,7 @@ RID = "2026-12"
 
 
 def release(root, *, ready=True):
-    state = ReleaseState(release_id=RID, ccd="2026-12-09", timezone="UTC",
+    state = ReleaseState(release_id=RID, ccd="2026-12-09", timezone="UTC", execution_mode="unattended",
                          owner_email="owner@example.test")
     if ready:
         _active_phase(state, "preflight")
@@ -115,6 +115,7 @@ def test_every_startup_surface_exposes_missing_driver(tmp_path, monkeypatch, cap
     monkeypatch.setattr(checks, "read_pipeline_variable", lambda *args: (True, None, "offline"))
     if surface == "init":
         code, out = call(tmp_path, capsys, "init", "--json",
+                         "--unattended",
                          "--owner-email", "owner@example.test", "--timezone", "UTC")
     else:
         release(tmp_path, ready=surface != "checklist")
@@ -142,6 +143,52 @@ def test_every_startup_surface_exposes_missing_driver(tmp_path, monkeypatch, cap
             assert payload["next_action"] == "provision_startup_automation"
     saved = C.load_state(str(tmp_path), RID)
     assert not saved.steps and not saved.notification_deliveries
+
+
+def test_interactive_status_is_local_and_needs_no_driver(tmp_path, capsys, monkeypatch):
+    state = release(tmp_path)
+    state.execution_mode = "interactive"
+    C.save_state(state, str(tmp_path), RID)
+    path = tmp_path / RID / "release-state.json"
+    before = path.read_bytes()
+    monkeypatch.setattr(C, "refresh_conflict", lambda *a: pytest.fail("Status probed a provider"))
+    monkeypatch.setattr(AutomationRegistry, "list", lambda *a, **k: pytest.fail("Interactive status read a worker"))
+    code, out = call(tmp_path, capsys, "status", "--json", "--as-of", "2026-12-02")
+    report = json.loads(out)
+    assert code == 0 and report["execution_mode"] == "interactive"
+    assert report["startup_automation"] is None
+    assert report["work_dispatch"]["pending_work"]
+    assert path.read_bytes() == before
+    assert not (path.parent / "events.jsonl").exists()
+
+
+def test_interactive_tick_does_not_advance_or_send(tmp_path, capsys):
+    state = release(tmp_path)
+    state.execution_mode = "interactive"
+    C.save_state(state, str(tmp_path), RID)
+    path = tmp_path / RID / "release-state.json"
+    before = path.read_bytes()
+    code, out = call(tmp_path, capsys, "tick", "--json")
+    payload = json.loads(out)
+    assert code == 0 and payload["status"] == "waiting"
+    assert not payload["permission_to_send"] and payload["notifications"] == []
+    assert path.read_bytes() == before
+
+
+def test_scheduled_writer_is_paused_before_authorization_in_interactive_mode(tmp_path, capsys, monkeypatch):
+    from orchestrator import write_review
+    state = release(tmp_path)
+    state.execution_mode = "interactive"
+    C.save_state(state, str(tmp_path), RID)
+    path = tmp_path / RID / "release-state.json"
+    before = path.read_bytes()
+    monkeypatch.setattr(write_review, "authorize", lambda *a, **k: pytest.fail("Scheduled writer ran"))
+    assert cli.main(["--scheduled", "--runs-root", str(tmp_path), "distribute-tests",
+                     "--release", RID, "--apply"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "waiting" and not result["permission_to_execute"]
+    assert path.read_bytes() == before
+    assert not (path.parent / "events.jsonl").exists()
 
 
 def test_signed_readiness_does_not_offer_started_success_without_driver(tmp_path, capsys):
@@ -224,7 +271,7 @@ def test_actual_startup_input_hold_never_claims_driver_ready(tmp_path, capsys):
 def test_status_text_avoids_confusing_duplicate_startup_recovery_message(tmp_path, capsys):
     state = release(tmp_path)
     driver(tmp_path, state, "blocked")
-    code, out = call(tmp_path, capsys, "status", "--no-pipeline-check")
+    code, out = call(tmp_path, capsys, "status", "--details", "--no-pipeline-check")
     assert code == 0
     assert "Next actions before owner handoff:" in out
     assert "queued below for startup recovery." in out
@@ -271,7 +318,7 @@ def test_declared_disabled_driver_is_a_configuration_problem_not_startup_success
     document = yaml.safe_load((config.parent / "automations.yaml").read_text(encoding="utf-8"))
     document["provider_defaults"]["enabled"] = False
     (custom / "automations.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
-    state = ReleaseState(release_id=RID, timezone="UTC")
+    state = ReleaseState(release_id=RID, timezone="UTC", execution_mode="unattended")
     orch = Orchestrator(str(custom / "phases.yaml"), state, mocks={}, automation_entries=lambda: [])
     bind_initial(orch)
     result = orch.status_report()

@@ -10,6 +10,38 @@ from tests._harness import *  # noqa: F401,F403
 
 # ---- readiness entry gate ----
 
+def test_unrelated_capabilities_do_not_block_required_confirmations_or_probe_on_sign(monkeypatch):
+    from orchestrator.readiness import ReadinessGate
+    from orchestrator import render
+    state = ReleaseState(release_id="r")
+    config = {"items": [
+        {"id": "capability", "text": "Optional connection", "verify": "auto",
+         "source": "scout", "required": False},
+        {"id": "owner_ready", "text": "Owner confirmed required readiness", "verify": "attest"},
+    ]}
+    state.readiness_items["capability"] = {"status": "fail", "at": "2026-09-11T12:00:00Z"}
+    gate = ReadinessGate(config, state)
+    monkeypatch.setattr(gate, "verify", lambda **kw: pytest.fail("Signing a fact must not probe integrations"))
+    card = render.attest_prompt_payload(gate.checklist(), state.release_id)
+    assert card["ready"] and card["confirm_items"] == ["owner_ready"]
+    gate.sign(["owner_ready"], note="Explicit owner confirmation")
+    checklist = gate.checklist()
+    assert checklist["signed"] and not checklist["blocked"]
+    assert checklist["dispatch"]["next_action"] == "complete"
+    assert not checklist["dispatch"]["pending_auto_checks"]
+    assert not checklist["all_satisfied"]
+    assert "when used" in render.readiness_table(checklist, state.release_id)
+
+
+def test_one_read_only_task_does_not_require_global_readiness_or_advance_siblings():
+    state, orch = _orch(signed=False)
+    before = dict(state.steps)
+    action = orch.run_task("preflight", "cg")
+    assert action.kind == "ran" and state.is_done("preflight", "cg")
+    assert not orch.gate.signed
+    assert not state.is_done("preflight", "oneauth_access")
+    assert {key: value for key, value in state.steps.items() if key != "preflight.cg"} == before
+
 def test_entry_gate_blocks_before_signing():
     st, orch = _orch(signed=False)
     actions = orch.run_until_gate()
@@ -238,7 +270,7 @@ def test_readiness_prompt_always_includes_full_current_table_without_mutation(
         orch.gate.verify()
         _pass_scout_checks(orch)
     if stage == "failed":
-        orch.gate.record_check("adx_access", "fail", "offline denied")
+        orch.gate.record_check("oncall_now", "fail", "offline denied")
     elif stage == "blocked":
         orch.gate.decline(["yubikey"])
     elif stage == "partial":
@@ -283,7 +315,7 @@ def test_start_continues_scout_checks_after_only_python_verification():
     assert payload["continue_automatically"] and not payload["ready"]
     assert "answers" not in payload
     assert {item["id"] for item in payload["pending_auto_checks"]} == {
-        "ccd_confirmed", "m365_access", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
+        "ccd_confirmed", "oncall_now"}
     assert all(item["source"] == "scout" and item["verifier"]
                for item in payload["pending_auto_checks"])
     assert payload["failed_auto_checks"] == []
@@ -299,11 +331,11 @@ def test_auto_failure_does_not_hide_independent_pending_checks():
     from orchestrator import render
     st, orch = _orch(signed=False)
     orch.gate.verify()
-    orch.gate.record_check("adx_access", "fail", "Read permission denied")
+    orch.gate.record_check("oncall_now", "fail", "Read permission denied")
     payload = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
-    assert payload["failed_auto_checks"] == ["adx_access"]
-    assert len(payload["pending_auto_checks"]) == 5
-    assert "adx_access" not in {item["id"] for item in payload["pending_auto_checks"]}
+    assert payload["failed_auto_checks"] == ["oncall_now"]
+    assert len(payload["pending_auto_checks"]) == 1
+    assert "oncall_now" not in {item["id"] for item in payload["pending_auto_checks"]}
     assert payload["next_action"] == "run_auto_checks" and payload["continue_automatically"]
     assert "answers" not in payload
 
@@ -320,9 +352,10 @@ def test_init_directs_readiness_now_even_before_phase_zero(tmp_path, monkeypatch
         force=False)
     assert rcmd.cmd_init(args) == 0
     output = capsys.readouterr().out
-    assert "readiness entry gate now" in output
+    assert "Next required readiness" in output
     assert "checklist --release 2026-11 --attest-prompt --json" in output
-    assert "not a stopping point" in output and "Readiness does not wait for Phase 0" in output
+    assert "no background worker is required or created" in output
+    assert "No phase work or release approval has run" in output
     assert "Until then nothing fires" not in output
     state = ReleaseState.load(str(tmp_path / args.release / "release-state.json"))
     assert not state.readiness_items
@@ -353,9 +386,10 @@ def test_init_json_persists_once_and_hands_off_to_entry_gate(
     assert output["ccd_conflict"] == ("2026-11-18" if override == "2026-11-18" else None)
     assert output["phase0_open"] == "2026-11-04"
     assert not output["readiness_signed"] and not st.readiness_items and not st.steps
-    assert output["next_action"] == "provision_startup_automation" and output["continue_automatically"]
-    assert not output["startup_complete"]
-    assert output["work_dispatch"]["pending_work"][0]["key"] == "automation:push-reminders"
+    assert output["status"] == "done" and output["execution_mode"] == "interactive"
+    assert output["next_action"] == "readiness" and output["continue_automatically"]
+    assert output["startup_complete"]
+    assert not output["work_dispatch"]["pending_work"]
     assert output["checklist_command"] == "checklist --release 2026-11 --attest-prompt --json"
     assert st.workflow_revision is not None
     events_path = path.parent / "events.jsonl"
@@ -370,16 +404,16 @@ def test_init_json_persists_once_and_hands_off_to_entry_gate(
 
 
 
-def test_failing_auto_keeps_gate_closed():
-    """An auto check that FAILS is not satisfiable by attestation — gate stays shut."""
+def test_failed_capability_diagnostic_does_not_close_unrelated_readiness():
     _stub_build_defs("fail")
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
-    orch.gate.sign()  # attests humans, verifies auto (fails)
-    assert not orch.gate.signed
+    orch.gate.verify()
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+    assert orch.gate.signed
     assert st.readiness_items["build_access"]["status"] == "fail"
-    orch.run_until_gate()
-    assert orch.status_report()["status"] == "readiness_gate"
+    assert orch.status_report()["status"] != "readiness_gate"
     _stub_build_defs("pass")  # restore
 
 
@@ -389,6 +423,7 @@ def test_passing_auto_plus_attest_clears_gate():
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
+    orch.gate.verify()
     _pass_scout_checks(orch)   # scout-assisted (ICM + Kusto)
     orch.gate.sign()
     assert orch.gate.signed
@@ -470,14 +505,15 @@ def test_silent_perms_is_required_scout_item():
     sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
     assert sp["verify"] == "auto" and sp["source"] == "scout"
     assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm"]
-    # everything else satisfied but silent_perms → gate still closed
+    assert not sp["required"]
+    # Interactive operation does not require globally auto-approved tools.
     _pass_m365_check(orch)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
-    assert not orch.gate.signed
+    assert orch.gate.signed
     orch.gate.record_check("silent_perms", "pass", "all servers auto-approved")
     assert orch.gate.signed
 
@@ -1293,8 +1329,10 @@ def test_approve_orchestrator_gate_command_holds_when_submit_fails():
     execution = after.get_step("finalize", "remove_rc_tags_gate").execution
     assert execution and execution["approval"]["receipt"] is None
     after_orch = Orchestrator(CONFIG, after, mocks={})
-    assert after_orch.status_report()["status"] == "awaiting_action"
-    assert after_orch.status_report()["current_step"] == "remove_rc_tags_gate"
+    report = after_orch.status_report()
+    assert report["current_step"] == "remove_rc_tags_gate"
+    assert any(item["execution_id"] == execution["id"] for item in report["work_dispatch"]["held_work"])
+    assert not report["work_dispatch"]["permission_to_execute"]
 
 
 

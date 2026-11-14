@@ -83,7 +83,7 @@ def _suspend(state, settings, reason):
     (I.RECORD, "p", "human"), (I.RECORD, "p", "write"),
     (I.PREPARE, "p", "auto"), (I.POLL, "p", "external"),
     (I.REFRESH, "p", "external"), (I.MOCK, "p", "human"),
-    (I.EXECUTE, "later", "auto"), (I.COMPLETE, "p", "human"),
+    (I.COMPLETE, "p", "human"),
 ])
 def test_invalid_invocation_routes_are_mutation_free(context, intent, phase, step):
     state, _, kernel, _ = context
@@ -99,7 +99,9 @@ def test_new_work_cannot_bypass_any_suspension(context, reason, intent, step):
     state, settings, kernel, _ = context
     _suspend(state, settings, reason)
     before = deepcopy(state)
-    assert isinstance(kernel.authorize_outcome(intent, "p", step), TransitionResult)
+    result = kernel.authorize_outcome(intent, "p", step)
+    readable = intent == I.EXECUTE and reason not in ("halt", "cancel")
+    assert isinstance(result, OutcomePermit if readable else TransitionResult)
     assert state == before
 
 
@@ -118,7 +120,10 @@ def test_time_and_prerequisites_apply_to_every_new_call(context, intent, constra
         settings.fire = "13:00"
     before = deepcopy(state)
     result = kernel.authorize_outcome(intent, "p", sid)
-    assert isinstance(result, TransitionResult) and not result.changed
+    if intent == I.EXECUTE and constraint != "prerequisite":
+        assert isinstance(result, OutcomePermit)
+    else:
+        assert isinstance(result, TransitionResult) and not result.changed
     assert state == before
 
 

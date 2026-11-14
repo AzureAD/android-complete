@@ -185,6 +185,7 @@ def _sign_readiness(orch: Orchestrator) -> None:
     config, sign() flips it directly."""
     attest_ids = [it["id"] for it in (orch.gate.config or {}).get("items", [])
                   if it.get("verify", "attest") == "attest"]
+    orch.gate.verify()
     orch.gate.sign(item_ids=attest_ids, note="[sim] fast-forward attest")
 
 

@@ -46,13 +46,17 @@ class StepHandler:
     writes: WriteCapabilities
     status_email: bool
 
-    def parse_parameters(self, role=HookRole.BUILD, values=None, *, cli=False):
+    @property
+    def task_parameter_role(self):
+        return HookRole.PREPARE if self.effect is not None else HookRole.BUILD
+
+    def parse_parameters(self, role=HookRole.BUILD, values=None, *, cli=False, base=None):
         try:
             role = HookRole(role)
             schema = self.parameters[role]
         except (ValueError, KeyError) as exc:
             raise ParameterError(f"Step {self.definition.key}: unsupported hook role {role!r}") from exc
-        return schema.parse(values, cli=cli)
+        return schema.parse(values, cli=cli, base=base)
 
     def mockable_spec(self) -> dict:
         """Return a detached, JSON-ready view for payload overrides and display."""

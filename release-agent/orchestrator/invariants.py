@@ -189,6 +189,10 @@ def validate_step(state: ReleaseState, workflow: WorkflowDefinition, key: str):
 def validate_snapshot(state: ReleaseState, workflow: WorkflowDefinition, projection=None):
     """Never let malformed nested state prevent inspection or targeted recovery."""
     issues = []
+    try:
+        state.validate_task_attempts()
+    except ValueError as exc:
+        issues.append(InvariantViolation("invalid_task_attempt", str(exc)))
     if not isinstance(state.steps, dict):
         issues.append(InvariantViolation("invalid_steps", "Steps must be a mapping; owner repair required."))
     else:
@@ -213,7 +217,8 @@ def validate_snapshot(state: ReleaseState, workflow: WorkflowDefinition, project
                 "error" if definition else "warning"))
         if decision.get("decision") not in ("approved", "denied"):
             issues.append(InvariantViolation("invalid_gate_decision", f"Gate {key!r} has invalid decision {decision.get('decision')!r}."))
-        latest[key] = decision.get("decision")
+        if not decision.get("invalidated_at"):
+            latest[key] = decision.get("decision")
     if isinstance(state.steps, dict):
         for key, definition in workflow.step_by_key.items():
             if not definition.is_gate:

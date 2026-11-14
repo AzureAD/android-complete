@@ -258,3 +258,75 @@ def summarize(runs, release_id):
     return _transform(runs, lambda snapshot, rc, lane:
                       snapshot if "evidence_ref" in snapshot else
                       _describe(snapshot, release_id, rc, lane)[0])
+
+
+def _record_fields(document, transform):
+    result = deepcopy(document)
+    if isinstance(result.get("steps"), dict):
+        for record in result["steps"].values():
+            if isinstance(record, dict):
+                for field in ("data", "execution"):
+                    if isinstance(record.get(field), dict):
+                        record[field] = transform(record[field])
+    for field in ("resources", "notification_deliveries"):
+        if isinstance(result.get(field), dict):
+            result[field] = {key: transform(value) if isinstance(value, dict) else value
+                             for key, value in result[field].items()}
+    if isinstance(result.get("task_attempts"), dict):
+        for attempt in result["task_attempts"].values():
+            if isinstance(attempt, dict) and isinstance(attempt.get("history"), list):
+                attempt["history"] = [transform(item) if isinstance(item, dict) else item
+                                      for item in attempt["history"]]
+            if isinstance(attempt, dict) and isinstance(attempt.get("result"), dict):
+                attempt["result"] = transform(attempt["result"])
+    return result
+
+
+def externalize_records(document, directory):
+    """Keep bulky step/recovery bodies out of the hot state without losing their values."""
+    release = document["release_id"]
+
+    def store(value):
+        if len(_json_bytes(value)) <= 16_384:
+            return value
+        content = _json_bytes({"schema_version": SCHEMA_VERSION, "release_id": release,
+                               "record": value})
+        digest = sha256(content).hexdigest()
+        parts = ("evidence", "records", f"{digest}.json")
+        _write(directory, parts, content)
+        return {"evidence_ref": {"schema_version": SCHEMA_VERSION,
+                                 "path": str(Path(*parts)), "sha256": digest}}
+
+    return _record_fields(document, store)
+
+
+def hydrate_records(document, directory):
+    """Verify immutable record references before constructing any execution/evidence objects."""
+    def restore(value):
+        if set(value) != {"evidence_ref"}:
+            return value
+        ref = value["evidence_ref"]
+        if (not isinstance(ref, dict) or set(ref) != {"schema_version", "path", "sha256"}
+                or type(ref.get("schema_version")) is not int or ref["schema_version"] != SCHEMA_VERSION
+                or not isinstance(ref.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", ref["sha256"])
+                or not isinstance(ref.get("path"), str)):
+            raise EvidenceError("Invalid immutable record reference")
+        parts = ("evidence", "records", f"{ref['sha256']}.json")
+        if ref["path"].replace("\\", "/") != "/".join(parts):
+            raise EvidenceError("Invalid immutable record path")
+        content = _read(_contained_path(directory, parts))
+        if sha256(content).hexdigest() != ref["sha256"]:
+            raise EvidenceError("Immutable record SHA-256 mismatch; restore the original evidence")
+        try:
+            record = json.loads(content)
+        except (ValueError, UnicodeError) as exc:
+            raise EvidenceError("Immutable record is not valid JSON") from exc
+        if (not isinstance(record, dict) or set(record) != {"schema_version", "release_id", "record"}
+                or type(record["schema_version"]) is not int or record["schema_version"] != SCHEMA_VERSION
+                or record["release_id"] != document["release_id"] or not isinstance(record["record"], dict)
+                or set(record["record"]) == {"evidence_ref"}):
+            raise EvidenceError("Immutable record identity/schema mismatch")
+        return record["record"]
+
+    return _record_fields(document, restore)

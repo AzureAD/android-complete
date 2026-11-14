@@ -128,7 +128,7 @@ class StateProjection:
 
     def latest_gate_decision(self, step: StepDefinition) -> Optional[dict]:
         for decision in reversed(self.state.gate_decisions):
-            if decision.get("step") == step.key:
+            if decision.get("step") == step.key and not decision.get("invalidated_at"):
                 return decision
         return None
 
@@ -143,6 +143,22 @@ class StateProjection:
         if step.is_gate:
             return record.status == "done" and self.gate_approved(step)
         return record.status in ("done", "skipped")
+
+    def owner_task_problem(self, step: Optional[StepDefinition]) -> str:
+        """Explicit task requests ignore schedule/frontier, never business or approval prerequisites."""
+        if step is None:
+            return "The selected task no longer exists in this workflow."
+        if self.state.halt or self.state.cancellation:
+            return "Release is halted or cancelled."
+        if not self.phase_included(self.workflow.phase(step.phase_id)):
+            return "Activate this conditional phase before executing its task."
+        if not self.readiness_signed or self.readiness_blocked:
+            return "Required release readiness confirmations are incomplete."
+        missing = [key for key in self.workflow.dependency_keys(step)
+                   if not self.step_complete(self.workflow.step_by_key[key])]
+        if missing:
+            return "Waiting on the task's business prerequisites: " + ", ".join(missing)
+        return ""
 
     def phase_complete(self, phase: PhaseDefinition) -> bool:
         return all(self.step_complete(step) for step in phase.steps)
@@ -177,8 +193,8 @@ class StateProjection:
 
     def prerequisites_met(self, phase: PhaseDefinition, step: StepDefinition) -> bool:
         if any(
-            not self.step_complete(self.workflow.step(phase.id, dependency))
-            for dependency in step.depends_on
+            not self.step_complete(self.workflow.step_by_key[dependency])
+            for dependency in self.workflow.dependency_keys(step)
         ):
             return False
         if phase.execution == "parallel":

@@ -48,17 +48,7 @@ Client App
 - **Common Module:** Contains all IPC (Inter-Process Communication) logic. MSAL/OneAuth use Common layer to send requests to Broker over IPC
 - **Broker Module:** Handles the actual authentication logic, communicates with eSTS, and returns tokens
 
-### 1.3 Android DRI MCP Server
-
-The `android-dri-search` MCP server provides tools for querying past incidents, TSGs, and DRI knowledge:
-
-| Tool | Purpose |
-|------|---------|
-| `mcp_android-dri-s_get_incident` | Fetch a specific IcM incident by ID |
-| `mcp_android-dri-s_batch_search` | Run multiple ICM and/or TSG searches in parallel |
-| `mcp_android-dri-s_search_tsgs` | Search troubleshooting guides (single query) |
-
-The server is configured in `.vscode/mcp.json` as `android-dri-search`. Authentication is automatic via Entra ID OAuth — you must be a member of the **Android Auth Client SDK** security group. See `android_dri_mcp_server/deployment-and-connection-guide.md` for details.
+### 1.3 Incident Investigation
 
 > **For incident investigations:** Use the `incident-investigator` skill (located at `.github/skills/incident-investigator/SKILL.md`) which provides a comprehensive workflow for IcM/customer-reported issues.
 

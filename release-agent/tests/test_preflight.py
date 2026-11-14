@@ -324,7 +324,7 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
              "--note", f"Explicit simulated owner confirmation for {sid}")
     assert not C.load_state(root, rid).is_done("preflight", "cg")
     controls["alerts"] = []
-    report = json.loads(call("next", "--json"))
+    report = json.loads(call("next", "--retry", "--json"))
     completed = C.load_state(root, rid)
     phase = next(p for p in Orchestrator(CONFIG, completed, mocks={}).config["phases"]
                  if p["id"] == "preflight")
@@ -1268,7 +1268,7 @@ def test_cg_blocked_step_reruns_and_clears_when_fixed():
     assert step["status"] == "blocked" and step["needs_owner"]
     # FIX: alerts now clean → RERUN (next) re-checks and passes
     orch.mocks["preflight.cg"] = {"outcome": "done", "note": "CG: 0 active alerts."}
-    orch.run_until_gate()
+    orch.run_until_gate(pending_only=False)
     assert st.is_done("preflight", "cg")
     assert "preflight.cg" not in orch.status_report()["pending_human"]
 

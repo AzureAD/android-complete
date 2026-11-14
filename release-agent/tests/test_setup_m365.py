@@ -226,8 +226,21 @@ def test_repo_manifest_declares_enforced_connector_contract():
     assert not any(server["id"] == "workiq" for server in req["mcp_servers"])
 
 
+def skill_document(instructions="Test skill instructions", description="Release test skill"):
+    return "---\nname: release-agent\ndescription: " + json.dumps(description) + "\n---\n\n" + instructions + "\n"
+
+
+def run_bootstrap(flags, capture, agent, infra_exit=0):
+    return subprocess.run(flags, capture_output=True, text=True, timeout=60, cwd=capture.parent, env={
+        **os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
+        "PYTHONPATH": str(agent), "BOOTSTRAP_CAPTURE": str(capture),
+        "BOOTSTRAP_REPORT": str(capture.parent / "report.json"),
+        "BOOTSTRAP_INFRA_EXIT": str(infra_exit), "PIP_NO_INDEX": "1",
+    })
+
+
 def bootstrap_case(tmp_path, infra_exit=0, *, install_skill=False, missing=None,
-                   connector_status=None, with_inventory=True, invalid_report=None):
+                   connector_status=None, with_inventory=True, invalid_report=None, skill_only=False):
     pwsh = shutil.which("pwsh")
     if not pwsh:
         pytest.skip("PowerShell 7 is required to execute the Windows bootstrap")
@@ -242,7 +255,7 @@ def bootstrap_case(tmp_path, infra_exit=0, *, install_skill=False, missing=None,
     for filename in ("requirements.yaml", "phases.yaml"):
         (agent / "config" / filename).write_text("{}", encoding="utf-8")
     (agent / "skill" / "reference").mkdir(parents=True)
-    (agent / "skill" / "SKILL.md").write_text("# Test skill\n", encoding="utf-8")
+    (agent / "skill" / "SKILL.md").write_text(skill_document(), encoding="utf-8")
     (agent / "skill" / "reference" / "commands.txt").write_text("reference content", encoding="utf-8")
     (agent / "orchestrator" / "__init__.py").write_text("", encoding="utf-8")
     connectors = infra.check_m365_connectors(
@@ -280,12 +293,9 @@ def bootstrap_case(tmp_path, infra_exit=0, *, install_skill=False, missing=None,
         flags += ["-M365ToolsFile", str(tools)]
     if not install_skill:
         flags.append("-SkipSkillInstall")
-    result = subprocess.run(flags, capture_output=True, text=True, timeout=60, env={
-        **os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
-        "PYTHONPATH": str(agent), "BOOTSTRAP_CAPTURE": str(capture),
-        "BOOTSTRAP_REPORT": str(report_path),
-        "BOOTSTRAP_INFRA_EXIT": str(infra_exit), "PIP_NO_INDEX": "1",
-    })
+    if skill_only:
+        flags.append("-SkillOnly")
+    result = run_bootstrap(flags, capture, agent, infra_exit)
     return result, capture, tools, profile, agent
 
 
@@ -348,6 +358,237 @@ def test_bootstrap_requests_missing_path_without_guessing_or_console_hang(tmp_pa
     assert "ask the user for this path" in result.stdout
     assert not capture.exists()
     assert not (tmp_path / "missing profile").exists()
+
+def test_bootstrap_refreshes_skill_even_when_agency_setup_cannot_continue(tmp_path):
+    result, capture, _, profile, agent = bootstrap_case(tmp_path, missing="agency", install_skill=True)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert not capture.exists()
+    installed = profile / "m-skills" / "release-agent"
+    assert (installed / "SKILL.md").read_bytes() == (agent / "skill" / "SKILL.md").read_bytes()
+    assert "Skill files" in result.stdout and "Reload" in result.stdout
+
+@pytest.mark.parametrize("missing", ["agency", "python"])
+def test_skill_only_refresh_needs_no_runtime_or_infrastructure(tmp_path, missing):
+    result, capture, _, profile, agent = bootstrap_case(
+        tmp_path, install_skill=True, missing=missing, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not capture.exists()
+    assert (profile / "m-skills" / "release-agent" / "SKILL.md").read_bytes() == (
+        agent / "skill" / "SKILL.md").read_bytes()
+    assert "Skill refresh complete" in result.stdout and "Reload Scout" in result.stdout
+    assert "2. Infrastructure preflight" not in result.stdout and "Relaunching Scout" not in result.stdout
+    assert not (profile / "m-mcp-servers.json").exists()
+    registered = json.loads((profile / "m-skills" / "skills-metadata.json").read_text(encoding="utf-8"))
+    assert len(registered) == 1
+    assert registered[0]["id"] == "local-release-agent" and registered[0]["name"] == "release-agent"
+    assert registered[0]["instructions"] == "Test skill instructions"
+    assert registered[0]["description"] == "Release test skill"
+    assert registered[0]["enabled"] is True and registered[0]["scope"] == "local"
+    assert "matching local registry entry" in result.stdout
+    assert "metadata has no" not in result.stdout
+
+
+@pytest.mark.parametrize("skill_only", [False, True])
+def test_repeated_bootstrap_replaces_stale_skill_and_references_without_changing_profile(tmp_path, skill_only):
+    result, capture, _, profile, agent = bootstrap_case(
+        tmp_path, install_skill=True, skill_only=skill_only)
+    assert result.returncode == 0, result.stdout + result.stderr
+    if capture.exists():
+        capture.unlink()
+    installed = profile / "m-skills" / "release-agent"
+    (installed / "SKILL.md").write_text("Stale installed instructions", encoding="utf-8")
+    (agent / "skill" / "SKILL.md").write_text(skill_document("Updated source instructions"), encoding="utf-8")
+    (agent / "skill" / "reference" / "commands.txt").write_text("Updated reference", encoding="utf-8")
+    (agent / "skill" / "reference" / "new.txt").write_text("New reference", encoding="utf-8")
+    config = profile / "m-mcp-servers.json"
+    config.write_text('{"servers":{}}', encoding="utf-8")
+    metadata = profile / "m-skills" / "skills-metadata.json"
+    registered = json.loads(metadata.read_text(encoding="utf-8"))
+    registered[0]["id"] = "existing-release-id"
+    registered[0]["createdAt"] = "2020-06-07T08:09:10.123Z"
+    registered[0]["extra"] = {"preserved": True, "timestamp": "2021-02-03T04:05:06.789Z"}
+    other_entry = {"id": "local-unrelated-skill", "name": "unrelated-skill", "enabled": False,
+                   "createdAt": "2022-03-04T05:06:07.890Z"}
+    registered.append(other_entry)
+    metadata.write_text(json.dumps(registered), encoding="utf-8")
+    previous_metadata = metadata.read_bytes()
+    other = profile / "m-skills" / "unrelated-skill"
+    other.mkdir()
+    other_file = other / "SKILL.md"
+    other_file.write_text("Owner's unrelated skill", encoding="utf-8")
+    original = {path: path.read_bytes() for path in (config, other_file)}
+
+    refreshed = run_bootstrap(result.args, capture, agent)
+
+    assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
+    for source in (agent / "skill").rglob("*"):
+        if source.is_file():
+            assert (installed / source.relative_to(agent / "skill")).read_bytes() == source.read_bytes()
+    assert all(path.read_bytes() == data for path, data in original.items())
+    updated = json.loads(metadata.read_text(encoding="utf-8"))
+    entry = next(item for item in updated if item["name"] == "release-agent")
+    assert entry["id"] == "existing-release-id"
+    assert entry["createdAt"] == registered[0]["createdAt"]
+    assert entry["extra"] == registered[0]["extra"]
+    assert entry["instructions"] == "Updated source instructions"
+    assert entry["enabled"] is True and entry["scope"] == "local"
+    assert next(item for item in updated if item["name"] == "unrelated-skill") == other_entry
+    assert any(path.read_bytes() == previous_metadata
+               for path in metadata.parent.glob("skills-metadata.json.backup-*"))
+    assert capture.exists() is not skill_only
+    assert "SHA-256 verified" in refreshed.stdout
+    assert str(agent / "skill") in refreshed.stdout and str(installed) in refreshed.stdout
+
+
+def test_skill_only_does_not_read_or_repair_mcp_configuration(tmp_path):
+    result, capture, _, profile, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    config = profile / "m-mcp-servers.json"
+    config.write_text("Not valid MCP configuration JSON", encoding="utf-8")
+    before = config.read_bytes()
+    refreshed = run_bootstrap(result.args, capture, agent)
+    assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
+    assert config.read_bytes() == before and not capture.exists()
+
+
+@pytest.mark.parametrize("source_content", [None, ""])
+def test_skill_refresh_rejects_missing_or_empty_source_without_clobbering_install(tmp_path, source_content):
+    result, capture, _, profile, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    source = agent / "skill" / "SKILL.md"
+    installed = profile / "m-skills" / "release-agent" / "SKILL.md"
+    before = installed.read_bytes()
+    if source_content is None:
+        source.unlink()
+    else:
+        source.write_text(source_content, encoding="utf-8")
+    refreshed = run_bootstrap(result.args, capture, agent)
+    assert refreshed.returncode == 1, refreshed.stdout + refreshed.stderr
+    assert "Source skill is missing or empty" in refreshed.stdout
+    assert installed.read_bytes() == before and not capture.exists()
+
+
+@pytest.mark.parametrize("file,contents,message", [
+    ("disabled-skills.json", '["release-agent"]', "disabled-skills"),
+    ("skills-metadata.json", '{"invalid":', "metadata is unreadable"),
+])
+def test_skill_refresh_surfaces_disabled_or_unreadable_registration_without_rewriting_it(
+        tmp_path, file, contents, message):
+    result, capture, _, profile, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    metadata = profile / "m-skills" / file
+    metadata.write_text(contents, encoding="utf-8")
+    before = metadata.read_bytes()
+    refreshed = run_bootstrap(result.args, capture, agent)
+    assert refreshed.returncode == 1, refreshed.stdout + refreshed.stderr
+    assert message in refreshed.stdout + refreshed.stderr and "Skill refresh complete" not in refreshed.stdout
+    assert metadata.read_bytes() == before and not capture.exists()
+
+
+def test_skill_only_and_skip_skill_install_are_mutually_exclusive(tmp_path):
+    result, capture, _, profile, _ = bootstrap_case(tmp_path, skill_only=True)
+    assert result.returncode != 0
+    assert "cannot be combined" in result.stderr
+    assert not capture.exists() and not (profile / "m-skills").exists()
+
+
+def test_skill_refresh_rejects_overlapping_source_and_destination(tmp_path):
+    result, capture, _, _, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    source = agent / "skill"
+    before = (source / "SKILL.md").read_bytes()
+    refreshed = run_bootstrap([*result.args, "-ScoutSkillsDir", str(source)], capture, agent)
+    assert refreshed.returncode != 0
+    assert "must not overlap" in refreshed.stderr
+    assert (source / "SKILL.md").read_bytes() == before
+    assert not (source / "release-agent").exists() and not capture.exists()
+
+def check_skill_registration(agent, skills):
+    command = """
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:SCOUT_TEST_BOOTSTRAP, [ref]$tokens, [ref]$errors)
+foreach ($name in @('ConvertFrom-ScoutSkillJson', 'Read-ScoutSkillDefinition', 'Test-ScoutSkillRegistration')) {
+  $definition = $ast.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+  }, $true)
+  . ([ScriptBlock]::Create($definition.Extent.Text))
+}
+Test-ScoutSkillRegistration -ScoutSkillsDir $env:SCOUT_TEST_SKILLS -SkillName 'release-agent' | ConvertTo-Json
+"""
+    result = subprocess.run(
+        [shutil.which("pwsh"), "-NoProfile", "-Command", command],
+        capture_output=True, text=True, timeout=30, env={
+            **os.environ, "SCOUT_TEST_BOOTSTRAP": str(agent / "setup" / "bootstrap.ps1"),
+            "SCOUT_TEST_SKILLS": str(skills),
+        })
+    assert result.returncode == 0, result.stdout + result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("problem", [
+    "missing_metadata", "missing_entry", "duplicate_entry", "stale_instructions",
+    "disabled_id", "disabled_record", "wrong_scope", "invalid_shape",
+])
+def test_registration_verification_never_accepts_files_alone_or_stale_records(tmp_path, problem):
+    result, _, _, profile, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    skills = profile / "m-skills"
+    metadata = skills / "skills-metadata.json"
+    registered = json.loads(metadata.read_text(encoding="utf-8"))
+    if problem == "missing_metadata":
+        metadata.unlink()
+    elif problem == "missing_entry":
+        metadata.write_text("[]", encoding="utf-8")
+    elif problem == "duplicate_entry":
+        metadata.write_text(json.dumps(registered * 2), encoding="utf-8")
+    elif problem == "disabled_id":
+        (skills / "disabled-skills.json").write_text(json.dumps([registered[0]["id"]]), encoding="utf-8")
+    elif problem == "invalid_shape":
+        metadata.write_text("{}", encoding="utf-8")
+    else:
+        field, value = {
+            "stale_instructions": ("instructions", "Old instructions"),
+            "disabled_record": ("enabled", False),
+            "wrong_scope": ("scope", "global"),
+        }[problem]
+        registered[0][field] = value
+        metadata.write_text(json.dumps(registered), encoding="utf-8")
+    before = {path: path.read_bytes() for path in skills.rglob("*") if path.is_file()}
+    verified = check_skill_registration(agent, skills)
+    assert verified["ok"] is False
+    assert all(path.read_bytes() == data for path, data in before.items())
+
+
+def test_repeated_registration_is_idempotent_and_preserves_a_disabled_record(tmp_path):
+    result, capture, _, profile, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    metadata = profile / "m-skills" / "skills-metadata.json"
+    original = metadata.read_bytes()
+    repeated = run_bootstrap(result.args, capture, agent)
+    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert metadata.read_bytes() == original
+    assert not list(metadata.parent.glob("skills-metadata.json.backup-*"))
+    entries = json.loads(original)
+    entries[0]["enabled"] = False
+    metadata.write_text(json.dumps(entries), encoding="utf-8")
+    disabled = run_bootstrap(result.args, capture, agent)
+    assert disabled.returncode == 1, disabled.stdout + disabled.stderr
+    assert json.loads(metadata.read_text(encoding="utf-8"))[0]["enabled"] is False
+    assert "disabled" in disabled.stdout and "Skill refresh complete" not in disabled.stdout
+
+
+def test_registration_preserves_quoted_metadata_and_literal_instruction_text(tmp_path):
+    result, capture, _, profile, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    instructions = '# New instructions\n\nUse `$env:USERPROFILE` and "quotes".\nNever execute this as setup code.'
+    description = 'Updated: preserve "quotes" and C:\\literal\\paths'
+    (agent / "skill" / "SKILL.md").write_text(skill_document(instructions, description), encoding="utf-8")
+    refreshed = run_bootstrap(result.args, capture, agent)
+    assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
+    entry = json.loads((profile / "m-skills" / "skills-metadata.json").read_text(encoding="utf-8"))[0]
+    assert entry["instructions"] == instructions and entry["description"] == description
+    assert check_skill_registration(agent, profile / "m-skills")["ok"]
 
 
 @pytest.mark.parametrize("source", ["explicit", "environment", "path", "configured", "default"])

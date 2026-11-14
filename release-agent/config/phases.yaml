@@ -20,7 +20,8 @@
 #   steps[].effect_recovery   : effect input policy: frozen | match_current
 #   steps[].effect_retry      : transactional handler supports owner-verified absent retry
 #   steps[].owner/source/gate/attest : compatibility metadata validated against kind
-#   steps[].depends_on        : step ids in this phase that must finish first
+#   steps[].depends_on        : business prerequisites (local id or phase.step);
+#                               only these consumers are invalidated by a reopen
 #   steps[].maps_to           : the Release-Stabilization action-item ID(s) this step uses
 
 version: 1
@@ -64,7 +65,7 @@ phases:
       - { id: mrwp_local,          name: "Verify MRWP (Local) ran to completion + tests", depends_on: [mrwp_ecs], kind: auto, effect_mode: read_only, owner: agent, maps_to: [B3] }
       - { id: auth_ecs,            name: "Verify Authenticator ECS build + UI tests", depends_on: [mrwp_local], kind: auto, effect_mode: read_only, owner: agent, maps_to: [B3] }
       - { id: telemetry_verify,    name: "Verify bug-bash telemetry in Kusto", depends_on: [auth_ecs], kind: external, repeatable: true, owner: agent, source: scout, maps_to: [B3] }
-      - { id: rc_report_publish,   name: "Publish RC verification report to SharePoint", depends_on: [auth_ecs], kind: external, write_command: publish-rc-report, owner: agent, source: scout, maps_to: [B4] }
+      - { id: rc_report_publish,   name: "Publish RC verification report to SharePoint", depends_on: [auth_ecs], kind: external, write_command: publish-rc-report, manual_result: true, owner: agent, source: scout, maps_to: [B4] }
       - { id: rc_report_notify,    name: "Post RC verification report link to Scout bot", depends_on: [rc_report_publish], kind: external, owner: agent, source: scout, maps_to: [B4] }
       - { id: rc_report_gate,      name: "Decide RC quality gate after reviewing report", depends_on: [telemetry_verify, rc_report_notify], kind: approval_gate, owner: human, gate: true, maps_to: [B4] }
 
@@ -72,37 +73,37 @@ phases:
     name: "Test / Bug Bash"
     checklist_phase: 3
     steps:
-      - { id: clone_plans_broker, name: "Build Broker test plan (manual suites + failure triage by flight/category)", kind: auto, effect_mode: transactional, effect_recovery: frozen, owner: agent, maps_to: [T3] }
-      - { id: clone_plans_auth,   name: "Create Authenticator bug-bash test suite", kind: auto, effect_mode: transactional, effect_recovery: frozen, effect_retry: true, owner: agent, maps_to: [T3] }
-      - { id: ui_test_status,     name: "Fill current-RC automation results and failure triage", kind: auto, effect_mode: idempotent, effect_recovery: match_current, owner: agent, maps_to: [T4] }
-      - { id: distribute_tests,   name: "Distribute bug-bash tests across the team", kind: external, repeatable: true, write_command: distribute-tests, write_precondition: command, owner: agent, source: scout, maps_to: [T2] }
-      - { id: send_invite,        name: "Schedule Bug Bash + send Teams invite", kind: external, owner: agent, source: scout, maps_to: [T2] }
-      - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", kind: external, owner: agent, source: scout, maps_to: [T2] }
-      - { id: bugbash_updates, name: "Post bug-bash progress updates (first post + periodic poller)", kind: external, repeatable: true, owner: agent, source: scout, maps_to: [T2] }
-      - { id: notify_native_auth, name: "Notify the Native Auth release engineer", kind: external, owner: agent, source: scout, maps_to: [T2] }
-      - { id: ui_failures,     name: "Review Phase 2 automation failures (Broker + Authenticator)", kind: human_action, owner: human, maps_to: [T4] }
-      - { id: native_auth_signoff, name: "Native Auth team sign-off (attest)", kind: attestation, owner: human, attest: true, maps_to: [T5] }
-      - { id: bugbash_complete, name: "Bug bash complete + signed off", kind: approval_gate, owner: human, gate: true }
+      - { id: clone_plans_broker, name: "Build Broker test plan (manual suites + failure triage by flight/category)", kind: auto, effect_mode: transactional, effect_recovery: frozen, depends_on: [build_verify.mrwp_ecs, build_verify.mrwp_local], owner: agent, maps_to: [T3] }
+      - { id: clone_plans_auth,   name: "Create Authenticator bug-bash test suite", kind: auto, effect_mode: transactional, effect_recovery: frozen, effect_retry: true, depends_on: [build_verify.auth_ecs], owner: agent, maps_to: [T3] }
+      - { id: ui_test_status,     name: "Fill current-RC automation results and failure triage", kind: auto, effect_mode: idempotent, effect_recovery: match_current, depends_on: [clone_plans_broker, clone_plans_auth, build_verify.auth_ecs], owner: agent, maps_to: [T4] }
+      - { id: distribute_tests,   name: "Distribute bug-bash tests across the team", kind: external, repeatable: true, write_command: distribute-tests, write_precondition: command, depends_on: [ui_test_status], owner: agent, source: scout, maps_to: [T2] }
+      - { id: send_invite,        name: "Schedule Bug Bash + send Teams invite", kind: external, manual_result: true, depends_on: [clone_plans_broker, clone_plans_auth], owner: agent, source: scout, maps_to: [T2] }
+      - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", kind: external, depends_on: [send_invite], owner: agent, source: scout, maps_to: [T2] }
+      - { id: bugbash_updates, name: "Post bug-bash progress updates (first post + periodic poller)", kind: external, repeatable: true, depends_on: [activate_chat, ui_test_status], owner: agent, source: scout, maps_to: [T2] }
+      - { id: notify_native_auth, name: "Notify the Native Auth release engineer", kind: external, depends_on: [clone_plans_broker], owner: agent, source: scout, maps_to: [T2] }
+      - { id: ui_failures,     name: "Review Phase 2 automation failures (Broker + Authenticator)", kind: human_action, depends_on: [ui_test_status], owner: human, maps_to: [T4] }
+      - { id: native_auth_signoff, name: "Native Auth team sign-off (attest)", kind: attestation, depends_on: [notify_native_auth], owner: human, attest: true, maps_to: [T5] }
+      - { id: bugbash_complete, name: "Bug bash complete + signed off", kind: approval_gate, depends_on: [ui_failures, native_auth_signoff], owner: human, gate: true }
 
   - id: finalize
     name: "Finalize & Publish"
     checklist_phase: 4
     steps:
-      - { id: remove_rc_tags_gate, name: "Approve 'Remove RC Tags' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, owner: human, gate: true, maps_to: [F1] }
-      - { id: orchestrator_finalization, name: "Monitor Release Orchestrator to 'Publish GitHub Release Notes'", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F2] }
+      - { id: remove_rc_tags_gate, name: "Approve 'Remove RC Tags' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, depends_on: [bug_bash.bugbash_complete], owner: human, gate: true, maps_to: [F1] }
+      - { id: orchestrator_finalization, name: "Monitor Release Orchestrator to 'Publish GitHub Release Notes'", kind: auto, effect_mode: read_only, depends_on: [remove_rc_tags_gate], owner: agent, maps_to: [F2] }
       - { id: integ_prs,       name: "Auto-create integration PRs", kind: external, pollable: true, write_command: create-integration-prs, owner: agent, source: scout, depends_on: [orchestrator_finalization], maps_to: [F2] }
-      - { id: publish_notes_gate, name: "Approve 'Publish GitHub Release Notes' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, owner: human, gate: true, maps_to: [F4] }
-      - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F3] }
-      - { id: verify_release_notes, name: "Verify GitHub release notes (Broker + MSAL + Common)", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F5] }
-      - { id: oneauth_common_pr, name: "Ingest published Common into OneAuth (PR to dev)", kind: external, write_command: create-oneauth-common-pr, owner: agent, source: scout, maps_to: [F5] }
-      - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", kind: external, owner: agent, source: scout, maps_to: [F4] }
-      - { id: final_status_email, name: "Send the closing partner status email + close the daily automation", kind: external, owner: agent, source: scout, maps_to: [F4] }
+      - { id: publish_notes_gate, name: "Approve 'Publish GitHub Release Notes' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, depends_on: [orchestrator_finalization], owner: human, gate: true, maps_to: [F4] }
+      - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", kind: auto, effect_mode: read_only, depends_on: [publish_notes_gate], owner: agent, maps_to: [F3] }
+      - { id: verify_release_notes, name: "Verify GitHub release notes (Broker + MSAL + Common)", kind: auto, effect_mode: read_only, depends_on: [publish_notes_gate], owner: agent, maps_to: [F5] }
+      - { id: oneauth_common_pr, name: "Ingest published Common into OneAuth (PR to dev)", kind: external, write_command: create-oneauth-common-pr, depends_on: [verify_pub], owner: agent, source: scout, maps_to: [F5] }
+      - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", kind: external, depends_on: [verify_pub, verify_release_notes], owner: agent, source: scout, maps_to: [F4] }
+      - { id: final_status_email, name: "Send the closing partner status email + close the daily automation", kind: external, depends_on: [release_announcement], owner: agent, source: scout, maps_to: [F4] }
 
   - id: rollout_start
     name: "Rollout Start"
     checklist_phase: 5
     steps:
-      - { id: identify_auth_build, name: "Identify final Authenticator build", kind: auto, effect_mode: read_only, owner: agent, maps_to: [R1] }
+      - { id: identify_auth_build, name: "Identify final Authenticator build", kind: auto, effect_mode: read_only, depends_on: [finalize.orchestrator_finalization], owner: agent, maps_to: [R1] }
       - { id: tag_authenticator, name: "Tag the Authenticator release commit", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, depends_on: [identify_auth_build], maps_to: [F6] }
       - { id: wiki_payload,      name: "Create/update the release payload wiki page", kind: external, write_command: create-payload-wiki, owner: agent, source: scout, depends_on: [tag_authenticator], maps_to: [S0, F6] }
       - { id: notice,          name: "Send initial Auth App release notice", kind: external, owner: agent, source: scout, depends_on: [wiki_payload], maps_to: [R1] }
@@ -115,12 +116,12 @@ phases:
     name: "Monitoring & Ring Advancement"
     checklist_phase: 6
     steps:
-      - { id: health_report,   name: "Crash-% health report (halt/hotfix/proceed)", kind: auto, implementation: dummy, owner: agent, maps_to: [M1] }
-      - { id: adoption,        name: "Adoption % vs ring threshold", kind: auto, implementation: dummy, owner: agent, maps_to: [M2] }
-      - { id: guards,          name: "Check advancement guard rules", kind: auto, implementation: dummy, owner: agent, maps_to: [M4] }
-      - { id: advance,         name: "Ring advance / halt decision", kind: approval_gate, owner: human, gate: true, maps_to: [M3] }
-      - { id: progress_email,  name: "Send progression email on advance", kind: auto, implementation: dummy, owner: agent, maps_to: [M5] }
-      - { id: dashboard,       name: "Update ADX dashboard params", kind: auto, implementation: dummy, owner: agent, maps_to: [M6] }
+      - { id: health_report,   name: "Crash-% health report (halt/hotfix/proceed)", kind: auto, implementation: dummy, depends_on: [rollout_start.beta_play_store], owner: agent, maps_to: [M1] }
+      - { id: adoption,        name: "Adoption % vs ring threshold", kind: auto, implementation: dummy, depends_on: [rollout_start.beta_play_store], owner: agent, maps_to: [M2] }
+      - { id: guards,          name: "Check advancement guard rules", kind: auto, implementation: dummy, depends_on: [health_report, adoption], owner: agent, maps_to: [M4] }
+      - { id: advance,         name: "Ring advance / halt decision", kind: approval_gate, depends_on: [guards], owner: human, gate: true, maps_to: [M3] }
+      - { id: progress_email,  name: "Send progression email on advance", kind: auto, implementation: dummy, depends_on: [advance], owner: agent, maps_to: [M5] }
+      - { id: dashboard,       name: "Update ADX dashboard params", kind: auto, implementation: dummy, depends_on: [advance], owner: agent, maps_to: [M6] }
       - { id: crash_annot,     name: "Flag new vs existing crashes", kind: human_action, owner: human, maps_to: [M7] }
       - { id: hotfix_eval,     name: "Surface hotfix-trigger criteria", kind: human_action, owner: human, maps_to: [M8] }
 
@@ -130,9 +131,9 @@ phases:
     steps:
       - { id: china,           name: "China publish flow", kind: human_action, owner: human, maps_to: [PT1] }
       - { id: samsung,         name: "Samsung portal upload", kind: human_action, owner: human, maps_to: [PT1s] }
-      - { id: ngms,            name: "Verify nGMS upload", kind: auto, implementation: dummy, owner: agent, maps_to: [PT2] }
-      - { id: teams_dev,       name: "Teams Devices announcement", kind: auto, implementation: dummy, owner: agent, maps_to: [PT3] }
-      - { id: approvals,       name: "Track partner approvals + final notice", kind: auto, implementation: dummy, owner: agent, maps_to: [PT4] }
+      - { id: ngms,            name: "Verify nGMS upload", kind: auto, implementation: dummy, depends_on: [monitor.advance], owner: agent, maps_to: [PT2] }
+      - { id: teams_dev,       name: "Teams Devices announcement", kind: auto, implementation: dummy, depends_on: [monitor.advance], owner: agent, maps_to: [PT3] }
+      - { id: approvals,       name: "Track partner approvals + final notice", kind: auto, implementation: dummy, depends_on: [china, samsung, ngms], owner: agent, maps_to: [PT4] }
       - { id: review_times,    name: "Maintain review-times table", kind: auto, implementation: dummy, owner: agent, maps_to: [PT5] }
 
   - id: hotfix
@@ -141,14 +142,14 @@ phases:
     conditional: true
     steps:
       - { id: cherry,          name: "Cherry-pick PRs", kind: auto, implementation: dummy, owner: agent, maps_to: [H1] }
-      - { id: rebuild,         name: "Rebuild + retain hotfix build", kind: auto, implementation: dummy, owner: agent, maps_to: [H2] }
-      - { id: smoke,           name: "P0 smoke subset", kind: approval_gate, owner: human, gate: true, maps_to: [H3] }
-      - { id: expedite,        name: "Expedited rollout", kind: auto, implementation: dummy, owner: agent, maps_to: [H4] }
+      - { id: rebuild,         name: "Rebuild + retain hotfix build", kind: auto, implementation: dummy, depends_on: [cherry], owner: agent, maps_to: [H2] }
+      - { id: smoke,           name: "P0 smoke subset", kind: approval_gate, depends_on: [rebuild], owner: human, gate: true, maps_to: [H3] }
+      - { id: expedite,        name: "Expedited rollout", kind: auto, implementation: dummy, depends_on: [smoke], owner: agent, maps_to: [H4] }
       - { id: alpha_orgs,      name: "Track alpha-mitigation orgs to remove", kind: auto, implementation: dummy, owner: agent, maps_to: [H5] }
 
   - id: close
     name: "Release Close"
     checklist_phase: 9
     steps:
-      - { id: closeout,        name: "Close-out checklist (approvals/comms/bugs)", kind: auto, implementation: dummy, owner: agent, maps_to: [C1] }
-      - { id: done,            name: "Release complete", kind: approval_gate, owner: human, gate: true }
+      - { id: closeout,        name: "Close-out checklist (approvals/comms/bugs)", kind: auto, implementation: dummy, depends_on: [partner.approvals, monitor.advance], owner: agent, maps_to: [C1] }
+      - { id: done,            name: "Release complete", kind: approval_gate, depends_on: [closeout], owner: human, gate: true }

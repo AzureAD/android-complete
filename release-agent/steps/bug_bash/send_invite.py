@@ -70,15 +70,28 @@ def _latest_rc(context):
 
 def source_matches(context, *steps, pipelines=False):
     fields = {"clone_plans_broker": ("plan_id",), "clone_plans_auth": (
-        "plan_id", "suite_id", "layout", "manual_suite_id", "automated_suite_id", "classification", "queries",
-        "monthly", "monthly_source", "monthly_amendment"), "ui_test_status": ("result",)}
+        "plan_id", "suite_id", "layout", "manual_suite_id", "automated_suite_id")}
     sources = []
     for step in steps:
+        if step == "ui_test_status":
+            continue
         record = context.evidence.step("bug_bash", step)
         prefix = ["steps", f"bug_bash.{step}"]
         sources.append((prefix + ["status"], record.status))
         sources.extend((prefix + ["data", key], record.data[key])
                        for key in fields[step] if key in record.data)
+        if step == "clone_plans_auth":
+            for path in (("monthly", "plan_id"), ("monthly", "suite_id"),
+                         ("monthly_amendment", "status"),
+                         ("monthly_amendment", "monthly", "plan_id"),
+                         ("monthly_amendment", "monthly", "suite_id")):
+                value = record.data
+                for key in path:
+                    if not isinstance(value, dict) or key not in value:
+                        break
+                    value = value[key]
+                else:
+                    sources.append((prefix + ["data", *path], value))
     sources += [(["target_month"], context.release.target_month),
                 (["owner_name"], context.release.owner_name)]
     if pipelines:
@@ -157,6 +170,20 @@ def sent_notification(context, step_id, tool):
 
 def delivered_invite(context):
     """Identity from this step's acknowledged calendar receipt, never a topic search."""
+    selected = context.evidence.step("bug_bash", ID)
+    adoption = selected.data.get("external_adoption")
+    if adoption:
+        invite = adoption.get("invitation")
+        if (selected.status != "done" or not isinstance(invite, dict)
+                or adoption.get("verification") != "owner_selected_provider_event_verified"
+                or invite.get("release") != context.release.release_id
+                or invite.get("ccd") != context.release.ccd
+                or invite.get("owner") != context.release.owner_email
+                or adoption.get("confirmed_by", "").casefold()
+                != (context.release.owner_email or "").casefold()):
+            raise ValueError("Owner-selected invitation no longer matches this release")
+        _check_source_matches(context, {"state_matches": adoption["source_matches"]})
+        return {**thaw(invite), "adoption_hash": fingerprint(adoption)}
     try:
         step, item, attempt = sent_notification(context, ID, "workiq_create_event")
         receipt = attempt.get("receipt") or {}

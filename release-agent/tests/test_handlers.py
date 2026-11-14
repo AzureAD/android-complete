@@ -6,10 +6,10 @@ from types import MappingProxyType, SimpleNamespace
 import pytest
 
 from orchestrator.effects import EffectMode
-from orchestrator.authority import WriteOperation
+from orchestrator.authority import WriteOperation, OwnStepData
 from orchestrator.handlers import HandlerCatalog
-from orchestrator.outcomes import Done, NeedsHuman, NeedsSkill
-from orchestrator.evidence import RetryDecision
+from orchestrator.outcomes import Done, Blocked, NeedsHuman, NeedsSkill
+from orchestrator.evidence import RetryDecision, StepData
 from orchestrator.step_context import ApprovalContext, Clock, EffectContext, EvidenceView, ReleaseView, StepContext
 from orchestrator.approvals import ApprovalRequest
 from orchestrator.handler_contracts import HookRole
@@ -107,6 +107,111 @@ def _effect_module(mode="transactional", **attributes):
     })
 
 
+def test_read_only_task_refresh_preserves_unchanged_consumers_and_invalidates_only_real_changes(tmp_path):
+    import yaml
+    from orchestrator.state import ReleaseState, StepState
+    from tests._context import fresh_orchestrator
+
+    calls = []
+    values = {"value": 1, "observed_at": "2026-09-11T12:00:00+00:00"}
+
+    def build(context):
+        calls.append(True)
+        return Done("Fresh observation", updates=(StepData(dict(values)),))
+
+    source = _module(EVIDENCE=(OwnStepData(),), build=build)
+    config = _config(effect_mode="read_only")
+    config["phases"][0]["steps"] += [
+        {"id": "consumer", "name": "Dependent review", "kind": "human_action", "depends_on": ["work"]},
+        {"id": "independent", "name": "Independent review", "kind": "human_action"},
+    ]
+    path = tmp_path / "phases.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    def resolver(phase, step):
+        return source if step == "work" else SimpleNamespace(
+            ID=step, KIND="human", build=lambda context: NeedsHuman("Confirm"))
+
+    state = ReleaseState(release_id="r")
+    orch = fresh_orchestrator(str(path), state, mocks={}, handler_resolver=resolver)
+    assert orch.run_task("phase", "work").kind == "ran"
+    for step in ("consumer", "independent"):
+        state.set_step("phase", step, StepState(status="done", by="human"))
+
+    values["observed_at"] = "2026-09-11T12:01:00+00:00"
+    assert orch.run_task("phase", "work", retry=True).kind == "ran"
+    assert len(calls) == 2
+    assert state.is_done("phase", "consumer") and state.is_done("phase", "independent")
+    assert state.get_step("phase", "work").data["observed_at"] == "2026-09-11T12:00:00+00:00"
+
+    values["value"] = 2
+    assert orch.run_task("phase", "work", retry=True).kind == "ran"
+    assert len(calls) == 3 and state.get_step("phase", "work").data["value"] == 2
+    assert not state.is_done("phase", "consumer")
+    assert state.is_done("phase", "independent")
+    with pytest.raises(ValueError, match="unknown parameter"):
+        orch.run_task("phase", "work", parameters={"unknown": "value"})
+    assert len(calls) == 3
+
+@pytest.mark.parametrize("kind", ("read", "effect", "external"))
+def test_explicit_rerun_ignores_unrelated_phase_and_time_frontier(tmp_path, kind):
+    import yaml
+    from orchestrator.commands.step_action import prepare_step
+    from orchestrator.state import ReleaseState
+    from tests._context import fresh_orchestrator
+
+    calls = []
+
+    def build(context):
+        calls.append("selected")
+        return NeedsSkill("read-tool", outbound=False) if kind == "external" else Done("Selected task")
+
+    source = (_module(KIND="scout", EFFECT_MODE=None, build=build) if kind == "external"
+              else _effect_module(execute=build) if kind == "effect" else _module(build=build))
+    config = _config(**({"kind": "external"} if kind == "external" else {
+        "effect_mode": "transactional", "effect_recovery": "frozen"} if kind == "effect" else {
+        "effect_mode": "read_only"}))
+    config["phases"].insert(0, {"id": "earlier", "name": "Unrelated incomplete phase",
+                                "steps": [{"id": "other", "name": "Other", "kind": "human_action"}]})
+    config["phases"][1]["anchor"] = "CCD+365"
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    state = ReleaseState(release_id="r", ccd="2026-09-11", timezone="UTC", owner_email="owner@example.test")
+    orch = fresh_orchestrator(
+        str(path), state, mocks={}, now=datetime(2026, 9, 11, tzinfo=timezone.utc),
+        handler_resolver=lambda phase, step: source if step == "work" else None)
+    assert orch.rerun_task("phase", "work", reason="Run this one task now",
+                           confirmed_by=state.owner_email).changed
+    if kind == "external":
+        result = prepare_step(SimpleNamespace(release="r", phase="phase", step="work"), state, orch)
+        assert result["kind"] == "needs_skill" and not result["outbound"]
+    else:
+        assert orch.run_task("phase", "work").kind == "ran"
+    assert calls == ["selected"]
+    assert state.get_step("earlier", "other").status == "pending"
+
+
+def test_explicit_rerun_does_not_bypass_a_real_approval_prerequisite(tmp_path):
+    import yaml
+    from orchestrator.state import ReleaseState
+    from tests._context import fresh_orchestrator
+
+    config = _config(effect_mode="idempotent", effect_recovery="frozen")
+    config["phases"][0]["steps"][0]["depends_on"] = ["approval"]
+    config["phases"][0]["steps"].insert(0, {
+        "id": "approval", "name": "Human decision", "kind": "approval_gate"})
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    source = _effect_module(mode="idempotent", execute=lambda context: pytest.fail("No approval"))
+    state = ReleaseState(release_id="r", owner_email="owner@example.test")
+    orch = fresh_orchestrator(str(path), state, mocks={},
+                              handler_resolver=lambda phase, step: source if step == "work" else None)
+    assert orch.rerun_task("phase", "work", reason="Run now", confirmed_by=state.owner_email).changed
+    action = orch.run_task("phase", "work")
+    assert "approval" in action.message
+    assert state.get_step("phase", "work").execution is None
+
+
 def test_missing_real_auto_handler_fails_closed():
     with pytest.raises(WorkflowConfigError, match=r"phase\.work.*requires a handler module"):
         _catalog(effect_mode="read_only")
@@ -121,14 +226,14 @@ def test_missing_external_attestation_or_external_gate_handler_rejected(kind):
         _catalog(**step)
 
 
-def test_dummy_is_explicit_labeled_noop():
+def test_dummy_is_explicit_manual_only_without_automatic_success():
     handler = _catalog(implementation="dummy").get("phase", "work")
     outcome = handler.build(_context(handler))
     assert handler.definition.implementation == StepImplementation.DUMMY
     assert handler.definition.effect_mode == EffectMode.READ_ONLY
-    assert isinstance(outcome, Done)
-    assert "[DUMMY]" in outcome.note and "Test operation" in outcome.note
-    assert "no operation performed" in outcome.note
+    assert isinstance(outcome, Blocked)
+    assert "Manual-only" in outcome.reason and "Test operation" in outcome.reason
+    assert "record-fact" in outcome.reason
     assert handler.effect is None and handler.submit_approval is None
 
 
@@ -367,7 +472,7 @@ def test_workflow_metadata_is_detached_and_recursively_frozen():
     config["phases"][0]["steps"][0]["name"] = "Replacement"
     config["phases"][0]["steps"][0]["maps_to"].append("two")
     handler = catalog.get("phase", "work")
-    assert "Test operation" in handler.build(_context(handler)).note
+    assert "Test operation" in handler.build(_context(handler)).reason
     assert handler.definition.raw["maps_to"] == ("one",)
     assert workflow.phases[0].raw["steps"][0]["name"] == "Test operation"
     with pytest.raises(TypeError):

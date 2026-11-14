@@ -107,14 +107,20 @@ def scope_reason(orch, scope, *, acknowledgement=False):
     frontier = selection.frontier
     current_phase = frontier.id if frontier else None
     projected_status = selection.status
-    if projected_status == "complete":
+    owner_task = bool(scope.get("phase") and scope.get("step")
+                      and st.owner_task_active(scope["phase"], scope["step"]))
+    if owner_task:
+        definition = orch.workflow.step(scope["phase"], scope["step"])
+        if problem := orch._projection().owner_task_problem(definition):
+            return problem
+    if projected_status == "complete" and not owner_task:
         return "release complete"
-    if projected_status in ("halted", "blocked", "readiness_gate", "cancelled"):
+    if not owner_task and projected_status in ("halted", "blocked", "readiness_gate", "cancelled"):
         return "release suspended or unsigned"
     if orch.tz is None:
         return "owner timezone unavailable; repair configuration or tzdata"
     phases = scope.get("phases") if kind == "window" else [scope.get("phase")]
-    if kind == "refresh":
+    if kind == "refresh" and not owner_task:
         pid, sid = scope.get("phase"), scope.get("step")
         ready = step_readiness.get(f"{pid}.{sid}")
         if not ready or not ready.definition.repeatable:
@@ -123,7 +129,7 @@ def scope_reason(orch, scope, *, acknowledgement=False):
             return "outside owning phase/window"
         if not phase_readiness[pid].due:
             return "owning phase not due"
-    elif kind != "release":
+    elif kind != "release" and not owner_task:
         if not phases or current_phase not in phases:
             return "outside owning phase/window"
         if any(p not in phase_readiness for p in phases):

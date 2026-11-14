@@ -38,7 +38,10 @@ def digest_logical_id(report, today):
 def cmd_set_owner(args):
     """Set/change the release owner (who reminders are emailed to)."""
     st = C.load_state(args.runs_root, args.release)
+    previous_owner = st.owner_email
     st.owner_email = (getattr(args, "owner_email", None) or checks.current_az_user())
+    if (previous_owner or "").casefold() != (st.owner_email or "").casefold():
+        st.readiness_items = {}
     if getattr(args, "owner_name", None):
         st.owner_name = args.owner_name
     C.save_state(st, args.runs_root, args.release)
@@ -83,6 +86,11 @@ def _notify_payload(args, rid, advance):
         # Auto-advance: run every agent step that can run, holding at the first
         # gate / action-needed. Idempotent — a no-op once holding or not due.
         st, orch = C.load_orch(args.runs_root, rid, args.config, as_of)
+        if st.execution_mode != "unattended":
+            return {**_empty_payload(rid, args.config), "status": "waiting",
+                    "summary": "Interactive mode: scheduled progression is disabled.",
+                    "work_dispatch": {"pending_work": [], "continue_automatically": False,
+                                      "may_return_to_user": True}}
         actions = orch.run_until_gate()
         C.save_state(st, args.runs_root, rid)
         C.log_actions(C.elog(args.runs_root, rid), actions, state=st)

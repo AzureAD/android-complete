@@ -21,7 +21,8 @@ def cmd_init(args):
         else:
             print(message)
         return 1
-    st = ReleaseState(release_id=args.release)
+    st = ReleaseState(release_id=args.release,
+                      execution_mode="unattended" if getattr(args, "unattended", False) else "interactive")
 
     # Release owner (the engineer running this release) — release metadata.
     # Priority: explicit --owner-email (skill can pass the richer profile) then
@@ -77,7 +78,9 @@ def cmd_init(args):
     initialized_report = orch.status_report()
     if getattr(args, "json", False):
         print(_json.dumps({
+            "status": "done", "summary": "Release context initialized; no phase work or approval has run.",
             "initialized": True, "release_id": st.release_id, "state_path": sp,
+            "execution_mode": st.execution_mode,
             "owner_email": st.owner_email, "owner_name": st.owner_name,
             "timezone": st.timezone or schedule.DEFAULT_TZ,
             "ccd": st.ccd, "ccd_source": st.ccd_source, "ccd_conflict": st.ccd_conflict,
@@ -91,6 +94,7 @@ def cmd_init(args):
             "next_action": initialized_report["work_dispatch"]["next_action"],
             "continue_automatically": initialized_report["work_dispatch"]["continue_automatically"],
             "checklist_command": checklist_command,
+            **C.guided_followup(orch, initialized_report),
         }, indent=2))
         return 0
     owner_line = f"  Owner: {st.owner_name + ' ' if st.owner_name else ''}{st.owner_email or '(unresolved)'}{owner_note}"
@@ -115,12 +119,14 @@ def cmd_init(args):
               "through the work queue below and save its owning provider receipt before "
               "claiming unattended startup is complete.")
     print(
-        f"  Next: run the readiness entry gate now with "
-        f"`{checklist_command}`. "
-        "Initialization/reminder registration is not a stopping point. "
-        "Complete available automatic checks, then show the full current table "
-        "and request the required human confirmations. Readiness does not wait for Phase 0.")
-    print(render.work_followup(initialized_report["work_dispatch"]))
+        f"  Next required readiness: `{checklist_command}`. "
+        "No phase work or release approval has run.")
+    if st.execution_mode == "interactive":
+        print("  Guided progression is automatic while the agent is present; "
+              "no background worker is required or created.")
+        print(render.work_followup(initialized_report["work_dispatch"]))
+    else:
+        print(render.work_followup(initialized_report["work_dispatch"]))
     return 0
 
 
@@ -150,11 +156,6 @@ def cmd_list(args):
 
 def cmd_status(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    from orchestrator.revision import mismatch_reason
-    if not mismatch_reason(orch) and not getattr(args, "no_pipeline_check", False):
-        # Status may refresh its in-memory view, but observation must never modify
-        # release-state. Explicit CCD reconciliation commands own persistence.
-        C.refresh_conflict(st)
     rep = orch.status_report()
     holds = getattr(args, "hold_step", None)
     if holds and not getattr(args, "handoff", False):
@@ -167,15 +168,14 @@ def cmd_status(args):
     if getattr(args, "json", False):
         print(_json.dumps(rep, indent=2))
         return code
-    C.emit(args.runs_root, args.release, render.status_view(rep), kind="status",
-           log_text=(f"status viewed — {rep['release_id']} {rep['done']}/{rep['total']} "
-                     f"({rep['percent']}%), phase: {rep.get('current_phase_name','')}"))
+    display = render.status_view(rep) if getattr(args, "details", False) else render.status_brief(rep)
+    print(display)
     return code
 
 
 def cmd_next(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    actions = orch.run_until_gate(pending_only=getattr(args, "pending_only", False))
+    actions = orch.run_until_gate(pending_only=getattr(args, "pending_only", True))
     C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
     C.log_actions(C.elog(args.runs_root, args.release), actions, state=st)
     if getattr(args, "json", False):
@@ -208,12 +208,7 @@ def cmd_approve(args):
     C.save_state(st, args.runs_root, args.release)
     el = C.elog(args.runs_root, args.release)
     el.log("gate_approved", phase=act.phase, step=act.step, driver=args.comment or None)
-    actions = orch.run_until_gate()
-    C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
-    C.log_actions(el, actions, state=st)
-    C.emit(args.runs_root, args.release,
-           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="advance",
-           log_text=C.advance_log_summary(actions, lead=[act.message]))
+    C.emit(args.runs_root, args.release, act.message, kind="approval")
     return 0
 
 
@@ -231,37 +226,85 @@ def cmd_deny(args):
 
 
 def cmd_done(args):
-    """Mark a reminder (human, non-gate) step done, then advance to the next hold."""
+    """Record one human result without starting unrelated work."""
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     act = orch.complete_step(getattr(args, "phase", None), getattr(args, "step", None), args.note or "")
-    if act.kind != "ran":
-        print(act.message)
+    if act.kind not in ("ran", "recorded"):
+        if getattr(args, "json", False):
+            print(_json.dumps({"status": "failed", "summary": act.message,
+                               "permission_to_execute": False}))
+        else:
+            print(act.message)
         return 1
     el = C.elog(args.runs_root, args.release)
-    el.log("reminder_done", phase=act.phase, step=act.step, driver=args.note or None)
-    actions = orch.run_until_gate()
+    el.log("fact_recorded" if act.kind == "recorded" else "reminder_done",
+           phase=act.phase, step=act.step, driver=args.note or None)
     C.save_state(st, args.runs_root, args.release)
-    C.log_actions(el, actions, state=st)
-    C.emit(args.runs_root, args.release,
-           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="advance",
-           log_text=C.advance_log_summary(actions, lead=[act.message]))
+    if getattr(args, "json", False):
+        print(_json.dumps({"status": "needs_input" if act.kind == "recorded" else "done",
+                           "summary": act.message, "recorded": True,
+                           "phase": act.phase, "step": act.step,
+                           "verification": "unverified" if act.kind == "recorded" else "owner_attested",
+                           "permission_to_execute": False,
+                           **C.guided_followup(orch)}))
+    else:
+        C.emit(args.runs_root, args.release, act.message, kind="record_result")
     return 0
 
 
 def cmd_skip(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
-    act = orch.skip_step(args.phase, args.step, args.reason or "")
+    act = orch.skip_step(
+        args.phase, args.step, args.reason or "",
+        confirmed_by=getattr(args, "confirmed_by", None) or st.owner_email,
+        prior_writer_stopped=bool(getattr(args, "prior_writer_stopped", False)),
+    )
     if act.kind == "idle":            # rejected (no reason / bad step) — nothing changed
-        print(act.message)
+        if getattr(args, "json", False):
+            print(_json.dumps({"status": "needs_input", "summary": act.message,
+                               "permission_to_execute": False, "permission_to_send": False}))
+        else:
+            print(act.message)
         return 1
     el = C.elog(args.runs_root, args.release)
     el.log("step_skipped", phase=args.phase, step=args.step, driver=args.reason)
-    actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)
-    C.log_actions(el, actions, state=st)
-    C.emit(args.runs_root, args.release,
-           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="override",
-           log_text=C.advance_log_summary(actions, lead=[act.message]))
+    if getattr(args, "json", False):
+        print(_json.dumps({"status": "done", "summary": act.message, "verification": "waived",
+                           "permission_to_execute": False, "permission_to_send": False,
+                           **C.guided_followup(orch)}))
+    else:
+        C.emit(args.runs_root, args.release, act.message, kind="override")
+    return 0
+
+
+def cmd_complete_manually(args):
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
+    result = {}
+    if args.result_file:
+        with open(args.result_file, encoding="utf-8") as fh:
+            result = _json.load(fh)
+    if not isinstance(result, dict) or set(result) - {"outputs", "links"}:
+        raise ValueError("Manual result file accepts only outputs and links; these are not provider receipts")
+    if not isinstance(result.get("links", []), list):
+        raise ValueError("Manual result links must be a list")
+    links = result.get("links", []) + [
+        {"name": "Owner-attested manual result", "url": url} for url in args.evidence]
+    transition = orch.complete_manually(
+        args.phase, args.step, note=args.note, confirmed_by=args.confirmed_by or st.owner_email,
+        links=links, outputs=result.get("outputs", {}),
+        prior_writer_stopped=args.prior_writer_stopped,
+    )
+    if not transition.changed:
+        raise ValueError(transition.message)
+    C.save_state(st, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log(
+        "task_completed_manually", phase=args.phase, step=args.step, driver=args.note)
+    print(_json.dumps({"status": "done", "summary": transition.message,
+                       "verification": "owner_attested", "machine_verified": False,
+                       "phase": args.phase, "step": args.step, "links": links,
+                       "permission_to_execute": False, "permission_to_send": False,
+                       **C.guided_followup(orch)}))
     return 0
 
 
@@ -272,6 +315,8 @@ def cmd_reopen(args):
         args.step,
         args.reason or "",
         force_owner=bool(getattr(args, "force_owner", False)),
+        confirmed_by=getattr(args, "confirmed_by", None) or st.owner_email,
+        prior_writer_stopped=bool(getattr(args, "prior_writer_stopped", False)),
     )
     if act.kind == "idle":
         print(act.message)
@@ -377,11 +422,17 @@ def cmd_set_target_month(args):
 
 
 def register(sub):
+    inspect = sub.add_parser("inspect-state", help="Inspect state/version metadata without loading or advancing it")
+    inspect.add_argument("--release", required=True)
+    inspect.set_defaults(func=cmd_inspect_state)
+
     i = sub.add_parser("init", help="Start a new release run")
     i.add_argument("--release", required=True)
     i.add_argument("--json", action="store_true",
                    help="Print initialization metadata and the immediate readiness handoff as JSON")
     i.add_argument("--force", action="store_true")
+    i.add_argument("--unattended", action="store_true",
+                   help="Opt in to scheduled progression; interactive execution is the default")
     i.add_argument("--owner-email", default=None, help="Release owner email (default: signed-in az user)")
     i.add_argument("--owner-name", default=None, help="Release owner display name (optional)")
     i.add_argument("--timezone", default=None,
@@ -397,6 +448,7 @@ def register(sub):
     s.add_argument("--release", required=True)
     s.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--details", action="store_true", help="Show the full phase map and checklist")
     s.add_argument("--handoff", action="store_true",
                    help="Refuse returning to the owner (exit 2) while independent work remains executable")
     s.add_argument("--hold-step", action="append",
@@ -412,6 +464,9 @@ def register(sub):
                    help="After advancing, print the status report as JSON (carries scout_pending).")
     n.add_argument("--pending-only", action="store_true",
                    help="Drain fresh work without automatically retrying failed, owned or in-flight steps")
+    n.add_argument("--retry", action="store_false", dest="pending_only",
+                   help="Explicitly retry failed reads and reconcile in-flight operations once")
+    n.set_defaults(pending_only=True)
     n.set_defaults(func=cmd_next)
 
     a = sub.add_parser("approve", help="Approve the current holding gate, continue")
@@ -426,21 +481,37 @@ def register(sub):
     d.add_argument("--comment", default="")
     d.set_defaults(func=cmd_deny)
 
-    dn = sub.add_parser("done", help="Mark a reminder (human, non-gate) step done, then advance")
+    dn = sub.add_parser("done", aliases=["record-fact"],
+                       help="Record a human or manual-only result without advancing other work")
     dn.add_argument("--release", required=True)
     dn.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     dn.add_argument("--phase", default=None, help="Defaults to the current holding step")
     dn.add_argument("--step", default=None)
     dn.add_argument("--note", default="", help="Optional note (audited)")
+    dn.add_argument("--json", action="store_true")
     dn.set_defaults(func=cmd_done)
 
     # ---- manual overrides ----
-    sk = sub.add_parser("skip", help="Skip an eligible non-gate step without running it (reason REQUIRED)")
+    sk = sub.add_parser("skip", help="Waive any non-gate task, including blocked/out-of-order work")
     sk.add_argument("--release", required=True)
     sk.add_argument("--phase", required=True)
     sk.add_argument("--step", required=True)
     sk.add_argument("--reason", required=True, help="Why (audit — required)")
+    sk.add_argument("--confirmed-by", help="Confirming release owner; defaults to the configured owner")
+    sk.add_argument("--prior-writer-stopped", action="store_true")
+    sk.add_argument("--json", action="store_true")
     sk.set_defaults(func=cmd_skip)
+
+    manual = sub.add_parser("complete-manually", help="Record owner-attested completion of any non-gate task")
+    manual.add_argument("--release", required=True)
+    manual.add_argument("--phase", required=True)
+    manual.add_argument("--step", required=True)
+    manual.add_argument("--note", required=True, help="What the owner completed and its release applicability")
+    manual.add_argument("--confirmed-by", help="Confirming release owner; defaults to the configured owner")
+    manual.add_argument("--evidence", action="append", default=[], help="Credential-free HTTPS evidence URL")
+    manual.add_argument("--result-file", help="Optional owner-provided outputs and links JSON")
+    manual.add_argument("--prior-writer-stopped", action="store_true")
+    manual.set_defaults(func=cmd_complete_manually)
 
     ro = sub.add_parser("reopen", help="Reopen a done/skipped step so it runs again")
     ro.add_argument("--release", required=True)
@@ -450,8 +521,10 @@ def register(sub):
     ro.add_argument(
         "--force-owner",
         action="store_true",
-        help="Owner override: force-clear reservations/review holds and reopen immediately",
+        help="Start a fresh audited owner attempt; stopped-writer confirmation is required for owned work",
     )
+    ro.add_argument("--confirmed-by")
+    ro.add_argument("--prior-writer-stopped", action="store_true")
     ro.set_defaults(func=cmd_reopen)
 
     rt = sub.add_parser("rc-retriggered",
@@ -486,3 +559,44 @@ def register(sub):
     tm.add_argument("--release", required=True)
     tm.add_argument("--month", default=None, help="Ship month as YYYY-MM (e.g. 2026-09)")
     tm.set_defaults(func=cmd_set_target_month)
+
+    mode = sub.add_parser("set-mode", help="Explicitly select interactive or unattended execution")
+    mode.add_argument("--release", required=True)
+    mode.add_argument("--mode", required=True, choices=("interactive", "unattended"))
+    mode.set_defaults(func=cmd_set_mode)
+
+
+def cmd_set_mode(args):
+    state, _ = C.load_orch(args.runs_root, args.release, args.config)
+    state.execution_mode = args.mode
+    C.save_state(state, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log("execution_mode_changed", mode=args.mode)
+    print(_json.dumps({"status": "done", "execution_mode": args.mode,
+                       "permission_to_create": False, "permission_to_delete": False,
+                       "summary": "Mode recorded. Existing worker identities and receipts are unchanged."}))
+    return 0
+
+
+def cmd_inspect_state(args):
+    from orchestrator.revision import CURRENT_EXECUTION_CONTRACT
+    from orchestrator.state import SCHEMA_VERSION
+
+    with open(C.state_path(args.runs_root, args.release), encoding="utf-8-sig") as stream:
+        data = _json.load(stream)
+    if not isinstance(data, dict):
+        raise ValueError("Release state must be a JSON object")
+    binding = data.get("workflow_revision")
+    contract = binding.get("execution_contract") if isinstance(binding, dict) else None
+    supported = data.get("schema_version") == SCHEMA_VERSION and contract == CURRENT_EXECUTION_CONTRACT
+    print(_json.dumps({
+        "status": "done" if supported else "needs_input",
+        "release_id": data.get("release_id"), "schema_version": data.get("schema_version"),
+        "execution_contract": contract, "supported": supported,
+        "required_schema": SCHEMA_VERSION, "required_execution_contract": CURRENT_EXECUTION_CONTRACT,
+        "step_count": len(data["steps"]) if isinstance(data.get("steps"), dict) else None,
+        "execution_mode": data.get("execution_mode"),
+        "permission_to_execute": False, "permission_to_send": False,
+        "summary": ("Metadata inspected; no state or provider changes."
+                    if supported else "Unsupported run. This standard does not migrate old releases; retain the original bundle."),
+    }, indent=2))
+    return 0

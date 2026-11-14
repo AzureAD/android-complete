@@ -83,9 +83,11 @@ def test_pending_signoff_cannot_silently_replace_its_acknowledged_delivery():
 
     action = orch.complete_step("bug_bash", N.ID, "Confirmation for the original notice")
 
-    assert action.kind == "blocked" and "changed" in action.message
+    assert action.kind == "recorded" and "changed" in action.message
     assert not state.is_done("bug_bash", N.ID)
-    assert state.get_step("bug_bash", N.ID).data == reviewed
+    recorded = state.get_step("bug_bash", N.ID).data
+    assert recorded["owner_claim"]["verification"] == "unverified"
+    assert {key: value for key, value in recorded.items() if key != "owner_claim"} == reviewed
 
     assert orch.reopen("bug_bash", N.ID, "Review the replacement notice explicitly").kind == "ran"
     assert orch.complete_step("bug_bash", N.ID, "Confirmed the current notice").kind == "ran"
@@ -158,7 +160,7 @@ def test_missing_native_signoff_evidence_is_a_normal_blocked_prompt(tmp_path, mo
     assert (tmp_path / state.release_id / "release-state.json").read_bytes() == before
 
 
-def test_done_cli_does_not_log_or_save_success_for_blocked_signoff(tmp_path, monkeypatch, capsys):
+def test_done_cli_retains_unverified_claim_without_logging_success(tmp_path, monkeypatch, capsys):
     state, _ = _ready()
     state.set_step("bug_bash", Notice.ID, StepState(status="done"))
     C.save_state(state, str(tmp_path), state.release_id)
@@ -166,11 +168,31 @@ def test_done_cli_does_not_log_or_save_success_for_blocked_signoff(tmp_path, mon
     before = path.read_bytes()
     monkeypatch.setattr(mocks, "load_mocks", lambda: {})
     assert cli.main(["--runs-root", str(tmp_path), "done", "--release", state.release_id,
-                     "--phase", "bug_bash", "--step", N.ID, "--note", "Owner confirmed"]) == 1
+                     "--phase", "bug_bash", "--step", N.ID, "--note", "Owner confirmed"]) == 0
     assert "sign-off needs" in capsys.readouterr().out
-    assert path.read_bytes() == before
+    assert path.read_bytes() != before
+    saved = ReleaseState.load(str(path)).get_step("bug_bash", N.ID)
+    assert saved.status == "pending"
+    assert saved.data["owner_claim"]["note"] == "Owner confirmed"
+    assert saved.data["owner_claim"]["verification"] == "unverified"
     events = path.parent / "events.jsonl"
     assert not events.exists() or "reminder_done" not in events.read_text(encoding="utf-8")
+
+
+def test_native_signoff_can_be_recorded_before_ui_review_without_advancing():
+    state, orch = _ready()
+    state.set_step("bug_bash", "ui_failures", StepState())
+    decisions = deepcopy(state.gate_decisions)
+    before = deepcopy(state.get_step("bug_bash", "ui_failures"))
+
+    action = orch.complete_step("bug_bash", N.ID, "Owner received the release-specific sign-off")
+
+    assert action.kind == "ran"
+    assert state.get_step("bug_bash", N.ID).status == "done"
+    assert state.get_step("bug_bash", N.ID).data["confirmation_preconditions"]
+    assert state.get_step("bug_bash", "ui_failures") == before
+    assert state.gate_decisions == decisions
+    assert not state.is_done("bug_bash", "bugbash_complete")
 
 
 def test_producer_refresh_cannot_rewrite_what_a_human_already_confirmed():

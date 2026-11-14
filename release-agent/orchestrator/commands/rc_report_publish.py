@@ -559,10 +559,72 @@ def _result(args, orch):
     return 0
 
 
+def _adopt_report(args, orch):
+    if any(getattr(args, key, None) for key in (
+            "execute", "receipt_file", "execution_id", "upload_request_file",
+            "auto_approve", "review_hash", "approved_by", "executor")):
+        raise ValueError("Manual adoption is result-only; do not combine it with upload or receipt authorization")
+    value = _read_json(args.adopt_file)
+    owner = orch.state.owner_email
+    _, html, _, model = R.rc_email(orch.context(PHASE, S.ID))
+    if value.get("release") != orch.state.release_id or value.get("rc") != model.get("rc"):
+        raise ValueError("Selected report must explicitly identify the current release and RC")
+    if type(value.get("rc")) is not int or value["rc"] < 1:
+        raise ValueError("Adoption requires a captured current RC")
+    digest, size = value.get("sha256"), value.get("size")
+    if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or type(size) is not int or size < 1):
+        raise ValueError("Selected report requires its actual SHA-256 and positive byte size")
+    url = value.get("item_url")
+    _url(url)
+    name = unquote(urlparse(url).path.rsplit("/", 1)[-1])
+    if not re.fullmatch(r"[^/\\]+\.html", name, re.IGNORECASE):
+        raise ValueError("Select an exact HTML report in the configured report folder")
+    target = {**S.target_config(), "file_name": name}
+    route = value.get("route", "workiq")
+    if route == "sharepoint":
+        receipt = _observed_sharepoint_new_file(value, target, owner, digest, size)
+    elif route == "workiq":
+        receipt = _observed_item(value, target, owner, digest, size)
+    else:
+        raise ValueError("Selected report read route must be workiq or sharepoint")
+    lineage = {**R.report_lineage(orch.context(PHASE, S.ID), html), "content_sha256": digest}
+    existing = orch.state.get_step(PHASE, S.ID)
+    if (existing.status == "done" and existing.data.get("manual_adoption")
+            and all(existing.data.get(key) == val for key, val in {**receipt, **lineage}.items())):
+        print(json.dumps({"status": "done", "summary": "This owner-selected report is already recorded.",
+                          "report_link": receipt["report_link"], "permission_to_execute": False}))
+        return 0
+    data = S.publication_data(receipt, lineage, name)
+    data["manual_adoption"] = {
+        "release": orch.state.release_id, "rc": model["rc"],
+        "confirmed_by": args.confirmed_by, "reason": args.adoption_reason,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "verification": "owner_selected_provider_bytes_verified",
+        "source_applicability": "owner_attested",
+    }
+    result = orch.adopt_result(
+        PHASE, S.ID, data=data, links=[{"name": "Owner-selected RC report", "url": url}],
+        note=args.adoption_reason or "", confirmed_by=args.confirmed_by,
+        prior_writer_stopped=args.prior_writer_stopped,
+    )
+    if not result.changed:
+        raise ValueError(result.message)
+    C.save_state(orch.state, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log("manual_report_adopted", reason=args.adoption_reason)
+    print(json.dumps({"status": "done", "summary": result.message,
+                      "report_link": receipt["report_link"], "verification": "owner_selected",
+                      "permission_to_execute": False, "permission_to_send": False,
+                      "quality_approved": False}))
+    return 0
+
+
 def cmd_publish_rc_report(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     authorization = None
     try:
+        if getattr(args, "adopt_file", None):
+            return _adopt_report(args, orch)
         if args.receipt_file:
             return _result(args, orch)
         if not args.execute:
@@ -646,7 +708,7 @@ def cmd_publish_rc_report(args):
                 _record(orch, args, authorization.execution_id, "attention", summary)
             except ValueError as record_error:
                 recovery_error = str(record_error)
-        print(json.dumps({"error": summary, "permission_to_execute": False,
+        print(json.dumps({"status": "failed", "error": summary, "permission_to_execute": False,
                           **({"recovery_error": recovery_error} if recovery_error else {})}))
         return 2 if authorization is not None else 1
 
@@ -660,6 +722,11 @@ def register(sub):
     p.add_argument("--execution-id", help="Owning reservation or result execution id")
     p.add_argument("--upload-request-file", help="Existing-item proof or checked SharePoint new-file context and exact local HTML path JSON")
     p.add_argument("--receipt-file", help="Result-only frozen receipt binding and fresh provider readbacks JSON")
+    p.add_argument("--adopt-file", help="Owner-selected result: release, rc, sha256, size and exact resolve/download observations")
+    p.add_argument("--confirmed-by", help="Configured release owner explicitly selecting the result")
+    p.add_argument("--adoption-reason", help="Owner explanation of why this report covers the current release/RC")
+    p.add_argument("--prior-writer-stopped", action="store_true",
+                   help="Owner confirms any earlier uploader stopped; its original attempt remains in history")
     W.add_auto_approve_argument(
         p, help_text="Checkpoint the current report review before one checked Scout handoff")
     W.add_arguments(p)

@@ -135,36 +135,42 @@ def test_owner_can_confirm_interrupted_work_done_without_repeating_it(run, capsy
     st = ReleaseState.load(str(run[1]))
     orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
     assert orch.complete_step("ccd", "final_reminder").kind == "idle"
-    assert orch.complete_step("ccd", "final_reminder", "Owner found message; original runner stopped").kind == "ran"
-    assert st.is_done("ccd", "final_reminder")
-    assert orch.step_execution("ccd", "final_reminder") == {}
+    assert orch.complete_step("ccd", "final_reminder", "Owner found message; original runner stopped").kind == "idle"
+    assert not st.is_done("ccd", "final_reminder")
+    assert orch.step_execution("ccd", "final_reminder")["id"] == execution_id
 
 
 def test_owner_force_reopen_clears_interrupted_execution(run, capsys):
     execution_id = reserve(run, capsys)
     st = ReleaseState.load(str(run[1]))
     st.steps["ccd.final_reminder"]["execution"]["started_at"] = "2000-01-01"
+    st.owner_email = "owner@example.test"
     st.save(str(run[1]))
     assert report_result(run, capsys, execution_id, "uncertain")[0] == 0
 
-    rc, text = invoke(run, capsys, "reopen", "--force-owner", "--reason", "owner override")
+    assert invoke(run, capsys, "reopen", "--force-owner", "--reason", "owner override")[0] == 1
+    rc, text = invoke(run, capsys, "reopen", "--force-owner", "--reason", "owner override",
+                      "--prior-writer-stopped")
     assert rc == 0
-    assert "Owner-forced reopened ccd/final_reminder" in text
+    assert "New task attempt prepared" in text
     state = ReleaseState.load(str(run[1]))
     record = state.get_step("ccd", "final_reminder")
     assert record.status == "pending"
     assert record.execution is None
+    assert state.task_attempts["ccd.final_reminder"]["history"][0]["step"]["execution"]["id"] == execution_id
 
 
 def test_step_action_owner_force_rerun_unblocks_reserved_step(run, capsys):
     execution_id = reserve(run, capsys)
     st = ReleaseState.load(str(run[1]))
     st.steps["ccd.final_reminder"]["execution"]["started_at"] = "2000-01-01"
+    st.owner_email = "owner@example.test"
     st.save(str(run[1]))
     assert report_result(run, capsys, execution_id, "uncertain")[0] == 0
 
     rc, text = invoke(
-        run, capsys, "step-action", "--owner-force-rerun", "--owner-force-reason", "owner rerun"
+        run, capsys, "step-action", "--owner-force-rerun", "--owner-force-reason", "owner rerun",
+        "--prior-writer-stopped"
     )
     assert rc == 0
     payload = json.loads(text)
@@ -173,6 +179,105 @@ def test_step_action_owner_force_rerun_unblocks_reserved_step(run, capsys):
     state = ReleaseState.load(str(run[1]))
     record = state.get_step("ccd", "final_reminder")
     assert record.execution is None
+
+def test_broker_plan_rerun_accepts_a_new_name_and_preserves_old_binding(run, capsys, monkeypatch):
+    state = ReleaseState.load(str(run[1]))
+    _active_step(state, "bug_bash", "clone_plans_broker")
+    state.owner_email = "owner@example.test"
+    state.set_step("bug_bash", "clone_plans_broker", StepState(
+        status="done", note="First plan created", data={"plan_id": 100, "plan_name": "First plan"}))
+    state.resources["broker_test_plan"] = {"plan_id": 100, "identity": {"name": "First plan"}}
+    state.save(str(run[1]))
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {"bug_bash.clone_plans_broker": {"clone_id": 200}})
+    args = ["--runs-root", str(run[0]), "rerun", "--release", "2000-01",
+            "--phase", "bug_bash", "--step", "clone_plans_broker",
+            "--reason", "Build another named plan", "--param", "name=Owner's second plan"]
+
+    assert cli.main(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "done" and payload["attempt_id"]
+    assert payload["progression_policy"] == "automatic_until_input_or_wait"
+    assert payload["must_continue_automatic_work"]
+    assert any(item["step"] == "clone_plans_auth" for item in payload["work_dispatch"]["pending_work"])
+    assert "owner_prompt" not in payload
+    state = ReleaseState.load(str(run[1]))
+    record = state.get_step("bug_bash", "clone_plans_broker")
+    assert record.data["plan_id"] == 200 and record.data["plan_name"] == "Owner's second plan"
+    archived = state.task_attempts["bug_bash.clone_plans_broker"]["history"][0]
+    assert archived["step"]["data"]["plan_id"] == 100
+    assert archived["resources"]["broker_test_plan"]["plan_id"] == 100
+    assert not state.is_done("bug_bash", "ui_test_status")
+    assert cli.main(["--runs-root", str(run[0]), "task-history", "--release", "2000-01",
+                     "--phase", "bug_bash", "--step", "clone_plans_broker"]) == 0
+    history = json.loads(capsys.readouterr().out)
+    assert history["history"][0]["note"] == "First plan created"
+    assert not history["permission_to_execute"]
+
+
+@pytest.mark.parametrize("command", ("skip", "complete-manually"))
+def test_owner_can_record_blocked_future_work_without_sibling_execution(run, capsys, command):
+    state = ReleaseState.load(str(run[1]))
+    state.owner_email = "owner@example.test"
+    state.set_step("monitor", "health_report", StepState(status="blocked", note="No connector"))
+    state.save(str(run[1]))
+    options = ["--reason", "Owner will manage this outside the tool"] if command == "skip" else [
+        "--note", "Owner completed the health review manually",
+        "--evidence", "https://example.test/release-review/1"]
+    before = copy.deepcopy(state.steps)
+    prior_reminder = state.get_step("ccd", "final_reminder")
+
+    assert cli.main(["--runs-root", str(run[0]), command, "--release", "2000-01",
+                     "--phase", "monitor", "--step", "health_report", *options,
+                     *(["--json"] if command == "skip" else [])]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "done"
+    assert output["verification"] == ("waived" if command == "skip" else "owner_attested")
+    assert not output["permission_to_execute"]
+    state = ReleaseState.load(str(run[1]))
+    assert state.get_step("monitor", "health_report").status == ("skipped" if command == "skip" else "done")
+    assert state.get_step("ccd", "final_reminder") == prior_reminder
+    assert state.task_attempts["monitor.health_report"]["history"][0]["step"]["note"] == "No connector"
+    assert not state.gate_decisions
+
+
+def test_manual_outputs_are_not_promoted_to_provider_receipts(run, capsys):
+    state = ReleaseState.load(str(run[1]))
+    state.owner_email = "owner@example.test"
+    state.save(str(run[1]))
+    result = run[0] / "owner-result.json"
+    result.write_text(json.dumps({"outputs": {"event_id": "manual-event", "receipt": "owner assertion"}}),
+                      encoding="utf-8")
+    assert invoke(run, capsys, "complete-manually", "--note", "Owner sent the reminder",
+                  "--result-file", str(result))[0] == 0
+    state = ReleaseState.load(str(run[1]))
+    assert state.get_step("ccd", "final_reminder").data == {}
+    assert not state.notification_deliveries
+    assert state.task_attempts["ccd.final_reminder"]["result"]["outputs"]["event_id"] == "manual-event"
+
+
+def test_step_info_advertises_only_valid_public_plan_inputs(capsys):
+    assert cli.main(["step-info", "--phase", "bug_bash", "--step", "clone_plans_broker", "--json"]) == 0
+    info = json.loads(capsys.readouterr().out)["owner_controls"]
+    assert info["rerun"] and info["skip"] and info["complete_manually"]
+    assert [field["name"] for field in info["parameters"]] == ["name"]
+    assert info["input_role"] == "prepare_effect"
+
+def test_attempt_history_externalizes_large_outputs_and_roundtrips(run, capsys):
+    state = ReleaseState.load(str(run[1]))
+    state.owner_email = "owner@example.test"
+    state.set_step("monitor", "health_report", StepState(
+        status="blocked", note="Large prior result", data={"details": "x" * 100_000}))
+    state.save(str(run[1]))
+    assert cli.main(["--runs-root", str(run[0]), "complete-manually", "--release", "2000-01",
+                     "--phase", "monitor", "--step", "health_report", "--note", "Owner reviewed the report"]) == 0
+    capsys.readouterr()
+    packed = json.loads(run[1].read_text(encoding="utf-8"))
+    history = packed["task_attempts"]["monitor.health_report"]["history"]
+    assert set(history[0]) == {"evidence_ref"}
+    assert run[1].stat().st_size < 32_768
+    loaded = ReleaseState.load(str(run[1]))
+    original = loaded.task_attempts["monitor.health_report"]["history"][0]["step"]["data"]
+    assert original["details"] == "x" * 100_000
 
 
 def test_reservation_requires_executor_and_preserves_builder_block(run, capsys):

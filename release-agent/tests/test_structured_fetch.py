@@ -70,6 +70,51 @@ def test_actual_mcp_alias_needs_no_cli_or_custom_registration(alias):
     assert F.route({F.FETCH_TOOL: alias}) == {"kind": "mcp", "tool": alias}
 
 
+@pytest.mark.parametrize("alias", ["Agency--workiq-fetch", "workiq_fetch", "mcp__agency__workiq_fetch"])
+def test_supported_host_names_use_the_actual_exposed_fetch_handle(alias):
+    assert F.route({F.FETCH_TOOL: alias}) == {"kind": "mcp", "tool": alias}
+
+
+def test_native_read_reuses_verified_route_and_rechecks_changed_launcher(launcher, monkeypatch):
+    profile, binary = launcher
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return process("fetch --urls") if "--help" in argv else process('{"value":[]}')
+
+    monkeypatch.setattr(F.subprocess, "run", run)
+    F.read(str(profile), "owner@example.test", "/groups")
+    F.read(str(profile), "owner@example.test", "/groups/one/members")
+    assert sum("--help" in call for call in calls) == 1
+    binary.write_bytes(b"changed installed launcher")
+    F.read(str(profile), "owner@example.test", "/groups")
+    assert sum("--help" in call for call in calls) == 2
+
+
+def test_cli_pagination_can_reuse_a_verified_route_without_another_help_probe(launcher, monkeypatch, capsys):
+    profile, binary = launcher
+    discovered = F.discover_cli(str(profile))
+    path = profile / "temporary-route.json"
+    path.write_text(json.dumps(discovered), encoding="utf-8")
+    calls = []
+
+    def run(argv, **kwargs):
+        assert "--help" not in argv
+        calls.append(argv)
+        return process('{"value":[]}')
+
+    monkeypatch.setattr(F.subprocess, "run", run)
+    args = ["workiq-read", "--scout-root", str(profile), "--account", "owner@example.test",
+            "--route-file", str(path), "--entity-url", "/groups/one/members"]
+    assert cli.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == {"value": []}
+    binary.write_bytes(b"changed installed launcher")
+    assert cli.main(args) == 1
+    assert "rediscover" in capsys.readouterr().out
+    assert len(calls) == 1
+
+
 def test_discovery_preserves_scout_wrapper_and_never_uses_cmd_shell(launcher, monkeypatch):
     profile, binary = launcher
     components = [profile / "app with spaces" / name for name in

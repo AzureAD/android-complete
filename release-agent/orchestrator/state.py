@@ -11,7 +11,7 @@ from orchestrator.effects import execution_input_is_valid
 from orchestrator import evidence_store
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _now() -> str:
@@ -48,6 +48,7 @@ class ReleaseState:
     schema_version: int = SCHEMA_VERSION
     workflow_revision: Optional[dict] = None
     release_id: str = ""             # e.g. 2026-07
+    execution_mode: str = "interactive"
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     # Release owner — the engineer running this release (release metadata). The
@@ -82,6 +83,7 @@ class ReleaseState:
     escalation_checkpoints: dict = field(default_factory=dict)  # successfully sent alert key -> {sent_at, target}
     notification_deliveries: dict = field(default_factory=dict)  # id -> immutable descriptor, status, attempts, completion
     resources: dict = field(default_factory=dict)  # release-owned external identities; survives step reopen
+    task_attempts: dict = field(default_factory=dict)  # owner requests and immutable prior-attempt snapshots
     _checkpoint: ClassVar[Optional[Callable[[], None]]] = None
     # Phase-2 release-pipeline runs — the RECORD of what verification resolved, reused by
     # the RC report + gate (no re-discovery). Because a re-triggered 'Trigger RC Testing'
@@ -112,6 +114,8 @@ class ReleaseState:
     def load(cls, path: str) -> "ReleaseState":
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError("Release state must be a JSON object")
         if type(data.get("schema_version")) is not int or data.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(
                 f"Unsupported release-state schema {data.get('schema_version')!r}; "
@@ -124,7 +128,10 @@ class ReleaseState:
             raise ValueError(
                 "Unknown release-state fields: " + ", ".join(sorted(unknown))
             )
+        data = evidence_store.hydrate_records(data, os.path.dirname(os.path.abspath(path)))
         obj = cls(**data)
+        if obj.execution_mode not in ("interactive", "unattended"):
+            raise ValueError("Execution mode must be interactive or unattended")
         from orchestrator.revision import validate_binding, is_hash
         validate_binding(obj.workflow_revision)
         obj._loaded_from_disk = True
@@ -152,7 +159,8 @@ class ReleaseState:
         for decision in obj.gate_decisions:
             if (
                 not isinstance(decision, dict)
-                or set(decision) != gate_fields
+                or not gate_fields.issubset(decision)
+                or set(decision) - gate_fields - {"invalidated_at", "invalidation_reason"}
                 or not isinstance(decision.get("step"), str)
                 or decision.get("decision") not in ("approved", "denied")
                 or not isinstance(decision.get("at"), str)
@@ -163,6 +171,9 @@ class ReleaseState:
                 )
             ):
                 raise ValueError("Invalid gate decisions")
+            if any(key in decision and not isinstance(decision[key], str)
+                   for key in ("invalidated_at", "invalidation_reason")):
+                raise ValueError("Invalid gate invalidation history")
         if not isinstance(obj.steps, dict):
             raise ValueError("Invalid step state map")
         step_fields = {f.name for f in fields(StepState)}
@@ -250,6 +261,7 @@ class ReleaseState:
             raise ValueError("Invalid notification ledger; owner recovery required")
         if not isinstance(obj.resources, dict):
             raise ValueError("Invalid resource registry; owner recovery required")
+        obj.validate_task_attempts()
         if not isinstance(obj.pipeline_runs, dict) or not isinstance(obj.versions, dict):
             raise ValueError("Invalid release evidence maps")
         obj.pipeline_runs = evidence_store.hydrate(
@@ -261,6 +273,7 @@ class ReleaseState:
         data = asdict(self)
         data["pipeline_runs"] = evidence_store.externalize(
             self.pipeline_runs, self.release_id, os.path.dirname(path))
+        data = evidence_store.externalize_records(data, os.path.dirname(path))
         self.updated_at = _now()
         data["updated_at"] = self.updated_at
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -301,3 +314,42 @@ class ReleaseState:
     def is_done(self, phase: str, step: str) -> bool:
         """Raw terminal fact only; workflow completion is StateProjection.step_complete."""
         return self.get_step(phase, step).status in ("done", "skipped")
+
+    def validate_task_attempts(self) -> None:
+        if not isinstance(self.task_attempts, dict):
+            raise ValueError("Task attempts must be a mapping")
+        for key, attempt in self.task_attempts.items():
+            if (not isinstance(key, str) or not isinstance(attempt, dict)
+                    or set(attempt) != {"id", "at", "by", "reason", "mode", "generation",
+                                        "parameters", "history", "result"}
+                    or any(not isinstance(attempt.get(field), str) or not attempt[field].strip()
+                           for field in ("id", "at", "by", "reason", "generation"))
+                    or attempt["mode"] not in ("rerun", "manual", "skip")
+                    or not isinstance(attempt["parameters"], dict)
+                    or any(not isinstance(role, str) or not isinstance(values, dict)
+                           for role, values in attempt["parameters"].items())
+                    or not isinstance(attempt["history"], list)
+                    or any(not isinstance(item, dict) or not isinstance(item.get("step"), dict)
+                           or not isinstance(item.get("notifications"), list)
+                           or type(item.get("writer_stopped")) is not bool
+                           or not isinstance(item.get("at"), str)
+                           or any(not isinstance(item["step"].get(field), expected)
+                                  for field, expected in (("data", dict), ("links", list), ("status", str)))
+                           for item in attempt["history"])
+                    or attempt["result"] is not None and not isinstance(attempt["result"], dict)):
+                raise ValueError(f"Invalid task attempt for {key}")
+            for field in ("at", "generation"):
+                try:
+                    datetime.fromisoformat(attempt[field].replace("Z", "+00:00"))
+                except ValueError as exc:
+                    raise ValueError(f"Invalid task attempt timestamp for {key}") from exc
+
+    def owner_task_active(self, phase: str, step: str) -> bool:
+        attempt = self.task_attempts.get(self.key(phase, step)) or {}
+        record = self.get_step(phase, step)
+        return bool(
+            attempt.get("mode") == "rerun"
+            and attempt.get("generation") == record.invalidated_at
+            and self.owner_email
+            and attempt.get("by", "").casefold() == self.owner_email.casefold()
+        )

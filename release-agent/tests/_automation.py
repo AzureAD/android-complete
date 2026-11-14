@@ -20,6 +20,11 @@ def seed_driver(runs_root, state, config=None):
     """Acknowledge a synthetic canonical driver in an isolated CLI fixture."""
     from orchestrator import automations, cli_common as C
     from orchestrator.registry import AutomationRegistry
+    from pathlib import Path
+    if state.execution_mode != "unattended":
+        state.execution_mode = "unattended"
+        if Path(C.state_path(str(runs_root), state.release_id)).is_file():
+            C.save_state(state, str(runs_root), state.release_id)
     config = config or C.DEFAULT_CONFIG
     worker = next(item for item in automations.plan(
         config, state.release_id, state.ccd, owner_timezone=state.timezone)["automations"]

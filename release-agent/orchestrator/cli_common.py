@@ -232,6 +232,21 @@ def log_actions(el: EventLog, actions, state=None):
             el.log(name)
 
 
+def guided_followup(orch, report=None) -> dict:
+    """Expose the next classified work; atomic result commands never grant new write authority."""
+    report = orch.status_report() if report is None else report
+    result = {key: report[key] for key in (
+        "progression_policy", "work_dispatch", "must_continue_automatic_work",
+        "handoff_ready", "display_before_prompt",
+    )}
+    result["continue_automatically"] = report["must_continue_automatic_work"]
+    if report.get("display_markdown") is not None:
+        result["display_markdown"] = report["display_markdown"]
+    if report.get("owner_prompt") is not None:
+        result["owner_prompt"] = report["owner_prompt"]
+    return result
+
+
 def advance_block(actions, orch, lead=None) -> str:
     """The canonical 'what happened + new status' block for advance commands."""
     out = list(lead or [])

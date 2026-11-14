@@ -104,6 +104,17 @@ def cli(monkeypatch, state, inputs, *flags):
     monkeypatch.setattr(C, "save_state", lambda st, *_: saved.append(deepcopy(st)))
     monkeypatch.setattr(C, "load_orch", lambda *_: (state, Orchestrator(C.DEFAULT_CONFIG, state, mocks={})))
     monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
+    def read_points(url, timeout):
+        for group in inputs["point_sets"]:
+            if f"/Plans/{group['plan_id']}/Suites/{group['suite_id']}/points?" in url:
+                return True, [
+                    {"id": point["id"], "testCase": {"id": int(point["case_id"])},
+                     "configuration": {"id": int(point["config_id"])},
+                     "assignedTo": {"id": point["tester_id"]},
+                     **({"outcome": point["outcome"]} if "outcome" in point else {})}
+                    for point in group["points"]], ""
+        raise AssertionError(f"Unexpected provider read: {url}")
+    monkeypatch.setattr(D.P, "_ado_rest_get_all", read_points)
     options = list(flags)
     args = build_parser().parse_args([
         "distribute-tests", "--release", state.release_id,
@@ -252,7 +263,8 @@ def test_live_corrections_apply_then_read_back_and_do_not_repeat(state, inputs, 
     result, saved = cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
     assert result == 0 and sum(c[0] == "case" for c in calls) == 0
     assert sum(c[0] == "point" for c in calls) == 9
-    assert all(set(data(s)) <= {"oof", "oce", "in_flight_since", "last_write_review"} for s in saved)
+    assert all(set(data(s)) <= {"oof", "oce", "in_flight_since", "last_write_review", "last_write_progress"}
+               for s in saved)
     assert cli(monkeypatch, state, inputs, "--apply")[0] == 1 and len(calls) == 9
 
 

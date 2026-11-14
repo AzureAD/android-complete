@@ -684,15 +684,18 @@ def test_signoff_auto_approve_starts_stage_once(memory, monkeypatch):
     assert calls == [("397224001", "ReleaseSignOff")]
 
 
-def test_distribution_final_validation_persists_only_availability(distribution_inputs, monkeypatch):
+def test_distribution_final_validation_persists_availability_and_owned_progress(distribution_inputs, monkeypatch, memory):
     orch = make_orch("bug_bash", "distribute_tests")
     args = arguments("distribute-tests", "--apply", "--no-oof")
     plan = distribute.plan_distribution(args, orch)
+    args.review_hash = W.review_hash(orch, "bug_bash", "distribute_tests", plan)
+    args.approved_by = orch.state.owner_email
+    memory[0](orch)
     stored = []
     monkeypatch.setattr(C, "load_orch", lambda *_: (orch.state, orch))
     monkeypatch.setattr(C, "save_state", lambda *a: None)
-    monkeypatch.setattr(W, "authorize", lambda *a: Namespace(
-        plan=plan, execution_id="owned", validate=lambda: None))
+    monkeypatch.setattr(distribute, "_reconcile_distribution", lambda operation: {
+        "points_sha256": operation["descriptor"]["expected"]})
     monkeypatch.setattr(orch, "settle_execution", lambda *a, **kw: stored.append((a, kw)))
 
     def sync(plan_id, suite_id, assignments, **kw):
@@ -707,11 +710,11 @@ def test_distribution_final_validation_persists_only_availability(distribution_i
     monkeypatch.setattr(D, "sync_point_testers", sync)
     assert distribute.cmd_distribute_tests(args) == 0
     data = stored[-1][1]["data"]
-    assert set(data) == {"oof", "oce"}
+    assert set(data) == {"oof", "oce", "in_flight_since"}
     assert data["oof"]["upns"] == []
 
 
-def test_distribution_partial_write_never_claims_completion(distribution_inputs, monkeypatch):
+def test_distribution_partial_write_never_claims_completion(distribution_inputs, monkeypatch, memory):
     orch = make_orch("bug_bash", "distribute_tests")
     args = arguments("distribute-tests", "--apply", "--no-oof")
     first = distribution_inputs["point_sets"][0]
@@ -719,11 +722,14 @@ def test_distribution_partial_write_never_claims_completion(distribution_inputs,
     distribution_inputs["point_sets"].append({**first, "suite_id": 93, "points": [last]})
     plan = distribute.plan_distribution(args, orch)
     assert len(plan.operations) == 2
+    args.review_hash = W.review_hash(orch, "bug_bash", "distribute_tests", plan)
+    args.approved_by = orch.state.owner_email
+    memory[0](orch)
     calls, settlements = [], []
     monkeypatch.setattr(C, "load_orch", lambda *_: (orch.state, orch))
     monkeypatch.setattr(C, "save_state", lambda *a: None)
-    monkeypatch.setattr(W, "authorize", lambda *a: Namespace(
-        plan=plan, execution_id="owned", validate=lambda: None))
+    monkeypatch.setattr(distribute, "_reconcile_distribution", lambda operation: {
+        "points_sha256": operation["descriptor"]["expected"]})
     monkeypatch.setattr(orch, "settle_execution", lambda *a, **kw: settlements.append((a, kw)))
     def sync(plan_id, suite_id, assignments, **kw):
         calls.append((plan_id, suite_id))
@@ -742,6 +748,104 @@ def test_distribution_partial_write_never_claims_completion(distribution_inputs,
     assert last["tester_upn"] == "alice@example.com"
     assert "Earlier writes may have succeeded" in settlements[0][0][-1].reason
     assert not settlements[0][1]
+
+
+@pytest.mark.parametrize("interruption", ["between_operations", "lost_readback"])
+@pytest.mark.parametrize("completion", ["automatic", "owner_attested"])
+def test_distribution_resumes_13_of_45_changes_without_repeating_inputs_or_writes(
+        distribution_inputs, monkeypatch, memory, tmp_path, interruption, completion):
+    import re
+
+    inputs = distribution_inputs
+    inputs["auth_cases"] = [{"id": str(1000 + i)} for i in range(13)]
+    inputs["broker_cases"] = [{"id": str(2000 + i)} for i in range(32)]
+    inputs["point_sets"] = [
+        {"prefix": prefix, "plan_id": 91, "suite_id": suite,
+         "points": [{"id": offset + i, "case_id": str(case + i), "config_id": "293",
+                     "tester_id": "old-id", "tester_upn": "old@example.test"}
+                    for i in range(count)]}
+        for prefix, suite, offset, case, count in [
+            ("A", 93, 1, 1000, 13), ("B", 92, 101, 2000, 32)]
+    ]
+    orch = make_orch("bug_bash", "distribute_tests")
+    memory[0](orch)
+    writes, interrupted = [], [False]
+
+    def group_for(url):
+        found = re.search(r"/Plans/(\d+)/Suites/(\d+)/points", url)
+        assert found, url
+        plan_id, suite_id = map(int, found.groups())
+        return next(group for group in inputs["point_sets"]
+                    if (group["plan_id"], group["suite_id"]) == (plan_id, suite_id))
+
+    def read(url, timeout):
+        group = group_for(url)
+        if (interruption == "lost_readback" and writes and not interrupted[0]):
+            interrupted[0] = True
+            return False, None, "Injected lost readback after provider applied the first batch"
+        return True, [
+            {"id": point["id"], "testCase": {"id": int(point["case_id"])},
+             "configuration": {"id": int(point["config_id"])},
+             "assignedTo": {"id": point["tester_id"], "uniqueName": point["tester_upn"]}}
+            for point in group["points"]], ""
+
+    def send(url, method, body, timeout):
+        group = group_for(url)
+        ids = {int(value) for value in url.split("/points/")[1].split("?")[0].split(",")}
+        writes.append(ids)
+        for point in group["points"]:
+            if point["id"] in ids:
+                point.update(tester_id=body["tester"]["id"], tester_upn=body["tester"]["id"])
+        return True, {}, ""
+
+    def validate(plan):
+        execution = orch.state.get_step("bug_bash", "distribute_tests").execution or {}
+        operations = (execution.get("write_progress") or {}).get("operations", [])
+        if (interruption == "between_operations" and not interrupted[0]
+                and operations and operations[0]["receipt"] is not None):
+            interrupted[0] = True
+            raise ValueError("Injected interruption before the next provider operation")
+
+    monkeypatch.setattr(D.P, "_ado_rest_get_all", read)
+    monkeypatch.setattr(D.P, "_ado_rest_send", send)
+    monkeypatch.setattr(distribute, "_validate_roster", validate)
+    args = arguments("distribute-tests", "--apply", "--no-oof")
+    original = distribute.plan_distribution(args, orch)
+    args.review_hash = W.review_hash(orch, "bug_bash", "distribute_tests", original)
+    args.approved_by = orch.state.owner_email
+    assert distribute.cmd_distribute_tests(args) == 2
+    assert sum(map(len, writes)) == 13
+    first_execution = orch.state.get_step("bug_bash", "distribute_tests").execution["id"]
+    path = tmp_path / "release-state.json"
+    orch.state.save(str(path))
+    loaded = ReleaseState.load(str(path))
+    resumed = Orchestrator(C.DEFAULT_CONFIG, loaded, mocks={}, now=orch.now_local)
+    memory[0](resumed)
+    if completion == "owner_attested":
+        args = arguments("distribute-tests", "--manual-completion",
+                         "https://dev.azure.com/example/project/_testPlans/execute?planId=91&suiteId=92",
+                         "--confirmed-by", loaded.owner_email,
+                         "--recovery-reason", "The writer stopped; I completed all remaining original assignments")
+        monkeypatch.setattr(distribute, "_reconcile_distribution",
+                            lambda *a: pytest.fail("Owner-attested completion must not probe providers"))
+        assert distribute.cmd_distribute_tests(args) == 0
+        completed = resumed.state.get_step("bug_bash", "distribute_tests")
+        assert completed.status == "done" and completed.by == "human"
+        assert not completed.data["last_write_progress"]["finished"]
+        assert completed.data["last_write_progress"]["manual_completion"]["confirmed_by"] == loaded.owner_email
+        assert sum(map(len, writes)) == 13
+        return
+    args = arguments("distribute-tests", "--apply", "--review-hash", args.review_hash,
+                     "--approved-by", loaded.owner_email)
+    assert distribute.cmd_distribute_tests(args) == 0
+    completed = resumed.state.get_step("bug_bash", "distribute_tests")
+    assert completed.status == "done"
+    assert completed.data["oof"]["upns"] == []
+    assert completed.data["last_write_progress"]["finished"]
+    assert completed.data["last_write_review"]["execution_id"] == first_execution
+    assert sum(map(len, writes)) == 45
+    assert len(set.union(*writes)) == 45
+    assert not any(left & right for index, left in enumerate(writes) for right in writes[index + 1:])
 
 
 @pytest.fixture

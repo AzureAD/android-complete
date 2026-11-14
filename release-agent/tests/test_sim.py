@@ -27,8 +27,7 @@ def test_sim_open_positions_at_target_entry():
 
 
 def test_sim_done_mode_completes_phase_and_advances():
-    """`at: done` runs the whole target phase and lands at the next phase (Phase 2 has no
-    gate now — rc_report auto-advances)."""
+    """Offline completion traverses the actual publish/notify/quality-gate phase."""
     import tempfile
     from orchestrator import sim as SIM
     scenario = {"name": "t_done", "release_id": "2026-08", "ccd": "2026-08-26",
@@ -38,7 +37,8 @@ def test_sim_done_mode_completes_phase_and_advances():
         res = SIM.run_scenario(scenario, runs_root=tmp)
     st = res.state
     assert all(st.is_done("build_verify", s) for s in
-               ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"))
+               ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
+                "rc_report_publish", "rc_report_notify", "rc_report_gate"))
     from tests._context import fresh_orchestrator as Orchestrator
     orch = Orchestrator(CONFIG, st)
     assert orch.current_phase_id() == "bug_bash"

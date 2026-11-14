@@ -7,9 +7,15 @@ from orchestrator import infra, structured_fetch
 
 def cmd_workiq_read(args):
     try:
+        discovered = None
+        if getattr(args, "route_file", None):
+            with open(args.route_file, encoding="utf-8-sig") as stream:
+                discovered = json.load(stream)
+            if not isinstance(discovered, dict) or discovered.get("kind") != "cli":
+                raise ValueError("Route file must contain the actual verified CLI discovery descriptor")
         result = structured_fetch.read(
             infra.scout_profile_root(args.scout_root), args.account, args.entity_url,
-            preferred=args.workiq_path)
+            preferred=args.workiq_path, discovered=discovered)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(json.dumps({"error": str(exc), "permission_to_write": False}))
         return 1
@@ -23,4 +29,5 @@ def register(sub):
     parser.add_argument("--workiq-path", help="Actual existing WorkIQ launcher if discovery is unresolved")
     parser.add_argument("--account", required=True, help="Verified signed-in release-owner address")
     parser.add_argument("--entity-url", required=True, help="Exact Graph-relative read URL")
+    parser.add_argument("--route-file", help="Reuse a fresh verified discovery descriptor across pagination calls")
     parser.set_defaults(func=cmd_workiq_read)

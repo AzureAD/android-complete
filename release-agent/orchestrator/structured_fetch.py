@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,12 @@ from . import m365
 
 FETCH_TOOL = "workiq.fetch"
 FETCH_ALIASES = {FETCH_TOOL, "workiq-fetch", "workiq:fetch", "mcp__workiq__fetch"}
+_DISCOVERED = {}
+
+
+def _launcher_stamp(command, launcher):
+    return tuple((str(path), Path(path).stat().st_mtime_ns, Path(path).stat().st_size)
+                 for path in dict.fromkeys([str(launcher), *command]))
 
 
 def _parse_structured_payload(stdout):
@@ -57,7 +64,7 @@ def _command(path):
     if len(launch) != 1:
         raise ValueError("Unsupported WorkIQ command wrapper; inspect its supported launcher before continuing")
     parts = re.findall(r'"([^"]+)"', launch[0])
-    if (len(parts) != 4 or launch[0] != " ".join(f'"{part}"' for part in parts) + " %*"
+    if (len(parts) != 4 or not re.fullmatch(r'@?"[^"]+"\s+"[^"]+"\s+"[^"]+"\s+"[^"]+"\s+%\*', launch[0])
             or [Path(part).name.casefold() for part in parts] != [
                 "node-runner.exe", "node.exe", "workiq-wrapper.cjs", "workiq.exe"]
             or any(not Path(part).is_absolute() or not Path(part).is_file() for part in parts)):
@@ -77,6 +84,14 @@ def discover_cli(scout_root, preferred=None):
         return {"status": "missing", "detail": (
             "No WorkIQ launcher found for this Scout profile. Inspect actual loaded MCP fetch tools "
             "or supply --workiq-path; do not infer that directory reads are impossible.")}
+    cached = _DISCOVERED.get(os.path.abspath(path))
+    if cached is not None:
+        try:
+            m365.validate_freshness(cached["result"]["observed_at"])
+            if cached["stamp"] == _launcher_stamp(cached["result"]["command"], path):
+                return deepcopy(cached["result"])
+        except (OSError, ValueError):
+            _DISCOVERED.pop(os.path.abspath(path), None)
     try:
         command = _command(path)
         result = subprocess.run(
@@ -89,17 +104,23 @@ def discover_cli(scout_root, preferred=None):
         return {"status": "unsupported", "detail": (
             "This WorkIQ launcher did not confirm fetch --urls support. "
             "Inspect its version/help; Ask-only support is not structured fetch.")}
-    return {
+    discovered = {
         "status": "available", "kind": "cli", "command": command,
         "launcher": os.path.abspath(path), "scout_root": os.path.abspath(scout_root),
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "fetch_help": {"exit_code": 0, "urls_option": True},
+        "launcher_stamp": [list(row) for row in _launcher_stamp(command, path)],
     }
+    _DISCOVERED[os.path.abspath(path)] = {
+        "result": deepcopy(discovered), "stamp": _launcher_stamp(command, path)}
+    return discovered
 
 
 def route(available, cli=None, *, now=None):
     actual = available.get(FETCH_TOOL) if isinstance(available, dict) else None
-    if isinstance(actual, str) and actual in FETCH_ALIASES:
+    if (isinstance(actual, str) and re.fullmatch(r"[\w.:-]+", actual)
+            and (actual in FETCH_ALIASES
+                 or re.split(r"[-_:.]+", actual.casefold())[-2:] == ["workiq", "fetch"])):
         return {"kind": "mcp", "tool": actual}
     if cli is None:
         return None
@@ -127,7 +148,7 @@ def request(paths, owner):
     return result
 
 
-def read(scout_root, owner, path, *, preferred=None):
+def read(scout_root, owner, path, *, preferred=None, discovered=None):
     """One exact read through the discovered CLI; shell metacharacters stay literal."""
     if (not isinstance(owner, str) or owner != owner.strip() or owner.count("@") != 1
             or not all(owner.split("@"))
@@ -137,7 +158,18 @@ def read(scout_root, owner, path, *, preferred=None):
     if (not path.startswith("/") or path.startswith("//") or parsed.scheme or parsed.netloc
             or parsed.fragment or any(char in path for char in "\r\n")):
         raise ValueError("WorkIQ requires an exact Graph-relative entity URL")
-    discovered = discover_cli(scout_root, preferred)
+    if discovered is None:
+        discovered = discover_cli(scout_root, preferred)
+    else:
+        if route({}, discovered) is None:
+            raise ValueError("Saved WorkIQ route is unavailable; rediscover this profile's launcher")
+        if (discovered.get("scout_root") != os.path.abspath(scout_root)
+                or not isinstance(discovered.get("launcher"), str)
+                or preferred is not None and os.path.abspath(preferred) != discovered["launcher"]
+                or _command(discovered["launcher"]) != discovered["command"]
+                or discovered.get("launcher_stamp") != [
+                    list(row) for row in _launcher_stamp(discovered["command"], discovered["launcher"])]):
+            raise ValueError("Saved WorkIQ route changed; rediscover this profile's launcher before reading")
     selected = route({}, discovered)
     if selected is None:
         raise ValueError(discovered["detail"])

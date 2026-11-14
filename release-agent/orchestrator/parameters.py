@@ -1,4 +1,4 @@
-"""Module-owned, invocation-only parameter schemas; never persisted release state."""
+"""Module-owned input schemas; attempts store plain values, never invocation authority."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -124,8 +124,10 @@ class ParameterSchema:
         except (TypeError, ValueError, NameError) as exc:
             raise ParameterError(f"{label}: invalid parameter schema: {exc}") from exc
 
-    def parse(self, values=None, *, cli=False):
+    def parse(self, values=None, *, cli=False, base=None):
         try:
+            if base is not None and not isinstance(base, Mapping):
+                raise ParameterError("previous parameter values must be a mapping")
             if values is None:
                 supplied = {}
             elif type(values) is self.model:
@@ -138,6 +140,8 @@ class ParameterSchema:
                 raise ParameterError(f"expected mapping or {self.model.__name__}")
             names = {item.name for item in self.fields}
             unknown = set(supplied) - names
+            if base is not None:
+                unknown |= set(base) - names
             if unknown:
                 raise ParameterError(f"unknown parameter(s): {', '.join(sorted(map(str, unknown)))}")
             parsed = {}
@@ -149,6 +153,8 @@ class ParameterSchema:
                             value = _cli_value(item.annotation, value)
                         except ParameterError as exc:
                             raise ParameterError(f"{item.name}: {exc}") from exc
+                elif base is not None and item.name in base:
+                    value = base[item.name]
                 elif item.default is MISSING:
                     raise ParameterError(f"missing required parameter: {item.name}")
                 else:

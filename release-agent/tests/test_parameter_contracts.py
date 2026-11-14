@@ -50,6 +50,16 @@ def test_new_parameter_model_requires_no_core_option_registry():
         parameters.labels["lane"] = (3,)
     assert handler.build(replace(_context(handler), parameters=parameters)).payload["message"] == "123"
 
+def test_rerun_overrides_only_new_cli_values_and_keeps_typed_previous_inputs():
+    schema = ParameterSchema.compile(Inputs, "Owner task")
+    previous = {"message": "Last message", "count": 3, "enabled": True,
+                "recipients": ["owner@example.invalid"], "labels": {"lane": [1]}, "mode": "review"}
+    parsed = schema.parse({"message": "New message"}, cli=True, base=previous)
+    assert parsed.message == "New message" and parsed.count == 3 and parsed.enabled
+    assert parsed.recipients == ("owner@example.invalid",) and parsed.labels == {"lane": (1,)}
+    with pytest.raises(ParameterError, match="unknown parameter"):
+        schema.parse({}, base={"unexpected": 1})
+
 
 @pytest.mark.parametrize("values", [
     {"count": True}, {"count": "3"}, {"count": 3.5}, {"enabled": 1},

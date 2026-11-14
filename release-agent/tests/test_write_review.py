@@ -238,6 +238,9 @@ def test_explicit_owner_closure_retains_authorization_not_provider_success(revie
     live = authorize(reviewed)
     if resolution == "done":
         result = orch.complete_step("rollout_start", "wiki_payload", "Owner verified provider page and content")
+        assert result.kind == "idle"
+        assert orch.state.get_step("rollout_start", "wiki_payload").execution["id"] == live.execution_id
+        return
     else:
         result = orch._transition_kernel().skip(
             "rollout_start", "wiki_payload", "Owner verified no further writes needed",

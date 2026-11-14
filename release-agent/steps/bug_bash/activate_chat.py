@@ -72,6 +72,12 @@ def chat_state_matches(context):
 
 
 def binding_preconditions(context, invite):
+    if invite.get("adoption_hash"):
+        return gate_preconditions(context, [
+            {"path": ["steps", "bug_bash.send_invite", "status"], "value": "done"},
+            {"path": ["steps", "bug_bash.send_invite", "data", "external_adoption"],
+             "hash": invite["adoption_hash"]},
+        ])
     prefix = ["notification_deliveries", invite["notification_id"]]
     return gate_preconditions(context, [
         {"path": ["target_month"], "value": context.release.target_month},
@@ -99,7 +105,7 @@ def build(context: StepContext):
     instructions = (
         f"Run `record-bugbash-chat --release {context.release.release_id}` as the invite organizer. "
         f"It requests read-only native evidence for event {invite['event_id']} from the sent "
-        "calendar receipt: workiq_get_my_profile, workiq_get_event with the exact eventId "
+        "recorded calendar invitation: workiq_get_my_profile, workiq_get_event with the exact eventId "
         "and complete typed attendees, then microsoft_teams-GetChat with the exact thread "
         "derived from that validated event's Teams meetup-join URL. Supply timestamped, "
         "owner-account-bound structured observation envelopes using --profile-observation, "

@@ -83,13 +83,44 @@ def saved(tmp_path):
     return state, path, _read(path)
 
 
+def test_large_recovery_and_result_bodies_roundtrip_below_one_mib(tmp_path):
+    state = _state(count=400)
+    state.set_step("build_verify", "rc_report_publish", StepState(
+        status="done", by="human", data={
+            "manual_adoption": {"prior_pipeline_runs": deepcopy(state.pipeline_runs)},
+            "provider_history": [{"case": index, "detail": "x" * 800} for index in range(9000)],
+        }))
+    state.resources["broker_test_plan"] = {
+        "plan_id": 900, "evidence": [{"case": index, "title": "case" * 100} for index in range(1000)]}
+    path = tmp_path / "release-state.json"
+    state.save(str(path))
+    raw = _read(path)
+    assert path.stat().st_size < 1_048_576
+    assert set(raw["steps"]["build_verify.rc_report_publish"]["data"]) == {"evidence_ref"}
+    assert asdict(ReleaseState.load(str(path))) == asdict(state)
+    assert not [file for file in tmp_path.rglob("*") if file.name.endswith(".tmp")]
+
+
+def test_changed_recovery_blob_is_never_trusted_or_refetched(tmp_path):
+    state = _state()
+    state.set_step("build_verify", "rc_report_publish", StepState(
+        data={"history": "x" * 50_000}))
+    path = tmp_path / "release-state.json"
+    state.save(str(path))
+    ref = _read(path)["steps"]["build_verify.rc_report_publish"]["data"]["evidence_ref"]
+    artifact = path.parent.joinpath(*PureWindowsPath(ref["path"]).parts)
+    artifact.write_bytes(artifact.read_bytes() + b" ")
+    with pytest.raises(evidence_store.EvidenceError, match="SHA-256"):
+        ReleaseState.load(str(path))
+
+
 def test_all_lanes_roundtrip_exactly_with_small_state_and_deduplicated_failures(tmp_path):
     state = _state(count=300)
     path = tmp_path / "release-state.json"
     logical = deepcopy(state.pipeline_runs)
     state.save(path)
     raw = _read(path)
-    assert raw["schema_version"] == 3
+    assert raw["schema_version"] == 5
     assert state.pipeline_runs == logical
     assert asdict(ReleaseState.load(path)) == asdict(state)
     assert path.stat().st_size < 12_000
@@ -307,7 +338,7 @@ def test_legacy_inline_read_is_pure_then_save_preserves_lineage_and_delivery(tmp
     assert _consumer_outputs(loaded) == before
 
     loaded.save(path)
-    assert len(list((tmp_path / "evidence").rglob("*.json"))) == 3
+    assert len(list((tmp_path / "evidence" / "rc1").glob("*.json"))) == 3
     hydrated = ReleaseState.load(path)
     assert hydrated.steps == state.steps
     assert hydrated.gate_decisions == state.gate_decisions

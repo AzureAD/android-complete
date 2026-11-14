@@ -184,6 +184,7 @@ def test_reviewed_roster_change_or_expiry_blocks_before_tester_writes(
 
 
 def test_partial_failure_is_read_back_and_old_approval_cannot_overwrite_it(state, inputs, monkeypatch):
+    from tests.test_distribution import correct_ado
     _, report = inspect(state, inputs, oof=["Alice"])
     calls = fake_writes(monkeypatch, inputs)
     writer = D.sync_point_testers
@@ -196,19 +197,20 @@ def test_partial_failure_is_read_back_and_old_approval_cannot_overwrite_it(state
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 2
     assert len(calls) == 2 and not state.is_done("bug_bash", "distribute_tests")
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 1
-    assert len(calls) == 2 and set(data(state)) == {"oof", "in_flight_since"}
+    assert len(calls) == 2 and set(data(state)) == {"oof", "oce", "in_flight_since"}
     owner = deepcopy(state.get_step("bug_bash", "distribute_tests").execution)
     assert owner["write_review"]["hash"] == report["review_hash"]
     _, pending = inspect(state, inputs)
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", pending["review_hash"])[0] == 1
     assert state.get_step("bug_bash", "distribute_tests").execution == owner
     orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
-    assert orch.reopen("bug_bash", "distribute_tests",
-                       "Owner verified the first ADO update and stopped the failed worker.").changed
+    assert not orch.reopen("bug_bash", "distribute_tests",
+                           "Owned partial work uses checked continuation, not a reset.").changed
+    correct_ado(inputs, report)
     _, fresh = inspect(state, inputs, oof=["Alice"])
     monkeypatch.setattr(D, "sync_point_testers", writer)
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", fresh["review_hash"])[0] == 0
-    assert sum(c[0] == "point" for c in calls) == 9
+    assert sum(c[0] == "point" for c in calls) == 2
 
 
 def test_provider_success_without_correct_ado_values_does_not_complete(state, inputs, monkeypatch):
@@ -228,12 +230,13 @@ def test_unexpected_crash_leaves_no_assignment_map_and_fresh_reads_detect_partia
             raise RuntimeError("crashed")
         return writer(*args, **kwargs)
     monkeypatch.setattr(D, "sync_point_testers", crash)
-    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 2
+    with pytest.raises(RuntimeError, match="crashed"):
+        cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
     _, after = inspect(state, inputs)
     assert not after["valid"] and after["review_hash"] != report["review_hash"]
-    assert set(data(state)) == {"oof", "in_flight_since"}
+    assert set(data(state)) == {"oof", "oce", "in_flight_since"}
     record = state.get_step("bug_bash", "distribute_tests")
-    assert record.status == "blocked"
+    assert record.status in ("running", "in_flight")
     assert record.execution["write_review"]["hash"] == report["review_hash"]
 
 
@@ -247,15 +250,13 @@ def test_completion_failure_is_recovered_using_ado_without_reapplying(state, inp
             raise RuntimeError("completion failed")
         return readback(*args, **kwargs)
     monkeypatch.setattr(command, "_inspect", crash)
-    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 2
+    with pytest.raises(RuntimeError, match="completion failed"):
+        cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
     before = len(calls)
     monkeypatch.setattr(command, "_inspect", readback)
-    assert cli(monkeypatch, state, inputs, "--apply")[0] == 1 and len(calls) == before
+    assert cli(monkeypatch, state, inputs, "--apply")[0] == 0 and len(calls) == before
     _, current = inspect(state, inputs)
     assert current["valid"]
-    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
-    assert orch.reopen("bug_bash", "distribute_tests",
-                       "Owner verified ADO has all reviewed assignments and the worker stopped.").changed
     _, current = inspect(state, inputs, oof=[])
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", current["review_hash"])[0] == 0
     assert len(calls) == before

@@ -51,8 +51,8 @@ def _orch(tmp_path, *, mode="transactional", recovery="frozen", source_kind="hum
         source["write_command"] = write_command
     effect = {"id": "effect", "name": "Effect", "kind": "auto",
               "effect_mode": mode, "effect_recovery": recovery}
-    if dependent and not later:
-        effect["depends_on"] = ["source"]
+    if dependent:
+        effect["depends_on"] = ["p.source"] if later else ["source"]
     tail = {"id": "tail", "name": "Tail", "kind": "human_action", "depends_on": ["effect"]}
     gate = {"id": "gate", "name": "Gate", "kind": "approval_gate", "depends_on": ["source"]}
     other = {"id": "other", "name": "Independent", "kind": "human_action"}
@@ -117,7 +117,7 @@ def test_reopen_preserves_active_effect_and_existing_permit_then_succeeds_after_
     assert orch.apply_outcome(permit, Done("confirmed")).kind == "ran"
     result = orch.reopen("p", "source", "new input")
     assert result.changed and {"p.source", "p.effect", "p.tail", "p.gate"} <= set(result.affected)
-    assert not orch.state.gate_decisions
+    assert all(decision.get("invalidated_at") for decision in orch.state.gate_decisions)
     assert orch.state.get_step("p", "effect").status == "pending"
     assert not control["calls"]
 
@@ -247,7 +247,9 @@ def test_reserved_refresh_checks_policy_before_clearing_owner(tmp_path, policy, 
         rejected = policy != "never"
     elif operation == "complete":
         result = kernel.complete("p", "source", "owner confirmed")
-        rejected = policy == "always"
+        assert result.kind == "idle" and "result/receipt protocol" in result.message
+        assert orch.state == before and _permits(orch) == permits
+        return
     else:
         result = kernel.authorize_outcome(I.WRITE, "p", "source", execution_id="refresh")
         rejected = policy == "always"

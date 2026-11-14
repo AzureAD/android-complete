@@ -1,588 +1,245 @@
 ---
 name: release-agent
-description: Onboard the release engineer and drive an Android release using the Release Orchestrator. Use for /release-agent, "set up release agent", "onboard", "check setup", "finish setup", "start a release", "continue the release", "advance the release", "approve the gate", "release status", or release run-state. Guided onboarding handles portable installation paths, supported connections and read checks without starting a release. The engine owns release sequencing and human gates.
+description: "Run Android releases with automatic guided progression by default: execute all eligible agent-owned steps until genuine user input or a scheduling/external wait, then display the full status table before prompting. Supports release status, start/continue release, rerun with new inputs, skip, complete manually, record sign-off, use my report, recover a task, and /release-agent. Unattended workers remain opt-in."
 ---
 
-# /release-agent — Release Orchestrator conductor
+# Release Agent: automatic guided progression
 
-> **Recommended model:** run on a high-reasoning model (e.g. **claude-opus-4.8**). Release work involves gate decisions, Component Governance / incident judgment, and multi-step state reconciliation. Scout skills can't self-select a model, so switch the session model before invoking if you're on a lighter one. (The unattended push-reminders automation — `<release> · Release-wide — push reminders` — is already pinned to a strong model.)
+The Python engine owns facts, dependencies, execution receipts, and release gates.
+Use the configured step classifications to execute all currently available
+agent-owned work by default. Keep progressing across phase boundaries until a
+real human decision/input, scheduled time, external wait, or release completion.
+Do not pause after each successful task or ask whether to continue.
+Status-only, explanation, setup-only and explicitly one-task requests remain scoped.
 
-You are the conversation layer over the **Release Orchestrator engine** (deterministic Python). The engine decides what happens next; you discover releases, present status/gates, and relay decisions. **Never decide the release flow yourself, and never invent a release — always call the engine.**
+## Resolve context once
 
-## Status output contract (non-negotiable)
+- Use the user's supplied clone/release when explicit. Otherwise resolve the
+  current clone with `python -m orchestrator.cli paths --json` from its
+  `release-agent` directory and discover releases with `list --json`.
+- Reuse an unambiguous valid clone and selected release. Ask only when missing or
+  ambiguous; do not repeatedly reconfirm paths, dates, or stored availability.
+- Before a release is selected/initialized, ask for necessary context directly;
+  there is no release status table to display yet.
+- Run all commands from that resolved `<AGENT_ROOT>`. Never assume an author's
+  installation path. `--help` is authoritative for each command's arguments.
+- Releases use state schema **5** and execution contract **4**. Older runs are not
+  migrated. `inspect-state --release <id>` provides read-only version metadata;
+  never hand-edit a run, change its version stamp, or overwrite its history.
 
-For `/release-agent show status` (and any status-only request), the user-facing table MUST come from:
-`python -m orchestrator.cli status --release <id>` (no `--json`), pasted as the full emitted markdown block.
+## Route by intent
 
-If that status shows a focused owner hold (`gate`, `action`, or non-empty
-`pending_human`), the same turn must continue with an actionable `m_ask_user`
-card for that exact step (for gates: **Approve gate**, **Deny gate**, **Keep on hold**).
-Status-only requests are never a prose dead end when the current queue needs an
-owner decision.
+| Request | Operation | Stopping point |
+|---|---|---|
+| Status / where are we? | `status --release <id> --details` | Return the full local status table. No probes, progression, or unsolicited approval card |
+| Run a task | `task --release <id> --phase <phase> --step <step>` | Finish the selected task, then resume automatic progression unless the user said only this task |
+| Rerun with new inputs | `rerun --release <id> --phase <phase> --step <step> --reason "<owner request>" [--param key=value]` | Preserve original results, execute the new attempt, then continue newly eligible work |
+| Skip a task | `skip --release <id> --phase <phase> --step <step> --reason "<owner reason>" --json` | Waive any non-gate task, including blocked work; do not claim it was performed |
+| Completed manually | `complete-manually --release <id> --phase <phase> --step <step> --note "<owner's completion statement>"` | Record owner-attested completion of any non-gate task, without provider actions |
+| Record a confirmation | `record-fact --release <id> --phase <phase> --step <step> --note "<explicit owner statement>" --json` | Record only the supplied fact, then continue eligible work |
+| Use an existing report or invitation | Use the supported result-only adoption command below | Adoption itself does not upload/send/approve; then resume eligible work |
+| Continue the release | `next --release <id> --json` | Eligible work up to a real decision/wait; failed or owned work is not blindly retried |
+| Check setup | `onboarding --json` | Diagnose the requested setup only; do not initialize or advance a release |
 
-Forbidden for user-facing status replies:
-- rebuilding status from `status --json`
-- condensed/custom summary tables (for example `Field | Value`)
-- replacing the canonical block with prose-only status bullets
+`task` returns `done`, `needs_input`, `waiting`, or `failed` in `status`.
+Host-assisted outcomes also include their exact `kind`, tool, and payload.
+Use those fields rather than guessing a command or rebuilding an external action.
 
-## Universal execution boundary — every phase
+## Default execution loop
 
-**Automations are desired state to reconcile, not a one-time enforcement hurdle.**
-`push-reminders` drives the WHOLE release hourly. At every operational release
-entry (start, continue/reconnect or scheduled callback), read `automation obligations`
-and reconcile its `ensure` list using fresh exhaustive Scout list/details and each
-canonical exact plan. At minimum ensure the shared driver; scope-limited workers
-repair it plus their own required workers, never execute unrelated phase work.
-Use `automation reconcile-create --ensure --claim` with the exact temporary spec,
-fresh observations and executor. It can prepare a missing intent atomically; do NOT
-let a stale `prepare` intent or source hash turn a routine deleted worker into a
-manual reset ceremony. Reuse an unchanged existing worker; recreate a known
-settled worker only after fresh complete absence proof, preserving prior IDs,
-intent hashes and receipts. Then record the owning create-result. Create
-ONLY when reconciliation grants `permission_to_create:true`. Never create raw,
-duplicate a claimed/uncertain operation, or silently replace a LIVE worker.
-Ordinary proven deletion is automatic recovery, not a reason to stop at the owner.
-Unknown provider operations, live disabled/mismatched/duplicate workers and
-explicit halt/cancellation still require their genuine recovery/consent paths.
-`initialized:true` is not unattended startup success. `startup_complete:false` /
-`startup_automation.complete:false` must remain explicit until an active registry
-entry has its creation acknowledgement or exact-provider adoption receipt.
-Runtime `next`/`tick` stops phase execution while this obligation is unsatisfied.
-Readiness checks remain independent; do not add another human attestation.
-Registry receipts do not prove the provider is live NOW: re-read Scout's actual
-list/details at each operational entry. Checks older than five minutes also queue
-automatic revalidation during a long run. Never substitute cached IDs for live reads.
-Do not recreate workers before their durable trigger, after their objective/release
-completes, or for a past one-shot schedule. A deleted sole driver cannot wake itself:
-the next active Scout release interaction or another worker run performs repair;
-do not claim an independent watchdog exists.
-For an actual host input/consent need on startup, guarded status may take
-`--hold-step "automation:push-reminders=<actual reason>"`; this reports a hold,
-never a successful setup, receipt, permission or completed driver.
+1. Perform the requested release operation using its exact supported protocol.
+2. Run `next --release <id> --json` for eligible in-process agent work. Follow
+   `work_dispatch` for required readiness checks and host-assisted agent steps.
+   An external/Scout step is still agent-owned work, not automatically a user task.
+3. Execute every currently eligible operation that needs no missing human input.
+   Honor required host consent, exact write review and provider receipts. A human
+   hold in a parallel phase does not hide executable independent siblings.
+4. After each real result, re-read dispatch and continue newly eligible work,
+   including later phases and dependencies invalidated by a rerun. Do not require
+   the owner to say "next" between successful steps.
+5. Once a release exists, before any owner question or wait handoff, obtain fresh
+   `status --release <id> --details --handoff --json`. A host-assisted operation
+   needing actual input/consent/recovery can be identified with the supported
+   `--hold-step <phase.step>=<actual reason>`; exhaust other independent work first.
+6. Unless the owner explicitly limited scope, if `must_continue_automatic_work:true`,
+   keep executing the queue, not prompting.
+   At `handoff_ready:true`, **print `display_markdown` as normal Markdown before
+   asking the focused question or explaining the wait**. This is the existing full
+   release status table, not a substitute summary or raw tool-output reference.
 
-The same rule applies to ALL phases, not only entry readiness or Phase 0.
-Every release-advancing task drains `work_dispatch.pending_work` before returning
-or asking the owner about a sibling block/gate. `action`, `gate` and the status
-headline identify a focus; they are NOT permission to ignore independent work.
-Use each queued command and its owning notification/write/read protocol.
-Re-read status after each result and continue newly eligible work through the
-next phase too, without crossing a real gate, dependency or scheduling boundary.
-Use `next --release <id> --pending-only --json` between host results so failed
-engine checks and in-flight/owned work are not automatically retried.
+Never bypass a genuine gate, required input, owner-local schedule, halt or
+cancellation. Running pipelines/unknown operations can require an external wait;
+finish all independent eligible work before stopping. No tight polling or replay
+of an unchanged failed/uncertain operation. An error requiring repair is a concrete
+input boundary, not a reason to keep retrying or silently mark success.
 
-Before EVERY release-advancing final response or skill-generated owner question,
-run `status --release <id> --handoff --json --no-pipeline-check`.
-**Exit 2 / `work_dispatch.may_return_to_user:false` means keep executing**, not
-return a blocked summary or retry only the guard. This guard covers entry and
-all present/future phases from the scheduler, never a phase-name list.
-If a Scout preview/read reveals actual input/consent or an unresolved owning
-recovery need, finish independent work then pass `--hold-step "<phase.step>=<actual reason>"`
-to that read-only handoff. This is host-reported, not provider-verified; it grants
-no completion/send/write/retry/approval and is not persisted. It cannot hide
-unattempted engine work. Show each deferred reason explicitly; never invent one
-to evade the queue. Resume the original task after the owner's answer.
-`held_work` retains failed, reserved and in-flight tasks; reconcile/poll only through
-their existing owning protocols, never tight retries or duplicate writes.
-Real host consent prompts still pause immediately. Global halt/cancellation,
-denied gates, runtime/integrity holds and future schedule boundaries remain enforced.
-Notification-only/poll workers keep their scope; do not start unrelated phase work.
-Show one fresh full status/checklist at the genuine handoff. Maintenance/code
-investigation is not authorization to advance a live release or change its clock.
+Low-level CLI result commands are intentionally atomic; the conversation adapter
+continues the workflow through this loop. If the owner explicitly says "only this
+step" or "stop after this", honor that scope without draining siblings. Still show
+the full current table before any necessary release question, using
+`status --details --json` without the broader `--handoff` guard in this scoped case.
 
-## Readiness execution boundary
+### Rerun, skip and manual completion
 
-For every selected-release start/continue/reconnect/status turn, exhaust the engine's
-executable readiness queue BEFORE returning to the user. `init`, `next`, `status`
-and ordinary `checklist --verify` are not completion signals. Python verification
-only handles Python checks; it cannot execute Scout MCP/settings probes.
-Use `readiness_dispatch` from init/status/next, `dispatch` from checklist JSON, or
-the canonical attestation payload. Execute every `pending_auto_checks[].probe`
-(and the referenced procedure), record actual results, then re-read. No unperformed
-automatic item becomes an owner task. Group/read pagination must complete too.
+These are universal owner controls, not adapter-specific exceptions. Use
+`step-info --phase <p> --step <s> --json` for actual public input names/types.
+Pass the owner's changed inputs through `--param`; do not use mocks or edit state.
+Broker creation's `name` names the plan; Authenticator creation's `name` names the
+release parent suite. Do not silently interpret an individual suite rename as a
+new plan. Steps with no configurable inputs can still be rerun.
 
-Before a final response or a skill-generated question during entry, run
-`checklist --release <id> --attest-prompt --handoff --json`.
-**Exit 2 / `may_return_to_user:false` refuses the handoff:** keep executing the queue.
-Do not retry only the handoff command, show an incomplete table as completion, or
-stop because `ready:false`. If a read reveals missing input/consent, record
-`needs_input` with its exact reason and finish independent probes BEFORE asking.
-Do not fabricate pass/fail or silently opt out. Actual host consent prompts must
-still be honored immediately; do not bypass them or perform further actions after
-calling `m_ask_user`. An explicit halt/cancellation/runtime-integrity hold also stops work.
-Once the queue is exhausted, paste the returned fresh full table and ask the real
-repair/input question, or the returned human-attestation card. Setup-only remains separate.
+`--retry` reconciles the original attempt; `rerun` creates a fresh attempt and
+archives old results/receipts. Explicit reruns are not constrained by unrelated
+phase position or schedule, but retain real prerequisites/readiness and approvals.
+Show actual dependent invalidation when it matters. Do not reopen unrelated work.
+Use `task-history` (`--details` for receipts/outputs) to inspect earlier attempts.
 
-## FIRST RUN — resolve the android-complete clone (ONCE per machine, before anything else)
-**This is the very first thing you do on any release request — before Discover, before any `python -m orchestrator.cli` command.** The engine is portable (it self-locates from its own file), but YOU must know which folder to `cd` into to run it. **Do NOT assume `C:\repos\android-complete` — that is only this author's layout; other users clone elsewhere.**
+Skip and complete-manually work for blocked/out-of-order non-gate tasks. Keep
+waived versus owner-attested versus provider-verified outcomes explicit.
+Optional `--evidence <url>` / `--result-file` capture manual context; arbitrary
+manual outputs are not machine evidence. Use the owning bind/adoption/readback
+when a later automated task requires a provider-bound identity.
 
-1. **Recall.** `m_recall` for the clone path (e.g. "android-complete release-agent path"). If a confirmed path comes back **and still exists** (quick `Test-Path <path>\orchestrator\cli.py`), use it as `<AGENT_ROOT>` and skip straight to the normal flow. Only do the steps below when nothing is remembered or the remembered path is gone.
-2. **Discover candidates** — the `release-agent` folder of an `android-complete` clone (a folder qualifies only if `<X>\release-agent\orchestrator\cli.py` exists):
-   - the Scout execution working directory and its ancestors (you may already be inside the clone);
-   - common roots: `C:\repos\android-complete`, `~\repos\android-complete`, `~\source\repos\android-complete`, `~\git\android-complete`, `~\src\android-complete`;
-   - a bounded fallback search for `…\android-complete\release-agent\orchestrator\cli.py` under the user's home / source dirs (`Get-ChildItem -Recurse -Filter cli.py -ErrorAction SilentlyContinue`, don't scan the whole disk).
-3. **Canonicalize.** From the candidate's `release-agent` folder, run `python -m orchestrator.cli paths --json` → `{agent_root, repo_root, runs_root}`. Take `agent_root` as the authoritative `<AGENT_ROOT>` (absolute, normalized).
-4. **Ask only when unresolved.** Reuse a remembered valid path without asking again. One unambiguous discovered candidate corroborated by `paths --json` is usable; report it once, without a confirmation card. Multiple different valid clones require a choice. No valid candidate requires one free-text `m_ask_user` for the folder. Validate any supplied path; do not silently fall back from an invalid explicit path.
-5. **Persist provenance.** `m_remember` the canonical path as user-confirmed or auto-discovered, as applicable. Never describe an inferred path as user-confirmed. Continue without repeating path confirmation on later setup attempts.
+If an old runner or notification is still owned/uncertain, ask only for the missing
+confirmation that it stopped, then use `--prior-writer-stopped`. Retain the old
+uncertainty; never infer delivery, absence or permission to replay. All new sends
+and checked writes still use fresh reviewed payloads and genuine host consent.
+Gates cannot be skipped or manually completed: route their explicit decision
+through approve/deny or the exact external approval protocol.
 
-Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folder and **`<REPO_ROOT>`** = its parent (the android-complete clone). Run every `python -m orchestrator.cli …` from `<AGENT_ROOT>`; `paths --json` prints all three roots any time. Never hardcode `C:\repos`.
+### Present a handoff with location
 
-## Where things live
-- Engine + config: **`<AGENT_ROOT>`** (the confirmed `release-agent` folder — see FIRST RUN) — **run all `python -m orchestrator.cli …` commands from here.**
-- Run-state: **`<REPO_ROOT>\.release-runs\<release>\release-state.json`** (gitignored; one per month, e.g. `2026-08`). `python -m orchestrator.cli paths --json` prints `agent_root` / `repo_root` / `runs_root`.
-- **Reference docs (this skill's detail):** **`<AGENT_ROOT>\skill\reference\`** — read the relevant one on demand (routing table below). The core stays lean; the details live there.
-- `setup/bootstrap.ps1` prepares the machine (infra preflight + installs this skill). Its normal final handoff is `/release-agent check setup` inside Scout. The terminal cannot inspect loaded tools; that alone is not a missing connector. Inspect the actual failure before recommending configuration or a restart. Manifest: `config/requirements.yaml`.
+State what happened, link the result when available, and identify the next action
+only if one is needed. Do not stop between automatically executable steps.
+After exhausting them, always display the full status table before a user prompt
+or wait handoff so the owner can see the current phase, progress and held step.
 
-## Check setup only (no release activity)
+- `done`: state the result and whether it is verified, owner-attested, or waived.
+- `needs_input`: ask one focused question for the actual missing decision/consent.
+- `waiting`: state what is being awaited and the next check; do not poll tightly.
+- `failed`: show the cause, any verified partial success, and the supported recovery.
 
-For setup/onboarding requests, read **reference/starting-and-scheduling.md →
-Guided onboarding** and run `onboarding --json` from the resolved clone.
-Follow its single `action`; Scout handles observations and follow-up reads
-internally. No `list`, `init`, `next`, release readiness changes, notifications or
-workers. Do not treat setup as a request to start a release.
+Use the host's question tool when input is genuinely missing. Do not ask the owner
+to repeat a clear confirmation they just supplied, operate review hashes, construct
+JSON observations, or decide how internal ownership should be reset.
+Never infer approval from "what's next?", silence, or a status request.
 
-Use one short introduction, perform automatic diagnostics silently, then show
-only the next required human action. Never repeat summaries before/after a card,
-ask for tool inventories/JSON, or ask the user what the assistant should do next.
-Register missing declared MCP connections automatically as part of requested
-setup, just like bootstrap. A `register_mcp` action runs `infra` with registration
-enabled at the resolved Scout profile; no extra "Guide connection" question,
-Add Server form task or host-capability question. The custom remote Hosted WorkIQ
-registration was removed: never restore or reconnect it. Keep Scout's native
-`workiq_*` tools and Agency MCPs. Logical `workiq.fetch` remains required, through
-an actual exposed MCP fetch tool OR the selected profile's existing native CLI.
-Inspect actual tools first; load `agency-workiq-workiq` instructions if useful.
-If MCP fetch is absent, use `infra --json`/`onboarding --json` native CLI discovery
-and `fetch --help`, then the machine-only `workiq-read` adapter (see references).
-Do not infer unavailability from failed semantic WorkIQ Ask or absent MCP fetch.
-Preserve existing connections, tokens and permission settings.
-The planner remains read-only; the existing infra installer owns backed-up
-create-if-absent writes. Never turn a check-only technical plan into broad write
-permission, edit a conflicting existing entry or change access approvals.
-Ask only for unresolved paths, an actual repair to existing configuration, or
-sign-in/consent the user must complete. If a reload is required, use an exposed
-refresh control; otherwise ask the user to reopen Scout once. Do not claim a
-desktop action happened when no such host-control tool is available.
+## Start interactively
 
-After registration and one reload/sign-in/reconnect, inspect fresh tools and retry the
-failed read once. Record the planner's action_id in the temporary observations.
-If still unsuccessful, follow `support` and STOP. A denial/unsupported host is
-not a retry prompt. No alternate transport, raw token, fabricated success or
-silent weakening of required capabilities is allowed.
+Gather the release/CCD and owner context in one focused interaction if needed.
+Use `preview-release --json` for actual candidate dates rather than guessing them.
+Then run `init --release <id> --json` with the verified owner/timezone as appropriate.
+Initialization records context; it does not claim release execution or readiness.
 
-`ready` requires fresh account/target-bound profile/calendar, complete exact
-configured roster, Teams and report site/library reads plus ICM/ADX connectivity.
-Help output/tool availability alone cannot pass setup. Missing or failed evidence
-holds; never replace membership with people search or WorkIQ Ask. Use configured
-targets (currently androididentity@microsoft.com), never historical examples.
-On completion use `onboarding --record-routing` with the same fresh evidence and
-selected profile to save its compact `routing` JSON to
-`<selected-profile>\release-agent-routing.json` (not release state):
-account/targets/actual route/how-to only, no
-tokens, roster contents or raw private responses. It is a recipe, not a durable
-grant; rediscover and rerun live reads next time. Say no release
-was started, preserve the configured account/targets, and end. Release-bound
-capability evidence, current on-call eligibility and human readiness attestations
-still run separately when the owner later starts a release.
+Automatic guided progression uses foreground `interactive` mode. Do not create reminder workers or demand every
+integration before starting. Check required readiness with
+`checklist --release <id> --attest-prompt --json`; run only the required
+`pending_auto_checks`, and collect the returned human confirmations explicitly.
+A `ready:false` result can mean automatic readiness work remains: execute its
+queue before asking. On an actual readiness input/wait boundary, print
+`display_markdown` before the question. Do not loop on unchanged failed checks.
 
-## Setup prerequisite check BEFORE a new release
+Capabilities marked "when used" are checked by their consuming operations. A Teams
+outage does not prohibit recording a sign-off or inspecting a local report.
+No blanket write authority comes from setup/readiness: every owning write step
+still requires its own access, review, host consent, and receipt.
 
-On a release start, complete guided onboarding before `preview-release`/`init`.
-`infra` retains the low-level registration/inventory diagnostic for bootstrap;
-`onboarding` adds actionable connections, auth/session recovery and read checks.
-Neither creates a release or changes its pin. Use actual resolved per-user paths;
-`--scout-root`/`--agency-path` and the process environment override
-`RELEASE_AGENT_SCOUT_ROOT` must refer to the same selected installation.
-An earlier successful check is not a durable grant: use fresh observations and
-run release-bound readiness after init. A skill reload installs text/resources,
-not a connection or permission.
+For explicitly requested unattended execution, use `init --unattended` or
+`set-mode --release <id> --mode unattended`, then the canonical automation
+plan/reconcile/receipt lifecycle. Missing startup receipts mean unattended operation
+is not ready. `set-mode ... --mode interactive` pauses scheduled progression; it
+does not delete workers or discard their identities. Keep worker cleanup explicit.
+Generated workers prefix release CLI calls with the global `--scheduled` flag;
+interactive mode rejects new scheduled work while preserving owning receipts.
 
-## GOLDEN RULES (always apply — the deduped essentials)
-1. **Discover first for release activity.** Run `python -m orchestrator.cli list --json` and branch on `resolution`: `none` → offer to start (via `m_ask_user`); `one` → use `release.release_id`; `ambiguous` → list `all`, let the user pick; `explicit` → use it. Never run `status`/`next`/`approve` against an unconfirmed id. **Setup-only requests are the exception:** follow Check setup only above, without release discovery or actions.
-2. **Render CLI output as LIVE MARKDOWN — never fenced.** `checklist`, `status`, `next`, etc. print finished markdown tables. Reproduce their stdout **verbatim as normal message content** so Scout renders the table — do NOT wrap in a ``` code fence, and do NOT rebuild/re-order/re-type from memory (you'll introduce stale icons / broken URLs). A sentence before/after is fine; the block must match. Use `--json` only for your own branching. **Running the command is NOT the same as showing it** — the CLI auto-logs, but the user only sees what YOU paste into your reply. If you ran `checklist`/`status` and didn't paste its table, the user saw nothing.
-    **For `/release-agent show status` (and any status-only question), NEVER use `status --json` output as the user-facing table.** Run `status --release <id>` and paste that full emitted markdown block verbatim. Any custom compact summary (for example `Field | Value` matrices) is invalid.
-    **Every release iteration ends with one fresh table.** An iteration is a user-facing
-    release turn ending in a final response or a handoff to `m_ask_user`. After the last
-    action/read, show the engine's full current checklist while entry is unsigned/blocked;
-    otherwise show the phase map and current-phase steps from `status --release <id>`.
-    This includes initialization, entry checks, scheduled/no-op requests, failures,
-    interrupted/blocked work, recovery, manual completion, declines and status questions.
-    Prose, a confirmation card, JSON, a tool-output pane, or a table from an earlier turn
-    never substitutes for the table in THIS response. One iteration, one final table;
-    no table after every internal tool call and no stale pre-action table.
-    Before returning or asking, check: **fresh table obtained after the last action,
-    full table pasted as live markdown, then the next action/question**. If a pass must
-    pause before all checks finish, show the current table with pending/failing rows;
-    do not withhold context until everything succeeds. If rendering itself fails, report
-    that exact failure and do not ask for attestation/approval against a missing table.
-    **If your draft wraps the table in ` ```markdown ` or any code fence, that reply is invalid.**
-    Remove the fence and paste the same block as live markdown before sending.
-    Setup-only onboarding before release selection remains exempt: never create or
-    discover a release just to render a table.
-2b. **NEVER ask for a gate decision or attestation in a message that doesn't contain the freshly-rendered table.** Before any `m_ask_user` for attestations (entry gate) or Approve/Deny (a gate), the SAME assistant message must first show the current `checklist`/`status` table pasted verbatim. A bare list of items is not acceptable — the table is the context. If you're about to ask and haven't pasted the table in this message, run the command and paste it first.
-    `checklist --release <id> --attest-prompt --handoff --json` returns `display_markdown` from
-    the SAME checklist as its question/answers. Paste that full field before the card;
-    `ready:false` still requires displaying the table when stopping. Pass only the
-    question/answers/recommendedIndex to `m_ask_user`, not display metadata.
-    After a user choice is processed (`confirm_all` sign or `decline`), the same response
-    must include a fresh post-action checklist/status block; narrative-only acknowledgements
-    are invalid.
-    **Never emit a condensed substitute table.** Do not abbreviate rows, collapse details,
-    reword statuses, drop links/check text, or produce a custom "quick summary" table.
-    For entry gate output, the only valid table is the exact `display_markdown` block from
-    the current command snapshot.
-2c. **Every focused user action gets an actionable prompt, not a prose dead end.**
-    When status is `awaiting_action`, or the user asks “what’s next,” focus on the
-    engine's current `action`/`needs_owner` step and handle exactly one user action:
-    - For an attestation or human action, run `step-action` to obtain its exact prompt,
-      show fresh status in the same message, then call `m_ask_user` with **Completed**,
-      **Not yet**, and **Need help**. `Completed` is explicit authorization to run
-      `done --phase <p> --step <s> --note "Owner confirmed: <specific action>"`;
-      `Not yet` leaves it held; `Need help` runs `step-info`, explains it, then presents
-      the choices again. Never infer completion from “what’s next,” silence, or discussion.
-    - For owned work, check the previous provider outcome; do not repeat it or offer
-      a generic override. Explain what Scout is checking, not command/hash mechanics.
-    - For a blocked check, show its exact reason and call `m_ask_user` with
-      **Fixed — rerun**, **Override**, and **Keep blocked**. Fixed reruns the owning check;
-      Override first asks for a free-text reason and only then runs `skip`; Keep blocked
-      changes nothing. Never present override as equivalent to a pass.
-    Process multiple actions one at a time. After a confirmed completion/rerun, call
-    `next`, render the new table, and prompt for the next focused user action.
-3. **The engine is the source of truth.** It owns sequencing and gate state. When unsure, `status --json`. Never hand-edit checklist/status output.
-3a. **Initialization and reminder setup are not a stopping point.** A request to start
-    a release includes running its entry gate NOW, even when pre-flight opens later.
-    Machine callers use `init --release <id> --json`: it returns initialization metadata,
-    `next_action:provision_startup_automation`, `startup_complete:false`,
-    `work_dispatch`, `continue_automatically:true` and `checklist_command`.
-    Follow that handoff; successful init does not sign readiness or run phase steps.
-    Do not assume every subcommand accepts `--json`; check that command's `--help`
-    when its flags are uncertain, before attempting the operation.
-    After `init` and the required reminder registration, load reference/readiness-gate.md
-    and run `checklist --release <id> --attest-prompt --json` in the SAME turn.
-    `next_action:run_auto_checks` / `continue_automatically:true` means continue working,
-    not return a "Started" summary or ask "run the entry gate?".
-    Dispatch EVERY `pending_auto_checks` entry using its `probe`: `source:python` through `verify`,
-    `source:scout` through the reference's actual tools and `record-check`. Re-read the
-    payload after recording results; finish independent pending checks even when one
-    has failed. Do not loop/retry `failed_auto_checks` without a real correction.
-    Record a missing input/permission decision as `needs_input`, then finish every
-    independent probe before the handoff guard permits an owner question. Stop only
-    for actual host consent, an exhausted queue with recorded input/failure, an explicit
-    release hold, or the engine's required human attestation. Explain the exact
-    blocker; never hand unperformed Scout checks to the owner as manual tasks.
-    Always show the final fresh table at that genuine handoff. `ready:false` alone is
-    not a stopping condition while automatic checks remain executable. A generic "show
-    a table at the end" rule does not permit ending before available work is done.
-3b. **Drain every eligible Scout step in a parallel phase.** After every `next --json`,
-    inspect and execute **all** entries in `scout_pending`, even when an independent
-    auto/human step is blocked. A block stops phase completion, not unrelated Scout
-    work. Repeat `next --json` after each completion until no eligible Scout work remains;
-    only then render the final status or ask for owner action. Never leave a `🤖 Scout runs
-    this — automatic` row pending merely because another row blocked.
-    This is enforced by the shared `work_dispatch`/`status --handoff` contract in
-    EVERY phase, including sequential phases as dependencies clear. Do not treat
-    a human `action` or `gate` field as a global stop while `pending_work` remains.
-3c. **Recover every state-required on-demand worker.** After draining `next`, and on
-    every scheduled run even when `scout_pending` is empty, run `automation obligations
-    --release <id> --json`. Provision every `required` worker from its exact canonical
-    on-demand plan; reconcile `recoveries` without creating a duplicate; stop on
-    `problems`. This durable state check is mandatory because any eligible worker may
-    win an effect claim before the step's specialized trigger worker runs.
-    `automation obligations` also includes the mandatory release-wide startup driver.
-    Missing or only prepared/claimed driver setup is NOT complete. Resolve it through
-    its original lifecycle, never replace it with a bare state flag or synthetic receipt.
-3d. **Workflow adoption is never implicit status handling.** A status request may diagnose
-    a revision mismatch, but must not adopt it. Before asking the owner, show the exact
-    `workflow-adopt --json` impact: old/new revision, `invalidation.summary`, every
-    entry in `completed_step_keys` and `blocked_step_keys` being reset, gate decisions/offers removed,
-    and all blockers. Ask whether to accept **that exact reset scope**; a generic “new
-    version” approval without the displayed impact is insufficient. Apply only the reviewed
-    hash/reviewer/reason, then show the resulting status.
-    Same-contract implementation updates with unchanged phases need no adoption in a
-    fresh process. Do not ask the owner to approve a code-only update. Changed workflows
-    still need the exact impact review above. Schema 4 is a clean version boundary:
-    never migrate or edit an older run to make it load.
-    Checked writers plan once and save one attempt immediately before execution.
-    Preflight failure needs a corrected input, not a reservation-reset ceremony.
-    Unknown outcomes require checking the original provider result, never another write.
-    For partial integration/OneAuth work, use the SAME checked command to reconcile
-    saved operation receipts and preview the remaining actions. Preserve verified
-    PR/PBI/branch-update identities; do not recreate them or clear ownership.
-    A moving target refreshes only the affected remaining plan under its normal
-    approval policy. An old reviewed RI update must never be pushed to a changed base.
-    Unresolved provider outcomes stay held. No new recovery/cancellation command,
-    user-managed IDs, generic override or workflow reopen is needed.
-    If reconciliation reports an unknown/mismatched result, stop that advance pass
-    and show its actual reason; do not repeatedly invoke the command in a drain loop.
-    Immediately offer supported manual recovery, not a prose dead end. The owner can
-    supply a manual commit/PR/PBI result; confirm a stopped, unapplied push; or attest
-    that ALL remaining work in the original step is manually complete with an evidence
-    URL. Use the same command's result-only options described in reference/commands.md.
-    Never invent an owner's confirmation/reason or infer it from a failed lookup.
-    Explicitly confirm the prior writer has stopped. Whole-step manual completion
-    needs no provider read or checkout, but is owner-attested, NOT machine-verified,
-    and does not authorize any other gate. Show this distinction before confirmation.
-    Scout handles flags/identities internally; do not make owners operate the CLI.
-    Scout handles command IDs and hashes internally; ask the owner only for a real
-    decision or missing information. For distinct notification/effect/approval/worker
-    recovery, use **reference/commands.md → Runtime updates and recovery**.
-3e. **Email notification acknowledgement requires exact payload proof.** Send only the
-    claimed tool/payload through the direct MCP mail tool (`workiq_send_email`), never
-    browser/OWA/Outlook/manual compose. For `workiq_send_email`, generate a receipt file
-    whose `descriptor_hash`, `payload_hash`, and `provider_receipt.transport` match the
-    claimed notification before running `notification result --outcome sent`; never
-    acknowledge a fallback/plaintext/manual/browser email as a successful notification.
-    Validation copies use the same rule: send the renderer-produced HTML/plain payload
-    verbatim through the MCP mail tool, or do not send. Never hand-compose a shortened
-    validation email that preserves one section while summarizing or dropping another.
-4. **Prompt, don't interrogate.** For any discrete choice (start? which release? approve/deny?) use the `m_ask_user` clickable prompt, not free-text. Reserve free-text for genuinely open values (an unusual month).
-4a. **No prose-only action asks.** If your draft tells the owner to review/confirm/approve/choose/rerun/override/keep blocked, that same turn MUST include an `m_ask_user` card with explicit options. Never end a release iteration with "please review/confirm" in prose alone.
-4b. **Use option cards whenever options are known.** For focused actions, always provide predefined choices (for example `Completed/Not yet/Need help`, `Fixed — rerun/Override/Keep blocked`, `Approve/Deny`, or the engine-returned readiness answers). Free-text `m_ask_user` is only for truly unknown values (for example entering a different CCD date), never as a shortcut when options already exist.
-5. **Never assume a human decision.** An `m_ask_user` result that merely echoes the offered options is NOT confirmation. Never attest, approve, sign, or mark done until the user explicitly said so. Attesting/approving on an assumption is a release-integrity violation.
-6. **Gates are human-decided.** Present and relay Approve/Deny; never authorize yourself.
-7. **Runs are real; mock for safety.** Auto handlers make real calls. Checked external write commands default to read-only previews, not simulated writes. For testing, the engineer keeps a personal `mocks.local.yaml` (gitignored) that skips, blocks, redirects (`send_to`), or injects inputs per step. External-gate BUILD previews retain their inputs, but production approval preview/submission/reconciliation rejects every nonempty gate-local mock; `submit: skip` is never approval success. Offline lifecycle tests use injected provider fakes, not mock completion. `[STUB…]` output = an unbuilt later-phase step; say so, don't imply real work. See `mock-spec` for what each step exposes.
-7b. **In-process effects are engine-owned.** `next` automatically checkpoints effectful
-    auto steps. Never clear or replace their execution metadata. After interruption,
-    rerun `next`: frozen idempotent handlers reuse the saved operation, match-current
-    handlers reject changed evidence, and transactional handlers reconcile. If status
-    requests owner review, inspect the provider and use an
-    engine-supported `retry-effect --confirm-absent` only when its handler proves absence;
-    use `supersede-effect --confirm-idempotent` only for a configured idempotent desired-state
-    replacement. Never use `done`, `skip`, `reopen`, mocks, or a forced second create.
-7c. **External approvals are exact and durable.** Review `approve-orchestrator-gate
-    --preview` before asking for authorization; submit only its exact request/hash/comment
-    with the human reviewer. Once an attempt is owned, use its `--execution-id` for
-    read-only recovery, never another submission. Pending/unknown evidence is a hold.
-    A completed stage or newer run is not proof that the persisted approval succeeded.
-8. **Never hardcode a recipient.** Reminders/notices go to the release `owner_email` from metadata (or engine-resolved DLs). 
-9. **Log silently.** Human-readable commands auto-log. YOU must journal user choices: `journal --release <id> --source user --kind choice --text "<said>" --choice "<option>"` — silently, never announced (detail in commands.md).
+## Record useful work immediately
 
-## The universal loop
-**Every notification uses one delivery contract, including specialized follow-ups.**
-On every run, including silent or terminal producer outcomes, discover `notification prepare
---release <id> --source pending`. Finalize sent records with empty completion status;
-claim only eligible prepared/not_sent records. Keep expired/closed work unsent and
-surface claimed/uncertain work for evidence-based owner recovery.
-`step-action`, `notify`, `tick`, `status-email`, and polling output are previews, never send
-permission. Run `notification prepare --release <id> --source step|digest|status-email|pending`
-(step source needs the same `--phase`, `--step`, `--param` inputs).
-Review the exact destination and payload yourself, then `notification claim --release <id> --id <notification-id>
---hash <approved-hash> --executor <session-id>`. This review is a Scout/engine safety check,
-not an owner approval prompt: do NOT call `m_ask_user` or pause for send approval unless the
-engine returned an explicit human gate/review. Send exactly the returned tool/payload ONLY
-when `permission_to_send:true`. No extra courtesy copies. For the Scout bot transport,
-verify the signed-in runner is the descriptor's owner target before claiming.
-Only preparation accepts `--as-of`; claim/result/finalize use the trusted current clock.
-Changed never-claimed preparations may refresh with a new hash: review again.
-After any claim, the snapshot is frozen (including known-not-sent attempts); source or
-recipient changes require deliberate owner recovery, not a new identity to bypass a claim.
-Routine Bug Bash updates retain only their latest never-claimed preview. Settled sends
-become compact receipts, excluded from `source pending` (explicit `--id` can inspect one).
-Expired unsent snapshots and old settled receipts are removed automatically; absence
-after expiry never authorizes an old resend. Claimed/uncertain and sent-unfinalized work,
-first/final messages, invitation receipts and referenced records keep their recovery data.
+Human facts can be recorded before unrelated checklist predecessors. Their source
+binding still determines applicability, and they never approve another gate.
+If source evidence is missing, the engine retains an unverified owner claim and
+returns the specific outstanding requirement. Do not label it completed verification.
 
-Immediately acknowledge each channel separately: `notification result --release <id>
---id <notification-id> --execution-id <execution-id> --outcome sent --evidence "<provider success>"
-[--receipt-file <JSON>]`. Supply real receipts when available; never invent message IDs.
-`not_sent` means positive evidence nothing was delivered; only that outcome permits retry.
-Timeouts/unknown outcomes are `uncertain`. Claims never expire or get stolen. If sending
-succeeds but acknowledgement fails, retry acknowledgement, NEVER the send. Owner recovery
-requires stopping the original runner and `--owner-review` plus evidence. `done`/`reopen`
-cannot authorize replay of a claimed/uncertain/sent notification.
-If delivery was saved but completion failed, retry `notification finalize --release <id>
---id <notification-id>`. There is no exactly-once guarantee without downstream idempotency.
-Source bindings are rechecked before completion. A source change during a send preserves
-the receipt but suppresses stale completion; it never applies an obsolete quality-gate pass.
-Configured non-notification writers require their checked command's full transient plan:
-`distribute-tests`, `create-integration-prs`, `create-oneauth-common-pr`,
-`create-payload-wiki`, `start-release-signoff`, `start-upload-whats-new`,
-`start-upload-alpha`, `launch-localization`. `distribute-tests` still needs explicit
-owner approval of the exact hash because it changes live ADO assignments. The scheduled
-release writers (`launch-localization`, `create-integration-prs`, `create-oneauth-common-pr`,
-`create-payload-wiki`, `start-release-signoff`, `start-upload-whats-new`,
-`start-upload-alpha`) run with `--execute --auto-approve --executor <automation-id>`;
-each command recomputes and checkpoints the current plan hash before its single fenced
-provider request. Checked writers do not accept `--reserve`; a preview does not own
-work, and only execution saves an attempt. Existing execution IDs are receipt-only.
-Never replace this with generic reserve-step, raw provider calls or record-step.
-Changed human-reviewed actions need fresh approval; existing scheduled auto-writer
-policy still applies to scheduled work. Partial Git writers retain their same execution
-and compact receipts while reconciling and refreshing only remaining actions. Never
-replay an uncertain provider call. `last_write_review`
-records authorization, not success or reusable permission. Other non-notification
-actions retain their existing guard/reservation/domain follow-up.
-External gate approvals use a separate checked lifecycle: `approve-orchestrator-gate
---release <id> --preview --comment "<comment>" [--phase <p> --step <s>]` returns the exact
-coordinates/build/stage/approval id/comment and `review_hash`, without changes.
-Present that request with fresh status, obtain the human's approval, then repeat the
-same comment/selections with `--review-hash <hash> --approved-by <reviewer>` and optional
-`--executor <session>`. `--reserve` only checkpoints authorization. An unattempted
-reservation still needs its original hash/reviewer/comment and exact `--execution-id`
-to submit; omit `--reserve`. An **attempted** execution uses that ID solely to read
-the original approval and recover its receipt—never to resubmit.
-Core saves matching approved evidence even during halt/cancellation; completion waits
-for eligibility and is saved before downstream drain. Preserve ownership and
-`data.last_approval`; never reopen, invalidate upstream work, adopt a new runtime, or
-clear fields to evade it. `--as-of` affects scheduling, not persisted ownership times.
-See **reference/commands.md → External gate approval and recovery** for exact flags.
-A `done` outcome marked `no_delivery_required:true` can use `record-step --status pass`;
-the recorder revalidates it. This never acknowledges a send.
+### Owner-selected report
 
-Discover → (if no gate cleared, run the entry gate) → `next --json` to advance → drain every eligible `scout_pending` item (including beside independent blocks) → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
-Every exit from this loop follows the same final-table rule, including an error,
-pending input, scheduled wait, or manual recovery; stopping the loop never skips display.
+Use `publish-rc-report --release <id> --adopt-file <observations.json>
+--confirmed-by <owner> --adoption-reason "<owner explanation>"`.
+The agent prepares release/RC, actual SHA-256/size, exact item URL, and fresh
+resolve/download observations. The owner selects the report, not a receipt for the
+original automatic uploader. A different filename/content is permitted through
+this separate provenance path. Quality approval remains a separate human decision.
 
-## Provider routing and capability readiness
+### Existing Bug Bash invitation
 
-Use structured native WorkIQ for calendar/mail/supported file operations and
-Agency Teams MCP for exact chat/member reads, direct-user notices and channel
-posts. Exact directory group/user and report site/library reads use logical
-`workiq.fetch` via the actual exposed MCP tool OR selected-profile native CLI
-`workiq-read` route. The custom remote registration stays removed; an absent MCP
-fetch tool alone is not unavailability. Require exact fresh evidence and all
-pages; never ask to restore that registration. WorkIQ Ask is for synthesis, not identities,
-assignments, approvals or delivery proof. Do not acquire M365 Graph tokens through
-Azure CLI. Azure DevOps/Git operations retain their existing provider adapters.
+Use `adopt-bugbash-invite --release <id> --result-file <observations.json>
+--confirmed-by <owner> --reason "<owner explanation>"`.
+The agent supplies the exact selected event and verified organizer/profile,
+typed attendees, times, and release/CCD. This records no engine send.
+Continue chat binding against that event; never search by topic or create a second
+invitation to repair a receipt.
 
-Before entry, run `m365-capabilities --release <id>` and perform its actual
-owner/target-bound profile/calendar/complete-roster/Teams/site/library read probes
-with the loaded tool inventory and discovered structured-fetch route. Record
-`m365_access` only with the validated structured evidence file, not a bare pass.
-Missing required tools/routes or failed/denied reads hold setup early; read
-reference/readiness-gate.md. No blanket send/upload attestation belongs in entry
-readiness. Reads/tool discovery do not prove write access or authorize a send/upload.
-Check actual access and authorization at the owning write step, with its exact
-destination/payload preview, required confirmation and owning receipt. Host consent
-requirements still apply; readiness and silent-run settings are not message approval.
-No test write is authorized by readiness. Recheck future event/chat destinations when used.
+For either adoption, if an earlier writer is owned, obtain explicit confirmation
+that it stopped and pass `--prior-writer-stopped`. Preserve its original attempt
+and uncertainty in history. Do not infer this confirmation from finding a file.
 
-Read-only connector requests are NOT completed Scout steps or notification
-deliveries. Gather the exact native response in its timestamp/account/argument
-observation envelope and rerun the owning follow-up flags; never record a read as
-a successful send. Resolve UPN/SMTP differences with actual directory evidence.
-Missing access immediately offers supported human recovery rather than waiting.
-New immutable SharePoint reports cannot use the native existing-item uploader as
-if it created files; use the checked publication upload handoff and owning receipt.
-Never switch transports or repeat an upload/send after an unknown outcome.
+## Execute and recover safely
 
-## Behaviour dispatch
-- **Authenticator Manual/Automated split:** NEW releases use a static release
-  parent with Manual Tests and Automated Tests query children. Classify only by
-  verified captured Phase2 Android mapped-case IDs, not Automation Status or a
-  generic Automated tag. Clone suite_id is the parent; typed fill suite_id is
-  the automated child. Only that child receives results; distribution/progress
-  use actual category points plus completed-fill evidence. Preserve legacy
-  single-query-suite recovery without migration and all per-create ownership.
-  Monthly canonical mapping remains report-only; an explicitly selected fresh
-  `auth-manual-automated-monthly-v2` layout adds separate release-owned failed-scenario
-  investigations. Historical layouts never migrate by replay; a separately checked
-  `amend-auth-monthly` may attach one leaf to an intact completed v1 parent without
-  changing its layout/pin. Live creation still requires new exact scoped approval.
-- **Fresh Stress/UI runs:** new failure-only plans freeze classification policy 2 and
-  create distinct Stress Tests and UI Automation leaves from the start. Reports show
-  separate categories while preserving the combined UI+Stress gate. A held historical
-  label correction is not a prerequisite for a fresh, separately identified test plan;
-  never clear/reuse its receipt, retry its rename or silently adopt an existing release.
-- **"status" / "where are we":** discover. If entry is unsigned, run its shared readiness dispatch to exhaustion, then `checklist --release <id> --attest-prompt --handoff --json` and show that full table. `checklist --verify` only runs Python verifiers and is not a stopping point. Otherwise show `status`. Explicit halt/cancellation/runtime holds remain in force. No release → say so, offer to start.
-- **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before anything.)* After discovery, complete **Setup prerequisite check BEFORE a new release** above; do not initialize through a missing/unverified connector hold. **Do not initialize from a month-only phrase. The first start must explicitly lock THREE values: (1) android-complete path (`<AGENT_ROOT>`), (2) ship label month, and (3) CCD date.**
-  1. Resolve and show the current `<AGENT_ROOT>` (via `paths --json` / onboarding resolution) and require explicit user confirmation before release selection. If user says it is wrong, collect the correct path and re-resolve first.
-  2. Run `python -m orchestrator.cli preview-release --json` and present candidates with both fields together (`ship_label` + `ccd_pretty`). Lead with candidate[0] (current month) and include **"A different month"**.
-  3. Once a candidate is selected, run a second `m_ask_user` that explicitly confirms or edits the pair: **label month** and **CCD date**. Offer chips like **"Use `<ship_label>` + `<ccd_pretty>`"**, **"Change CCD date"**, **"Change label month"**, **"Change both"**. Never infer one from shorthand like "oct 26".
-  4. If CCD differs from the candidate default, capture the exact `YYYY-MM-DD` date explicitly before init and then apply the pipeline write via `set-ccd` preview → confirm with owner reason.
-  5. If label month differs from default ship label, capture the exact `YYYY-MM` month explicitly and apply `set-target-month` after init.
-  6. Only after path + month + CCD are explicit: `init --release <chosen release_id>` → apply any requested `set-ccd`/`set-target-month` changes (gated preview/confirm where applicable) → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms CCD via `ccd_confirmed`) → **now that CCD is confirmed**, provision timed phase automations (`automation plan`, cron-pinned to CCD) → `next` → present status.
-  *(Provision CCD-day automations only AFTER the gate confirms CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
-- **Engine HOLDS at a gate:** present fresh status. For an external gate, first run its `approval_command --preview --comment "<comment>"` and show the exact request/hash alongside the table; then `m_ask_user` Approve/Deny. On approval repeat the reviewed comment, hash and human reviewer through that command (see the lifecycle above); for a local gate use `approve`. On denial run `deny --comment` with their reason. An already-owned external attempt needs exact-ID read recovery, not another approval prompt/submission. Never substitute generic `approve` for an externally-backed gate; the CLI rejects that bypass. Present new status.
-- **Phase 3 `distribute_tests` needs owner input:** this is NOT a technical failure to skip or mark done. Follow **reference/commands.md → Bug Bash availability**: first resolve the current primary OCE from ICM and pass its verified UPN with `--oce`. Show only the returned filtered candidates (owner, OCE, Jia Le He, Moumita Ghosh and Veena Soman are already removed), never the raw DL roster. Then ask "Is anyone OOF for this Bug Bash?", stop and wait, and record the owner's explicit answer with `distribute-tests`. Never infer availability from calendars, presence, O365 OOF, or silence. The confirmation is for this release's Bug Bash only.
-- **Phase 3 Broker plan recovery:** follow **reference/commands.md → Broker plan recovery**. Never reopen creation or clear IDs to fix missing metadata. Present candidate IDs/areas/results and ask which existing plan to retain; bind only the owner's explicit choice. An uncertain create is not permission to retry. Partial plans are repaired in place, not automatically deleted/replaced.
-- **Broker source-v4:** NEW plans preserve both manual suites and track reconciled MRWP FAILURES ONLY under Automation Failure Triage → ECS/Local → nonempty failure categories (including UI). No full UI inventory, passing/NA/recovered cases or empty folders; zero failures means manual-only. Keep Phase2 report/gate denominators and Authenticator Firebase routing unchanged. Collision/no-ID scenarios get actual owned cases with exact build/run/result/original links; never mutate shared cases. Typed plan-root/flight/category IDs and durable receipts cover fill, Tester-only assignment, distribution and progress; retain resolved history. Frozen v3/full-device and older matrix resources/pinned workflows never migrate automatically. Isolated creation requires exact payload/source-hash review and explicit approval; see reference/commands.md.
-- **Two-plan ownership:** `auth_ecs` owns complete RC/APK/test-build-bound source capture; `rc_report` prepares source-only investigation facts and gates, and renderers only present them. Clone steps own target identity/structure. `ui_test_status` alone maps/writes both plans, durably invalidates prior results before retry, and publishes a completed result only after required writes succeed. Distribution reads its automated case IDs; progress reads its applied-failed IDs plus live assignments, never raw Phase-2 evidence or projections. Missing/partial/stale results require refreshing owning clone/verification steps then rerunning the fill, not migration/fallback. Preview/apply bind the receipt ID and current release/RC/build/plan/suite identities. Assignment failures remain visible and nonblocking.
-- **Current Tester is release ownership:** assignments use Current Tester on exact release plan/suite/test points, never shared test-case Assigned To (`System.AssignedTo`). The legacy point API calls Current Tester `point.assignedTo`; its PATCH field is `tester`. Do not confuse that point-local read field with the shared work item. New Authenticator automated categories require complete frozen mapped-case coverage, checked before either product is filled, including NA-only cases without inventing outcomes.
-- **Distribution source of truth:** ADO owns assignments and plan testers; never store/replay an internal allocation map. `distribute-tests --json` reads live ADO and shows exact corrections, separately for manual work and owner triage. After explicit approval repeat the preview's OOF/OCE flags with `--apply --review-hash <hash> --approved-by <reviewer>`. Previews do not save availability. The command rereads ADO, rejects changed review inputs, corrects mismatches and reads back. Valid ADO needs no redistribution. Partial failures retain ownership: inspect live results and resolve explicitly before another review. Keep only availability decisions, authorization digest and workflow status internally; progress reads live ADO.
-- **Distribution workload isolation:** Current Tester belongs to each release test point. Broker manual work and failure triage can reference the same case without sharing an owner target (`B:<id>` versus `B:<id>:triage` when they overlap). Monthly investigations never enter manual balancing, including resolved points; preserve their Current Tester. Current Broker flight/category and Authenticator Manual/Automated/Monthly destinations come from the completed fill. Review exact point scopes and recheck outcome-dependent Monthly eligibility before writing.
-- **Bug Bash chat identity:** preserve the actual invitation receipt. `record-bugbash-chat`
-  requests exact native profile/event/chat observation envelopes through
-  `--profile-observation`, `--event-observation`, `--chat-observation`; it never calls
-  Azure CLI/Graph. Missing reads do not complete the step. On the FIRST access
-  failure or opaque join link, immediately offer **Confirm my chat link**,
-  **Post updates manually**, or **Keep held**. Preview `--chat-link <link>` copied
-  from THIS invitation's activated Chat pane. Show fresh status and exact
-  invitation/link/limitations, then obtain explicit owner confirmation before
-  recording its current `--confirm-activated --review-hash <hash> --approved-by
-  <owner_email> --reason "<owner confirmation>"`. This is owner-attested, not
-  native-provider verification. Missing receipts, contradictory threads, stale
-  review and changed terminal bindings still hold; no recreated invite or state edit.
-- **Bug Bash mentions:** use fresh exact-chat Teams `ListChatMembers` or native
-  `workiq_get_chat` observation envelopes via `members_file` / `--members-file`,
-  not raw legacy snapshots. Keep prepared display-name tags, real user GUIDs and
-  canonical mentions unchanged. Explicit directory evidence resolves UPN/SMTP
-  differences; never guess identities or omit unresolved pending owners.
-- **Bug Bash manual progress:** when the owner has explicitly chosen manual posting or
-  asks for progress without a working chat binding, run `bugbash-progress --release <id>`.
-  Show its full private/manual report and relevant frozen investigation evidence; it is
-  read-only and has no mentions or send permission. Preserve skipped chat/progress steps
-  and already-sent Native Auth notifications. Do not reopen them just to get a report.
-  `ui_failures`, `native_auth_signoff`, and `bugbash_complete` still require the owner's
-  explicit response through the normal focused-action flow; neither a report nor a
-  skipped notification proves review, sign-off, or delivery. Graph 403 remains an access
-  problem, not evidence that waiting or opening the meeting will repair permissions.
-- **Bug Bash progress counts:** count human manual/triage work from BOTH plans, including Broker UI failures outside the Broker manual subtree. Use the completed fill's classification to exclude automation-only Auth cases, retain applied failures for both apps, and preserve real manual completions. Broker triage matches the original failed point/case/config IDs; count each case once and require all its tracked failures to resolve. Owners/outcomes remain live ADO; no assignment cache.
-- **Bug Bash rendering:** always show every workload case, including completed cases and finished owners' full lists. The leading outcome icon and single report legend replace repeated trailing status text; Passed and N/A use distinct icons. Keep unresolved work first and mention only owners with remaining work. Label each row Broker/Authenticator from the source plan; retain only a short Automation triage context note. The final wrap-up includes the full completed list.
-- **Two-plan routing:** No Phase-3 result refetch or invented attribution. Broker routing uses the complete MSAL/Broker/flight combination: LTW RC/RC targets existing 293/330, not 294/344. Use `broker-plan --preview-ui-repair` for read-only old/new point evidence; applying a repair requires later exact approval. Never clear historical/manual outcomes without ownership receipts and match-before-write.
-- **Authenticator Monthly policy:** `Firebase Test Lab - Monthly UI Tests` intentionally has **NO canonical test-plan case map**. Phase 2 never creates cases or forces mappings. Historical/v1 layouts stay report-only unless a separately reviewed `amend-auth-monthly` existing-parent amendment completes; explicit fresh `auth-manual-automated-monthly-v2` clones also support this tracker. Only distinct unresolved failures after exact-title retries get NEW owned investigations under STATIC `Monthly UI Failure Triage`; no initial pass/NA/recovered cases or empty folder. Preserve exact provenance, dedicated `ReleaseMonthlyInvestigation` tag and durable intent/ACK/member proof; never `ReleaseBugBash`, automation IDs or shared-case edits. The amendment independently binds/reviews/claims original clone/source/config and its new command runtime, preserving original layout/completion/execution/create receipts and workflow pin. Never replay/adopt or combine independent states. Partial/cancelled/stale amendments hold P3S3; complete sealed amendments resolve the target. P3S3 alone fills/publishes and attempts failed-point Tester assignment; preserve manual resolutions/history. Downstream needs current complete fill and live points. Normal workflow runtime/eligibility stays enforced; no unknown-create retry/reset command. Gates remain independent and unchanged. Local preview/review is not external approval.
-- **Phase 5 Beta Play Store start requires the release owner.** For
-  `rollout_start.beta_play_store`, preview `start-beta-play-store` and show the exact
-  target/hash with fresh status; use `m_ask_user` Approve/Deny. Execute only with the
-  same hash and `--approved-by <owner_email>`; `--auto-approve` is forbidden. If Friday
-  in the release owner's timezone, tell the user a release cannot start on Friday and
-  keep the step held. Offer **I have manager approval** vs **Keep held**—never generic
-  skip. The authenticated release owner is attesting to the approval; the manager is
-  not independently authenticated. Ask who approved, rerun step-action with
-  `--param manager_approved_by=<manager>`, and bind the same value through
-  `--manager-approved-by` in preview and execution. Execution also requires that owner
-  to be the Azure CLI signed-in identity and rejects `--as-of`; Beta remains pinned to
-  the pipeline run recorded by Upload Alpha.
-- **Scout steps pending** are Scout's work: resolve each with `step-action --release <id> --phase <p> --step <step>`. Notifications MUST use the universal prepare/claim/result protocol; legacy record commands are not send evidence. For a configured non-notification writer, use the exact checked-command review contract above; every poll/receipt needs its execution ID. Localization must launch through `launch-localization`, never a raw pipeline tool. Re-run `next --release <id>` after acknowledged completion.
-- **On-demand automation recovery:** private notification `_automation` is never a transport argument and remains gated on applied notification completion. Independently, `automation obligations --release <id> --json` derives non-notification poller requirements from durable release state, so a generic worker winning the trigger race cannot strand an in-flight effect. On every worker run process both source-pending completion directives and engine obligations. For each required slug, use its canonical `automation plan --on-demand <slug>` metadata/provider_spec. Write the exact spec once to a temporary JSON file and pass the SAME `--spec-file` to prepare/reconcile-create/owning create-result, including `--on-demand <slug>` on preparation/claims. Write fresh exhaustive list/detail observations as `{observed_at:<UTC>,complete:true,automations:[{id,spec}]}` to a second temporary file and pass `--observed-file`; inline JSON is only for small manual inputs because Windows quoting can corrupt large prompts. Delete the temporary files only after the owning result is durably recorded. Incomplete or inexact equivalence holds, never fuzzy adoption. Only `permission_to_create:true` authorizes the exact returned provider kwargs. Never provision from suppressed notification completion or recreate an uncertain worker.
-- **Automation lifecycle (registry v3):** ALWAYS run cleanup in a finally block. Claim deletion, delete only with permission, then acknowledge the owning result. STOP on barriers/errors/uncertainty; the lock protects children/unresolved siblings and keeps push-reminders until helpers retire. New workers are barred during release-level deletion. Reads and identical prepare never take ownership or reactivate deleting/uncertain entries; late owning receipts stay valid. Terminal ID-less intents need fresh verified absence plus explicit owner `abandon-prepared`; live claims must first settle. Shared/manual entries survive. Direct register/deregister and automatic in-place updates are forbidden; `sync` only reports reviewed delete/recreate needs. All seven canonical specs have explicit defaults; only metadata/hash and evidence digests persist, never prompts/payloads/raw responses. Old schemas or source/spec hash drift require owner recovery, not silent rehash. CCD confirmation and owner-to-host timezone conversion precede one-shot claims; daily status uses hourly owner-local business-day/17:00 gating. See starting-and-scheduling for exact commands.
-- **Engine HOLDS for a reminder** (`awaiting_action` with `action`/`needs_owner` — an attest or blocked USER task): present as "you need to do X"; when done, `done --release <id> --note "<what they did>"`. Not a decision — no Approve/Deny.
-- **"what's next" while action is pending:** do not end with a list of instructions.
-  Follow Golden Rule 2c: fresh status + exact `step-action` prompt + `m_ask_user`
-  completion/help choices for the focused action. One choice at a time; after completion,
-  advance and present the next action.
-- **A step is BLOCKED** (agent found a real problem, e.g. `cg` on High/Critical CG alerts, `cron` on a stale Calendar Checker): show the note plainly. Two exits: **(a) fix** → `next` re-runs the check; **(b) override** → `skip --release <id> --phase <p> --step <s> --reason "<why>"`. No other way to clear it. **Exception — `build_verify.rc_report` (the <90% UI gate)** has a richer **three-exit** flow: **re-trigger** (flaky → re-run RC, then `rc-retriggered --release <id>`), **cherry-pick** (real bug → patch via the broker cherry-pick process, then `rc-retriggered`), or **override** (`skip …`, the last resort — discuss with the team first). After `rc-retriggered`, Scout tracks the newest RC: the verify step is `in_flight` (⏳ no action) while it runs, and the 30-min poller re-applies the gate on completion. See `reference/phases/build_verify.md`. Present all three — don't collapse it to "fix or override".
-- **Engine is `scheduled`** (before CCD‑7): relay the opens-date + countdown; nothing to advance. Earlier start = a CCD change (`set-ccd`), not `next`.
-- **User asks "show status" / "release status" / run-state snapshot:** run `status --release <id>` (**no `--json`**) and paste the full emitted markdown block verbatim. Do **not** answer with a synthesized field/value matrix, compact substitute table, or raw state names from `status --json`.
-- **"continue"/"resume"/connection recheck after restarting:** discover → if entry is unsigned, resume and exhaust its shared readiness dispatch, then guarded full-table handoff; otherwise `next` and the normal phase loop. Do not stop at "connections live", init or a Python-only checklist.
-- **User asks ABOUT a step** ("what does X do?", "where do I find the Play Console vitals?", "how do I clear this block?", "why is this needed?", "who fixes this?"): run `step-info --phase <p> --step <id>` and answer from it — do NOT guess step details from memory. It returns the step's what/who/where/how/links/FAQs (accurate, curated in `config/knowledge.yaml`). If it returns "no knowledge entry yet", say so rather than inventing an answer. **Then, if a release is active, silently journal the exchange:** `journal --release <id> --kind qa --phase <p> --step <id> --question "<what they asked>" --answer "<one-line gist of your answer>"` — best-effort, never announced, skip entirely when no release run exists.
+- Notifications: prepare the exact descriptor, obtain required consent, claim it,
+  send only with `permission_to_send:true`, and record the real result/receipt.
+  Finalize an acknowledged send; never resend after a lost acknowledgement.
+  Email uses the direct MCP mail tool and exact renderer-produced payload;
+  browser/OWA/Outlook/manual mail is not proof of that engine send.
+  Preserve `provider_receipt.transport`, descriptor, and payload binding.
+- Checked writes: preview, obtain any required exact review, execute through the
+  returned command, then verify/read back. Do not use raw provider writes or
+  generic `done` to escape uncertain ownership. An explicit owner-requested new
+  attempt/waiver/manual completion uses the audited controls above instead.
+- Partial distribution retains its approved allocation, OOF/OCE selections, and
+  verified operation receipts. Repeat the same checked command; review only
+  material changes, not unchanged remaining work. Never reopen it as routine recovery.
+- Git compound writers keep their own supported manual-result/completion options.
+  Unknown operations remain held, not repeated. The owner may leave a task pending.
+- A new RC or relevant plan/source change requires the dependent review again.
+  Unrelated refreshes do not invalidate received sign-off or delivered invitations.
+- Manual-only/unimplemented tasks are not automatic success. Record actual
+  owner-attested completion with a specific note, or show what remains unsupported.
 
-- **User asks about the RC pipelines / RC tests / "phase 2 status"** ("how are the release pipelines?", "did the RC tests pass?", "show pipeline status", "is the orchestrator done?"): run **`rc-report --release <id>`** and paste its output verbatim — the checker → orchestrator → ECS/Local-MRWP chain with each run's stage completion + Test-tab breakdown (unit/instrumented/UI-automation). It's **read-only** (never gates); use `--json` for your own branching. Red/yellow stages and failed tests are expected here (triaged in bug bash) — only a stage that never ran is a real problem, and it shows under **Issues**.
-- **User explicitly asks to run the existing CCD offline tests**: from `<AGENT_ROOT>` use `python -m pytest -q tests\test_ccd.py::test_ccd_phase_replay_without_waiting_or_running_preflight` with the README temporary-state cleanup wrapper. These seven ordinary pytest cases use fake providers, clean their temporary state and do not prove live execution. They are not an interactive stage runner. The separate runner/proposal was rejected and removed; do not offer it or recreate it while continuing the phase audit. Normal audits use the affected existing tests and exact step data contracts.
-- **User wants to seed a phase mid-release, rather than the immediate offline CCD replay above** ("test phase 2", "simulate phase 2", "let me test the RC phase", "drop me in at the RC gate", "test the bug-bash phase"): this is the **sim** — it SEEDS the real release to a mid-release point so you then drive it with the normal skill. Run it for them via the shell; don't hand them python. Pick the scenario by intent (`sim list` shows all):
-  - "test phase 2" / "test phase 2 against the real pipelines" / "does phase 2 work" → **`sim run --scenario build_verify_live`** (fast-forwards Phases 0-1, runs the 4 verification steps against the **real** 2026-08 `az` runs, auto-advances rc_report, lands positioned at the bug-bash entry).
-  - "test phase 2 offline / quickly / without the network" → **`sim run --scenario at_rc_gate`** (same flow, fully mocked).
-  - "drop me at phase 2 so I can step through it myself" → **`sim run --scenario mid_build_verify_open`** (positions at entry, runs nothing — then use `next` to run each step live).
+By default, use `work_dispatch` to discover eligible
+operations. Attempt each operation at most once per unchanged progress snapshot.
+Use `next`'s pending-only default between host results. Do not loop/retry
+`failed_auto_checks`, unknown writes, or unchanged connector errors.
+`--retry` is an explicit repair/reconciliation request, not permission to replay a write.
+For a completed read-only task it performs a fresh check; unchanged business facts
+retain their dependent work instead of requiring a reopen.
+On no progress, exhaust independent work, print the full status table, and return
+the actual wait/input/failure. A status-only or explicitly one-task request need
+not drain the broader queue.
 
-  `sim run` **seeds the real release** (backing up any existing state first — the path is printed), so afterwards you just use the **normal** commands: `status`, `rc-report --release <id>`, `next`, `approve`. Paste the seeded status back to the user and offer those follow-ups. The sim fast-forwards the **real engine** and signs the entry gate from mocks; it stops at `open`/`gate`/`done`. (Pass `--runs-root <path>` only if you deliberately want a throwaway sandbox instead of the real release.) Scenarios live in `config/scenarios/*.yaml`; add one per phase as phases grow.
+## Release controls remain human-owned
 
-## Reference routing table — read the file when you hit that situation
-| When you are… | Read |
-| --- | --- |
-| Running the readiness entry gate (right after `init`) | `reference/readiness-gate.md` |
-| Starting a release / handling CCD / setting up push reminders & automations | `reference/starting-and-scheduling.md` |
-| Advancing **Phase 0 (Pre-flight)** — notice, flight reminders, lockdown, confirm, vitals | `reference/phases/preflight.md` |
-| Advancing **Phase 2 (Build & RC Verification)** — verification chain, RC report email + three-tier 90% UI gate (no separate gate) | `reference/phases/build_verify.md` |
-| **Phase 3 — distribute manual tests / owner OOF confirmation** | `reference/commands.md` → Bug Bash availability |
-| Advancing **Phase 5 (Rollout Start)** — Authenticator rollout notice and source-only payload rules | `reference/phases/rollout_start.md` |
-| Rendering `status`/`checklist` output | `reference/presenting-status.md` |
-| Looking up a command / manual override / event-logging detail | `reference/commands.md` |
-| Building a NEW phase's guidance | `reference/phases/_TEMPLATE.md` |
+Approve only the exact gate the owner explicitly approved. External approval
+commands require their own preview/hash/reviewer and owning result protocol.
+Never auto-approve quality, Remove RC Tags, publication, or Beta Play Store start.
+Beta requires the authenticated release owner; Friday additionally requires the
+explicit manager-approval policy enforced by its checked command.
+Workflow adoption is separate: show `invalidation.summary` and exact impact first;
+historical approvals remain auditable but may become inapplicable.
 
-_As later phases get real handlers, add one row here → `reference/phases/<id>.md` (mirrors `config/phases.yaml` + `steps/<phase>/<step>.py`). Unfinished auto steps explicitly declare `implementation: dummy`; `[DUMMY]` completion notes are not evidence of real verification or publication. A missing real handler is a catalog error, not a dummy._
+Respect halt/cancellation and unattended scheduling boundaries. Explicit task reruns
+use their documented owner scope; never change clocks to make a task eligible.
+Never change
+accounts, permissions, sharing, or transports to work around denial. Discover actual
+supported tools; WorkIQ Ask is not identity, roster, or delivery proof. Structured
+fetch preserves the installed wrapper and literal arguments. A fresh verified
+`--route-file` can be reused across pagination; stale/changed routes require rediscovery.
+Setup and live runs are different tasks; do not change installed connections during
+code investigation or pretend source edits have updated a user's installed skill.
 
-## Guardrails (see GOLDEN RULES; these are the hard lines)
-- Engine owns sequencing/gate state; when unsure, `status --json`.
-- Gates are human-decided — present and relay, never authorize.
-- Runs are real (no dry-run); the engineer's `mocks.local.yaml` provides test-safe skips/redirects. Preview/read clocks can be simulated; notification claim/result/finalize never accept a simulated clock.
-- Never sign/attest/approve/done on an assumption — require explicit user confirmation.
-- Never hardcode recipients; never fence CLI output; never invent a release or a flow.
+## Reference routing
+
+- [Commands and result protocols](reference/commands.md)
+- [Readiness and point-of-use capabilities](reference/readiness-gate.md)
+- [Starting and optional unattended operation](reference/starting-and-scheduling.md)
+- [Presenting status](reference/presenting-status.md)
+- [Preflight](reference/phases/preflight.md)
+- [RC verification](reference/phases/build_verify.md)
+- [Rollout start](reference/phases/rollout_start.md)

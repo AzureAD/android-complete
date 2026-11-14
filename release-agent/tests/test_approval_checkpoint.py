@@ -72,6 +72,7 @@ def _setup(tmp_path, monkeypatch, external=True, fail_after=False, predecessor=F
         ID="after", KIND="agent", EFFECT_MODE="read_only", build=after)
     previous = []
     if predecessor:
+        gate["depends_on"] = ["before"]
         previous = [{"id": "before", "name": "Before", "kind": "auto", "effect_mode": "read_only"}]
         modules["before"] = SimpleNamespace(
             ID="before", KIND="agent", EFFECT_MODE="read_only", build=lambda _: Done())
@@ -132,9 +133,9 @@ def _setup(tmp_path, monkeypatch, external=True, fail_after=False, predecessor=F
 def test_approval_is_saved_before_following_work(tmp_path, monkeypatch, external):
     command, args, _, calls, path, _ = _setup(tmp_path, monkeypatch, external)
     assert command(args) == 0
-    assert calls == (["submit", "after"] if external else ["after"])
+    assert calls == (["submit", "after"] if external else [])
     saved = ReleaseState.load(str(path))
-    assert saved.get_step("phase", "after").status == "done"
+    assert saved.get_step("phase", "after").status == ("done" if external else "pending")
     if external:
         record = saved.get_step("phase", "approve")
         assert record.execution is None
@@ -144,8 +145,11 @@ def test_approval_is_saved_before_following_work(tmp_path, monkeypatch, external
 @pytest.mark.parametrize("external", [False, True])
 def test_following_failure_does_not_lose_approved_gate(tmp_path, monkeypatch, external):
     command, args, _, _, path, _ = _setup(tmp_path, monkeypatch, external, fail_after=True)
-    with pytest.raises(RuntimeError, match="downstream failure"):
-        command(args)
+    if external:
+        with pytest.raises(RuntimeError, match="downstream failure"):
+            command(args)
+    else:
+        assert command(args) == 0
     saved = ReleaseState.load(str(path))
     assert saved.get_step("phase", "approve").status == "done"
     assert saved.gate_decisions[-1]["decision"] == "approved"

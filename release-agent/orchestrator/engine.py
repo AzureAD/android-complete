@@ -10,11 +10,12 @@ The engine is the BRAIN: it decides what's next. The skill is only the mouth/ear
 No LLM logic here — this is fully unit-testable and replayable.
 """
 from __future__ import annotations
+from copy import deepcopy
 import hashlib
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import date, datetime, time
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Mapping, Optional
 
 import yaml
 
@@ -166,6 +167,13 @@ class Orchestrator(StatusViewMixin):
         from . import service_adapters
 
         handler = self.handler(phase_id, step_id)
+        if self.state.owner_task_active(phase_id, step_id):
+            saved = self.state.task_attempts[f"{phase_id}.{step_id}"]["parameters"].get(
+                HookRole(role).value)
+            if parameters is None:
+                parameters = saved
+            elif saved is not None and isinstance(parameters, Mapping):
+                parameters = {**saved, **{key: value for key, value in parameters.items() if value is not None}}
         parameters = handler.parse_parameters(role, parameters)
         role = HookRole(role)
         effect = role in (HookRole.EXECUTE, HookRole.RECONCILE)
@@ -312,7 +320,7 @@ class Orchestrator(StatusViewMixin):
             selection = projection.scheduling()
             if selection.suspension not in ("workflow_revision", "cancelled", "halted", "denied", "blocked"):
                 startup = startup_plan(self, selection)
-                projection.startup_ready = startup["complete"]
+                projection.startup_ready = startup is None or startup["complete"]
         return projection
 
     def _transition_kernel(self) -> TransitionKernel:
@@ -558,7 +566,7 @@ class Orchestrator(StatusViewMixin):
             if isinstance(outcome, NeedsSkill):
                 action.kind = "scout"
                 action.message = (
-                    f"Continue {step.name}: an in-progress operation needs reconciliation. "
+                    f"Continue {step.name} with its checked command: an in-progress operation needs reconciliation. "
                     "Ask the AI agent to continue this step; ownership checks and partial-work "
                     "review are preserved, and unknown outcomes stay held. Do not repeat the action.")
                 return action
@@ -632,7 +640,8 @@ class Orchestrator(StatusViewMixin):
                 )
         return action
 
-    def _run_auto_step(self, phase: dict, step: dict, block_holds: bool) -> NextAction:
+    def _run_auto_step(self, phase: dict, step: dict, block_holds: bool, *,
+                       refresh=False, parameters=None) -> NextAction:
         """Run an agent step. On success → done. On failure: in sequential mode
         (block_holds=True) HOLD as action-needed and break; in parallel mode
         (block_holds=False) mark it blocked + register it, but return 'ran' so the
@@ -658,7 +667,7 @@ class Orchestrator(StatusViewMixin):
         )
         kernel = self._transition_kernel()
         permit = kernel.authorize_outcome(
-            TransitionIntent.EFFECT if active_effect else (
+            TransitionIntent.REFRESH if refresh else TransitionIntent.EFFECT if active_effect else (
                 TransitionIntent.MOCK if outcome is not None else TransitionIntent.EXECUTE),
             pid, step["id"],
             execution_id=self.step_execution(pid, step["id"]).get("id") if active_effect else None,
@@ -673,7 +682,8 @@ class Orchestrator(StatusViewMixin):
                 if not recovering:
                     prepared = effects.prepare(
                         effect,
-                        self.context(pid, step["id"], permit=permit, role=HookRole.PREPARE),
+                        self.context(pid, step["id"], permit=permit, role=HookRole.PREPARE,
+                                     parameters=parameters),
                         self.mocks.get(f"{pid}.{step['id']}", {}),
                     )
                     if isinstance(prepared, Blocked):
@@ -760,8 +770,36 @@ class Orchestrator(StatusViewMixin):
                     )
             else:
                 # Input mocks exercise the bound handler's real build logic.
-                outcome = handler.build(self.context(pid, step["id"], permit=permit))
+                outcome = handler.build(self.context(pid, step["id"], permit=permit, parameters=parameters))
         outcome = require_auto_outcome(outcome)
+        if refresh:
+            if rejected := kernel.validate_outcome_application(permit, outcome):
+                return self._next_from_transition(rejected)
+            shadow = deepcopy(self.state)
+            EvidenceSession(shadow, permit, lambda _: None, authority=handler.evidence,
+                            durable=False).apply(outcome.updates)
+
+            def business_facts(state):
+                def normalize(value):
+                    if isinstance(value, dict):
+                        return {key: normalize(item) for key, item in value.items()
+                                if key not in ("resolved_at", "observed_at", "last_checked", "in_flight_since")}
+                    if isinstance(value, (list, tuple)):
+                        return [normalize(item) for item in value]
+                    return value
+                return normalize({
+                    "pipeline_runs": state.pipeline_runs, "versions": state.versions,
+                    "resources": state.resources,
+                    "steps": {key: record.get("data", {}) for key, record in state.steps.items()},
+                })
+
+            if business_facts(shadow) == business_facts(self.state):
+                outcome = replace(outcome, updates=())
+            else:
+                invalidation = kernel.invalidate_dependents(
+                    pid, step["id"], f"Business evidence changed after refreshing {pid}.{step['id']}.")
+                if invalidation.kind != "invalidated":
+                    return self._next_from_transition(invalidation)
         rejected = kernel.validate_outcome_application(permit, outcome)
         if rejected:
             return self._next_from_transition(rejected)
@@ -771,7 +809,62 @@ class Orchestrator(StatusViewMixin):
             self._evidence_sessions.pop(permit, None)
         return self._next_from_transition(transition)
 
-    def run_until_gate(self, max_steps: int = 500, *, pending_only=False) -> list[NextAction]:
+    @revision_checked
+    def run_task(self, phase_id: str, step_id: str, *, retry=False, parameters=None) -> NextAction:
+        """Execute only the selected automatic operation, never its siblings."""
+        definition = self._workflow_definition().step(phase_id, step_id)
+        if not definition or definition.kind != StepKind.AUTO:
+            raise ValueError("This task requires an automatic step; use step-action for host-assisted work")
+        handler = self.handler(phase_id, step_id)
+        record = self.state.get_step(phase_id, step_id)
+        if parameters is not None:
+            parameters = handler.parse_parameters(handler.task_parameter_role, values=parameters)
+        if parameters is not None and record.execution:
+            raise ValueError("An active attempt uses frozen inputs; use rerun to request a reviewed new attempt")
+        if parameters is not None and self._projection().step_complete(definition):
+            if not (retry and definition.effect_mode == EffectMode.READ_ONLY):
+                raise ValueError("Use rerun to execute completed work with new inputs")
+        complete = self._projection().step_complete(definition)
+        refresh = bool(complete and record.status == "done" and retry
+                       and definition.effect_mode == EffectMode.READ_ONLY
+                       and definition.implementation.value != "dummy")
+        if complete and not refresh:
+            return NextAction(kind="ran", phase=phase_id, step=step_id, message=record.note or "Already complete")
+        if record.status in ("blocked", "in_flight") and not record.execution and not retry:
+            return NextAction(kind="blocked", phase=phase_id, step=step_id,
+                              message=(record.note or "Task is held.") + " Use --retry after resolving the cause.")
+        return self._run_auto_step(
+            self.workflow.phase(phase_id).raw, definition.raw, block_holds=True,
+            refresh=refresh, parameters=parameters)
+
+    @revision_checked
+    def rerun_task(self, phase_id: str, step_id: str, *, reason, confirmed_by,
+                   parameters=None, cli=False, prior_writer_stopped=False) -> TransitionResult:
+        """Prepare a fresh owner-requested attempt; execution remains a separate boundary."""
+        handler = self.handler(phase_id, step_id)
+        role = handler.task_parameter_role
+        previous = self.state.task_attempts.get(f"{phase_id}.{step_id}") or {}
+        previous_values = (previous.get("parameters") or {}).get(role.value)
+        parsed = handler.parse_parameters(role, parameters, cli=cli, base=previous_values)
+        values = {item.name: thaw(getattr(parsed, item.name)) for item in fields(parsed)}
+        from .authority import WriteOperation
+        resources = (("broker_test_plan",)
+                     if WriteOperation.ENSURE_BROKER_PLAN in handler.writes.operations else ())
+        return self._transition_kernel().owner_control(
+            phase_id, step_id, mode="rerun", reason=reason, confirmed_by=confirmed_by,
+            parameters={role.value: values}, prior_writer_stopped=prior_writer_stopped,
+            reset_resources=resources,
+        )
+
+    @revision_checked
+    def complete_manually(self, phase_id: str, step_id: str, *, note, confirmed_by,
+                          links=None, outputs=None, prior_writer_stopped=False) -> TransitionResult:
+        return self._transition_kernel().owner_control(
+            phase_id, step_id, mode="manual", reason=note, confirmed_by=confirmed_by,
+            links=links, outputs=outputs, prior_writer_stopped=prior_writer_stopped,
+        )
+
+    def run_until_gate(self, max_steps: int = 500, *, pending_only=True) -> list[NextAction]:
         """Drain independent work until a settled hold, completion, or step cap.
 
         Step-local parallel waits retain their kind but allow another selection.
@@ -781,7 +874,9 @@ class Orchestrator(StatusViewMixin):
         actions = []
         attempted = {
             step.key for step in self._workflow_definition().step_by_key.values()
-            if pending_only and self.state.get_step(step.phase_id, step.id).status != "pending"
+            if pending_only
+            and (record := self.state.get_step(step.phase_id, step.id)).status != "pending"
+            and (not record.execution or record.status == "blocked")
         }
         for _ in range(max_steps):
             act = self.step_once(attempted)
@@ -950,9 +1045,16 @@ class Orchestrator(StatusViewMixin):
 
     @revision_checked
     def reopen(self, phase_id: str, step_id: str, reason: str = "",
-               *, force_owner: bool = False) -> TransitionResult:
+               *, force_owner: bool = False, confirmed_by=None,
+               prior_writer_stopped=False) -> TransitionResult:
+        if force_owner:
+            return self.rerun_task(
+                phase_id, step_id, reason=reason,
+                confirmed_by=confirmed_by or self.state.owner_email,
+                prior_writer_stopped=prior_writer_stopped,
+            )
         return self._transition_kernel().reopen(
-            phase_id, step_id, reason, force_owner=force_owner
+            phase_id, step_id, reason
         )
 
     @revision_checked
@@ -1082,12 +1184,21 @@ class Orchestrator(StatusViewMixin):
         return phase.raw if phase and workflow.step(phase_id, step_id) else None
 
     @revision_checked
-    def skip_step(self, phase_id: str, step_id: str, reason: str) -> NextAction:
+    def skip_step(self, phase_id: str, step_id: str, reason: str, *,
+                  confirmed_by=None, prior_writer_stopped=False) -> NextAction:
         """Mark a step skipped (counts as done for progression) without running it.
         A reason is REQUIRED (audit). For 'doesn't apply' or 'done manually outside the tool'."""
-        return self._next_from_transition(
-            self._transition_kernel().skip(phase_id, step_id, reason)
-        )
+        kernel = self._transition_kernel()
+        result = (kernel.owner_control(
+            phase_id, step_id, mode="skip", reason=reason, confirmed_by=confirmed_by,
+            prior_writer_stopped=prior_writer_stopped,
+        ) if confirmed_by is not None else kernel.skip(phase_id, step_id, reason))
+        return self._next_from_transition(result)
+
+    @revision_checked
+    def adopt_result(self, phase_id: str, step_id: str, **evidence):
+        """Record a domain-verified owner result without invoking its original writer."""
+        return self._transition_kernel().adopt_result(phase_id, step_id, **evidence)
 
     @revision_checked
     def complete_step(self, phase_id: str = None, step_id: str = None, note: str = "") -> NextAction:
@@ -1111,6 +1222,9 @@ class Orchestrator(StatusViewMixin):
             outcome = self.handler(phase_id, step_id).build(
                 self.context(phase_id, step_id, permit=permit))
             if isinstance(outcome, Blocked):
+                if note.strip():
+                    return self._next_from_transition(
+                        kernel.record_human_claim(phase_id, step_id, note, outcome.reason))
                 return NextAction(kind="blocked", phase=phase_id, step=step_id,
                                   message=outcome.reason)
             if not isinstance(outcome, NeedsHuman):
@@ -1161,10 +1275,12 @@ class Orchestrator(StatusViewMixin):
 
     @revision_checked
     def reopen_step(self, phase_id: str, step_id: str, reason: str = "",
-                    *, force_owner: bool = False) -> NextAction:
+                    *, force_owner: bool = False, confirmed_by=None,
+                    prior_writer_stopped=False) -> NextAction:
         """Undo a done/skipped step so the conductor runs it again. Reason optional."""
         return self._next_from_transition(
-            self.reopen(phase_id, step_id, reason, force_owner=force_owner)
+            self.reopen(phase_id, step_id, reason, force_owner=force_owner,
+                        confirmed_by=confirmed_by, prior_writer_stopped=prior_writer_stopped)
         )
 
     @revision_checked

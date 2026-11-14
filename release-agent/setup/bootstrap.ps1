@@ -1,18 +1,21 @@
 <#
 .SYNOPSIS
-  One-time setup for the Release Orchestrator (/release-agent) on this machine.
+  Install or refresh the Release Orchestrator (/release-agent) on this machine.
   Small by design: it only prepares Scout + the environment so the real work
   can run inside Scout. It does NOT run a release.
 
 .DESCRIPTION
   Steps:
-    1. Infrastructure preflight — check CLIs/host deps AND register + verify the
+    1. Refresh the /release-agent skill, its reference resources and Scout's local
+       skill registry record, verifying files and registered instructions.
+       This happens before infrastructure
+       checks so missing prerequisites cannot prevent a skill update.
+       -SkillOnly stops here: no dependency checks, connection changes or restart.
+    2. Infrastructure preflight — check CLIs/host deps AND register + verify the
        MCP servers the skill needs inside Scout (from config/requirements.yaml).
        If Python 3.9+ is not discovered, ask for its actual path. -InstallPython
        explicitly opts into winget installation (per-user, no admin);
        -NoAutoInstallPython prevents it. PyYAML is installed via pip if missing.
-    2. Install the /release-agent skill into the Scout skills folder — only if
-       Microsoft Scout is detected (~/.scout present); the copy is then verified.
     3. Print next steps. By default the script closes and relaunches Scout so the
        new skill / MCP servers load (skipped automatically when this setup is run
        from inside a Scout session, to avoid killing itself). Pass -NoRestartScout
@@ -31,6 +34,9 @@
 .EXAMPLE
   cd <your-clone>\release-agent
   pwsh .\setup\bootstrap.ps1
+.EXAMPLE
+  pwsh .\setup\bootstrap.ps1 -SkillOnly
+  Refresh only the installed skill; reload Scout and start a new conversation.
   M365 CONNECTORS
     The terminal installs the skill and registers command-based MCP servers.
     Finish guided onboarding in Scout with: /release-agent check setup
@@ -47,14 +53,15 @@ param(
   [switch]$NonInteractive,
   [switch]$InstallPython,
   [switch]$SkipSkillInstall,
+  [switch]$SkillOnly,
   [string]$M365ToolsFile,
   [switch]$NoAutoInstallPython,  # compatibility veto for -InstallPython
   [switch]$NoRestartScout        # by default we restart Scout so new skill/MCP servers load
 )
 
 $ErrorActionPreference = "Stop"
-if ($M365ToolsFile) {
-  $M365ToolsFile = (Resolve-Path -LiteralPath $M365ToolsFile).Path
+if ($SkillOnly -and $SkipSkillInstall) {
+  throw "-SkillOnly cannot be combined with -SkipSkillInstall."
 }
 
 # The Python engine prints UTF-8 (em-dashes, etc.). Make sure this console reads/writes
@@ -122,26 +129,6 @@ if (-not $ScoutSkillsDir) { $ScoutSkillsDir = Join-Path $ScoutRoot 'm-skills' }
 $ScoutSkillsDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ScoutSkillsDir)
 $env:RELEASE_AGENT_SCOUT_ROOT = $ScoutRoot
 
-$agencyCandidates = @()
-foreach ($name in @('agency', 'agency.exe')) {
-  $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($command) { $agencyCandidates += $command.Source }
-}
-$mcpConfig = Join-Path $ScoutRoot 'm-mcp-servers.json'
-if (Test-Path -LiteralPath $mcpConfig -PathType Leaf) {
-  $servers = (Get-Content -LiteralPath $mcpConfig -Raw | ConvertFrom-Json).servers
-  foreach ($entry in $servers.PSObject.Properties.Value) {
-    $command = $entry.config.command
-    if ($command -and ([IO.Path]::GetFileName($command) -match '^agency(\.exe)?$')) {
-      $agencyCandidates += $command
-    }
-  }
-}
-if ($env:APPDATA) { $agencyCandidates += Join-Path $env:APPDATA 'agency\CurrentVersion\agency.exe' }
-if (-not $AgencyPath) { $AgencyPath = $env:RELEASE_AGENT_AGENCY_PATH }
-$AgencyPath = Resolve-SetupPath -Value $AgencyPath -Candidates $agencyCandidates -Label 'Agency CLI executable' -Parameter AgencyPath
-if (-not $AgencyPath) { exit 1 }
-
 # Stop all Scout processes and relaunch the app. Returns $true if it relaunched.
 function Restart-Scout {
   $procs = @(Get-Process -Name 'scout' -ErrorAction SilentlyContinue)
@@ -178,6 +165,130 @@ function Restart-Scout {
   return $launched
 }
 
+function ConvertFrom-ScoutSkillJson {
+  param([Parameter(Mandatory = $true)][string]$Json)
+  $options = @{ InputObject = $Json; NoEnumerate = $true; ErrorAction = 'Stop' }
+  if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $options.DateKind = 'String' }
+  $value = ConvertFrom-Json @options
+  return ,$value
+}
+
+function Read-ScoutSkillDefinition {
+  param([Parameter(Mandatory = $true)][string]$SkillFile)
+  $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($SkillFile)).Replace("`r`n", "`n")
+  $document = [regex]::Match($text, '\A---\n(?<metadata>[\s\S]*?)\n---\n?(?<instructions>[\s\S]*)\z')
+  if (-not $document.Success) { throw "Skill file must start with YAML frontmatter: $SkillFile" }
+  $values = @{}
+  foreach ($field in @('name', 'description')) {
+    $match = [regex]::Match($document.Groups['metadata'].Value, "(?m)^${field}:[ `t]*(?<value>[^`n]+)$")
+    if (-not $match.Success) { throw "Skill frontmatter is missing '$field': $SkillFile" }
+    $value = $match.Groups['value'].Value.Trim()
+    if ($value.StartsWith('"')) {
+      try { $value = ConvertFrom-ScoutSkillJson -Json $value }
+      catch { throw "Skill '$field' must be a valid quoted string: $SkillFile" }
+    } elseif ($value.StartsWith("'")) {
+      if ($value.Length -lt 2 -or -not $value.EndsWith("'")) {
+        throw "Skill '$field' has an unterminated quoted string: $SkillFile"
+      }
+      $value = $value.Substring(1, $value.Length - 2).Replace("''", "'")
+    } elseif ($value -match '^[>|[{]') {
+      throw "Skill '$field' must be a single-line text value: $SkillFile"
+    }
+    if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) {
+      throw "Skill '$field' must be nonempty text: $SkillFile"
+    }
+    $values[$field] = $value
+  }
+  if ($values.name -cne 'release-agent') { throw "Skill name must be 'release-agent': $SkillFile" }
+  $instructions = $document.Groups['instructions'].Value.Trim()
+  if ([string]::IsNullOrWhiteSpace($instructions)) { throw "Skill instructions are empty: $SkillFile" }
+  return [PSCustomObject]@{
+    name = $values.name
+    description = $values.description
+    instructions = $instructions
+  }
+}
+
+function Update-ScoutSkillRegistration {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScoutSkillsDir,
+    [Parameter(Mandatory = $true)]$Definition
+  )
+  $metadataFile = Join-Path $ScoutSkillsDir 'skills-metadata.json'
+  $originalHash = $null
+  $metadata = @()
+  if (Test-Path -LiteralPath $metadataFile -PathType Leaf) {
+    $originalHash = (Get-FileHash -LiteralPath $metadataFile -Algorithm SHA256).Hash
+    try { $metadata = ConvertFrom-ScoutSkillJson -Json ([IO.File]::ReadAllText($metadataFile)) }
+    catch { throw "Scout skill metadata is unreadable: $($_.Exception.Message)" }
+    if ($metadata -isnot [array]) { throw "Scout skill metadata must be a JSON array; no registry changes made." }
+    foreach ($item in $metadata) {
+      if ($null -eq $item -or $item.id -isnot [string] -or $item.name -isnot [string] -or
+          [string]::IsNullOrWhiteSpace($item.id) -or [string]::IsNullOrWhiteSpace($item.name)) {
+        throw "Scout skill metadata contains an invalid entry; no registry changes made."
+      }
+    }
+  }
+  $matches = @($metadata | Where-Object { $_.name -eq $Definition.name })
+  if ($matches.Count -gt 1) { throw "Scout has duplicate '$($Definition.name)' registry entries; no registry changes made." }
+  $changed = $false
+  if ($matches.Count -eq 1) {
+    $entry = $matches[0]
+    if ($null -ne $entry.enabled -and $entry.enabled -isnot [bool]) {
+      throw "Scout skill enabled state must be boolean; no registry changes made."
+    }
+    foreach ($field in @('name', 'description', 'instructions')) {
+      if ($entry.$field -cne $Definition.$field) {
+        $entry | Add-Member -NotePropertyName $field -NotePropertyValue $Definition.$field -Force
+        $changed = $true
+      }
+    }
+    if ($null -eq $entry.enabled) {
+      $entry | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force
+      $changed = $true
+    }
+    if ($entry.scope -cne 'local') {
+      $entry | Add-Member -NotePropertyName scope -NotePropertyValue 'local' -Force
+      $changed = $true
+    }
+  } else {
+    $id = "local-$($Definition.name)"
+    if (@($metadata | Where-Object { $_.id -eq $id }).Count) {
+      throw "Scout skill ID '$id' belongs to another entry; no registry changes made."
+    }
+    $entry = [PSCustomObject]@{
+      id = $id
+      name = $Definition.name
+      description = $Definition.description
+      instructions = $Definition.instructions
+      enabled = $true
+      createdAt = [DateTime]::UtcNow.ToString('o')
+      scope = 'local'
+    }
+    $metadata += $entry
+    $changed = $true
+  }
+  if (-not $changed) { return [PSCustomObject]@{ entry = $entry; changed = $false; backup = $null } }
+  $temporary = "$metadataFile.$([Guid]::NewGuid().ToString('N')).tmp"
+  $backup = $null
+  try {
+    $json = ConvertTo-Json -InputObject @($metadata) -Depth 100
+    [IO.File]::WriteAllText($temporary, $json, [Text.UTF8Encoding]::new($false))
+    if ($originalHash) {
+      if ((Get-FileHash -LiteralPath $metadataFile -Algorithm SHA256).Hash -ne $originalHash) {
+        throw "Scout skill metadata changed during refresh; rerun instead of overwriting concurrent changes."
+      }
+      $backup = "$metadataFile.backup-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmssfff'))-$([Guid]::NewGuid().ToString('N'))"
+      [IO.File]::Replace($temporary, $metadataFile, $backup)
+    } else {
+      [IO.File]::Move($temporary, $metadataFile)
+    }
+  } finally {
+    if (Test-Path -LiteralPath $temporary -PathType Leaf) { Remove-Item -LiteralPath $temporary -Force }
+  }
+  return [PSCustomObject]@{ entry = $entry; changed = $true; backup = $backup }
+}
+
 function Test-ScoutSkillRegistration {
   param(
     [Parameter(Mandatory = $true)][string]$ScoutSkillsDir,
@@ -189,32 +300,37 @@ function Test-ScoutSkillRegistration {
     return [PSCustomObject]@{ ok = $false; detail = "Installed skill file is missing: $skillFile" }
   }
 
-  $metadataNote = $null
   $metadataFile = Join-Path $ScoutSkillsDir 'skills-metadata.json'
   if (Test-Path -LiteralPath $metadataFile -PathType Leaf) {
     try {
-      $metadata = Get-Content -LiteralPath $metadataFile -Raw | ConvertFrom-Json
-      $entry = @($metadata | Where-Object { $_.name -eq $SkillName }) | Select-Object -First 1
-      if ($entry) {
-        $metadataNote = "metadata entry '$($entry.id)'"
-        if ($null -ne $entry.enabled -and -not [bool]$entry.enabled) {
-          return [PSCustomObject]@{ ok = $false; detail = "Scout metadata has '$SkillName' disabled." }
-        }
-      } else {
-        $metadataNote = "metadata has no '$SkillName' entry yet"
+      $metadata = ConvertFrom-ScoutSkillJson -Json ([IO.File]::ReadAllText($metadataFile))
+      if ($metadata -isnot [array]) { throw "Skill metadata must be a JSON array." }
+      $entries = @($metadata | Where-Object { $_.name -ceq $SkillName })
+      if ($entries.Count -ne 1) {
+        return [PSCustomObject]@{ ok = $false; detail = "Scout must have exactly one '$SkillName' registry entry." }
+      }
+      $entry = $entries[0]
+      if ($entry.enabled -isnot [bool] -or -not $entry.enabled) {
+        return [PSCustomObject]@{ ok = $false; detail = "Scout metadata has '$SkillName' disabled or invalid." }
+      }
+      $definition = Read-ScoutSkillDefinition -SkillFile $skillFile
+      if ([string]::IsNullOrWhiteSpace($entry.id) -or $entry.scope -cne 'local' -or
+          $entry.description -cne $definition.description -or $entry.instructions -cne $definition.instructions) {
+        return [PSCustomObject]@{ ok = $false; detail = "Scout registry does not match the installed '$SkillName' instructions." }
       }
     } catch {
-      $metadataNote = "metadata unreadable: $($_.Exception.Message)"
+      return [PSCustomObject]@{ ok = $false; detail = "Scout skill metadata is unreadable: $($_.Exception.Message)" }
     }
   } else {
-    $metadataNote = "metadata file not present yet"
+    return [PSCustomObject]@{ ok = $false; detail = "Scout skill registry is missing: $metadataFile" }
   }
 
   $disabledFile = Join-Path $ScoutSkillsDir 'disabled-skills.json'
   if (Test-Path -LiteralPath $disabledFile -PathType Leaf) {
     try {
-      $disabled = Get-Content -LiteralPath $disabledFile -Raw | ConvertFrom-Json
-      if ($disabled -contains $SkillName) {
+      $disabled = ConvertFrom-ScoutSkillJson -Json ([IO.File]::ReadAllText($disabledFile))
+      if ($disabled -isnot [array]) { throw "Disabled skills must be a JSON array." }
+      if ($disabled -contains $SkillName -or $disabled -contains $entry.id) {
         return [PSCustomObject]@{ ok = $false; detail = "Scout disabled-skills list contains '$SkillName'." }
       }
     } catch {
@@ -224,7 +340,7 @@ function Test-ScoutSkillRegistration {
 
   return [PSCustomObject]@{
     ok = $true
-    detail = if ($metadataNote) { "skill files present and enabled ($metadataNote)." } else { "skill files present and enabled." }
+    detail = "matching local registry entry '$($entry.id)', enabled instructions and skill files verified."
   }
 }
 
@@ -244,12 +360,102 @@ function Wait-ScoutSkillRegistration {
   return $result
 }
 
-# ---- 1. Infrastructure preflight (CLIs + MCP servers), data-driven ----
+$ok = $true
+$infraReport = $null
+$setupReady = $false
+$restartNeeded = $false
+$skillInstalled = $false
+$skillRegistrationChecked = $false
+$skillRegistrationPending = $false
+$skillRegistrationResult = $null
+
+Write-Host "1. Skill install/refresh"
+if ($SkipSkillInstall) {
+  Write-Host "  Skipped (-SkipSkillInstall)."
+} else {
+  $srcDir = Join-Path $AgentRoot 'skill'
+  $src = Join-Path $srcDir 'SKILL.md'
+  $destDir = Join-Path $ScoutSkillsDir 'release-agent'
+  $destFile = Join-Path $destDir 'SKILL.md'
+  Write-Host "  Source: $srcDir" -ForegroundColor DarkGray
+  Write-Host "  Destination: $destDir" -ForegroundColor DarkGray
+  if (-not (Test-Path -LiteralPath $src -PathType Leaf) -or (Get-Item -LiteralPath $src).Length -eq 0) {
+    Write-Host "  [ERROR] Source skill is missing or empty: $src" -ForegroundColor Red
+    $ok = $false
+  } else {
+    $definition = Read-ScoutSkillDefinition -SkillFile $src
+    $sourcePath = [IO.Path]::GetFullPath($srcDir).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $destinationPath = [IO.Path]::GetFullPath($destDir).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $separator = [IO.Path]::DirectorySeparatorChar
+    if ($sourcePath.Equals($destinationPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $destinationPath.StartsWith("$sourcePath$separator", [StringComparison]::OrdinalIgnoreCase) -or
+        $sourcePath.StartsWith("$destinationPath$separator", [StringComparison]::OrdinalIgnoreCase)) {
+      throw "The installed skill directory must not overlap the source skill directory."
+    }
+    $files = @(Get-ChildItem -LiteralPath $srcDir -Recurse -File)
+    foreach ($file in $files) {
+      $relative = [IO.Path]::GetRelativePath($srcDir, $file.FullName)
+      $target = Join-Path $destDir $relative
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+      Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+      if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne
+          (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash) {
+        throw "Installed skill resource differs from its source: $relative"
+      }
+    }
+    if ((Get-Item -LiteralPath $destFile).Length -eq 0) { throw "Installed skill instructions are empty." }
+    $skillInstalled = $true
+    Write-Host "  [OK] Skill files refreshed and SHA-256 verified ($($files.Count) files)." -ForegroundColor Green
+    $registration = Update-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -Definition $definition
+    if ($registration.backup) { Write-Host "  Registry backup: $($registration.backup)" -ForegroundColor DarkGray }
+    Write-Host "  [OK] Local skill record saved: $($registration.entry.id)" -ForegroundColor Green
+    Write-Host "  Reload Scout and start a new conversation to load the updated instructions." -ForegroundColor DarkYellow
+    $skillRegistrationResult = Test-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName 'release-agent'
+    if ($skillRegistrationResult.ok) {
+      $skillRegistrationChecked = $true
+      Write-Host "  [OK] Installed files checked ($($skillRegistrationResult.detail))" -ForegroundColor Green
+    } else {
+      Write-Host "  [ACTION NEEDED] $($skillRegistrationResult.detail)" -ForegroundColor Yellow
+      $ok = $false
+    }
+  }
+}
+
+if ($SkillOnly) {
+  if (-not $ok -or -not $skillInstalled) { exit 1 }
+  Write-Host "`nSkill refresh complete. No infrastructure checks, connection changes or app restart were performed." -ForegroundColor Green
+  exit 0
+}
+
+if ($M365ToolsFile) {
+  $M365ToolsFile = (Resolve-Path -LiteralPath $M365ToolsFile).Path
+}
+$agencyCandidates = @()
+foreach ($name in @('agency', 'agency.exe')) {
+  $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($command) { $agencyCandidates += $command.Source }
+}
+$mcpConfig = Join-Path $ScoutRoot 'm-mcp-servers.json'
+if (Test-Path -LiteralPath $mcpConfig -PathType Leaf) {
+  $servers = (Get-Content -LiteralPath $mcpConfig -Raw | ConvertFrom-Json).servers
+  foreach ($entry in $servers.PSObject.Properties.Value) {
+    $command = $entry.config.command
+    if ($command -and ([IO.Path]::GetFileName($command) -match '^agency(\.exe)?$')) {
+      $agencyCandidates += $command
+    }
+  }
+}
+if ($env:APPDATA) { $agencyCandidates += Join-Path $env:APPDATA 'agency\CurrentVersion\agency.exe' }
+if (-not $AgencyPath) { $AgencyPath = $env:RELEASE_AGENT_AGENCY_PATH }
+$AgencyPath = Resolve-SetupPath -Value $AgencyPath -Candidates $agencyCandidates -Label 'Agency CLI executable' -Parameter AgencyPath
+if (-not $AgencyPath) { exit 1 }
+
+# ---- 2. Infrastructure preflight (CLIs + MCP servers), data-driven ----
 # Delegates to the engine (python -m orchestrator.cli infra), which reads
 # config/requirements.yaml, checks every CLI/host dependency, and REGISTERS any
 # missing MCP servers into Scout's config (backing it up first). One home for the
 # logic; bootstrap just needs python+pyyaml to call it.
-Write-Host "1. Infrastructure preflight (from config/requirements.yaml)"
+Write-Host "`n2. Infrastructure preflight (from config/requirements.yaml)"
 if (-not (Test-Path $ReqFile)) { Write-Host "  requirements.yaml not found at $ReqFile" -ForegroundColor Red; exit 1 }
 
 # Resolve a working Python (3.9+). Prefer `python`/`python3`, fall back to `py -3`,
@@ -329,13 +535,6 @@ if ($PyExe) {
   if ($missingInfraPackages.Count -eq 0) { $haveInfra = $true }
 }
 
-$ok = $true
-$infraReport = $null
-$setupReady = $false
-$restartNeeded = $false
-$skillRegistrationChecked = $false
-$skillRegistrationPending = $false
-$skillRegistrationResult = $null
 if (-not $haveInfra) {
   if (-not $PyExe) {
     Write-Host "  [ ] Python 3.9+ ... still MISSING (needed to run the preflight)" -ForegroundColor Yellow
@@ -372,7 +571,7 @@ if (-not $haveInfra) {
       throw "Setup check returned an invalid result. No setup completion was assumed."
     } else {
       $setupReady = $infraReport.ok
-      $ok = $infraReport.infrastructure_ok
+      $ok = $ok -and $infraReport.infrastructure_ok
       $restartNeeded = $infraReport.restart_needed
       $missingDeps = @($infraReport.requirements | Where-Object { -not $_.ok })
       if ($missingDeps.Count -eq 0) { Write-Host "  [OK] Command-line dependencies" -ForegroundColor Green }
@@ -395,61 +594,6 @@ if (-not $haveInfra) {
     Write-Host "  [OK] engine config (phases.yaml)" -ForegroundColor Green
   } else {
     Write-Host "  [MISSING] engine config (phases.yaml)" -ForegroundColor Yellow; $ok = $false
-  }
-}
-
-Write-Host "`n2. Skill install"
-if ($SkipSkillInstall) {
-  Write-Host "  Skipped (--SkipSkillInstall)."
-} else {
-  $srcDir    = Join-Path $AgentRoot "skill"
-  $src       = Join-Path $srcDir "SKILL.md"
-  $destDir   = Join-Path $ScoutSkillsDir "release-agent"
-  $destFile  = Join-Path $destDir "SKILL.md"
-
-  if (-not (Test-Path $src)) {
-    Write-Host "  [ ] Source skill not found at $src" -ForegroundColor Red
-    $ok = $false
-  }
-  # Is Scout actually installed? Its per-user data folder (~/.scout) is created on
-  # first launch. If it's absent, Scout isn't installed/run yet — don't fabricate it.
-  elseif (-not (Test-Path $ScoutRoot)) {
-    Write-Host "  [ ] Microsoft Scout not detected ($ScoutRoot is missing)." -ForegroundColor Yellow
-    Write-Host "      Install Microsoft Scout and launch it once, then re-run this setup" -ForegroundColor DarkYellow
-    Write-Host "      to install the /release-agent skill." -ForegroundColor DarkYellow
-    $ok = $false
-  }
-  else {
-    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-    foreach ($file in Get-ChildItem -LiteralPath $srcDir -Recurse -File) {
-      $relative = [IO.Path]::GetRelativePath($srcDir, $file.FullName)
-      $target = Join-Path $destDir $relative
-      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
-      Copy-Item -LiteralPath $file.FullName -Destination $target -Force
-      if ((Get-FileHash -LiteralPath $file.FullName).Hash -ne (Get-FileHash -LiteralPath $target).Hash) {
-        throw "Installed skill resource differs from its source: $relative"
-      }
-    }
-    if ((Get-Item -LiteralPath $destFile).Length -eq 0) { throw "Installed skill instructions are empty." }
-    Write-Host "  [x] Installed /release-agent and reference resources -> $destDir" -ForegroundColor Green
-    $skillInstalled = $true
-  }
-
-  # Report every release-agent skill Scout can currently see.
-  if (Test-Path $ScoutSkillsDir) {
-    $installed = Get-ChildItem $ScoutSkillsDir -Directory -ErrorAction SilentlyContinue |
-                 Where-Object { Test-Path (Join-Path $_.FullName 'SKILL.md') } |
-                 Select-Object -ExpandProperty Name
-    if ($installed) { Write-Host "  Skills currently installed in Scout: $($installed -join ', ')" -ForegroundColor DarkGray }
-  }
-
-  # Verify Scout has actually registered the newly-installed skill before we claim success.
-  $skillRegistrationResult = Test-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName 'release-agent'
-  if ($skillRegistrationResult.ok) {
-    $skillRegistrationChecked = $true
-    Write-Host "  [OK] Scout registry contains release-agent ($($skillRegistrationResult.detail))" -ForegroundColor Green
-  } else {
-    Write-Host "  [ ] Scout registry has not registered release-agent yet: $($skillRegistrationResult.detail)" -ForegroundColor Yellow
   }
 }
 

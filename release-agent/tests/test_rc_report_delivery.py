@@ -2,6 +2,7 @@
 from argparse import Namespace
 from copy import deepcopy
 from datetime import date, datetime, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -171,6 +172,100 @@ def receipt_arguments(tmp_path, handoff, path):
     return ["--runs-root", str(tmp_path), S.WRITE_COMMAND,
             "--release", handoff["receipt_binding"]["release"],
             "--execution-id", handoff["execution_id"], "--receipt-file", str(path)]
+
+
+def manual_report_result(state, tmp_path):
+    target = {**S.target_config(), "file_name": "owner-selected-report.html"}
+    html = "<html><body>Owner-reviewed report for this release and RC.</body></html>"
+    value = {"release": state.release_id, "rc": 1,
+             "sha256": sha256(html.encode("utf-8")).hexdigest(),
+             "size": len(html.encode("utf-8")), **publication_proof(target, html)}
+    path = tmp_path / "manual-report.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path, value
+
+
+def test_owner_selected_report_is_adopted_without_upload_or_quality_approval(ready, tmp_path, capsys):
+    state, _ = ready
+    C.save_state(state, str(tmp_path), state.release_id)
+    path, value = manual_report_result(state, tmp_path)
+    decisions = deepcopy(state.gate_decisions)
+    args = ["--runs-root", str(tmp_path), S.WRITE_COMMAND, "--release", state.release_id,
+            "--adopt-file", str(path), "--confirmed-by", state.owner_email,
+            "--adoption-reason", "Use the report I reviewed for the current release and RC"]
+
+    assert cli.main(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    saved, orch = C.load_orch(str(tmp_path), state.release_id, CONFIG)
+    report = saved.get_step("build_verify", S.ID)
+    assert result["status"] == "done" and not result["permission_to_execute"]
+    assert not result["quality_approved"]
+    assert report.by == "human" and report.data["content_sha256"] == value["sha256"]
+    assert report.data["manual_adoption"]["source_applicability"] == "owner_attested"
+    assert saved.gate_decisions == decisions
+    assert not saved.is_done("build_verify", "rc_report_gate")
+    assert N.build(orch.context("build_verify", N.ID)).kind == "needs_skill"
+    before = (tmp_path / state.release_id / "release-state.json").read_bytes()
+    assert cli.main(args) == 0
+    assert "already recorded" in capsys.readouterr().out
+    assert (tmp_path / state.release_id / "release-state.json").read_bytes() == before
+
+
+def test_adoption_retains_uncertain_original_publication_and_requires_stopped_writer(ready, tmp_path, capsys):
+    state, _ = ready
+    handoff, _ = issue_publication(ready, tmp_path, capsys)
+    path, _ = manual_report_result(state, tmp_path)
+    args = ["--runs-root", str(tmp_path), S.WRITE_COMMAND, "--release", state.release_id,
+            "--adopt-file", str(path), "--confirmed-by", state.owner_email,
+            "--adoption-reason", "Select my independently uploaded report"]
+    assert cli.main(args) == 1
+    assert "prior writer stopped" in capsys.readouterr().out
+    assert C.load_state(str(tmp_path), state.release_id).get_step(
+        "build_verify", S.ID).execution["id"] == handoff["execution_id"]
+    assert cli.main([*args, "--prior-writer-stopped"]) == 0
+    capsys.readouterr()
+    report = C.load_state(str(tmp_path), state.release_id).get_step("build_verify", S.ID)
+    assert report.status == "done"
+    assert report.data["prior_results"][0]["execution"]["id"] == handoff["execution_id"]
+    assert report.data["prior_results"][0]["writer_stopped"] is True
+    assert not report.data.get("publication_receipt_execution")
+
+
+def test_manual_report_can_use_supported_native_sharepoint_reads_without_workiq_resolve(ready, tmp_path, capsys):
+    state, _ = ready
+    C.save_state(state, str(tmp_path), state.release_id)
+    target = {**S.target_config(), "file_name": "owner-native-report.html"}
+    html = "<html><body>Owner's selected native report.</body></html>"
+    value = {"release": state.release_id, "rc": 1, "route": "sharepoint",
+             "sha256": sha256(html.encode("utf-8")).hexdigest(), "size": len(html.encode("utf-8")),
+             **sharepoint_publication_proof(target, html)}
+    path = tmp_path / "native-adoption.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    assert cli.main(["--runs-root", str(tmp_path), S.WRITE_COMMAND, "--release", state.release_id,
+                     "--adopt-file", str(path), "--confirmed-by", state.owner_email,
+                     "--adoption-reason", "Use this current report"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "done" and not result["permission_to_execute"]
+    assert not result["quality_approved"]
+
+
+@pytest.mark.parametrize("damage", ["rc", "owner", "bytes"])
+def test_manual_report_adoption_rejects_mismatched_scope_or_proof(ready, tmp_path, capsys, damage):
+    state, _ = ready
+    C.save_state(state, str(tmp_path), state.release_id)
+    path, value = manual_report_result(state, tmp_path)
+    if damage == "rc":
+        value["rc"] = 2
+    elif damage == "bytes":
+        value["download"]["result"]["content"] += "changed"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    before = (tmp_path / state.release_id / "release-state.json").read_bytes()
+    assert cli.main(["--runs-root", str(tmp_path), S.WRITE_COMMAND, "--release", state.release_id,
+                     "--adopt-file", str(path), "--confirmed-by",
+                     "other@example.test" if damage == "owner" else state.owner_email,
+                     "--adoption-reason", "Select this report"]) == 1
+    assert not json.loads(capsys.readouterr().out)["permission_to_execute"]
+    assert (tmp_path / state.release_id / "release-state.json").read_bytes() == before
 
 
 def test_sharepoint_new_file_action_uses_create_small_text_file(ready, tmp_path):
@@ -565,7 +660,7 @@ def test_new_filename_requires_explicit_owner_assisted_recovery(ready, tmp_path,
     handoff, arguments = issue_publication(ready, tmp_path, capsys, existing=False)
     assert handoff["permission_to_execute"] is False
     assert handoff["kind"] == "owner_assisted_upload" and handoff["action"] is None
-    assert "no native new-file uploader is released" in handoff["limitations"].lower()
+    assert "owner-assisted" in handoff["limitations"].lower()
     assert C.load_state(str(tmp_path), st.release_id).get_step("build_verify", S.ID).status == "blocked"
     assert cli.main(arguments) == 1
     capsys.readouterr()

@@ -140,7 +140,55 @@ def cmd_record_nativeauth_notify(args):
     return 1
 
 
+def cmd_adopt_bugbash_invite(args):
+    state, orch = C.load_orch(args.runs_root, args.release, args.config)
+    with open(args.result_file, encoding="utf-8-sig") as stream:
+        value = json.load(stream)
+    if not isinstance(value, dict):
+        raise ValueError("Invitation result must be a structured object")
+    context = orch.context("bug_bash", send_invite.ID)
+    for step in ("clone_plans_broker", "clone_plans_auth"):
+        if context.evidence.step("bug_bash", step).status != "done":
+            raise ValueError("Create the release test plans before adopting their invitation")
+    invite = bugbash_meeting.adopt_invitation(
+        value, state.owner_email, state.release_id, state.ccd)
+    old = state.get_step("bug_bash", send_invite.ID)
+    if (old.status == "done"
+            and old.data.get("external_adoption", {}).get("invitation") == invite):
+        print(json.dumps({"status": "done", "summary": "This existing invitation is already recorded.",
+                          "permission_to_send": False}))
+        return 0
+    sources = send_invite.source_matches(context, "clone_plans_broker", "clone_plans_auth")
+    adoption = {"invitation": invite, "source_matches": sources,
+                "verification": "owner_selected_provider_event_verified",
+                "source_applicability": "owner_attested",
+                "confirmed_by": args.confirmed_by, "reason": args.reason}
+    result = orch.adopt_result(
+        "bug_bash", send_invite.ID,
+        data={"external_adoption": adoption,
+              "gate_preconditions": send_invite.gate_preconditions(context, sources)},
+        links=[], note=args.reason or "", confirmed_by=args.confirmed_by,
+        prior_writer_stopped=args.prior_writer_stopped,
+    )
+    if not result.changed:
+        raise ValueError(result.message)
+    C.save_state(state, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log("external_invite_adopted", reason=args.reason)
+    print(json.dumps({"status": "done", "summary": result.message,
+                      "event_id": invite["event_id"], "permission_to_send": False,
+                      "verification": "owner_selected"}))
+    return 0
+
+
 def register(sub):
+    adopt = sub.add_parser("adopt-bugbash-invite", help="Record a verified owner-selected existing calendar event; never send")
+    adopt.add_argument("--release", required=True)
+    adopt.add_argument("--result-file", required=True, help="Release/CCD/event ID plus exact profile and event read observations")
+    adopt.add_argument("--confirmed-by", required=True, help="Release owner selecting this invitation")
+    adopt.add_argument("--reason", required=True)
+    adopt.add_argument("--prior-writer-stopped", action="store_true")
+    adopt.set_defaults(func=cmd_adopt_bugbash_invite)
+
     p = sub.add_parser("record-bugbash-chat",
                        help="Store the resolved Bug Bash meeting chat id (Phase-3 activate_chat)")
     p.add_argument("--release", required=True)

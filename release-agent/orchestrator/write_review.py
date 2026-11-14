@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 import json
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from orchestrator import revision
 from orchestrator.step_context import freeze, thaw
@@ -189,7 +189,7 @@ class WriteAuthorization:
 
 def authorize(
     args, orch, phase: str, step: str, planner: Callable[[], WritePlan],
-    *, auto_approved_by: str | None = None, progress=None,
+    *, auto_approved_by: str | None = None, progress=None, resume_approved=False,
 ) -> WriteAuthorization:
     """Plan once, then atomically persist review and attempt before any provider work.
 
@@ -231,7 +231,10 @@ def authorize(
         args.approved_by = reviewer
         args.executor = getattr(args, "executor", None) or reviewer
     elif actual_hash != expected:
-        raise ValueError("Write review hash is stale; review the fresh plan; no writes")
+        previous = (progress.value or {}).get("reviews", []) if progress is not None else []
+        if not (resume_approved and progress is not None and progress.existing
+                and any(review["hash"] == expected for review in previous)):
+            raise ValueError("Write review hash is stale; review the fresh plan; no writes")
     revision.assert_current(orch)
     before = deepcopy(asdict(orch.state))
     permit = None
@@ -274,8 +277,10 @@ def _sealed(value):
 
 def validate_progress(value):
     """Fail closed on malformed/edited receipts, including when loading saved state."""
-    if (not isinstance(value, dict) or set(value) != {
-            "scope", "policy", "reviews", "operations", "finished", "manual_completion", "digest"}
+    required = {"scope", "policy", "reviews", "operations", "finished", "manual_completion", "digest"}
+    if (not isinstance(value, dict) or not required.issubset(value)
+            or set(value) - required - {"context"}
+            or "context" in value and not isinstance(value["context"], dict)
             or not revision.is_hash(value.get("scope"))
             or not isinstance(value.get("policy"), dict)
             or set(value["policy"]) != {"automatic", "reviewer"}
@@ -336,8 +341,11 @@ def validate_manual_completion(value):
             or any(not isinstance(text, str) or not text.strip() for text in value.values())):
         raise ValueError("Manual completion requires the owner's identity, reason and evidence URL")
     url = urlsplit(value["evidence"])
+    credentials = {"access_token", "refresh_token", "token", "sig", "signature",
+                   "key", "api_key", "apikey", "client_secret", "password", "code", "auth"}
     if (url.scheme != "https" or not url.hostname or url.username or url.password
-            or url.query or url.fragment or any(ord(c) < 32 for c in value["evidence"])):
+            or url.fragment or any(key.casefold() in credentials for key, _ in parse_qsl(url.query))
+            or any(ord(c) < 32 for c in value["evidence"])):
         raise ValueError("Manual completion requires a credential-free HTTPS evidence URL")
     return value
 
@@ -361,12 +369,28 @@ def continuation(orch, phase, step):
     if rejected := kernel._owned_outcome_check(phase, step, record.execution["id"]):
         return Blocked(rejected.message)
     selection = orch._projection().scheduling()
-    if (selection.suspension or not selection.phase(phase).due
+    if not orch.state.owner_task_active(phase, step) and (
+            selection.suspension or not selection.phase(phase).due
             or not selection.step(phase, step).time_ready):
         return Blocked("Checked continuation waits for the release/prerequisite/time frontier.")
     command = orch.workflow.step(phase, step).write_command
     automatic = progress["policy"]["automatic"]
     followup = f"{command} --release {orch.state.release_id}"
+    if command == "distribute-tests" and (progress.get("context") or {}).get("plan"):
+        return NeedsSkill(
+            tool=command, record_as=step, outbound=True,
+            payload={"release": orch.state.release_id, "followup_command": followup + " --apply",
+                     "continuation": True, "permission_to_execute": False,
+                     "execution_instructions": (
+                         "Continue the original approved distribution. The command validates live business "
+                         "inputs and receipts, then applies only unchanged remaining actions. It reuses "
+                         "the original approval and availability; do not ask for unchanged input again. "
+                         "Unknown results remain held. If all remaining work was done manually, use "
+                         "--manual-completion <evidence-url> --confirmed-by <release-owner> "
+                         "--recovery-reason <explicit stopped-writer/all-work confirmation>; this is "
+                         "owner-attested and performs no provider read or write.")},
+            summary="Check and continue only the original approved distribution; no reset or repeated approval.",
+        )
     if automatic:
         followup += " --execute --auto-approve"
     return NeedsSkill(
@@ -390,7 +414,7 @@ class VerifiedProgress:
     Descriptors contain identities and expected result digests, never write payloads.
     No failed checkpoint grants another call, even if the caller catches the error.
     """
-    def __init__(self, orch, phase, step, scope, reconcile, resolve=None):
+    def __init__(self, orch, phase, step, scope, reconcile, resolve=None, *, context=None):
         self.orch, self.phase, self.step = orch, phase, step
         self.reconcile = reconcile
         self.resolve = resolve
@@ -401,6 +425,7 @@ class VerifiedProgress:
         self.scope = revision.digest(scope) if scope is not None else (self.value or {}).get("scope")
         self.authorization = None
         self.failed = False
+        self.context = deepcopy(context)
 
     def prepare(self, policy=None):
         if self.existing or self.value and self.value.get("reviews"):
@@ -428,7 +453,8 @@ class VerifiedProgress:
         else:
             self.value = _sealed({
                 "scope": self.scope, "policy": policy, "reviews": [],
-                "operations": [], "finished": False, "manual_completion": None})
+                "operations": [], "finished": False, "manual_completion": None,
+                **({"context": self.context} if self.context is not None else {})})
 
     def authorized(self, digest, reviewer):
         self.value["reviews"].append({"hash": digest, "approved_by": reviewer})

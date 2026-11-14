@@ -185,11 +185,12 @@ def test_unclaimed_step_refresh_preserves_audit_and_requires_new_approval(
     setattr(st, change, "new-owner@example.com" if change == "owner_email" else "2026-09-10")
     C.save_state(st, str(tmp_path), st.release_id)
     assert cli.main(prepare) == 0
-    blocked = json.loads(capsys.readouterr().out)
-    assert blocked["notifications"] == [] and "readiness" in blocked["reason"].casefold()
+    refreshed_preview = json.loads(capsys.readouterr().out)
+    assert len(refreshed_preview["notifications"]) == 1
+    assert refreshed_preview["notifications"][0]["hash"] != first["hash"]
     st, refreshed = C.load_orch(str(tmp_path), st.release_id, C.DEFAULT_CONFIG)
-    assert st.notification_deliveries[first["id"]] == original
-    assert not refreshed.gate.signed
+    assert st.notification_deliveries[first["id"]]["attempts"] == original["attempts"]
+    assert refreshed.gate.signed
     result = refreshed.gate.record_check(
         "m365_access", "pass", "synthetic refreshed connector probes", evidence=capability_evidence(st))
     assert "error" not in result and refreshed.gate.signed

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
+import json
 import uuid
 from typing import Callable, Optional
 
@@ -122,6 +123,28 @@ class EligibilityEvaluator:
                 return Eligibility(False, f"Step is already pending: {phase_id}/{step_id}")
             return Eligibility(True, phase=phase, step=step, execution=execution)
 
+        if (self.state.owner_task_active(phase_id, step_id)
+                and intent in (TransitionIntent.EXECUTE, TransitionIntent.PREPARE,
+                               TransitionIntent.RESERVE, TransitionIntent.POLL,
+                               TransitionIntent.RECORD, TransitionIntent.MOCK)):
+            problem = self.projection.owner_task_problem(step)
+            if problem:
+                return Eligibility(False, problem, phase, step, execution)
+            if execution and intent != TransitionIntent.POLL:
+                return Eligibility(False, "Continue the owning execution or start an explicitly reviewed new attempt.",
+                                   phase, step, execution)
+            if intent == TransitionIntent.EXECUTE and step.kind != StepKind.AUTO:
+                return Eligibility(False, "Only auto steps execute in-process.", phase, step, execution)
+            if intent == TransitionIntent.PREPARE and step.kind == StepKind.AUTO:
+                return Eligibility(False, "Use task for automatic work.", phase, step, execution)
+            if intent in (TransitionIntent.RESERVE, TransitionIntent.RECORD) and step.kind != StepKind.EXTERNAL:
+                return Eligibility(False, "Only external tasks support this operation.", phase, step, execution)
+            if intent == TransitionIntent.POLL and (not step.pollable or record.status != "in_flight"):
+                return Eligibility(False, "Only pollable in-flight work may be polled.", phase, step, execution)
+            if intent == TransitionIntent.MOCK and (step.is_gate or not step_readiness.mocked):
+                return Eligibility(False, "Only explicitly mocked non-gate tasks accept mock outcomes.", phase, step)
+            return Eligibility(True, phase=phase, step=step, execution=execution)
+
         refresh_reservation = (
             intent == TransitionIntent.RESERVE
             and step.kind == StepKind.EXTERNAL
@@ -140,6 +163,28 @@ class EligibilityEvaluator:
                 step,
                 execution,
             )
+
+        record_only = (
+            step.is_human_action and intent in (TransitionIntent.PREPARE, TransitionIntent.COMPLETE)
+            or step.implementation.value == "dummy" and intent == TransitionIntent.COMPLETE
+        )
+        if record_only:
+            if self.state.halt or self.state.cancellation:
+                return Eligibility(False, "Release is halted or cancelled; resume before recording completion.",
+                                   phase, step, execution)
+            if execution:
+                return Eligibility(False, "Fact recording cannot clear an owned execution.",
+                                   phase, step, execution)
+            return Eligibility(True, phase=phase, step=step, execution={})
+
+        if (intent in (TransitionIntent.EXECUTE, TransitionIntent.REFRESH) and step.kind == StepKind.AUTO
+                and step.effect_mode == EffectMode.READ_ONLY and not execution):
+            if self.state.halt or self.state.cancellation:
+                return Eligibility(False, "Release is halted or cancelled.", phase, step, execution)
+            if any(not self.projection.step_complete(self.workflow.step_by_key[key])
+                   for key in self.workflow.dependency_keys(step)):
+                return Eligibility(False, "Waiting on the task's business prerequisites.", phase, step)
+            return Eligibility(True, phase=phase, step=step, execution={})
 
         projected_status = selection.status
         if intent == TransitionIntent.POLL:
@@ -394,6 +439,13 @@ class EligibilityEvaluator:
                     execution,
                 )
             if execution:
+                if not execution.get("write_progress"):
+                    return Eligibility(
+                        False,
+                        "Use the owning result/receipt protocol or supported manual-result adoption; "
+                        "done cannot clear an uncertain execution.",
+                        phase, step, execution,
+                    )
                 return Eligibility(True, phase=phase, step=step, execution=execution)
             if not step.is_human_action:
                 return Eligibility(
@@ -475,7 +527,8 @@ class TransitionKernel:
             return self._reject("Auto results require the configured engine-owned effect.", phase_id, step_id)
         if step.kind == StepKind.EXTERNAL and effect:
             return self._reject("External results cannot settle an auto effect.", phase_id, step_id)
-        if record.invalidated_at and (
+        owner_task = self.state.owner_task_active(phase_id, step_id)
+        if record.invalidated_at and not owner_task and (
             (record.status == "blocked" and not execution.get("write_review"))
             or datetime.fromisoformat(record.invalidated_at.replace("Z", "+00:00"))
             > datetime.fromisoformat(execution["started_at"].replace("Z", "+00:00"))
@@ -488,7 +541,10 @@ class TransitionKernel:
             return self._reject("Interrupted execution requires owner review before done or reopen.", phase_id, step_id)
         selection = projection.scheduling()
         readiness = selection.step(phase_id, step_id)
-        if (
+        if owner_task:
+            if problem := projection.owner_task_problem(step):
+                return self._reject(problem, phase_id, step_id)
+        elif (
             not selection.frontier or selection.frontier.id != phase_id
             or not readiness.prerequisites_met
         ):
@@ -544,10 +600,11 @@ class TransitionKernel:
             if intent == TransitionIntent.WRITE and step.kind != StepKind.EXTERNAL:
                 return self._reject("Only external steps accept write invocation permits.", phase_id, step_id)
             selection = self.projection_factory().scheduling()
-            if selection.suspension or not selection.phase(phase_id).due:
+            owner_task = self.state.owner_task_active(phase_id, step_id)
+            if not owner_task and (selection.suspension or not selection.phase(phase_id).due):
                 return self._reject("Provider invocation is suspended or its phase is not due.", phase_id, step_id)
             if intent == TransitionIntent.WRITE and (
-                not selection.step(phase_id, step_id).time_ready
+                not owner_task and not selection.step(phase_id, step_id).time_ready
                 or self.state.get_step(phase_id, step_id).status != "running"
             ):
                 return self._reject("External write execution is not active or its time has not arrived.", phase_id, step_id)
@@ -619,7 +676,7 @@ class TransitionKernel:
         if not definition or definition.is_gate:
             return self._reject("Generic outcomes cannot complete approval gates.", pid, sid)
         if definition.kind != StepKind.EXTERNAL and permit.intent not in (
-            TransitionIntent.EXECUTE, TransitionIntent.MOCK, TransitionIntent.EFFECT,
+            TransitionIntent.EXECUTE, TransitionIntent.MOCK, TransitionIntent.EFFECT, TransitionIntent.REFRESH,
         ):
             return self._reject("Human actions require done/skip, not generic outcomes.", pid, sid)
         if (
@@ -629,7 +686,18 @@ class TransitionKernel:
         ):
             return self._reject("Effect outcomes require a reserved execution before application.", pid, sid)
         selection = projection.scheduling()
-        if (
+        read_observation = (
+            definition.kind == StepKind.AUTO and definition.effect_mode == EffectMode.READ_ONLY
+            and permit.intent in (TransitionIntent.EXECUTE, TransitionIntent.REFRESH))
+        if read_observation and any(
+                not projection.step_complete(self.workflow.step_by_key[key])
+                for key in self.workflow.dependency_keys(definition)):
+            return self._reject("Task business prerequisites changed during observation.", pid, sid)
+        owner_task = self.state.owner_task_active(pid, sid)
+        if owner_task:
+            if problem := projection.owner_task_problem(definition):
+                return self._reject(problem, pid, sid)
+        if not read_observation and not owner_task and (
             not selection.frontier or selection.frontier.id != pid
             or not selection.step(pid, sid).prerequisites_met
         ):
@@ -673,7 +741,8 @@ class TransitionKernel:
                     permit.phase, permit.step, record.execution["id"]):
                 return rejected
             selection = self.projection_factory().scheduling()
-            if (selection.suspension or not selection.phase(permit.phase).due
+            if not self.state.owner_task_active(permit.phase, permit.step) and (
+                    selection.suspension or not selection.phase(permit.phase).due
                     or not selection.step(permit.phase, permit.step).time_ready):
                 return self._reject("Reviewed provider invocation is suspended.", permit.phase, permit.step)
             return None
@@ -834,9 +903,199 @@ class TransitionKernel:
             step_id,
         )
 
+    def adopt_result(self, phase_id, step_id, *, data, links, note, confirmed_by,
+                     prior_writer_stopped=False):
+        if rejected := self._invalid():
+            return rejected
+        definition = self.workflow.step(phase_id, step_id)
+        if not definition or not definition.manual_result:
+            return self._reject("This task has no supported manual-result policy.", phase_id, step_id)
+        if (self.state.halt or self.state.cancellation or not isinstance(confirmed_by, str)
+                or not self.state.owner_email
+                or confirmed_by.strip().casefold() != self.state.owner_email.casefold()
+                or not isinstance(note, str) or not note.strip()):
+            return self._reject("Adoption requires the release owner's explicit reason on an active release.",
+                                phase_id, step_id)
+        previous = self.state.get_step(phase_id, step_id)
+        notifications = []
+        for identifier, ledger in self.state.notification_deliveries.items():
+            if not isinstance(ledger, dict) or ledger.get("status") not in ("claimed", "uncertain"):
+                continue
+            descriptor = ledger.get("descriptor")
+            scope = descriptor.get("scope") if isinstance(descriptor, dict) else None
+            if (isinstance(scope, dict)
+                    and (scope.get("phase"), scope.get("step")) == (phase_id, step_id)
+                    or previous.data.get("notification_id") == identifier):
+                notifications.append({"id": identifier, "status": ledger["status"]})
+        if (previous.execution or notifications) and not prior_writer_stopped:
+            return self._reject("Confirm the prior writer stopped before adopting another result.",
+                                phase_id, step_id)
+        if not isinstance(data, dict) or not valid_links(links):
+            return self._reject("Adoption requires structured evidence and links.", phase_id, step_id)
+        affected = self._dependent_steps(phase_id, step_id)
+        if rejected := self._invalidation_check(affected):
+            return rejected
+        history = deepcopy(previous.data.get("prior_results", []))
+        if previous.execution or notifications or previous.status in ("done", "skipped"):
+            history.append({
+                "status": previous.status, "execution": deepcopy(previous.execution),
+                "note": previous.note, "at": self.now(),
+                "writer_stopped": bool(prior_writer_stopped),
+                "notifications": notifications,
+                "data": {key: deepcopy(value) for key, value in previous.data.items()
+                         if key != "prior_results"},
+            })
+        if affected:
+            self._invalidate_steps(affected, reason=f"Owner selected a new result for {definition.key}.")
+        self.state.set_step(phase_id, step_id, StepState(
+            status="done", completed_at=self.now(), by="human", note=note.strip(),
+            links=deepcopy(links), data={**deepcopy(data), "prior_results": history},
+        ))
+        return self._accept("ran", "Owner-selected result recorded; no provider action or gate approval.",
+                            phase_id, step_id)
+
+    def owner_control(self, phase_id, step_id, *, mode, reason, confirmed_by,
+                      parameters=None, links=None, outputs=None, prior_writer_stopped=False,
+                      reset_resources=()):
+        """Record an owner decision, never a provider receipt or write permission."""
+        if rejected := self._invalid():
+            return rejected
+        definition = self.workflow.step(phase_id, step_id)
+        if not definition:
+            return self._reject(f"No such step: {phase_id}/{step_id}", phase_id, step_id)
+        if (mode not in ("rerun", "manual", "skip") or not isinstance(reason, str) or not reason.strip()
+                or not isinstance(confirmed_by, str) or not self.state.owner_email
+                or confirmed_by.strip().casefold() != self.state.owner_email.strip().casefold()):
+            return self._reject("An explicit reason and the configured release owner's confirmation are required.",
+                                phase_id, step_id)
+        if self.state.halt or self.state.cancellation:
+            return self._reject("Release is halted or cancelled; resume before changing a task.", phase_id, step_id)
+        previous = self.state.get_step(phase_id, step_id)
+        if definition.is_gate and (mode != "rerun" or previous.execution):
+            return self._reject("Gates require approve/deny or their owning approval reconciliation; "
+                                "they cannot be skipped or manually completed.", phase_id, step_id)
+        notifications = self._unsettled_notifications(phase_id, step_id)
+        if (previous.execution or notifications) and prior_writer_stopped is not True:
+            return self._reject("Confirm the prior writer stopped with --prior-writer-stopped. "
+                                "Its outcome will remain uncertain in history, not certified successful.",
+                                phase_id, step_id)
+        links = [] if links is None else links
+        outputs = {} if outputs is None else outputs
+        if not valid_links(links) or not isinstance(outputs, dict):
+            return self._reject("Manual results require structured outputs and evidence links.", phase_id, step_id)
+        try:
+            json.dumps(outputs, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            return self._reject(f"Manual outputs must be JSON values: {exc}", phase_id, step_id)
+        from orchestrator.write_review import validate_manual_completion
+        for link in links:
+            validate_manual_completion({"confirmed_by": confirmed_by, "reason": reason, "evidence": link["url"]})
+        affected = self._dependent_steps(phase_id, step_id)
+        if rejected := self._invalidation_check(affected):
+            return rejected
+        key = definition.key
+        prior = deepcopy(self.state.task_attempts.get(key) or {})
+        history = prior.pop("history", [])
+        history.append({
+            "attempt": prior or None, "step": asdict(previous),
+            "resources": {name: deepcopy(self.state.resources[name])
+                          for name in reset_resources if name in self.state.resources},
+            "pipeline_runs": deepcopy(self.state.pipeline_runs) if definition.kind == StepKind.AUTO else {},
+            "versions": deepcopy(self.state.versions) if definition.kind == StepKind.AUTO else {},
+            "notifications": notifications, "at": self.now(),
+            "writer_stopped": bool(prior_writer_stopped),
+            "dependents": {step.key: asdict(self.state.get_step(step.phase_id, step.id))
+                           for step in affected},
+        })
+        instant = datetime.fromisoformat(self.now().replace("Z", "+00:00"))
+        instant = instant.replace(tzinfo=timezone.utc) if instant.tzinfo is None else instant.astimezone(timezone.utc)
+        for earlier in (previous.invalidated_at, prior.get("generation")):
+            if earlier:
+                boundary = datetime.fromisoformat(earlier.replace("Z", "+00:00"))
+                boundary = (boundary.replace(tzinfo=timezone.utc) if boundary.tzinfo is None
+                            else boundary.astimezone(timezone.utc))
+                if instant <= boundary:
+                    instant = boundary + timedelta(microseconds=1)
+        generation = instant.isoformat()
+        if affected:
+            self._invalidate_steps(affected, reason=f"Owner {mode} for {key}: {reason.strip()}")
+        for decision in self.state.gate_decisions:
+            if decision.get("step") == key and not decision.get("invalidated_at"):
+                decision.update(invalidated_at=generation, invalidation_reason=reason.strip())
+        self._outcome_permits = {
+            permit: value for permit, value in self._outcome_permits.items()
+            if (permit.phase, permit.step) != (phase_id, step_id)
+        }
+        if mode == "rerun":
+            for name in reset_resources:
+                self.state.resources.pop(name, None)
+            data = deepcopy(previous.data) if definition.is_human_action else {}
+            for name in ("confirmation_preconditions", "owner_claim"):
+                data.pop(name, None)
+            record = StepState(invalidated_at=generation, invalidation_reason=reason.strip(), data=data)
+        else:
+            record = StepState(status="done" if mode == "manual" else "skipped",
+                               completed_at=generation, note=reason.strip(), by="human",
+                               links=deepcopy(links))
+        self.state.set_step(phase_id, step_id, record)
+        self.state.task_attempts[key] = {
+            "id": uuid.uuid4().hex, "at": self.now(), "by": self.state.owner_email,
+            "reason": reason.strip(), "mode": mode, "generation": generation,
+            "parameters": deepcopy(parameters if parameters is not None else prior.get("parameters", {})),
+            "history": history,
+            "result": (None if mode == "rerun" else {
+                "verification": "owner_attested" if mode == "manual" else "waived",
+                "machine_verified": False, "outputs": deepcopy(outputs), "links": deepcopy(links),
+            }),
+        }
+        self._clear_pending(phase_id, step_id)
+        return TransitionResult(
+            "ran", {"rerun": "New task attempt prepared; previous results are retained.",
+                    "manual": "Owner-attested manual completion recorded; no provider action or gate approval.",
+                    "skip": "Task waived by the owner; no work or provider verification is claimed."}[mode],
+            phase_id, step_id, True, tuple(step.key for step in affected),
+        )
+
+    def _unsettled_notifications(self, phase_id, step_id):
+        previous = self.state.get_step(phase_id, step_id)
+        known_stopped = {
+            item["id"]
+            for entry in (self.state.task_attempts.get(f"{phase_id}.{step_id}") or {}).get("history", [])
+            if entry.get("writer_stopped")
+            for item in entry.get("notifications", [])
+        }
+        result = []
+        for identifier, ledger in self.state.notification_deliveries.items():
+            if identifier in known_stopped:
+                continue
+            if not isinstance(ledger, dict) or ledger.get("status") not in ("claimed", "uncertain"):
+                continue
+            scope = (ledger.get("descriptor") or {}).get("scope") or {}
+            if ((scope.get("phase"), scope.get("step")) == (phase_id, step_id)
+                    or previous.data.get("notification_id") == identifier):
+                result.append({"id": identifier, "status": ledger["status"]})
+        return result
+
+    def record_human_claim(self, phase_id: str, step_id: str, note: str, reason: str) -> TransitionResult:
+        check = self.eligibility().evaluate(TransitionIntent.COMPLETE, phase_id, step_id)
+        if not check.allowed or not check.step.is_human_action or not note.strip():
+            return self._reject(check.reason or "An explicit human confirmation is required.", phase_id, step_id)
+        record = self.state.get_step(phase_id, step_id)
+        record.data["owner_claim"] = {
+            "note": note.strip(), "at": self.now(), "by": self.state.owner_email or "human",
+            "release": self.state.release_id, "ccd": self.state.ccd,
+            "verification": "unverified", "reason": reason,
+        }
+        self.state.set_step(phase_id, step_id, record)
+        return self._accept("recorded", "Confirmation saved; applicability still needs verification. " + reason,
+                            phase_id, step_id)
+
     def complete(
         self, phase_id: str, step_id: str, note: str, *, manual_confirmation=None,
     ) -> TransitionResult:
+        definition = self.workflow.step(phase_id, step_id)
+        if definition and definition.implementation.value == "dummy" and not note.strip():
+            return self._reject("Manual-only work requires an explicit completion note.", phase_id, step_id)
         progress = (self.state.get_step(phase_id, step_id).execution or {}).get("write_progress")
         if progress:
             if manual_confirmation is None:
@@ -905,6 +1164,9 @@ class TransitionKernel:
     def reopen(
         self, phase_id: str, step_id: str, reason: str = "", *, force_owner: bool = False
     ) -> TransitionResult:
+        if force_owner:
+            return self._reject("Use the audited rerun operation with owner and stopped-writer confirmation.",
+                                phase_id, step_id)
         check = self.eligibility().evaluate(
             TransitionIntent.REOPEN, phase_id, step_id
         )
@@ -972,13 +1234,15 @@ class TransitionKernel:
         if rejected := self._owned_outcome_check(phase_id, step_id, execution_id):
             return rejected
         selection = self.projection_factory().scheduling()
-        if (selection.suspension or not selection.phase(phase_id).due
+        if not self.state.owner_task_active(phase_id, step_id) and (
+                selection.suspension or not selection.phase(phase_id).due
                 or not selection.step(phase_id, step_id).time_ready):
             return self._reject("Reviewed continuation is suspended.", phase_id, step_id)
         record = self.state.get_step(phase_id, step_id)
         old = validate_progress(record.execution.get("write_progress"))
         validate_progress(progress)
-        if (any(old[key] != progress[key] for key in ("scope", "policy", "manual_completion"))
+        if (old.get("context") != progress.get("context")
+                or any(old[key] != progress[key] for key in ("scope", "policy", "manual_completion"))
                 or progress["reviews"][:-1] != old["reviews"]
                 or progress["reviews"][-1] != write_review
                 or len(old["operations"]) != len(progress["operations"])):
@@ -1005,7 +1269,8 @@ class TransitionKernel:
         previous = deepcopy(record)
         old = validate_progress(record.execution.get("write_progress"))
         validate_progress(progress)
-        if (any(old[key] != progress[key] for key in ("scope", "policy", "reviews", "manual_completion"))
+        if (old.get("context") != progress.get("context")
+                or any(old[key] != progress[key] for key in ("scope", "policy", "reviews", "manual_completion"))
                 or progress["finished"] or len(old["operations"]) != len(progress["operations"])):
             return self._reject("Recovery cannot replace compound scope/history.", phase_id, step_id)
         changed = [(before, after) for before, after in zip(old["operations"], progress["operations"])
@@ -1605,17 +1870,17 @@ class TransitionKernel:
         import re
 
         phase = self.workflow.phase(gate.phase_id)
-        pending = ([step.id for step in phase.steps[:phase.steps.index(gate) + 1]]
-                   if phase.execution == "sequential" else [gate.id])
+        pending = ([step.key for step in phase.steps[:phase.steps.index(gate) + 1]]
+                   if gate.is_gate and phase.execution == "sequential" else [gate.key])
         visited = set()
         while pending:
-            sid = pending.pop()
-            if sid in visited:
+            key = pending.pop()
+            if key in visited:
                 continue
-            visited.add(sid)
-            definition = self.workflow.step(gate.phase_id, sid)
-            pending.extend(definition.depends_on)
-            record = self.state.get_step(gate.phase_id, sid)
+            visited.add(key)
+            definition = self.workflow.step_by_key[key]
+            pending.extend(self.workflow.dependency_keys(definition))
+            record = self.state.get_step(definition.phase_id, definition.id)
             conditions = record.data.get("gate_preconditions", [])
             if not isinstance(conditions, list):
                 return f"{label} preconditions for {definition.key} are malformed; recover prerequisite evidence."
@@ -1772,8 +2037,6 @@ class TransitionKernel:
         force_clear = force_clear or set()
         protected = []
         for step in steps:
-            if step.key in force_clear:
-                continue
             record = self.state.get_step(step.phase_id, step.id)
             if (record.execution or {}).get("approval"):
                 protected.append(f"{step.key} (approval execution {record.execution['id']})")
@@ -1790,6 +2053,8 @@ class TransitionKernel:
     def _refresh_invalidates(self, phase_id: str, step_id: str, *, status: str, refresh: bool = False) -> bool:
         previous = self.state.get_step(phase_id, step_id)
         definition = self.workflow.step(phase_id, step_id)
+        if definition and definition.kind == StepKind.AUTO and definition.effect_mode == EffectMode.READ_ONLY:
+            return False
         if not definition or not (refresh or (previous.execution or {}).get("refresh")):
             return False
         baseline = (previous.execution or {}).get("previous_status") or previous.status
@@ -1800,6 +2065,9 @@ class TransitionKernel:
         self, phase_id: str, step_id: str, *, status: str, refresh: bool = False,
     ) -> TransitionResult | None:
         previous = self.state.get_step(phase_id, step_id)
+        definition = self.workflow.step(phase_id, step_id)
+        if refresh and definition and definition.kind == StepKind.AUTO and definition.effect_mode == EffectMode.READ_ONLY:
+            return None
         if refresh or (previous.execution or {}).get("refresh"):
             projection = self.projection_factory()
             frontier = projection.frontier_phase()
@@ -1839,6 +2107,7 @@ class TransitionKernel:
             if result.kind != "invalidated":
                 return result
         stored_data = deepcopy(data if data is not None else previous.data)
+        owner_task = self.state.owner_task_active(phase_id, step_id)
         if "last_write_review" in previous.data:
             stored_data["last_write_review"] = deepcopy(previous.data["last_write_review"])
         else:
@@ -1866,8 +2135,8 @@ class TransitionKernel:
                 StepState(
                     status="in_flight",
                     completed_at=previous.completed_at if reviewed else None,
-                    invalidated_at=previous.invalidated_at if reviewed else None,
-                    invalidation_reason=previous.invalidation_reason if reviewed else None,
+                    invalidated_at=previous.invalidated_at if reviewed or owner_task else None,
+                    invalidation_reason=previous.invalidation_reason if reviewed or owner_task else None,
                     note=note,
                     by=by,
                     links=list(links or []),
@@ -1887,8 +2156,8 @@ class TransitionKernel:
             StepState(
                 status=status,
                 completed_at=self.now() if status == "done" else (previous.completed_at if reviewed else None),
-                invalidated_at=previous.invalidated_at if reviewed and status == "blocked" else None,
-                invalidation_reason=previous.invalidation_reason if reviewed and status == "blocked" else None,
+                invalidated_at=previous.invalidated_at if (reviewed or owner_task) and status == "blocked" else None,
+                invalidation_reason=previous.invalidation_reason if (reviewed or owner_task) and status == "blocked" else None,
                 note=note,
                 by=by,
                 links=list(links or []),
@@ -2015,11 +2284,10 @@ class TransitionKernel:
                 self._close_write_review(record.data, record.execution)
                 record.execution = None
             self.state.set_step(step.phase_id, step.id, record)
-        self.state.gate_decisions = [
-            decision
-            for decision in self.state.gate_decisions
-            if decision.get("step") not in affected_keys
-        ]
+        for decision in self.state.gate_decisions:
+            if decision.get("step") in affected_keys and not decision.get("invalidated_at"):
+                decision["invalidated_at"] = self.now()
+                decision["invalidation_reason"] = reason
 
     def _close_write_review(self, data: dict, execution: Optional[dict]) -> None:
         if execution and execution.get("write_progress"):

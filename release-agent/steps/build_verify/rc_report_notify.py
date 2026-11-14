@@ -23,12 +23,19 @@ def _report_link(context: StepContext):
         raise ValueError("RC report publication is not complete; publish the current report first.")
     _, html, _, model = R.rc_email(context)
     lineage = R.report_lineage(context, html)
+    adopted = data.get("manual_adoption")
+    if adopted:
+        if (adopted.get("release") != context.release.release_id or adopted.get("rc") != model.get("rc")
+                or adopted.get("verification") != "owner_selected_provider_bytes_verified"):
+            raise ValueError("Owner-selected report does not cover the current release/RC")
+        lineage["content_sha256"] = data.get("content_sha256")
     if any(data.get(key) != value for key, value in lineage.items()):
         raise ValueError("Published report source/content is stale or missing; publish the current report first.")
     if (not all(isinstance(data.get(key), str) and data[key].strip()
                 for key in ("drive_id", "item_id", "web_url", "report_link"))
             or type(data.get("size")) is not int
-            or data["size"] != len(html.encode("utf-8"))):
+            or data["size"] < 1
+            or not adopted and data["size"] != len(html.encode("utf-8"))):
         raise ValueError("Published report receipt is incomplete; recover publication before notification.")
     return data["report_link"], data, model, lineage
 
@@ -64,6 +71,8 @@ def build(context: StepContext):
         f"Authenticator ECS: {_auth_summary(model, auth)}.\n\n"
         "Open the report for failure details and next steps."
     )
+    if published.get("manual_adoption"):
+        message += "\n\nOwner-selected report; applicability is owner-attested. The summary uses captured pipeline evidence."
     completion = {
         "kind": "step",
         "record_as": ID,

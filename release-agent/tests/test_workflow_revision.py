@@ -62,7 +62,7 @@ def _save(state, tmp_path):
 def test_unbound_is_diagnostic_only_and_never_silently_bound(tmp_path):
     state, orch = _orch(tmp_path, bind=False)
     _complete(state)
-    assert state.schema_version == 4
+    assert state.schema_version == 5
     assert orch.scheduling().status == "blocked"
     assert not orch.scheduling().runnable
     assert orch.status_report()["done"] == 0
@@ -92,7 +92,7 @@ def test_schema4_exact_binding_and_review_shapes(tmp_path):
     pristine = json.loads(path.read_text(encoding="utf-8"))
     changes = [
         lambda value: value.update(schema_version=2),
-        lambda value: value.update(schema_version=4.0),
+        lambda value: value.update(schema_version=5.0),
         lambda value: value["workflow_revision"].update(id=digest("redundant")),
         lambda value: value["workflow_revision"]["phases"][0].update(step_keys=["wrong.step"]),
         lambda value: value["workflow_revision"].update(runtime_hash="sha256:no"),
@@ -360,7 +360,8 @@ def test_adoption_invalidates_earliest_change_and_later_preserving_evidence(tmp_
     assert state.get_step("second", "work").data["last_write_review"] == last_review
     assert state.get_step("second", "work").links
     assert state.resources["known"]["id"] == 123
-    assert [item["step"] for item in state.gate_decisions] == ["first.approve"]
+    assert [item["step"] for item in state.gate_decisions if not item.get("invalidated_at")] == ["first.approve"]
+    assert len(state.gate_decisions) == 3
     assert state.workflow_revision["last_adoption"]["from_revision"] == old
     assert state.workflow_revision["execution_contract"] == CURRENT_EXECUTION_CONTRACT
     assert_current(orch)
@@ -615,8 +616,7 @@ def test_status_refresh_is_state_read_only(tmp_path, monkeypatch, capsys):
     before = path.read_bytes()
 
     def refresh(loaded):
-        loaded.ccd_conflict = "2026-07-09"
-        return True
+        pytest.fail("Status must not probe or refresh a provider")
 
     monkeypatch.setattr(C, "refresh_conflict", refresh)
     args = Namespace(
@@ -625,7 +625,7 @@ def test_status_refresh_is_state_read_only(tmp_path, monkeypatch, capsys):
     )
     assert release.cmd_status(args) == 0
     rendered = json.loads(capsys.readouterr().out)
-    assert rendered["ccd_conflict"] == "2026-07-09"
+    assert rendered["ccd_conflict"] == state.ccd_conflict
     assert path.read_bytes() == before
 
 

@@ -101,12 +101,12 @@ def test_parallel_wait_drains_independent_work_once_then_retries_next_pass(tmp_p
     assert not orch.state.gate_decisions
 
     calls.clear()
-    actions = orch.run_until_gate()
+    actions = orch.run_until_gate(pending_only=False)
     assert calls == [("slow", "build")]
     assert [action.kind for action in actions] == ["waiting", "waiting"]
     control["outcome"] = Done("job complete")
     calls.clear()
-    actions = orch.run_until_gate()
+    actions = orch.run_until_gate(pending_only=False)
     assert calls == [("slow", "build"), ("dependent", "build")]
     assert actions[-1].kind == "gate"
     assert not orch.state.gate_decisions

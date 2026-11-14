@@ -1,7 +1,10 @@
 """Table-driven tests for the generic workflow transition kernel."""
 from datetime import date, datetime, timezone
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
+import yaml
 
 from orchestrator.projection import StateProjection
 from orchestrator.invariants import validate_snapshot
@@ -80,6 +83,63 @@ def _kernel(state=None):
     )
 
 
+def _configured_workflow():
+    path = Path(__file__).resolve().parents[1] / "config" / "phases.yaml"
+    return WorkflowDefinition.compile(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("key", tuple(_configured_workflow().step_by_key))
+@pytest.mark.parametrize("mode", ("rerun", "manual", "skip"))
+def test_owner_controls_cover_every_configured_step_without_provider_calls(key, mode):
+    workflow = _configured_workflow()
+    state = ReleaseState(release_id="r", owner_email="owner@example.test")
+    bind_model_state(state, workflow)
+    step = workflow.step_by_key[key]
+    original = StepState(status="blocked", note="Original failure", data={"original": "evidence"})
+    state.set_step(step.phase_id, step.id, original)
+    projection = lambda: StateProjection(
+        state, workflow, date(2026, 9, 11), datetime(2026, 9, 11, tzinfo=timezone.utc))
+    kernel = TransitionKernel(state, workflow, projection, lambda: "2026-09-11T12:00:00+00:00")
+    before = deepcopy(state)
+
+    result = kernel.owner_control(
+        step.phase_id, step.id, mode=mode, reason="Owner requested this action",
+        confirmed_by="owner@example.test",
+        outputs={"external_id": 123} if mode == "manual" else {},
+    )
+
+    if step.is_gate and mode != "rerun":
+        assert not result.changed and state == before
+        assert "approve/deny" in result.message
+        return
+    assert result.changed
+    attempt = state.task_attempts[key]
+    assert attempt["history"][0]["step"]["data"] == original.data
+    assert attempt["history"][0]["step"]["note"] == original.note
+    record = state.get_step(step.phase_id, step.id)
+    if mode == "rerun":
+        assert record.status == "pending" and record.execution is None
+        assert state.owner_task_active(step.phase_id, step.id)
+    else:
+        assert record.status == ("done" if mode == "manual" else "skipped")
+        assert record.by == "human"
+        assert attempt["result"]["machine_verified"] is False
+        assert attempt["result"]["verification"] == ("owner_attested" if mode == "manual" else "waived")
+        assert record.data == {}
+        assert not state.gate_decisions
+
+
+def test_owner_control_requires_owner_and_preserves_owned_descendants():
+    state, _, _, kernel = _kernel(ReleaseState(release_id="r", owner_email="owner@example.test"))
+    assert not kernel.owner_control(
+        "phase", "auto", mode="manual", reason="Done", confirmed_by="someone-else@example.test").changed
+    assert not state.task_attempts and not state.steps
+    state.halt = {"reason": "Emergency", "at": "2026-09-11T12:00:00+00:00"}
+    assert not kernel.owner_control(
+        "phase", "auto", mode="skip", reason="Not needed", confirmed_by="owner@example.test").changed
+    assert not state.task_attempts and not state.steps
+
+
 @pytest.mark.parametrize("step", ["human", "attest", "external"])
 def test_only_a_prepared_human_confirmation_can_reopen_while_still_pending(step):
     state, _, _, kernel = _kernel()
@@ -131,8 +191,8 @@ def test_skip_complete_and_reserve_share_projection_eligibility():
     assert execution["owner"] == "worker"
     assert not kernel.skip("phase", "external", "override").changed
     assert not kernel.complete("phase", "external", "").changed
-    assert kernel.complete("phase", "external", "owner reviewed receipt").changed
-    assert state.get_step("phase", "external").execution is None
+    assert not kernel.complete("phase", "external", "owner reviewed receipt").changed
+    assert state.get_step("phase", "external").execution == execution
 
     assert kernel.complete("phase", "human", "finished").changed
     assert state.get_step("phase", "human").status == "done"
@@ -153,7 +213,9 @@ def test_gate_decision_and_reconsideration_are_atomic():
 
     reopened = kernel.reopen("phase", "gate", "new evidence")
     assert reopened.changed
-    assert state.gate_decisions == []
+    assert len(state.gate_decisions) == 1
+    assert state.gate_decisions[0]["decision"] == "denied"
+    assert state.gate_decisions[0]["invalidated_at"]
     assert projection().release_status() == "holding_gate"
 
     approved = kernel.approve_gate("reviewed")
@@ -247,18 +309,20 @@ def test_reopen_invalidates_transitive_and_later_workflow_results():
                 "name": "First",
                 "steps": [
                     {"id": "source", "name": "Source", "kind": "auto"},
-                    {"id": "derived", "name": "Derived", "kind": "auto"},
+                    {"id": "derived", "name": "Derived", "kind": "auto", "depends_on": ["source"]},
                     {
                         "id": "gate",
                         "name": "Gate",
                         "kind": "approval_gate",
+                        "depends_on": ["derived"],
                     },
                 ],
             },
             {
                 "id": "later",
                 "name": "Later",
-                "steps": [{"id": "publish", "name": "Publish", "kind": "auto"}],
+                "steps": [{"id": "publish", "name": "Publish", "kind": "auto",
+                           "depends_on": ["first.gate"]}],
             },
         ]
     }
@@ -288,11 +352,34 @@ def test_reopen_invalidates_transitive_and_later_workflow_results():
         "first.gate",
         "later.publish",
     )
-    assert state.gate_decisions == []
+    assert len(state.gate_decisions) == 1
+    assert state.gate_decisions[0]["decision"] == "approved"
+    assert state.gate_decisions[0]["invalidated_at"]
     assert all(
         state.get_step(step.phase_id, step.id).status == "pending"
         for step in workflow.step_by_key.values()
     )
+
+
+def test_sequential_reopen_does_not_invalidate_unrelated_later_steps():
+    config = {"phases": [
+        {"id": "first", "name": "First", "steps": [
+            {"id": "source", "name": "Source", "kind": "auto"},
+            {"id": "sibling", "name": "Sibling", "kind": "human_action"}]},
+        {"id": "later", "name": "Later", "steps": [
+            {"id": "independent", "name": "Independent", "kind": "auto"}]},
+    ]}
+    workflow = WorkflowDefinition.compile(config)
+    state = bind_model_state(ReleaseState(release_id="r"), workflow)
+    for step in workflow.step_by_key.values():
+        state.set_step(step.phase_id, step.id, StepState(status="done"))
+    kernel = TransitionKernel(state, workflow, lambda: StateProjection(
+        state, workflow, date(2026, 9, 11),
+        datetime(2026, 9, 11, 12, tzinfo=timezone.utc)), lambda: "2026-09-11T12:00:00+00:00")
+    result = kernel.reopen("first", "source", "Correct this source only")
+    assert result.affected == ("first.source",)
+    assert state.is_done("first", "sibling")
+    assert state.is_done("later", "independent")
 
 
 def test_snapshot_invariants_detect_invalid_status_and_legacy_gate():

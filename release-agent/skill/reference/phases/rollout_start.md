@@ -1,5 +1,11 @@
 # Reference — Phase 5 (Rollout Start)
 
+Use `task` for one requested operation and `next` only for explicit release
+progression. Interactive operation does not require scheduled workers or unrelated
+integration setup. Result recording never approves a rollout gate.
+The detailed source/target rules below remain enforced by the checked adapters;
+they are not permission to send or start stages during a status request.
+
 ## `identify_auth_build` — final Authenticator build/version capture
 
 `rollout_start.identify_auth_build` is the first Phase-5 step. It reads pipeline

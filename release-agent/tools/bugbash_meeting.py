@@ -168,7 +168,7 @@ def _verify_profile(invite, profile):
         raise ValueError("Run chat resolution as the invitation's organizer; do not use another mailbox.")
 
 
-def _verify_event(invite, event):
+def _verify_event(invite, event, *, require_thread=True):
     if (event.get("id") != invite["event_id"] or event.get("subject") != invite["subject"]
             or event.get("isCancelled") is not False or event.get("isOnlineMeeting") is not True
             or event.get("organizer", {}).get("emailAddress", {}).get("address", "").casefold()
@@ -190,6 +190,8 @@ def _verify_event(invite, event):
     parts = parsed.path.split("/")
     thread = unquote(parts[3]) if len(parts) >= 5 and parts[1:3] == ["l", "meetup-join"] else None
     if not meeting_chat_id(thread):
+        if not require_thread:
+            return None
         raise ConnectorEvidenceRequired([], missing_capability=(
             "The exact current event has an opaque Teams join URL with no meeting thread. "
             "No supported native onlineMeeting-to-thread resolver is available. Ask the owner "
@@ -198,6 +200,50 @@ def _verify_event(invite, event):
             "--review-hash. Alternatively keep held or use owner-reviewed manual posting. "
             "Do not guess a thread, search by topic, use raw Graph or create another invitation."))
     return thread
+
+
+def adopt_invitation(value, owner, release, ccd):
+    """Verify an owner-selected existing event without claiming the tool sent it."""
+    if value.get("release") != release or value.get("ccd") != ccd:
+        raise ValueError("Selected invitation must explicitly cover this release and CCD")
+    event_id = value.get("event_id")
+    if not isinstance(event_id, str) or not event_id.strip():
+        raise ValueError("Select the exact existing event ID")
+    profile = _observation(value.get("profile"), tool=PROFILE_TOOL, arguments={},
+                           owner=owner, now=None)
+    event = _observation(value.get("event"), tool=EVENT_TOOL,
+                         arguments=event_arguments({"event_id": event_id}), owner=owner, now=None)
+    invite = {"release": release, "ccd": ccd, "owner": owner, "event_id": event_id,
+              "subject": event.get("subject"), "timeZone": "UTC"}
+    if not isinstance(invite["subject"], str) or not invite["subject"].strip():
+        raise ValueError("Selected invitation has no subject")
+    _verify_profile(invite, profile)
+    for key in ("start", "end"):
+        observed = event.get(key)
+        if (not isinstance(observed, dict) or not isinstance(observed.get("dateTime"), str)
+                or not isinstance(observed.get("timeZone"), str)):
+            raise ValueError("Selected invitation requires an exact start/end and timezone")
+        invite[key] = _instant(observed.get("dateTime", ""), observed.get("timeZone")).isoformat()
+    if invite["start"] >= invite["end"]:
+        raise ValueError("Selected invitation has an invalid time range")
+    attendees = event.get("attendees")
+    if (not isinstance(attendees, list) or any(
+            not isinstance(row, dict) or not isinstance(row.get("emailAddress"), dict)
+            for row in attendees)):
+        raise ValueError("Selected invitation requires complete typed attendees")
+    organizer = event.get("organizer")
+    if (not isinstance(organizer, dict) or not isinstance(organizer.get("emailAddress"), dict)
+            or not isinstance(event.get("onlineMeeting"), dict)):
+        raise ValueError("Selected invitation requires a verified organizer and online meeting")
+    for field, kind in (("attendees", "required"), ("optionalAttendees", "optional"),
+                        ("resourceAttendees", "resource")):
+        invite[field] = [
+            _address(row.get("emailAddress", {}).get("address"))
+            for row in attendees if isinstance(row, dict) and row.get("type") == kind
+        ]
+    _verify_event(invite, event, require_thread=False)
+    invite["join_url"] = event["onlineMeeting"]["joinUrl"]
+    return invite
 
 
 def _native_binding(invite, profile, event, chat):

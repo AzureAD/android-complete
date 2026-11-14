@@ -116,67 +116,63 @@ def test_guardrail_actually_sees_the_contract():
     assert {"create-payload-wiki", "create-oneauth-common-pr", "check-lockdown"} <= seen_tools
 
 
-def test_skill_requires_parallel_scout_drain_and_adoption_impact_review():
+def test_skill_defaults_to_guided_progression_and_preserves_approval_and_transport_review():
     skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
-    assert "all** entries in `scout_pending`" in skill
-    assert "even when an independent" in skill and "step is blocked" in skill
-    assert "only then render the final status" in skill
+    for command in ("status --release", "task --release", "record-fact --release", "next --release"):
+        assert command in skill
+    assert "automatic guided progression" in skill.lower()
+    assert "An external/Scout step is still agent-owned work" in skill
+    assert '"only this' in skill and "without draining siblings" in skill
+    assert "at most once per unchanged progress snapshot" in skill
     assert "`invalidation.summary`" in skill
-    assert "generic “new" in skill and "approval" in skill and "insufficient" in skill
     assert "direct MCP mail tool" in skill and "never" in skill
-    assert "browser/OWA/Outlook/manual" in skill
+    assert "browser/owa/outlook/manual" in skill.lower()
     assert "provider_receipt.transport" in skill
-    assert "Validation copies" in skill and "renderer-produced HTML/plain payload" in skill
-    assert "Never hand-compose a shortened" in skill and "validation email" in skill
+    assert "renderer-produced payload" in skill
 
 
 def test_skill_requires_actionable_user_holds():
     skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
-    assert "Every focused user action gets an actionable prompt" in skill
-    assert "**Completed**" in skill and "**Not yet**" in skill and "**Need help**" in skill
-    assert "**Fixed — rerun**" in skill and "**Override**" in skill and "**Keep blocked**" in skill
-    assert "Never infer completion from “what’s next,”" in skill
-    assert "Override first asks for a free-text reason" in skill
+    assert "one focused question" in skill and "needs_input" in skill
+    assert "repeat a clear confirmation" in skill
+    assert 'Never infer approval from "what\'s next?"' in skill
+    assert "The owner may leave a task pending" in skill
 
 
-def test_skill_requires_fresh_table_at_every_release_iteration_and_prompt():
+def test_skill_requires_the_full_table_before_every_input_or_wait_handoff():
     skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
     presentation = open(
         os.path.join(ROOT, "skill", "reference", "presenting-status.md"), encoding="utf-8").read()
     readiness = open(
         os.path.join(ROOT, "skill", "reference", "readiness-gate.md"), encoding="utf-8").read()
-    assert "Every release iteration ends with one fresh table" in skill
-    assert "final response or a handoff to `m_ask_user`" in skill
     for text in (skill, presentation, readiness):
         assert "display_markdown" in text
         assert "ready:false" in text
-        assert "even if the table above didn't render" not in text
-        assert "card is the guaranteed source of truth" not in text
-    assert "stopping the loop never skips display" in skill
-    assert "Setup-only onboarding" in skill
-    assert "pending/failing rows" in readiness
-    assert "before returning or" in presentation
+        assert "Every release iteration ends with one fresh table" not in text
+    assert "--details" in skill and "--details" in presentation
+    assert "always print the existing full status" in presentation
+    assert "before the question/wait explanation" in presentation
+    assert "before prompting" in skill
+    assert "optional, not mandatory" not in presentation
 
 
-def test_start_requires_automatic_readiness_before_the_final_table_handoff():
+def test_start_distinguishes_required_policy_from_point_of_use_capabilities():
     documents = [
         open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
         for path in ("SKILL.md", os.path.join("reference", "readiness-gate.md"),
                      os.path.join("reference", "starting-and-scheduling.md"))]
     for text in documents:
-        assert "pending_auto_checks" in text and "same" in text.lower() and "turn" in text
-        assert "not a stopping point" in text or "not just initialization" in text
-        assert "record" in text and "permission" in text
-    assert "`ready:false` alone is" in documents[0]
-    assert "Do not loop/retry `failed_auto_checks`" in documents[0]
-    assert "finish independent pending checks" in documents[0]
-    assert "Future" in documents[1] and "not readiness" in documents[1]
+        assert "required" in text.lower() and "when used" in text
+        assert "consent" in text
+    from orchestrator.state import ReleaseState
+    assert ReleaseState().execution_mode == "interactive"
+    assert "Do not loop/retry" in documents[0] and "failed_auto_checks" in documents[0]
 
 
 def test_init_json_and_per_write_authorization_match_the_skill():
     from orchestrator.cli import build_parser
     args = build_parser().parse_args(["init", "--release", "2026-11", "--json"])
-    assert args.json and args.release == "2026-11"
+    assert args.json and args.release == "2026-11" and not args.unattended
     documents = [
         open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
         for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
@@ -186,41 +182,35 @@ def test_init_json_and_per_write_authorization_match_the_skill():
         assert "blanket" in text and "owning write step" in text
     for text in documents[:2]:
         assert "init --release <id> --json" in text
-        assert "next_action:provision_startup_automation" in text and "checklist_command" in text
+        assert "guided" in text.lower() and "--unattended" in text
         assert "--help" in text
 
 
-def test_every_readiness_handoff_requires_exhaustion_not_a_python_only_table():
+def test_status_only_is_scoped_but_recorded_results_resume_guided_progression():
     documents = [
         open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
         for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
                      os.path.join("reference", "readiness-gate.md"),
                      os.path.join("reference", "presenting-status.md"))]
-    for text in documents:
-        assert "--attest-prompt --handoff --json" in text
-        assert "may_return_to_user:false" in text and "exit 2" in text.lower()
-        assert "needs_input" in text and "independent" in text
-        assert "host consent" in text
-    assert "Readiness execution boundary" in documents[0]
-    assert "ordinary `checklist --verify` are not completion signals" in documents[0]
-    assert "no final table yet" in documents[2]
+    assert "Status-only" in documents[0] and '"only this' in documents[0]
+    assert "resume automatic guided progression" in documents[3]
+    assert "Status-only" in documents[3] and "do not drain the broader queue" in documents[3]
+    assert all("may_return_to_user:false" not in text for text in documents)
+    assert "No blanket write authority" in documents[2]
 
 
-def test_universal_dispatch_contract_is_not_a_phase_specific_rule():
+def test_default_guided_dispatch_is_separate_from_opted_in_worker_execution():
     from orchestrator import automations
     skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
-    assert "Universal execution boundary" in skill and "ALL phases" in skill
-    for path in ("SKILL.md", os.path.join("reference", "presenting-status.md"),
-                 os.path.join("reference", "commands.md"), os.path.join("reference", "phases", "preflight.md")):
-        text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
-        assert "work_dispatch" in text and "--handoff" in text
-        assert "--hold-step" in text and "consent" in text
+    assert "By default, use `work_dispatch`" in skill
+    assert "For explicitly requested unattended execution" in skill
+    assert "Status-only" in skill and "explicitly one-task" in skill
     for spec in automations.plan(CONFIG, "2026-09", "2026-09-09")["automations"]:
         assert "work_dispatch" in spec["prompt"] and "may_return_to_user:false" in spec["prompt"]
         assert "Notification-only/poll workers retain their" in spec["prompt"]
 
 
-def test_required_driver_is_a_receipted_startup_obligation_not_an_attestation():
+def test_required_driver_is_only_an_opted_in_unattended_obligation():
     from orchestrator import automations
     required = [item for item in automations.load_defs(CONFIG) if item.get("required_on_start")]
     assert [item["slug"] for item in required] == ["push-reminders"]
@@ -228,10 +218,10 @@ def test_required_driver_is_a_receipted_startup_obligation_not_an_attestation():
                  os.path.join("reference", "readiness-gate.md"),
                  os.path.join("reference", "presenting-status.md")):
         text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
-        assert "driver" in text and ("receipt" in text or "acknowledged" in text)
-        assert "startup" in text.lower() and "consent" in text
+        assert ("driver" in text or "worker" in text) and ("receipt" in text or "acknowledged" in text)
+        assert "unattended" in text.lower() and "consent" in text
     entry = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
-    assert "startup_complete:false" in entry and "not unattended startup success" in entry
+    assert "foreground `interactive` mode" in entry and "Do not create reminder workers" in entry
 
 
 def test_worker_prompts_and_skill_ensure_desired_state_instead_of_owner_reset():
@@ -240,7 +230,7 @@ def test_worker_prompts_and_skill_ensure_desired_state_instead_of_owner_reset():
         assert "At each operational run first" in worker["prompt"]
         assert "reconcile-create --ensure --claim" in worker["prompt"]
         assert "proven-absent settled worker" in worker["prompt"]
-    for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
+    for path in (os.path.join("reference", "starting-and-scheduling.md"),
                  os.path.join("reference", "commands.md")):
         text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
         assert "--ensure" in text

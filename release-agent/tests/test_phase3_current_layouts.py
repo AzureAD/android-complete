@@ -155,6 +155,8 @@ def current_layouts(monkeypatch, tmp_path, request):
         canonical = Path(C.DEFAULT_CONFIG)
         document = yaml.safe_load(canonical.read_text(encoding="utf-8"))
         document["phases"] = [p for p in document["phases"] if p["id"] == "bug_bash"]
+        for step in document["phases"][0]["steps"]:
+            step["depends_on"] = [dep for dep in step.get("depends_on", []) if "." not in dep]
         config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         (config.parent / "automations.yaml").write_bytes(
             canonical.with_name("automations.yaml").read_bytes())

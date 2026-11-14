@@ -607,7 +607,7 @@ def test_v2_invitation_and_rollout_links_require_complete_fill(provider, monkeyp
     link = M.links(record)[0]
     from html import escape
     assert escape(link["url"], quote=True) in invitation.payload["body"]
-    assert ["steps", "bug_bash.ui_test_status", "data", "result"] in [
+    assert ["steps", "bug_bash.clone_plans_auth", "data", "monthly", "suite_id"] in [
         p["path"] for p in invitation.notification["state_matches"]]
     plans, detail = N._plans(context(st))
     assert plans["monthly"] == link, detail

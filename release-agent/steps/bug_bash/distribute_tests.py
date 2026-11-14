@@ -2,10 +2,10 @@
 
 ADO release test-point Current Tester is the ownership source of truth, never case AssignedTo.
 This step READS those values, checks eligibility, workload balance and owner triage,
-and reports only needed corrections. Valid manual changes are preserved, not reset to
-an internal allocation. Availability decisions (OOF/OCE) and workflow status are durable;
-assignment lists, preview baselines and replay ledgers are not saved. The checked
-execution retains its approved digest/reviewer as authorization, not an allocation.
+and reports only needed corrections. Previewing saves nothing. An authorized execution
+retains its reviewed allocation, OOF/OCE selections and verified operation receipts so
+continuation can apply only the unchanged approved remainder. Assignments remain live
+ADO facts; a saved plan is authorization, not proof that its changes succeeded.
 
 Eligible = roster DL minus always-excluded people, the release owner, the current primary
 on-call engineer (OCE), and people the owner explicitly says are OOF for this Bug Bash.

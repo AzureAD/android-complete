@@ -22,6 +22,7 @@ Mock knobs (mocks.local.yaml / tests):
   fail        : a detail string → force a Blocked (simulate an API/auth failure).
 """
 from __future__ import annotations
+from dataclasses import dataclass
 
 from orchestrator.step_context import StepContext, thaw
 import hashlib
@@ -42,6 +43,17 @@ KIND = "agent"
 EFFECT_MODE = "transactional"
 EFFECT_RECOVERY = "frozen"
 
+@dataclass(frozen=True)
+class PlanParameters:
+    name: str | None = None
+
+    def __post_init__(self):
+        if self.name is not None and (not self.name.strip() or self.name != self.name.strip()):
+            raise ValueError("Plan name must be nonblank text without surrounding whitespace")
+
+
+PARAMETERS = {"prepare_effect": PlanParameters}
+
 
 def prepare_effect(context):
     execution = context.evidence.step("bug_bash", ID).execution or {}
@@ -50,7 +62,9 @@ def prepare_effect(context):
     fail = context.input("fail", MISSING)
     if fail is not MISSING:
         return Blocked(f"clone_plans_broker: {fail}")
-    dest = context.input("name", MISSING)
+    dest = getattr(context.parameters, "name", None)
+    if dest is None:
+        dest = context.input("name", MISSING)
     if dest is MISSING:
         dest = T.broker_plan_name(context.release.release_id)
     if not isinstance(dest, str) or not dest.strip() or dest != dest.strip():

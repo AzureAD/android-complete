@@ -173,9 +173,14 @@ def test_scheduled_real_phase_never_becomes_executable_to_satisfy_handoff():
                       owner_email="owner@example.test", timezone="UTC")
     _active_phase(st, "preflight")
     orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2026, 10, 21))
-    plan = orch.status_report()["work_dispatch"]
+    report = orch.status_report()
+    plan = report["work_dispatch"]
     assert plan["next_action"] == "scheduled" and plan["pending_work"] == []
     assert plan["may_return_to_user"]
+    assert report["display_before_prompt"]
+    assert report["display_markdown"] == render.status_view(report)
+    assert "### Phases" in report["display_markdown"]
+    assert "Scheduled" in report["display_markdown"] and "owner_prompt" not in report
 
 
 def seed_test6(root):
@@ -200,6 +205,8 @@ def test_persisted_test6_guard_refuses_cg_handoff_before_independent_tasks(tmp_p
             "--as-of", "2026-12-02", "--handoff", "--no-pipeline-check"]
     if as_json:
         args.append("--json")
+    else:
+        args.append("--details")
     assert cli.main(args) == 2
     output = capsys.readouterr().out
     if as_json:
@@ -300,6 +307,8 @@ def test_handoff_contract_exposes_continue_signal_and_gate_prompt(tmp_path):
     orch, _ = engine(tmp_path, "phase", execution="parallel")
     queued = decorate_handoff_contract(orch.status_report())
     assert queued["must_continue_automatic_work"] and not queued["handoff_ready"]
+    assert queued["progression_policy"] == "automatic_until_input_or_wait"
+    assert not queued["display_before_prompt"] and "display_markdown" not in queued
     assert "owner_prompt" not in queued
 
     # Empty queue + gate hold => owner_prompt is present.
@@ -308,6 +317,67 @@ def test_handoff_contract_exposes_continue_signal_and_gate_prompt(tmp_path):
     )
     assert gate_report["handoff_ready"] and not gate_report["must_continue_automatic_work"]
     assert gate_report["owner_prompt"]["kind"] == "gate_decision"
+    assert gate_report["owner_prompt"]["display_before_prompt"]
+    assert gate_report["display_markdown"] == render.status_view(gate_report)
+    assert "| Step | State | Details |" in gate_report["display_markdown"]
+    assert "you are here" in gate_report["display_markdown"]
+
+
+def test_default_guided_followup_is_read_only_and_keeps_executable_work_automatic(tmp_path):
+    orch, calls = engine(tmp_path, "phase", execution="parallel")
+    before = deepcopy(orch.state)
+    followup = C.guided_followup(orch)
+    assert followup["progression_policy"] == "automatic_until_input_or_wait"
+    assert followup["continue_automatically"] and followup["must_continue_automatic_work"]
+    assert {item["step"] for item in followup["work_dispatch"]["pending_work"]} == {"scan", "gather"}
+    assert not followup["handoff_ready"] and "owner_prompt" not in followup
+    assert not followup["work_dispatch"]["permission_to_execute"]
+    assert not followup["work_dispatch"]["permission_to_send"]
+    assert orch.state == before and not calls
+
+
+def test_guided_progression_continues_across_phases_until_the_actual_human_gate(tmp_path):
+    calls = []
+    config = {"phases": [
+        {"id": "first", "name": "First phase", "steps": [
+            {"id": "scan", "name": "Initial scan", "kind": "auto", "effect_mode": "read_only"},
+            {"id": "host", "name": "Agent-hosted read", "kind": "external"}]},
+        {"id": "second", "name": "Second phase", "steps": [
+            {"id": "scan", "name": "Later scan", "kind": "auto", "effect_mode": "read_only",
+             "depends_on": ["first.host"]},
+            {"id": "gate", "name": "Real owner decision", "kind": "approval_gate"}]},
+    ]}
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    def resolver(phase, step):
+        if step == "scan":
+            def scan(context):
+                calls.append(phase)
+                return Done("Read completed")
+            return SimpleNamespace(ID=step, KIND="agent", EFFECT_MODE="read_only", build=scan)
+        if step == "host":
+            return SimpleNamespace(ID=step, KIND="scout", build=lambda context:
+                                   NeedsSkill("fixture_read", record_as="host", outbound=False))
+        return None
+
+    state = ReleaseState(release_id="r", timezone="UTC")
+    orch = Orchestrator(str(path), state, mocks={}, handler_resolver=resolver)
+    orch.run_until_gate()
+    followup = C.guided_followup(orch)
+    assert calls == ["first"] and followup["continue_automatically"]
+    assert [item["step"] for item in followup["work_dispatch"]["pending_work"]] == ["host"]
+    assert "owner_prompt" not in followup
+    orch.record_scout_step("first", "host", "pass", "Actual host read")
+    assert C.guided_followup(orch)["must_continue_automatic_work"]
+    orch.run_until_gate()
+    report = orch.status_report()
+    assert calls == ["first", "second"]
+    assert report["current_phase"] == "second" and report["handoff_ready"]
+    assert report["owner_prompt"]["kind"] == "gate_decision"
+    assert report["display_before_prompt"]
+    assert report["display_markdown"] == render.status_view(report)
+    assert not state.gate_decisions
 
 
 def test_owner_prompt_suppressed_when_non_owner_held_work_exists(tmp_path):

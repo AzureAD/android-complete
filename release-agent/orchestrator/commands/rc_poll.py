@@ -77,6 +77,14 @@ def cmd_poll_rc(args):
         now = now.replace(tzinfo=orch.tz or timezone.utc)
     # Advance: the in-flight verify step re-checks the run's LIVE status. Still running →
     # stays in-flight; completed → the stage rule + UI gate run and the phase moves on.
+    before_poll = orch.scheduling()
+    if not before_poll.suspension:
+        for item in before_poll.steps:
+            if (item.definition.phase_id == "build_verify"
+                    and item.definition.kind.value == "auto"
+                    and item.status == "in_flight" and item.prerequisites_met and item.time_ready
+                    and before_poll.phase("build_verify").due):
+                orch.run_task("build_verify", item.definition.id, retry=True)
     orch.run_until_gate()
     st = orch.state
     C.save_state(st, args.runs_root, args.release)
@@ -139,6 +147,7 @@ def cmd_poll_rc(args):
             approved = any(
                 item.get("step") == "build_verify.rc_report_gate"
                 and item.get("decision") == "approved"
+                and not item.get("invalidated_at")
                 for item in st.gate_decisions
             )
             decision = {"decision": "resolved",

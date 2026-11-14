@@ -490,7 +490,8 @@ def _run_poll_rc(runs_root, rid, now_iso):
         runs_root = None; release = None; config = CONFIG; as_of = None; now = None
     A.runs_root, A.release, A.now = runs_root, rid, now_iso
     buf = io.StringIO()
-    with patch("orchestrator.engine.Orchestrator.run_until_gate", lambda self, **k: []):
+    with patch("orchestrator.engine.Orchestrator.run_until_gate", lambda self, **k: []), \
+            patch("orchestrator.engine.Orchestrator.run_task", lambda *a, **k: None):
         with contextlib.redirect_stdout(buf):
             rc = RP.cmd_poll_rc(A)
     assert rc == 0

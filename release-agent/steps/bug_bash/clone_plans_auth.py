@@ -53,7 +53,9 @@ def prepare_effect(context):
     fail = context.input("fail", MISSING)
     if fail is not MISSING:
         return Blocked(f"clone_plans_auth: {fail}")
-    name = context.input("name", MISSING)
+    name = getattr(context.parameters, "name", None)
+    if name is None:
+        name = context.input("name", MISSING)
     if name is MISSING:
         if not context.release.ccd:
             return Blocked(
@@ -124,6 +126,11 @@ def _dispatch(context, *, allow_create):
 @dataclass(frozen=True)
 class BuildParameters:
     layout: str = "auth-manual-automated-v1"
+    name: str | None = None
+
+    def __post_init__(self):
+        if self.name is not None and (not self.name.strip() or self.name != self.name.strip()):
+            raise ValueError("Suite name must be nonblank text without surrounding whitespace")
 
 
 @dataclass(frozen=True)

@@ -118,7 +118,7 @@ def test_auto_readiness_is_shared_but_hold_focus_is_not_a_dispatch_veto(tmp_path
         ["observe", "sibling"] if execution == "parallel" else ["observe"]
     )
     assert _eligible(orch, TransitionIntent.EXECUTE, "observe").allowed
-    assert _eligible(orch, TransitionIntent.EXECUTE, "sibling").allowed == (execution == "parallel")
+    assert _eligible(orch, TransitionIntent.EXECUTE, "sibling").allowed
     attempted = set()
     action = orch.step_once(attempted)
     assert action.step == selection.runnable[0].step.id
@@ -176,7 +176,7 @@ def test_timed_new_work_including_mocks_uses_one_readiness_boundary(
     assert selection.phase("phase").due and not selection.step("phase", "timed").time_ready
     assert selection.status == "scheduled" and not selection.runnable
     assert not selection.action_holds
-    assert not _eligible(orch, intent, "timed").allowed
+    assert _eligible(orch, intent, "timed").allowed == (kind == "auto")
     assert orch.status_report()["current_steps"][0]["state"] == "scheduled"
     assert orch.step_once().kind == "scheduled" and not calls
 

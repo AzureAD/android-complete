@@ -24,7 +24,7 @@ from typing import get_args, get_origin
 
 
 ROOT = Path(__file__).resolve().parent.parent
-CURRENT_EXECUTION_CONTRACT = 3
+CURRENT_EXECUTION_CONTRACT = 4
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _ID = re.compile(r"[\w-]+\Z")
 _REVISION_CHECK_SCOPES = ContextVar("revision_check_scopes", default=())
@@ -489,8 +489,10 @@ def adopt(orch, reviewed_hash, *, by, reason, registry_entries=(), persist=None)
             record.invalidation_reason = f"Workflow adoption: {reason.strip()}"
             orch.state.set_step(phase, step, record)
         affected = set(plan["invalidation"]["step_keys"])
-        orch.state.gate_decisions = [decision for decision in orch.state.gate_decisions
-                                    if decision["step"] not in affected]
+        for decision in orch.state.gate_decisions:
+            if decision["step"] in affected and not decision.get("invalidated_at"):
+                decision["invalidated_at"] = stamp
+                decision["invalidation_reason"] = f"Workflow adoption: {reason.strip()}"
         for key in plan["invalidation"]["notification_offers"]:
             del orch.state.notification_deliveries[key]
         new["last_adoption"] = {
