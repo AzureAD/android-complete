@@ -605,14 +605,14 @@ def test_send_invite_composes_create_event():
         out = as_dict(_invoke(_steps.get_step("bug_bash", "send_invite").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_create_event"
     p = out["payload"]
-    assert p["subject"] == "September 2026 Release Bug Bash"
+    assert p["subject"] == "August 2026 Release Bug Bash"
     assert p["attendees"] == ["androididentity@microsoft.com", "idnadevexciamdublin@microsoft.com"]
     assert p["start"] == "2026-08-24T09:00:00" and p["end"] == "2026-08-24T11:00:00"
     assert p["isOnlineMeeting"] is True and p["bodyContentType"] == "html"
     b = p["body"]
     for frag in ("planId=3730001", "buildId=1678863", "buildId=1678864",
                  "planId=714514&suiteId=3730002", "EnableBrowserSso",
-                 "variableGroupId=40", "September 2026"):
+                 "variableGroupId=40", "August 2026"):
         assert frag in b, frag
     assert 'href="https://msazure.visualstudio.com/One/_build/results?buildId=301&amp;view=results"' in b
     assert "Authenticator &middot; ECS build</a>" in b and "buildId=302" not in b
@@ -746,7 +746,7 @@ def test_activate_chat_composes_needs_skill():
     out = as_dict(_invoke(_steps.get_step("bug_bash", "activate_chat").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "record-bugbash-chat"
     g = out["payload"]["_gather"]
-    assert g["meeting_topic"] == "September 2026 Release Bug Bash"
+    assert g["meeting_topic"] == "August 2026 Release Bug Bash"
     assert "Playwright" in g["instructions"] and "m_ask_user" in g["instructions"]
     assert "--chat-link" in g["instructions"] and "--confirm-activated" in g["instructions"]
     assert "On the first access failure, stop retrying" in g["instructions"]
@@ -819,7 +819,7 @@ def test_notify_native_auth_composes_needs_skill():
     st = _na_state()
     out = as_dict(_invoke(_steps.get_step("bug_bash", "notify_native_auth").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "record-nativeauth-notify"
-    assert out["payload"]["engineer_hint"] == "silviu.petrescu"      # Aug 2026 from schedule
+    assert out["payload"]["engineer_hint"] == "mmizrak"              # August 2026 from schedule
     assert "planId=3730001" in out["payload"]["content"]            # links the Broker plan
     assert "confirmation" in out["payload"]["content"].lower()
     assert "notification prepare --release 2026-08" in out["payload"]["_gather"]["instructions"]
@@ -968,7 +968,7 @@ def test_bugbash_updates_composes_needs_skill():
     assert out["payload"]["mentions"][0]["mentioned"]["user"]["id"] == "11111111-1111-1111-1111-111111111111"
     assert "_mentions" not in out["payload"]
     assert out["payload"]["_automation"] == {"on_demand": "bug-bash-update-poller"}
-    assert "September 2026 Bug Bash" in out["payload"]["content"]
+    assert "August 2026 Bug Bash" in out["payload"]["content"]
     assert out["record_as"] == "bugbash_updates" and out["outbound"] is True
     assert _steps.get_step("bug_bash", "bugbash_updates").KIND == "scout"
 

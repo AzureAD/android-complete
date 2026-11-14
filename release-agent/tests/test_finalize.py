@@ -742,7 +742,7 @@ def test_release_announcement_builds_channel_post_from_state_versions():
     assert out["tool"] == "microsoft_teams-SendMessageToChannel"
     p = out["payload"]
     assert p["teamId"] == RA.CONFIG["team_id"] and p["channelId"] == RA.CONFIG["channel_id"]
-    assert p["subject"] == "Auth Client Android SDKs September 2026 Release"
+    assert p["subject"] == "Auth Client Android SDKs August 2026 Release"
     assert p["contentType"] == "html"
     # table shows the 3 SDKs with their versions; authenticator branch is NOT in the table
     for v in ("24.6.0", "8.4.2", "16.5.0"):
@@ -858,14 +858,14 @@ def test_release_announcement_blocks_without_versions():
 
 
 def test_release_announcement_month_year_from_release_id_without_ccd():
-    """Title month/year is the ship month (release_id month + 1) even when no CCD is set."""
+    """Title month/year matches the calendar month of release_id even when no CCD is set."""
     from steps.lib import mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08")                     # no ccd
     st.record_versions({"common": "1.0.0"})
     with mockctx.active({}):
         out = _invoke(RA.build, st)
-    assert out.payload["subject"] == "Auth Client Android SDKs September 2026 Release"
+    assert out.payload["subject"] == "Auth Client Android SDKs August 2026 Release"
 
 
 
@@ -1333,10 +1333,10 @@ def test_wiki_payload_composes_page_and_filters_noise():
     assert "#App Version\n6.2608.5658 [Pipelines - Run 20260824.9]" in c
     assert "PR 1: Real feature" in c and "LEGO: check in to working" not in c   # noise filtered
     assert "*   Broker: 16.5.0" in c and "*   Common: 24.6.0" in c and "*   Msal: 8.4.2" in c
-    assert "### Release: September 2026" in c
+    assert "### Release: August 2026" in c
     assert "_Add the Broker release-announcement email title._" in c
     assert "Expected Feature flags rollouts" in c
-    assert plan["page_name"] == "September 2026 Release" and plan["pr_count"] == 1
+    assert plan["page_name"] == "August 2026 Release" and plan["pr_count"] == 1
 
 
 

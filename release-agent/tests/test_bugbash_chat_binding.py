@@ -162,7 +162,7 @@ def test_resolver_rejects_wrong_or_ambiguous_meeting(state, native, bad):
     elif bad == "wrong_event":
         data["event"]["id"] = "other"
     elif bad == "wrong_subject":
-        data["event"]["subject"] = "September 2026 Release Bug Bash"
+        data["event"]["subject"] = "August 2026 Release Bug Bash"
     elif bad == "wrong_organizer":
         data["event"]["organizer"]["emailAddress"]["address"] = "other@example.test"
     elif bad == "cancelled":
@@ -176,7 +176,7 @@ def test_resolver_rejects_wrong_or_ambiguous_meeting(state, native, bad):
     elif bad == "no_thread":
         data["event"]["onlineMeeting"]["joinUrl"] = "https://teams.microsoft.com/meet/123"
     elif bad == "old_chat":
-        data["chat"]["topic"] = "September 2026 Release Bug Bash"
+        data["chat"]["topic"] = "August 2026 Release Bug Bash"
     elif bad == "wrong_chat":
         data["chat"]["id"] = "19:meeting_OLD@thread.v2"
     else:

@@ -76,7 +76,7 @@ MOCKABLE = {
 
 
 def _month_year(context) -> str:
-    """The release's display month — the ship/target month (CCD month + 1), e.g. 'August 2026'."""
+    """The release's display month matching its calendar month, e.g. 'August 2026'."""
     from orchestrator import schedule
     return schedule.target_month_label(context.release) or str(context.release.release_id)
 

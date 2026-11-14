@@ -88,30 +88,62 @@ def default_ccd(release_id: str) -> date:
     return second_wednesday(year, month)
 
 
-def default_target_month(release_id: str) -> Optional[str]:
-    """The default display month a release is NAMED for: the CCD/work month + 1 (the ship
-    month). 'YYYY-MM' -> 'YYYY-MM' rolling the year at Dec->Jan. e.g. '2026-08' -> '2026-09'.
-    Returns None when the release id isn't YYYY-MM. Defaulted at init and confirmed by the owner."""
-    try:
-        year, month = parse_release_month(release_id)
-    except (ValueError, IndexError):
+def default_target_month(release_id: str, ccd: Optional[str] = None) -> Optional[str]:
+    """The display month ('YYYY-MM') a release is labeled for: directly matches the
+    calendar month of the elected release date (or `release_id` when no date is passed).
+    e.g. a release date in November 2026 ('2026-11-18' or '2026-11') -> '2026-11'."""
+    d = parse_date(ccd)
+    if d is not None:
+        return f"{d.year:04d}-{d.month:02d}"
+    if not release_id or not str(release_id).strip():
         return None
-    month += 1
-    if month == 13:
-        month, year = 1, year + 1
+    parts = str(release_id).strip().split("-")
+    if len(parts) != 2:
+        return None
+    try:
+        year, month = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if year < 1970 or not (1 <= month <= 12):
+        return None
     return f"{year:04d}-{month:02d}"
 
 
+def validate_custom_release_date(
+    ccd_str: Optional[str],
+    *,
+    as_of: Optional[date] = None,
+) -> Tuple[Optional[date], Optional[str]]:
+    """Validate an owner-specified release date ('YYYY-MM-DD').
+    Allowed: any day within the current calendar month OR any date in the future (>= as_of).
+    Returns (parsed_date, error_message)."""
+    d = parse_date(ccd_str)
+    if d is None:
+        return None, f"Bad release date '{ccd_str}' (expected YYYY-MM-DD)."
+    ref = as_of or today()
+    in_current_month = (d.year, d.month) == (ref.year, ref.month)
+    if not in_current_month and d < ref:
+        return (
+            None,
+            f"Release date {d.isoformat()} is in a past month relative to {ref.isoformat()}; "
+            f"choose any day in {ref.strftime('%B %Y')} or any future date.",
+        )
+    return d, None
+
+
 def target_month_id(state) -> Optional[str]:
-    """The stored ship-month ('YYYY-MM') the release is named for, or the CCD-month+1 default
-    when it hasn't been set yet (so naming works even before the owner confirms it at init)."""
+    """The stored display month ('YYYY-MM') the release is labeled for, or the direct
+    calendar month of the elected release date / release_id."""
     tm = getattr(state, "target_month", None)
-    return tm or default_target_month(getattr(state, "release_id", "") or "")
+    return tm or default_target_month(
+        getattr(state, "release_id", "") or "",
+        getattr(state, "ccd", None),
+    )
 
 
 def target_month_label(state, with_year: bool = True) -> str:
-    """The release's display month — 'September 2026' (or just 'September' when with_year=False).
-    Reads the stored target_month, else the CCD-month+1 default. '' when unresolvable."""
+    """The release's display month — 'November 2026' (or 'November' when with_year=False).
+    Matches the calendar month of the elected release date (or explicit target_month override)."""
     tm = target_month_id(state)
     if not tm:
         return ""
@@ -129,6 +161,8 @@ def month_add(release_id: str, n: int) -> Optional[str]:
         year, month = parse_release_month(release_id)
     except (ValueError, IndexError):
         return None
+    if not (1 <= month <= 12):
+        return None
     total = year * 12 + (month - 1) + n
     return f"{total // 12:04d}-{total % 12 + 1:02d}"
 
@@ -138,42 +172,59 @@ def _ccd_pretty(d: date) -> str:
     return f"{d.strftime('%A, %b')} {d.day}, {d.year}"
 
 
-def preview_release(release_id: str) -> Optional[dict]:
-    """The full identity of a release for a PRE-init prompt, so the skill can show one
-    coherent, unambiguous confirmation instead of 'pick a month' then 'confirm a different
-    month'. All derived (no state, no IO): the release id (the CCD/work month), the ship-month
-    it's NAMED for (CCD month + 1), and the default CCD (2nd Wednesday). None on a bad id."""
-    ship = default_target_month(release_id)
-    if not ship:
+def preview_release(release_id: str, *, as_of: Optional[date] = None) -> Optional[dict]:
+    """The pre-init identity of a release candidate (pure schedule math, no IO):
+    default CCD is the 2nd Wednesday of `release_id`, and the release label directly
+    matches that calendar month (e.g. a November 2026 release date -> 'November' / 'November 2026')."""
+    label_month = default_target_month(release_id)
+    if not label_month:
         return None
     try:
         ccd = default_ccd(release_id)
-        sy, sm = parse_release_month(ship)
+        ly, lm = parse_release_month(label_month)
     except (ValueError, IndexError):
         return None
+    ref = as_of or today()
+    via = ccd_viability(ccd, ref)
+    month_name = calendar.month_name[lm]
+    full_label = f"{month_name} {ly}"
     return {
-        "release_id": release_id,                       # internal id = the CCD/work month
-        "ship_month": ship,                             # 'YYYY-MM' the release is named for
-        "ship_label": f"{calendar.month_name[sm]} {sy}",  # 'October 2026' — the display name
+        "release_id": release_id,
+        "label_month": label_month,         # 'YYYY-MM' matching the elected release date's month
+        "label": month_name,                # 'November' — calendar month name
+        "ship_month": label_month,          # kept for callers reading ship_month
+        "ship_label": full_label,           # 'November 2026' — full display label
         "ccd": ccd.isoformat(),
-        "ccd_pretty": _ccd_pretty(ccd),                 # 'Wednesday, Sep 9, 2026'
+        "ccd_pretty": _ccd_pretty(ccd),     # 'Wednesday, Nov 11, 2026'
         "ccd_weekday": ccd.strftime("%A"),
+        "ccd_past": via["past"],
+        "days_to_ccd": via["days_to_ccd"],
+        "phase0_open": via["phase0_open"],
     }
 
 
-def preview_releases(start_release_id: Optional[str] = None, count: int = 4) -> list:
+def preview_releases(
+    start_release_id: Optional[str] = None,
+    count: int = 4,
+    *,
+    as_of: Optional[date] = None,
+) -> list:
     """`count` consecutive release candidates starting at `start_release_id` (default: the
-    current calendar month). Each is a preview_release() dict; the FIRST is the default the
-    skill leads with, the rest are the 'a different month' alternatives — all shown by
-    name + CCD so the user never picks a bare, ambiguous month."""
-    start = start_release_id or now_local().strftime("%Y-%m")
+    current calendar month in the release timezone). `recommended` marks the default offered
+    release date: the 2nd Wednesday of the current month if not yet passed, else the 2nd
+    Wednesday of the next month."""
+    ref = as_of or today()
+    start = start_release_id or f"{ref.year:04d}-{ref.month:02d}"
     out = []
     for i in range(max(1, count)):
         mid = month_add(start, i)
-        p = preview_release(mid) if mid else None
+        p = preview_release(mid, as_of=ref) if mid else None
         if p:
             p["is_default"] = (i == 0)
             out.append(p)
+    rec_idx = next((idx for idx, item in enumerate(out) if not item["ccd_past"]), 0)
+    for idx, item in enumerate(out):
+        item["recommended"] = (idx == rec_idx)
     return out
 
 

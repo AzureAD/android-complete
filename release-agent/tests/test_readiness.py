@@ -382,7 +382,7 @@ def test_init_json_persists_once_and_hands_off_to_entry_gate(
     for field in ("release_id", "owner_email", "owner_name", "timezone",
                   "ccd", "ccd_source", "ccd_conflict", "target_month"):
         assert output[field] == getattr(st, field)
-    assert output["ccd"] == "2026-11-11" and output["target_month"] == "2026-12"
+    assert output["ccd"] == "2026-11-11" and output["target_month"] == "2026-11"
     assert output["ccd_conflict"] == ("2026-11-18" if override == "2026-11-18" else None)
     assert output["phase0_open"] == "2026-11-04"
     assert not output["readiness_signed"] and not st.readiness_items and not st.steps

@@ -1491,7 +1491,7 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
             A.review_hash = preview["review_hash"]
             with C.state_lock(d, rid):
                 assert PW.cmd_create_payload_wiki(A) == 0
-            assert created["path"].endswith("September 2026 Release")
+            assert created["path"].endswith("August 2026 Release")
             s2 = C.load_state(d, rid)
             assert s2.is_done("rollout_start", "wiki_payload")
             step = s2.get_step("rollout_start", "wiki_payload")

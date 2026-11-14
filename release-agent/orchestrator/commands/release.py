@@ -12,6 +12,37 @@ from tools import checks
 
 
 def cmd_init(args):
+    explicit_ccd = getattr(args, "ccd", None)
+    chosen_ccd = None
+    if explicit_ccd:
+        as_of = C.parse_as_of(args) or schedule.today()
+        chosen_ccd, err = schedule.validate_custom_release_date(explicit_ccd, as_of=as_of)
+        if err:
+            if getattr(args, "json", False):
+                print(_json.dumps({"initialized": False, "release_id": getattr(args, "release", None),
+                                   "error": err}, indent=2))
+            else:
+                print(err)
+            return 1
+        expected_rid = f"{chosen_ccd.year:04d}-{chosen_ccd.month:02d}"
+        if not getattr(args, "release", None):
+            args.release = expected_rid
+        elif args.release != expected_rid:
+            msg = (f"Release id '{args.release}' does not match elected release date {chosen_ccd.isoformat()} "
+                   f"(expected --release {expected_rid}).")
+            if getattr(args, "json", False):
+                print(_json.dumps({"initialized": False, "release_id": args.release, "error": msg}, indent=2))
+            else:
+                print(msg)
+            return 1
+    elif not getattr(args, "release", None):
+        msg = "Provide --release <YYYY-MM> or --ccd <YYYY-MM-DD>."
+        if getattr(args, "json", False):
+            print(_json.dumps({"initialized": False, "release_id": None, "error": msg}, indent=2))
+        else:
+            print(msg)
+        return 1
+
     sp = C.state_path(args.runs_root, args.release)
     if os.path.exists(sp):
         message = f"Release {args.release} already exists at {sp}; initialization never replaces release history."
@@ -39,9 +70,8 @@ def cmd_init(args):
     st.timezone = (getattr(args, "timezone", None) or schedule.detect_local_tz())
     tz_note = "" if st.timezone else "  (couldn't detect — using default)"
 
-    # CCD is canonically the 2nd Wednesday. We still READ the pipeline override,
-    # but we do NOT silently adopt it — if it differs, we flag a conflict for the
-    # user to resolve (2nd-Wed default vs the pipeline date).
+    # CCD is canonically the 2nd Wednesday unless an explicit --ccd was elected at init.
+    # We still READ the pipeline override, without silently adopting a differing date.
     src = C.ccd_source()
     override, note = None, ""
     if src.get("pipeline_id"):
@@ -52,17 +82,17 @@ def cmd_init(args):
         else:
             note = f"  (couldn't read pipeline override: {detail})"
     try:
-        default = schedule.default_ccd(args.release)
-        st.ccd = default.isoformat()
-        st.ccd_source = "default"
+        default_wed = schedule.default_ccd(args.release)
+        elected = chosen_ccd or default_wed
+        st.ccd = elected.isoformat()
+        st.ccd_source = "default" if elected == default_wed else "manual"
         conflict = schedule.pipeline_conflict(args.release, override, st.ccd)
         st.ccd_conflict = conflict.isoformat() if conflict else None
     except (ValueError, IndexError):
-        default, conflict = None, None
+        elected, conflict = None, None
         note = "  (release id isn't YYYY-MM — CCD not set; use set-ccd)"
-    # The month the release is NAMED for (ship month) = CCD month + 1 by default. Stored so the
-    # docs/comms never misname the release; the owner confirms/adjusts it at init (set-target-month).
-    st.target_month = schedule.default_target_month(args.release)
+    # Release label directly matches the calendar month of the elected release date (no +1 offset).
+    st.target_month = schedule.default_target_month(args.release, st.ccd)
     from orchestrator.engine import Orchestrator
     from orchestrator.revision import bind_initial
     orch = Orchestrator(args.config, st, mocks={})
@@ -85,7 +115,8 @@ def cmd_init(args):
             "timezone": st.timezone or schedule.DEFAULT_TZ,
             "ccd": st.ccd, "ccd_source": st.ccd_source, "ccd_conflict": st.ccd_conflict,
             "target_month": st.target_month,
-            "phase0_open": schedule.anchor_date(default, "CCD-7").isoformat() if default else None,
+            "target_month_label": schedule.target_month_label(st),
+            "phase0_open": schedule.anchor_date(elected, "CCD-7").isoformat() if elected else None,
             "readiness_signed": orch.gate.signed,
             "readiness_dispatch": orch.gate.checklist()["dispatch"],
             "work_dispatch": initialized_report["work_dispatch"],
@@ -100,16 +131,17 @@ def cmd_init(args):
     owner_line = f"  Owner: {st.owner_name + ' ' if st.owner_name else ''}{st.owner_email or '(unresolved)'}{owner_note}"
     tz_line = f"  Timezone: {st.timezone or schedule.DEFAULT_TZ}{tz_note}"
     if st.ccd:
-        opens = schedule.anchor_date(default, "CCD-7").isoformat()
+        opens = schedule.anchor_date(elected, "CCD-7").isoformat()
         tm_label = schedule.target_month_label(st)
+        ccd_desc = "2nd Wednesday" if st.ccd_source == "default" else "custom date"
         lines = [f"Initialized release {args.release}.", f"  state: {sp}", owner_line, tz_line,
-                 f"  Code Complete Date: {st.ccd} (2nd Wednesday){note}",
-                 f"  Release name: {tm_label or '(unresolved)'} release "
-                 f"(ships the month after code-complete — confirm/adjust with set-target-month)",
+                 f"  Code Complete Date: {st.ccd} ({ccd_desc}){note}",
+                 f"  Release label: {tm_label or '(unresolved)'} release "
+                 f"(matches calendar month of elected release date)",
                  f"  Phase 0 (Pre-flight) opens {opens} (CCD-7). Scheduled phase work waits until then."]
         if conflict:
-            lines.append(f"  ⚠ Pipeline override is {conflict.isoformat()}, which differs from the "
-                         f"2nd-Wednesday default. Confirm which is the real CCD before proceeding.")
+            lines.append(f"  ⚠ Pipeline override is {conflict.isoformat()}, which differs from "
+                         f"{st.ccd}. Confirm which is the real CCD before proceeding.")
         print("\n".join(lines))
     else:
         print(f"Initialized release {args.release}.\n  state: {sp}\n{owner_line}\n{tz_line}\n{note}")
@@ -399,9 +431,9 @@ def cmd_activate(args):
 
 
 def cmd_set_target_month(args):
-    """Set the ship/display month the release is NAMED for ('YYYY-MM'). Display-only — it does
+    """Set the display month the release is labeled for ('YYYY-MM'). Display-only — it does
     NOT touch release_id, the CCD, branches, or scheduling. With no --month, resets to the
-    CCD-month+1 default."""
+    calendar month of the elected release date."""
     st = C.load_state(args.runs_root, args.release)
     if args.month:
         import re as _re
@@ -414,7 +446,7 @@ def cmd_set_target_month(args):
             return 1
         st.target_month = str(args.month).strip()
     else:
-        st.target_month = schedule.default_target_month(args.release)
+        st.target_month = schedule.default_target_month(args.release, st.ccd)
     C.save_state(st, args.runs_root, args.release)
     print(f"Release {args.release} is the {schedule.target_month_label(st)} release "
           f"(target_month={st.target_month}).")
@@ -427,7 +459,12 @@ def register(sub):
     inspect.set_defaults(func=cmd_inspect_state)
 
     i = sub.add_parser("init", help="Start a new release run")
-    i.add_argument("--release", required=True)
+    i.add_argument("--release", required=False, default=None,
+                   help="Release month as YYYY-MM (derived automatically when --ccd is provided)")
+    i.add_argument("--ccd", default=None,
+                   help="Elected release/Code Complete Date as YYYY-MM-DD (default: 2nd Wednesday of --release)")
+    i.add_argument("--as-of", dest="as_of", default="",
+                   help="Simulated clock YYYY-MM-DD for date validation (default: today)")
     i.add_argument("--json", action="store_true",
                    help="Print initialization metadata and the immediate readiness handoff as JSON")
     i.add_argument("--force", action="store_true")
@@ -554,8 +591,8 @@ def register(sub):
     ac.set_defaults(func=cmd_activate)
 
     tm = sub.add_parser("set-target-month",
-                        help="Set the ship/display month the release is named for (YYYY-MM; "
-                             "display-only). Omit --month to reset to the CCD-month+1 default.")
+                        help="Set the display month the release is labeled for (YYYY-MM; "
+                             "display-only). Omit --month to reset to the release date's calendar month.")
     tm.add_argument("--release", required=True)
     tm.add_argument("--month", default=None, help="Ship month as YYYY-MM (e.g. 2026-09)")
     tm.set_defaults(func=cmd_set_target_month)

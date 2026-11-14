@@ -1,43 +1,35 @@
 # Presenting status and operation results
 
-For a status request, use `status --release <id> --details` for the full phase
-map/checklist, or `--json` for machine branching. Omit `--details` only when the
-owner specifically wants a short brief.
-Status does not probe providers, advance phases, record a decision, or log a new
-status event. Never turn a status request into a consent/approval questionnaire.
+> **Render as live Markdown — NEVER inside a code fence, NEVER condensed.**
+> Both `status --release <id> --details` and `display_markdown` emit complete Markdown headings and tables. Paste them **verbatim as normal message content** so Scout renders the table — NEVER wrap them in ```` ```markdown ```` or any code block, and NEVER replace them with a custom/condensed summary matrix (e.g. `Field | Value` or bullet summaries). Tool output alone is not visible to the user unless you paste it into your message.
 
-For a task, use the result's `status`: `done`, `needs_input`, `waiting`, or `failed`.
-Show what happened, a result/link where available, and the exact missing next action.
-Keep verified, owner-attested, waived, and manual-only work distinguishable.
-A percentage measures checklist completion, not production rollout performed.
+## Status-only vs. release-advancing turns
 
-At every owner-input or wait boundary, **always print the existing full status
-table before the question/wait explanation**. Use the fresh handoff report's
-`display_markdown`, rendered as normal Markdown, not a code fence or raw JSON.
-Tool output is not proof the owner saw the table. Do not fabricate statuses,
-stale results, links, receipts or approvals.
-`ready:false` alone is not a user-input boundary: consult dispatch and finish
-executable checks before showing an actual input/repair/wait.
+- **Status-only requests** (`/release-agent show status`, `"where are we?"`): run `status --release <id> --details` (no `--json`; omit `--details` only if the user explicitly asked for a one-line brief) and paste the emitted Markdown block verbatim. Status-only and explicit `"only this step"` requests do not drain the broader queue, probe providers, advance phases, or attach unsolicited approval cards.
+- **Release-advancing turns** (default automatic guided progression): use `next --json` and `work_dispatch` to exhaust all executable agent-owned work across phases, rechecking after each result. Human holds do not veto independent siblings. Stop only for genuine input/consent/repair, a scheduling/external wait, or completion — never ask `"continue?"` between successful steps.
 
-On a real decision, provide enough current context for that decision and use the
-host's question tool. Ask only for missing information, not a confirmation the owner
-already clearly gave. After recording it, resume automatic guided progression
-unless the owner explicitly limited the scope.
-Offer rerun with changed inputs, skip, or completed-manually when the owner wants
-those controls, not merely another retry of the same failed attempt. Use the
-selected task's actual public inputs and preserve verification provenance.
-An uncertain old writer needs a stopped-runner confirmation, not fabricated
-success. Approval gates remain genuine decisions, not manual-completion toggles.
+## Guarded handoff & mandatory full-table context
 
-Automatic guided progression is the default for release actions: use `next --json`
-and `work_dispatch` to exhaust executable agent-owned work, rechecking after each
-result. Human holds do not veto independent siblings. Stop only for genuine
-input/consent/repair, a scheduling/external wait, or completion; never ask "continue?"
-between successful steps. At a handoff, use `status --details --handoff --json`;
-identify genuine host input boundaries with exact `--hold-step` reasons when needed.
-Preserve actual consent and ownership. Do not replay an unchanged failed operation.
-Status-only and explicit "only this step" requests do not drain the broader queue.
+At every owner-input or wait boundary, **always print the existing full status table before the question/wait explanation**:
+1. Run `status --release <id> --details --handoff --json` (or `checklist --release <id> --attest-prompt --handoff --json` while entry readiness is unsigned). Identify genuine host input/consent/recovery boundaries on queued Scout steps with `--hold-step "<phase.step>=<actual reason>"` after independent work is exhausted.
+2. `ready:false` alone is not a user-input boundary: consult dispatch (`must_continue_automatic_work`) and finish executable checks before showing an actual input/repair/wait. Preserve actual host consent and ownership; do not replay an unchanged failed operation.
+3. Paste `display_markdown` verbatim as normal Markdown **first**, then state what happened (with links and provenance: `verified`, `owner_attested`, `waived`, or `manual-only` — note that `%` measures checklist completion, not rollout ring percentage) and present the focused `m_ask_user` card or wait explanation.
 
-In unattended mode, show a missing driver's startup receipt/health as unavailable
-coverage. Do not claim unattended success. Interactive operation does not require
-that driver, recreate it, or delete it implicitly.
+## Actionable `m_ask_user` cards for focused owner decisions
+
+Never end an actionable hold with prose-only `"please review/confirm"` — always follow the pasted table with an `m_ask_user` option card (using `owner_prompt` when provided, or the exact options below):
+
+- **Attestation / human action (`confirm` / `action`):** run `step-action --release <id> --phase <p> --step <s>` for the exact `prompt`, paste fresh `display_markdown`, and call `m_ask_user` with **Completed**, **Not yet**, **Skip (waive)**, **Need help** (`step-info`).
+- **Blocked step (`blocked`):** paste fresh `display_markdown` + the block note, and call `m_ask_user` with:
+  - **Fixed — retry** (`task --retry` to recheck/reconcile the same attempt after a real fix)
+  - **New attempt / inputs** (`rerun` with `step-info --json` public parameters, keeping prior history)
+  - **Completed manually** (`complete-manually`, owner-attested without claiming provider verification)
+  - **Override (skip)** (collect free-text reason, then `skip`)
+  - **Keep blocked** (leave unchanged)
+  *(An uncertain/owned prior runner requires confirming the prior runner stopped before `--prior-writer-stopped`.)*
+- **Approval gate (`gate`):** approval gates remain genuine decisions, not manual-completion or skip toggles. Local gate → paste `display_markdown` + `m_ask_user` **Approve gate / Deny gate / Keep on hold**. External gate (`remove_rc_tags_gate`, `publish_notes_gate`) → run `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`, display the exact coordinates/build/stage/approval ID/hash alongside `display_markdown`, then `m_ask_user` **Approve / Deny / Keep on hold**.
+
+Ask only for genuinely missing information, never a confirmation the owner already clearly supplied. After recording the owner's answer, **resume automatic guided progression** immediately unless the owner explicitly limited the scope.
+
+In unattended mode, show a missing driver's startup receipt/health as unavailable coverage and never claim unattended success until acknowledged. Interactive operation does not require that driver, recreate it, or delete it implicitly.
+

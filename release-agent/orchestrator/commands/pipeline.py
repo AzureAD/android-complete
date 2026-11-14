@@ -65,10 +65,16 @@ def cmd_check_ccd(args):
     via = schedule.ccd_viability(ccd_d, as_of) if ccd_d else {}
     out.update({"today": as_of.isoformat(), **{k: via.get(k) for k in
                 ("days_to_ccd", "phase0_open", "runway_days", "compressed")}})
-    # `past` is the worst problem — it overrides the reconciliation status (a past CCD
-    # must be rescheduled regardless of whether it matches the pipeline). override/
-    # ccd_conflict stay populated so the resolver can offer a future override to adopt.
-    out["status"] = "past" if via.get("past") else recon
+    # Unconfirmed past defaults (or any date in a past calendar month) block as `past`.
+    # An owner-elected custom day within the current calendar month (`ccd_source == 'manual'`)
+    # or any future date is temporally accepted.
+    manual_in_current_month = bool(
+        ccd_d
+        and st.ccd_source == "manual"
+        and (ccd_d.year, ccd_d.month) == (as_of.year, as_of.month)
+    )
+    is_invalid_past = bool(via.get("past")) and not manual_in_current_month
+    out["status"] = "past" if is_invalid_past else recon
 
     if getattr(args, "json", False):
         print(_json.dumps(out))
@@ -132,6 +138,7 @@ def cmd_set_ccd(args):
     st.ccd = new_ccd.isoformat()
     st.ccd_source = source
     st.ccd_conflict = None            # the date is now settled — clear any conflict
+    st.target_month = schedule.default_target_month(args.release, st.ccd)
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
         "ccd_changed", value=value or "(default)", source=source, driver=args.reason.strip())

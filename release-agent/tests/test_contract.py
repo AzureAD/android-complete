@@ -235,3 +235,24 @@ def test_worker_prompts_and_skill_ensure_desired_state_instead_of_owner_reset():
         text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
         assert "--ensure" in text
         assert "absen" in text.lower() and "unknown" in text.lower()
+
+
+def test_start_release_requires_explicit_folder_and_date_confirmation_before_init():
+    for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md")):
+        text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
+        assert "android-complete" in text
+        assert "preview-release --json" in text
+        assert "ccd_past" in text
+        assert "Custom day in" in text and "Any date in the future" in text
+        assert "calendar month of the elected release date" in text
+        assert "CCD month + 1" not in text
+        assert "m_ask_user" in text
+        assert "Recommended model" not in text
+        for banned in ("claude", "opus", "sonnet", "gpt-", "gemini"):
+            assert banned not in text.lower()
+    skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
+    readiness = open(os.path.join(ROOT, "skill", "reference", "readiness-gate.md"), encoding="utf-8").read()
+    assert "complete-manually" in skill and "skip" in skill
+    assert "ICM MCP unavailable" in readiness
+
+
