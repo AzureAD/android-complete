@@ -345,6 +345,40 @@ class ReadinessGate:
         by_id = {it["id"]: it.get("label", it["id"]) for it in (self.config or {}).get("items", [])}
         return [by_id.get(item_id, item_id) for item_id in self.blocked_item_ids]
 
+    def _release_started(self) -> bool:
+        return bool(
+            self.state.gate_decisions
+            or any(
+                (rec.get("status") if isinstance(rec, dict) else getattr(rec, "status", "pending")) != "pending"
+                for rec in (self.state.steps or {}).values()
+            )
+        )
+
+    def override_oncall(self, confirmed_by: str, reason: str) -> dict:
+        """Allow an already-started release to continue if the owner rotates onto primary on-call."""
+        if not isinstance(confirmed_by, str) or not confirmed_by.strip():
+            return {"error": "An owner confirmation identity is required."}
+        if not self.state.owner_email or confirmed_by.strip().casefold() != self.state.owner_email.strip().casefold():
+            return {"error": "Only the configured release owner can approve a continuation-only on-call override."}
+        if not isinstance(reason, str) or not reason.strip():
+            return {"error": "A non-empty reason is required for an audited on-call override."}
+        if not self._release_started():
+            return {"error": "On-call override is only allowed for an already-started release; new releases require a non-on-call owner."}
+        rec = dict(self.state.readiness_items.get("oncall_now") or {})
+        if rec.get("status") != "fail":
+            return {"error": "oncall_now override is only needed when oncall_now recorded fail."}
+        rec["override"] = {
+            "scope": "continuation",
+            "release": self.state.release_id,
+            "owner": self.state.owner_email,
+            "by": confirmed_by.strip(),
+            "reason": reason.strip(),
+            "at": _now(),
+        }
+        self.state.readiness_items["oncall_now"] = rec
+        self._refresh_signed()
+        return self.checklist()
+
     # ---- internals ----
     def _item_satisfied(self, item: dict) -> bool:
         record = self.state.readiness_items.get(item["id"], {}) or {}
@@ -355,6 +389,15 @@ class ReadinessGate:
             mocked = mocks_mod.readiness_result(self.mocks, item["id"])
             if mocked is None and record.get("capability_binding") != binding(self.state):
                 return False
+        if item["id"] == "oncall_now" and status == "fail":
+            override = record.get("override")
+            if (isinstance(override, dict)
+                    and override.get("scope") == "continuation"
+                    and override.get("release") == self.state.release_id
+                    and override.get("owner") == self.state.owner_email
+                    and isinstance(override.get("reason"), str) and override["reason"].strip()
+                    and self._release_started()):
+                return True
         if item.get("verify", "attest") == "auto":
             if item.get("opt_out"):
                 # soft item: fully verified (pass) OR user chose to proceed (degraded)

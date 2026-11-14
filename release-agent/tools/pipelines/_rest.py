@@ -4,6 +4,7 @@ from __future__ import annotations
 import json as _json
 import shutil
 import subprocess
+import time
 from urllib.parse import quote
 
 from tools.coordinates import coords
@@ -50,44 +51,11 @@ def _az_json(args, timeout):
 _ADO_RESOURCE = coords.resource_id()
 
 
-def _ado_rest_get(url, timeout):
-    """GET an ADO REST url with an az-minted bearer token. Returns (ok, json, detail).
-    Used only where `az devops invoke` can't reach an endpoint cleanly."""
-    az = shutil.which("az")
-    if az is None:
-        return (False, None, "az CLI not found")
-    try:
-        tok = subprocess.run(
-            [az, "account", "get-access-token", "--resource", _ADO_RESOURCE,
-             "--query", "accessToken", "-o", "tsv"],
-            capture_output=True, text=True, timeout=timeout, encoding="utf-8")
-    except (subprocess.TimeoutExpired, OSError) as e:
-        return (False, None, f"failed to get token: {e}")
-    if tok.returncode != 0:
-        return (False, None, "AUTH: could not get an ADO token (run `az login`)")
-    token = (tok.stdout or "").strip()
-    if not token:
-        return (False, None, "AUTH: empty ADO token (run `az login`)")
-    import urllib.request
-    import urllib.error
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return (True, _json.loads(resp.read().decode("utf-8")), "")
-    except urllib.error.HTTPError as e:
-        code = e.code
-        detail = f"HTTP {code}"
-        if code in (401, 403):
-            detail = f"AUTH: HTTP {code} (run `az login` / check access)"
-        return (False, None, detail)
-    except (urllib.error.URLError, ValueError, TimeoutError) as e:
-        return (False, None, f"REST GET failed: {e}")
+_TRANSIENT_HTTP = {429, 502, 503, 504}
 
 
-def _ado_rest_get_h(url, timeout):
-    """Like _ado_rest_get but also returns the response headers:
-    (ok, json, headers_lower, detail). ADO returns paging tokens in the
-    `x-ms-continuationtoken` HEADER (not the body), so header access is needed to page."""
+def _ado_rest_fetch(url, timeout, *, retries=2):
+    """GET an ADO REST url with an az-minted bearer token and bounded transient retry."""
     az = shutil.which("az")
     if az is None:
         return (False, None, {}, "az CLI not found")
@@ -104,15 +72,38 @@ def _ado_rest_get_h(url, timeout):
     import urllib.request
     import urllib.error
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            hdrs = {k.lower(): v for k, v in resp.headers.items()}
-            return (True, _json.loads(resp.read().decode("utf-8")), hdrs, "")
-    except urllib.error.HTTPError as e:
-        detail = f"AUTH: HTTP {e.code}" if e.code in (401, 403) else f"HTTP {e.code}"
-        return (False, None, {}, detail)
-    except (urllib.error.URLError, ValueError, TimeoutError) as e:
-        return (False, None, {}, f"REST GET failed: {e}")
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                hdrs = {k.lower(): v for k, v in resp.headers.items()}
+                return (True, _json.loads(resp.read().decode("utf-8")), hdrs, "")
+        except urllib.error.HTTPError as e:
+            detail = f"AUTH: HTTP {e.code} (run `az login` / check access)" if e.code in (401, 403) else f"HTTP {e.code}"
+            if e.code in _TRANSIENT_HTTP and attempt < retries:
+                time.sleep(0.25 * (attempt + 1))
+                continue
+            return (False, None, {}, detail)
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt < retries:
+                time.sleep(0.25 * (attempt + 1))
+                continue
+            return (False, None, {}, f"REST GET failed: {e}")
+        except ValueError as e:
+            return (False, None, {}, f"REST GET failed: {e}")
+
+
+def _ado_rest_get(url, timeout):
+    """GET an ADO REST url with an az-minted bearer token. Returns (ok, json, detail).
+    Used only where `az devops invoke` can't reach an endpoint cleanly."""
+    ok, data, _hdrs, detail = _ado_rest_fetch(url, timeout)
+    return (ok, data, detail)
+
+
+def _ado_rest_get_h(url, timeout):
+    """Like _ado_rest_get but also returns the response headers:
+    (ok, json, headers_lower, detail). ADO returns paging tokens in the
+    `x-ms-continuationtoken` HEADER (not the body), so header access is needed to page."""
+    return _ado_rest_fetch(url, timeout)
 
 
 def _ado_rest_get_all(url, timeout, cap_pages=60):

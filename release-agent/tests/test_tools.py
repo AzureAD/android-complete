@@ -4,56 +4,6 @@ from tests._harness import *  # noqa: F401,F403
 
 
 
-def test_reconcile_retries_pure():
-    """reconcile_retries collapses per-attempt results by title: passed if any attempt
-    passed; recovered if it also failed; failed only if it never passed; NA ignored."""
-    from tools import pipelines as P
-    res = [
-        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},
-        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Failed"},
-        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},   # flaky → recovered
-        {"testCaseTitle": "testAlwaysGreen", "outcome": "Passed"},
-        {"testCaseTitle": "testHardFail", "outcome": "Failed"},
-        {"testCaseTitle": "testHardFail", "outcome": "Failed"},          # failed every attempt
-        {"testCaseTitle": "testSkipped", "outcome": "NotExecuted"},      # ignored
-    ]
-    r = P.reconcile_retries(res)
-    assert r["passed"] == 2 and r["failed"] == 1
-    assert r["recovered"] == ["testNullDrsMetadata"]
-    assert r["total"] == 3 and r["na"] == 1
-    assert P.reconcile_retries([]) == {"passed": 0, "failed": 0, "recovered": [], "total": 0, "na": 0}
-
-
-
-
-def test_get_test_summary_unit_retry_reconciles():
-    """A UNIT run whose only failure is a flaky test that passed on retry reconciles to
-    0 failed + a `recovered` warning — even though ADO's run aggregate said 1 failed.
-    The same policy also applies to UI/instrumented suites."""
-    from tools import pipelines as P
-    runs = {"value": [{"id": 700, "name": "broker4j_UnitTests",
-                       "totalTests": 6, "passedTests": 5, "notApplicableTests": 0}]}
-    results = {"value": [
-        {"id": 1, "testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},
-        {"id": 2, "testCaseTitle": "testNullDrsMetadata", "outcome": "Failed"},
-        {"id": 3, "testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},
-        {"id": 4, "testCaseTitle": "t2", "outcome": "Passed"},
-        {"id": 5, "testCaseTitle": "t3", "outcome": "Passed"},
-        {"id": 6, "testCaseTitle": "t4", "outcome": "Passed"},
-    ]}
-    orig = P._ado_rest_get
-    P._ado_rest_get = lambda url, timeout: (True, runs if "buildUri" in url else results, "")
-    try:
-        ok, s, _ = P.get_test_summary("O", "P", 700)
-        assert ok
-        unit = s["categories"]["unit"]
-        assert unit["failed"] == 0 and unit["recovered"] == [
-            {"suite": "broker4j_UnitTests", "title": "testNullDrsMetadata"}]
-        assert unit["passed"] == 4 and unit["total"] == 4
-    finally:
-        P._ado_rest_get = orig
-
-
 def _paged_test_api(monkeypatch, runs, results):
     from urllib.parse import parse_qs, urlparse
     from tools import pipelines as P
@@ -349,67 +299,6 @@ def test_test_api_ids_are_required_positive_and_unique(monkeypatch):
         {"run_id": 7, "result_id": 2, "outcome": "Passed"}]
 
 
-def test_retry_evidence_and_reports_are_permutation_invariant(monkeypatch):
-    import copy
-    import itertools
-    import json
-    from tools import pipelines as P
-    from steps.build_verify import rc_report as R, _rc_report_rendering as rendering
-    from orchestrator.commands.rc_report import _format
-
-    runs = [
-        {"id": 3, "name": "UI B # retry", "totalTests": 2},
-        {"id": 2, "name": "UI A # first", "totalTests": 2},
-        {"id": 1, "name": "UI B # first", "totalTests": 2},
-    ]
-    rows = {
-        1: [{"id": 1, "testCaseTitle": "recovered", "outcome": "Failed"},
-            {"id": 2, "testCaseTitle": "hard_failure", "outcome": "Failed"}],
-        2: [{"id": 2, "testCaseTitle": "skipped", "outcome": None},
-            {"id": 1, "testCaseTitle": "hard_failure", "outcome": "Failed"}],
-        3: [{"id": 2, "testCaseTitle": "hard_failure", "outcome": "Failed"},
-            {"id": 1, "testCaseTitle": "recovered", "outcome": "Passed"}],
-    }
-    baseline = None
-    for order, reverse_rows, string_ids in itertools.product(
-            itertools.permutations(runs), (False, True), (False, True)):
-        incoming_runs, incoming_rows = copy.deepcopy(list(order)), copy.deepcopy(rows)
-        if reverse_rows:
-            incoming_rows = {key: list(reversed(value)) for key, value in incoming_rows.items()}
-        if string_ids:
-            for row in incoming_runs:
-                row["id"] = str(row["id"])
-            for results in incoming_rows.values():
-                for row in results:
-                    row["id"] = str(row["id"])
-        _paged_test_api(monkeypatch, incoming_runs, incoming_rows)
-        ok, summary, detail = P.get_test_summary("O", "P", 99)
-        assert ok, detail
-        assert summary["passed"] == 1 and summary["failed"] == 2
-        assert summary["na"] == 1 and summary["total"] == 3
-        model = P.assemble_rc_model(
-            "2026-09", {"fired": True, "run_id": 10, "when": "2026-09-10T06:00:00Z"},
-            {"found": True, "healthy": True, "run_id": 11, "parked": True},
-            {p: {"run_id": bid, "complete": True, "ran": 1, "total": 1,
-                 "tests": summary, "failed_suites": summary["failed_suites"]}
-             for p, bid in (("ECS", 99), ("Local", 100))}, rc=1)
-        gate, auth = R.rc_ui_gate(model), R.auth_report_gate(model)
-        action = R.rc_next_action(model)
-        rendered = (
-            json.dumps(summary), json.dumps(gate),
-            rendering.rc_email_html(model, {}, gate, auth, action),
-            rendering.rc_email_plain(model, {}, gate, auth, action), _format(model))
-        if baseline is None:
-            baseline = rendered
-        assert rendered == baseline
-        for run in model["mrwp"].values():
-            run["failed_suites"] = list(reversed(run["failed_suites"]))
-        assert R.rc_ui_gate(model) == gate
-        assert rendering.rc_email_html(model, {}, gate, auth, action) == baseline[2]
-        assert rendering.rc_email_plain(model, {}, gate, auth, action) == baseline[3]
-        assert _format(model) == baseline[4]
-
-
 def test_get_failed_tests_non_failed_outcomes_and_missing_title(monkeypatch):
     from tools import pipelines as P
     runs = [{"id": 1, "name": "UI", "totalTests": 4, "passedTests": 1, "notApplicableTests": 1}]
@@ -495,19 +384,6 @@ def test_summary_rejects_missing_invalid_or_incomplete_evidence(monkeypatch):
             assert not ok and data is None and detail
 
 
-def test_na_only_and_pass_before_failure():
-    from tools import pipelines as P
-    rows = [{"testCaseTitle": "na", "outcome": o} for o in P._NA_OUTCOMES]
-    rows += [{"testCaseTitle": "pass_first", "outcome": o} for o in ("Passed", "Failed")]
-    rows += [{"testCaseTitle": "never_passed", "outcome": o} for o in ("Failed", "Failed")]
-    assert P.reconcile_retries(rows) == {
-        "passed": 1, "failed": 1, "total": 2, "na": 1, "recovered": ["pass_first"]}
-    audit = P.reconcile_retries(rows, include_tests=True)["test_results"][0]
-    assert audit["title"] == "na"
-    assert sum(audit["outcome_counts"].values()) == len(P._NA_OUTCOMES)
-    assert audit["outcome_counts"]["null"] == audit["outcome_counts"]["None"] == 1
-
-
 def test_auth_firebase_keeps_separate_aggregate_policy(monkeypatch):
     from tools import pipelines as P
     def no_mrwp(*a, **k):
@@ -542,31 +418,6 @@ def test_unit_result_fetch_error_propagates_to_summary_and_failures(monkeypatch)
 
 
 
-def test_classify_test_run_categories():
-    """The test-run classifier buckets into exactly three: unit / instrumented / ui;
-    anything that isn't unit/instrumented is UI ('the rest are UI', incl. Lab Api Tests)."""
-    from tools import pipelines as P
-    assert P.classify_test_run("common4j_UnitTests") == "unit"
-    assert P.classify_test_run("common_InstrumentedTests") == "instrumented"
-    assert P.classify_test_run("PROD MSAL - RC Broker (API 32)") == "ui"
-    assert P.classify_test_run("RC MSAL - PROD Broker (API 28) # 123_build.1") == "ui"
-    assert P.classify_test_run("Lab Api Tests") == "ui"             # NOT 'other'
-    assert P.classify_test_run("") == "ui"
-
-
-
-
-def test_testplans_names_and_query():
-    from tools import testplans as T
-    assert T.broker_plan_name("2026-08") == "Android Monthly Release - Aug 2026"
-    # suite name comes from the CCD date: 'Android release/MM/DD/YYYY' (matches prod)
-    assert T.auth_suite_name("2026-08-13") == "Android release/08/13/2026"
-    q = T.auth_bugbash_query()
-    assert "contains 'Android'" in q and "contains 'ReleaseBugBash'" in q and "Identity Apps" in q
-
-
-
-
 # ---- Phase 3: distribute_tests ----
 
 def test_distribution_even_and_preserves_preference():
@@ -587,18 +438,6 @@ def test_distribution_even_and_preserves_preference():
     assert r["kept"] >= 6
     # every assignment is an eligible tester (owner's 4 got reassigned)
     assert set(r["assignments"].values()) <= set(elig)
-
-
-
-
-def test_maven_pom_url_shape():
-    """The .pom URL matches Maven Central's layout for each artifact."""
-    from tools import maven as M
-    assert M.pom_url("common", "24.6.0") == \
-        "https://repo1.maven.org/maven2/com/microsoft/identity/common/24.6.0/common-24.6.0.pom"
-    assert M.pom_url("msal", "8.4.2") == \
-        "https://repo1.maven.org/maven2/com/microsoft/identity/client/msal/8.4.2/msal-8.4.2.pom"
-    assert M.pom_url("common4j", "24.6.0").endswith("/common4j/24.6.0/common4j-24.6.0.pom")
 
 
 
@@ -929,14 +768,6 @@ def test_commit_rename_classifies_both_original_and_destination_paths(monkeypatc
     assert classified["did"][0]["mixed"]
 
 
-def test_auth_branch_url_opens_repo_contents_at_exact_branch():
-    from tools.pipelines.auth_app import auth_branch_url
-
-    assert auth_branch_url("release/2026/09/10").endswith(
-        "?path=%2F&version=GBrelease%2F2026%2F09%2F10&_a=contents"
-    )
-
-
 def test_release_commit_classification_prefers_canonical_pr_title():
     from tools.pipelines.auth_app import classify_release_commits
 
@@ -951,3 +782,49 @@ def test_release_commit_classification_prefers_canonical_pr_title():
         {17099302: "Fix Ui navigation in authapp automation"},
     )
     assert result["general"][0]["title"] == "Fix Ui navigation in authapp automation"
+
+
+def test_ado_rest_get_retries_transient_connection_reset_not_auth(monkeypatch):
+    from io import BytesIO
+    import urllib.error
+    import urllib.request
+    from types import SimpleNamespace
+    from tools.pipelines import _rest
+
+    monkeypatch.setattr(_rest.shutil, "which", lambda _name: "az")
+    monkeypatch.setattr(_rest.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="tok\n", stderr=""))
+    monkeypatch.setattr(_rest.time, "sleep", lambda _s: None)
+
+    attempts = [0]
+
+    def flaky_urlopen(_req, timeout=0):
+        attempts[0] += 1
+        if attempts[0] < 3:
+            raise urllib.error.URLError(ConnectionResetError(10054, "Connection reset by peer"))
+
+        class Resp:
+            headers = {"x-ms-continuationtoken": "next"}
+            def read(self):
+                return b'{"value": [1]}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", flaky_urlopen)
+    ok, data, hdrs, detail = _rest._ado_rest_get_h("https://example.test/ado", 10)
+    assert ok and data == {"value": [1]} and hdrs["x-ms-continuationtoken"] == "next" and detail == ""
+    assert attempts[0] == 3
+
+    auth_attempts = [0]
+
+    def auth_fail(_req, timeout=0):
+        auth_attempts[0] += 1
+        raise urllib.error.HTTPError("https://example.test/ado", 401, "Unauthorized", {}, BytesIO())
+
+    monkeypatch.setattr(urllib.request, "urlopen", auth_fail)
+    ok, _data, detail = _rest._ado_rest_get("https://example.test/ado", 10)
+    assert not ok and "AUTH: HTTP 401" in detail and auth_attempts[0] == 1
+

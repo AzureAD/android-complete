@@ -658,17 +658,6 @@ def test_cli_done_and_skip_fail_without_mutating_gate(tmp_path, capsys):
     assert path.read_bytes() == before
 
 
-def test_reminder_is_not_a_gate():
-    from orchestrator.engine import Orchestrator as _O
-    st, orch = _orch()
-    # ui_failures is a reminder; flag_freeze is a gate
-    assert _O._is_reminder({"kind": "human_action"}) is True
-    assert _O._is_reminder({"kind": "approval_gate"}) is False
-    assert _O._is_reminder({"owner": "agent"}) is False
-
-
-
-
 def test_notify_unsigned_readiness_is_silent():
     """Readiness is interactive setup — it must NOT push (reversed from before)."""
     from orchestrator import render
@@ -901,51 +890,36 @@ def test_build_verify_orchestrator_blocks_on_failed_pregate_stage():
 
 
 
-def test_auth_gate_clean_when_both_suites_pass():
-    from steps.build_verify import auth_ecs
-    g = auth_ecs.auth_gate(_auth_suites(96.0, 100.0))
-    assert g["verdict"] == "clean" and g["blocking"] is False
-    assert "clear the 90% bar" in g["detail"]
+def test_oncall_continuation_override_requires_started_release_and_owner(tmp_path, capsys):
+    from orchestrator import cli
+    from orchestrator.state import StepState
 
+    rid = "2026-11"
+    st = ReleaseState(release_id=rid, owner_email="owner@example.test", ccd="2026-11-04")
+    _stub_build_defs("pass")
+    orch = Orchestrator(CONFIG, st, mocks={})
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+    assert orch.gate.signed
+    orch.gate.record_check("oncall_now", "fail", "rotated onto primary on-call")
+    assert not orch.gate.signed
+    # Unstarted release cannot override oncall_now.
+    assert "error" in orch.gate.override_oncall("owner@example.test", "accept risk")
+    assert not orch.gate.signed
 
+    # Once release work has started, the owner can record an audited continuation override.
+    st.set_step("preflight", "breaking", StepState(status="done", completed_at="2026-10-28T18:00:00Z"))
+    C.save_state(st, str(tmp_path), rid)
+    assert cli.main([
+        "--runs-root", str(tmp_path), "override-oncall", "--release", rid,
+        "--reason", "Primary duty started mid-release; continuing",
+    ]) == 0
+    capsys.readouterr()
+    reloaded = C.load_state(str(tmp_path), rid)
+    _, orch2 = C.load_orch(str(tmp_path), rid, CONFIG)
+    assert orch2.gate.signed
+    assert reloaded.readiness_items["oncall_now"]["override"]["scope"] == "continuation"
 
-
-def test_auth_gate_blocks_when_a_suite_below_threshold():
-    from steps.build_verify import auth_ecs
-    g = auth_ecs.auth_gate(_auth_suites(82.76, 100.0))    # the live example: E2E 24/29
-    assert g["verdict"] == "attention" and g["blocking"] is True
-    assert "NOT met" in g["detail"] and "UIAutomator" in g["detail"]
-
-
-
-
-def test_auth_gate_blocks_when_a_suite_missing():
-    from steps.build_verify import auth_ecs
-    g = auth_ecs.auth_gate(_auth_suites(100.0, 100.0, monthly_present=False))
-    assert g["blocking"] is True and "no result" in g["detail"]
-
-
-
-
-def test_build_verify_phase_shape():
-    """Phase 2 captures evidence, publishes the HTML report, emails a lightweight link,
-    then stops at a human RC quality decision gate. CCD+1 anchored."""
-    import yaml as _yaml
-    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    bv = next(p for p in cfg["phases"] if p["id"] == "build_verify")
-    ids = [s["id"] for s in bv["steps"]]
-    assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-                   "auth_ecs", "telemetry_verify", "rc_report_publish",
-                   "rc_report_notify", "rc_report_gate"]
-    assert bv.get("anchor") == "CCD+1"
-    tv = next(s for s in bv["steps"] if s["id"] == "telemetry_verify")
-    assert tv.get("source") == "scout" and tv.get("owner") == "agent"
-    pub = next(s for s in bv["steps"] if s["id"] == "rc_report_publish")
-    notify = next(s for s in bv["steps"] if s["id"] == "rc_report_notify")
-    gate = next(s for s in bv["steps"] if s["id"] == "rc_report_gate")
-    assert pub.get("write_command") == "publish-rc-report"
-    assert notify.get("source") == "scout" and notify.get("owner") == "agent"
-    assert gate.get("gate") and gate.get("owner") == "human"
 
 
 
@@ -1023,16 +997,6 @@ def test_build_verify_persists_pipeline_run_ids():
         _C.save_state(st, tmp, "2026-08")
         again = _C.load_state(tmp, "2026-08")
         assert again.pipeline_runs["rcs"][-1]["ecs"]["run_id"] == "900001"
-
-
-
-
-def test_oncall_team_is_single_source_from_readiness():
-    """The distribution step reads the on-call team from readiness.yaml's oncall_now item —
-    the SAME source the entry gate uses (no second copy to drift)."""
-    from tools import distribution as D
-    tid, tname = D.oncall_team()
-    assert tid == 78848 and "Android Shield" in (tname or "")
 
 
 

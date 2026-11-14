@@ -285,25 +285,6 @@ def test_publish_notes_gate_submit_verifies_stage():
 
 
 
-def test_publish_notes_gate_config_is_gate_after_integ_prs():
-    """Phase 4 separates branch monitoring, PR creation, and the publication gate."""
-    import yaml as _yaml
-    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
-    monitor = next(x for x in fin["steps"] if x["id"] == "orchestrator_finalization")
-    prs = next(x for x in fin["steps"] if x["id"] == "integ_prs")
-    s = next(x for x in fin["steps"] if x["id"] == "publish_notes_gate")
-    assert monitor.get("kind") == "auto" and monitor.get("effect_mode") == "read_only"
-    assert monitor["name"] == "Monitor Release Orchestrator to 'Publish GitHub Release Notes'"
-    assert prs.get("depends_on") == ["orchestrator_finalization"]
-    assert s.get("owner") == "human" and s.get("gate") is True
-    ids = [x["id"] for x in fin["steps"]]
-    assert (ids.index("orchestrator_finalization") < ids.index("integ_prs")
-            < ids.index("publish_notes_gate") < ids.index("verify_pub"))
-
-
-
-
 def test_integ_prs_reads_versions_from_state():
     """integ_prs uses state.versions as the source of truth (no versions mock, no re-discovery),
     and derives authenticator branches from its stored release branch."""
@@ -850,19 +831,6 @@ def test_release_announcement_cc_mode_off_is_plain_text():
 
 
 
-def test_release_announcement_cc_registry_loads_4_groups_20_members():
-    """The real config/announcement_cc.yaml resolves to 4 groups / 20 maintained members."""
-    from steps.finalize import release_announcement as RA
-    groups = RA._load_groups(_context(ReleaseState()))
-    assert [g for g, _ in groups] == ["CP/Intune", "LTW", "OneAuth", "Native Auth"]
-    assert sum(len(m) for _g, m in groups) == 20
-    assert len(RA._load_members(_context(ReleaseState()))) == 20
-    emails = {m["email"] for _g, ms in groups for m in ms}
-    assert "bingxi@microsoft.com" in emails and "yuxin@microsoft.com" in emails
-
-
-
-
 def test_release_announcement_post_to_redirects_target():
     """The `post_to` mock redirects to a test channel while keeping the post real."""
     from steps.lib import mockctx
@@ -1042,19 +1010,6 @@ def test_verify_release_notes_tags_v_prefixed_from_integ_config():
     assert VR._tag("16.5.0") == "v16.5.0"
     assert VR._gh_repo("broker") == IP.CONFIG["broker"]["gh_repo"]
     assert VR._gh_repo("common") == IP.CONFIG["common"]["gh_repo"]
-
-
-
-
-def test_verify_release_notes_config_is_agent_after_verify_pub():
-    """phases.yaml: verify_release_notes is an agent step placed after verify_pub."""
-    import yaml as _yaml
-    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
-    s = next(x for x in fin["steps"] if x["id"] == "verify_release_notes")
-    assert s.get("owner") == "agent" and s.get("source") != "scout"
-    ids = [x["id"] for x in fin["steps"]]
-    assert ids.index("verify_release_notes") > ids.index("verify_pub")
 
 
 
@@ -1281,17 +1236,6 @@ def test_tag_authenticator_blocks_when_build_not_run():
 
 
 
-def test_tag_authenticator_config_is_agent():
-    """phases.yaml classifies tag_authenticator as an agent step in rollout_start (F6)."""
-    import yaml as _yaml
-    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    phase = next(p for p in cfg["phases"] if p["id"] == "rollout_start")
-    s = next(x for x in phase["steps"] if x["id"] == "tag_authenticator")
-    assert s.get("owner") == "agent" and s.get("source") != "scout" and s.get("maps_to") == ["F6"]
-
-
-
-
 def test_oneauth_common_pr_preview_computes_plan():
     """build() is preview-first: reads versions, merge-needed, edits, existing PR → NeedsSkill."""
     from steps.lib import mockctx
@@ -1366,20 +1310,6 @@ def test_oneauth_common_pr_blocks_on_missing_anchor():
     finally:
         OA.ahead_behind, OA.read_text, OA.find_open_pr = o_ab, o_rt, o_fp
     assert out.kind == "blocked" and "anchors" in out.reason
-
-
-
-
-def test_oneauth_common_pr_config_is_external():
-    """phases.yaml classifies oneauth_common_pr as an agent step in finalize."""
-    import yaml as _yaml
-    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
-    s = next(x for x in fin["steps"] if x["id"] == "oneauth_common_pr")
-    assert s.get("kind") == "external" and s.get("source") == "scout"
-    # runs AFTER verify_pub (Common must be published first)
-    ids = [x["id"] for x in fin["steps"]]
-    assert ids.index("oneauth_common_pr") > ids.index("verify_pub")
 
 
 

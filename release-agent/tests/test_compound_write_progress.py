@@ -409,6 +409,38 @@ def test_changed_manual_remainder_requires_fresh_hash_not_original_approval(comp
     assert len(s.prs) == 8
 
 
+def test_pr_verification_and_reconciliation_tolerate_bot_enrichments(compound, monkeypatch):
+    """Azure Boards AB# title/link rewrites, CI labels (changelog:none), and GitOps footers
+    must not stall integ_prs or reconciliation; arbitrary external edits must still hold."""
+    s = compound
+    original_create = PR.gh_create_pr
+
+    def bot_mutated_create(slug, head, base, title, body, labels):
+        ok, url, detail = original_create(slug, head, base, title, body, labels)
+        pr = s.prs[(slug, head, base)]
+        # Simulate Azure Boards + CI bots mutating title, body, and labels right after creation.
+        pr["title"] = f"{title} [AB#101]"
+        pr["body"] = (
+            body.replace("AB#101", "[AB#101](https://identitydivision.visualstudio.com/Engineering/_workitems/edit/101)")
+                .replace("<!-- Scout-generated. Edit freely. -->", "")
+            + "\n\n---\n*AI-generated description by GitOps*"
+        )
+        pr["labels"] = sorted(set(labels) | {"changelog:none"})
+        return ok, url, detail
+
+    monkeypatch.setattr(PR, "gh_create_pr", bot_mutated_create)
+    interrupt_after_prs(s, 3)
+    # Resuming after an interruption must reconcile the bot-enriched PRs 1..3 cleanly.
+    assert s.run() == 0
+    assert len(s.prs) == 8
+    # Arbitrary external title tampering must still fail closed.
+    first_key = next(iter(s.prs))
+    s.prs[first_key]["title"] = "externally edited"
+    with pytest.raises(ValueError, match="PR identity/content uncertain"):
+        P.reconcile_operation(record(s).data["last_write_progress"]["operations"][1])
+
+
+
 @pytest.mark.parametrize("change", ["versions", "target", "root", "pbi-intent"])
 def test_other_frozen_scope_changes_cannot_smuggle_writes(compound, monkeypatch, change):
     s = compound

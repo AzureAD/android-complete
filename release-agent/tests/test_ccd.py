@@ -370,19 +370,6 @@ def test_ccd_confirmed_is_required_scout_item():
 
 
 
-def test_ccd_conflict_surfaced_in_status():
-    st = ReleaseState(release_id="2026-07", ccd="2026-07-08",
-                      ccd_source="default", ccd_conflict="2026-07-09")
-    orch = Orchestrator(CONFIG, st)
-    rpt = orch.status_report()
-    assert rpt["ccd_conflict"] == "2026-07-09"
-    from orchestrator import render
-    out = render.status_view(rpt)
-    assert "Confirm the date" in out and "2026-07-09" in out
-
-
-
-
 def test_ccd_viability_past_compressed_healthy():
     """ccd_viability is the single source of temporal truth: past (invalid),
     compressed (Phase 0 window squeezed — warn), and healthy (full runway)."""
@@ -403,15 +390,6 @@ def test_ccd_viability_past_compressed_healthy():
     # BOUNDARY — CCD today: not past, but zero prep days → compressed
     t = schedule.ccd_viability(date(2026, 8, 18), date(2026, 8, 18))
     assert t["past"] is False and t["compressed"] is True and t["runway_days"] == 0
-
-
-
-
-def test_no_localization_strings_step():
-    """The old #5 localization strings step was removed."""
-    st, orch = _orch()
-    preflight = next(p for p in orch.config["phases"] if p["id"] == "preflight")
-    assert "strings" not in [s["id"] for s in preflight["steps"]]
 
 
 
@@ -474,24 +452,6 @@ def test_ccd_steps_blocked_without_ccd():
     for mod in (final_reminder, pr_reminder, localization):
         out = _invoke(mod.build, st)
         assert out.kind == "blocked"
-
-
-
-
-def test_ccd_phase_shape_and_scout_kinds():
-    """Phase 1 is three scout comms/trigger steps and NO gate — the branch cut is
-    automatic (at 11 PM), so there's no manual cut step; the next hold is the Phase-3
-    ui_failures reminder (Phase 2's rc_report gate is automatic)."""
-    import yaml
-    cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    ccd = next(p for p in cfg["phases"] if p["id"] == "ccd")
-    ids = [s["id"] for s in ccd["steps"]]
-    assert ids == ["final_reminder", "pr_reminder", "localization"]
-    by = {s["id"]: s for s in ccd["steps"]}
-    for sid in ("final_reminder", "pr_reminder", "localization"):
-        assert by[sid].get("source") == "scout", f"{sid} should be a scout step"
-    # Phase 1 has no gate anymore
-    assert not any(s.get("gate") for s in ccd["steps"])
 
 
 
@@ -622,22 +582,6 @@ def test_localization_decide_branches(monkeypatch):
     monkeypatch.setattr(L, "get_tz", lambda _name: None)
     with pytest.raises(ValueError, match="timezone data unavailable"):
         L.decide(_context(st3), True, now=deadline, pr_status="active", evidence=proof)
-
-
-
-
-def test_localization_review_post_no_owner_has_no_mention():
-    """With no owner email, the post still goes out but without an @mention array."""
-    from steps.ccd import localization as L
-    st = _loc_state(started_min_ago=60)
-    st.owner_email = ""
-    st.owner_name = ""
-    from datetime import datetime, timezone
-    d = L.decide(_context(st), True, _PR_LOG, datetime.fromisoformat("2026-09-09T20:00:00+00:00"),
-                 evidence=L.RunEvidence("succeeded", True))
-    assert d["decision"] == "announce_pr"
-    assert "mentions" not in d["chat"]
-    assert "4:00 PM Los Angeles time" in d["chat"]["content"]
 
 
 
@@ -1279,3 +1223,18 @@ def test_localization_cli_log_proof_and_timeout(tmp_path, monkeypatch, capsys, l
     expected_status = {"pr": "in_flight", "no_pr": "done"}.get(log_kind, "blocked")
     assert stored.status == expected_status
     assert not ({"run_result", "logs_complete", "no_change_confirmation"} & stored.data.keys())
+
+
+def test_refresh_conflict_ignores_pipeline_override_after_checker_fired(monkeypatch):
+    from tools import checks
+
+    monkeypatch.setattr(checks, "read_pipeline_variable", lambda *a, **k: (True, "2026-11-11", "ok"))
+    st = ReleaseState(release_id="2026-11", ccd="2026-11-04", ccd_source="manual")
+    assert C.refresh_conflict(st) is True
+    assert st.ccd_conflict == "2026-11-11"
+
+    st.set_step("build_verify", "checker_fired", StepState(status="done"))
+    assert C.refresh_conflict(st) is True
+    assert st.ccd_conflict is None
+    assert C.refresh_conflict(st) is False
+

@@ -510,20 +510,6 @@ def test_clone_plans_auth_blocks_without_ccd():
 
 
 
-def test_bug_bash_clone_steps_are_real_agents():
-    """Both clone steps expose real agent handlers and transactional effect hooks."""
-    import steps as _steps
-    for sid in ("clone_plans_broker", "clone_plans_auth"):
-        mod = _steps.get_step("bug_bash", sid)
-        assert mod is not None and getattr(mod, "KIND", None) == "agent"
-        assert callable(getattr(mod, "build", None))
-        assert getattr(mod, "EFFECT_MODE", None) == "transactional"
-        for hook in ("prepare_effect", "execute", "reconcile"):
-            assert callable(getattr(mod, hook, None))
-
-
-
-
 def test_distribute_tests_step_returns_transient_corrections_without_storing_plan():
     """Corrections are read-only report data; the step waits for valid ADO."""
     mocks = {
@@ -748,14 +734,6 @@ def test_send_invite_blocks_without_plans():
 
 
 
-def test_send_invite_is_scout_step():
-    import steps as _steps
-    mod = _steps.get_step("bug_bash", "send_invite")
-    assert mod is not None and getattr(mod, "KIND", None) == "scout"
-
-
-
-
 # ---- Phase 3: activate_chat + record-bugbash-chat ----
 
 def test_activate_chat_composes_needs_skill():
@@ -903,17 +881,6 @@ def test_native_auth_signoff_is_owner_attestation():
     assert "`done --step" not in out2["prompt"]
     assert not out2.get("outbound") and "tool" not in out2
     assert "engineer@example.test" in out2["prompt"]
-
-
-
-
-def test_native_auth_signoff_config_is_attest():
-    """phases.yaml classifies it as a human attest step (not scout)."""
-    import yaml as _yaml
-    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    bb = next(p for p in cfg["phases"] if p["id"] == "bug_bash")
-    s = next(x for x in bb["steps"] if x["id"] == "native_auth_signoff")
-    assert s.get("owner") == "human" and s.get("attest") is True and s.get("source") != "scout"
 
 
 

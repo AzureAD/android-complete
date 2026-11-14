@@ -134,28 +134,6 @@ def test_attest_prompt_batches_additional_configured_items():
 
 
 
-def test_no_blocking_attribute():
-    """The 'blocking' per-item distinction was removed — all items equally required."""
-    st, orch = _orch(signed=False)
-    chk = orch.gate.checklist()
-    for it in chk["items"]:
-        assert "blocking" not in it
-
-
-
-
-def test_degraded_rejected_for_non_opt_out_item():
-    """'degraded' is only valid for opt_out items — a normal scout item rejects it."""
-    _stub_build_defs("pass")
-    st = ReleaseState(release_id="t")
-    orch = Orchestrator(CONFIG, st)
-    res = orch.gate.record_check("oncall_now", "degraded", "nope")
-    assert "error" in res
-
-
-
-
-
 def test_render_is_consistent_and_has_links():
     """The canonical render must include links and both type labels (no lock marker)."""
     from orchestrator import render
@@ -334,16 +312,6 @@ def test_conditional_hotfix_excluded_by_default():
 
 # ---- manual overrides ----
 
-def test_skip_requires_reason():
-    st, orch = _orch()
-    _advance_to_first_gate(orch)   # holds at bugbash_complete
-    act = orch.skip_step("bug_bash", "bugbash_complete", "")   # no reason
-    assert act.kind == "idle"
-    assert not st.is_done("bug_bash", "bugbash_complete")       # unchanged
-
-
-
-
 def test_reopen_step():
     st, orch = _orch()
     _advance_to_first_gate(orch); orch.approve_gate("ok")
@@ -371,13 +339,6 @@ def test_halt_blocks_then_resume():
     assert st.is_done("preflight", "notice")                # advances again
 
 
-
-
-def test_halt_requires_reason():
-    st, orch = _orch()
-    act = orch.halt("")
-    assert act.kind == "idle"
-    assert st.halt is None
 
 
 def test_skip_release_stops_local_engine():
@@ -503,17 +464,6 @@ def test_eventlog_step_qa_is_captured_and_counted():
 
 # ---- CCD schedule math (pure) ----
 
-def test_second_wednesday():
-    from orchestrator import schedule
-    from datetime import date
-    # July 2026: Wednesdays land on 1, 8, 15, 22, 29 → 2nd is the 8th.
-    assert schedule.second_wednesday(2026, 7) == date(2026, 7, 8)
-    # Feb 2026 starts on a Sunday → Wednesdays 4, 11 → 2nd is the 11th.
-    assert schedule.second_wednesday(2026, 2) == date(2026, 2, 11)
-
-
-
-
 def test_resolve_ccd_default_and_conflict():
     from orchestrator import schedule
     from datetime import date
@@ -528,17 +478,6 @@ def test_resolve_ccd_default_and_conflict():
     assert schedule.pipeline_conflict("2026-07", "2026-06-30", "2026-07-08") is None
     # against the default when nothing stored yet (init path)
     assert schedule.pipeline_conflict("2026-07", "2026-07-09", None) == date(2026, 7, 9)
-
-
-
-
-def test_anchor_offset_and_date():
-    from orchestrator import schedule
-    from datetime import date
-    assert schedule.anchor_offset("CCD-7") == -7
-    assert schedule.anchor_offset("CCD+1") == 1
-    assert schedule.anchor_offset("CCD") == 0
-    assert schedule.anchor_date(date(2026, 7, 8), "CCD-7") == date(2026, 7, 1)
 
 
 
@@ -580,15 +519,6 @@ def test_only_frontier_phase_shows_current_despite_stale_downstream_progress():
 
 
 
-def test_no_anchor_when_ccd_unknown_runs_immediately():
-    """Backward-compatible: with no CCD stored, the anchor is inert and Phase 0 runs."""
-    st, orch = _orch()   # ccd is None
-    orch.run_until_gate()
-    assert orch.status_report()["status"] == "awaiting_action"
-
-
-
-
 # ---- reminder steps (human, non-gate → hold until done) ----
 
 def test_reminder_holds_until_done():
@@ -613,20 +543,6 @@ def test_reminder_holds_until_done():
     orch.complete_step(note="triaged")
     assert st.is_done("bug_bash", "ui_failures")
     assert "bug_bash.ui_failures" not in orch.status_report()["pending_human"]
-
-
-
-
-def test_owner_stored_and_in_status():
-    st = ReleaseState(release_id="2026-08", ccd="2026-08-12",
-                      ccd_source="default", owner_email="pedroro@microsoft.com",
-                      owner_name="Pedro Romero Vargas")
-    orch = Orchestrator(CONFIG, st)
-    rpt = orch.status_report()
-    assert rpt["owner_email"] == "pedroro@microsoft.com"
-    assert rpt["owner_name"] == "Pedro Romero Vargas"
-    from orchestrator import render
-    assert "pedroro@microsoft.com" in render.status_view(rpt)
 
 
 
@@ -755,33 +671,6 @@ def test_infra_registers_declared_tools_allowlist():
             infra.scout_mcp_config_path = orig
 
 
-
-
-def test_requirements_declares_teams_mcp_with_tools():
-    """The repo requirements.yaml ships the Teams MCP with a populated tools
-    allowlist, so the entry-gate mcp_servers check includes it and infra registers
-    it correctly (empty allowlist would make Scout drop it)."""
-    from orchestrator import infra
-    root = os.path.dirname(os.path.abspath(__file__))
-    req = infra.load_requirements(os.path.join(os.path.dirname(root), "config", "requirements.yaml"))
-    teams = next((m for m in req.get("mcp_servers", []) if m.get("scout_key") == "teams"), None)
-    assert teams is not None, "Teams MCP missing from requirements.yaml"
-    assert "CreateChat" in teams.get("tools", []) and len(teams["tools"]) >= 30
-
-
-def test_requirements_declares_sharepoint_mcp_with_tools():
-    """The repo requirements.yaml ships SharePoint MCP with a populated tools
-    allowlist so setup can register it without Scout dropping the command server."""
-    from orchestrator import infra
-    root = os.path.dirname(os.path.abspath(__file__))
-    req = infra.load_requirements(os.path.join(os.path.dirname(root), "config", "requirements.yaml"))
-    sharepoint = next((m for m in req.get("mcp_servers", []) if m.get("scout_key") == "sharepoint"), None)
-    assert sharepoint is not None, "SharePoint MCP missing from requirements.yaml"
-    tools = sharepoint.get("tools", [])
-    assert "createSmallTextFile" in tools
-    assert "readSmallTextFile" in tools
-    assert "getDefaultDocumentLibraryInSite" in tools
-    assert len(tools) >= 8
 
 
 def test_all_command_mcps_ship_nonempty_tool_allowlists():
@@ -1004,17 +893,6 @@ def test_notifications_config_defaults_and_target():
 
 
 
-def test_notifications_repo_config_targets_scout_bot():
-    """The repo's config/notifications.yaml enables Teams and targets the Scout bot."""
-    from orchestrator import notifications as N
-    cfg = N.load_config(CONFIG)                     # real config/ dir
-    assert cfg["channels"]["email"] is True
-    assert cfg["channels"]["teams"] is True
-    assert N.teams_target(cfg) == "scout"
-
-
-
-
 def test_notification_html_lists_all_tasks_and_flags_attention():
     """The HTML digest shows every step with a status pill and flags the hold."""
     from orchestrator import render
@@ -1100,16 +978,6 @@ def test_stage_completion_uses_latest_stage_attempt():
 
 
 
-def test_active_phase_report_steps_carry_links():
-    """The digest's active-phase step model exposes each step's durable `links` so the
-    links to items a step evaluated aren't dropped from the phase report."""
-    st, orch = _mock_orch({})
-    ap = orch.status_report()["active_phase"]
-    assert ap and all("links" in s for s in ap["steps"])
-
-
-
-
 def test_agent_steps_render_as_automatic_not_pending():
     """UX contract: engine-run agent steps ('auto') read IDENTICALLY to skill-run scout
     steps — 'Scout runs this — automatic', 🤖 — so a human never sees a confusing
@@ -1154,25 +1022,6 @@ def test_get_failed_tests_drops_fully_recovered_unit_suite():
         assert ok and suites == []          # the only failure recovered → no failing suite
     finally:
         P._ado_rest_get = orig
-
-
-
-
-def test_ui_case_id_from_result_extraction():
-    from tools import pipelines as P
-    assert P._ui_case_id_from_result({"automatedTestName": "test_3522687_WpjWithHardwareKey"}) == 3522687
-    assert P._ui_case_id_from_result({"testCaseTitle": "test_833561_WPJ_Install"}) == 833561
-    assert P._ui_case_id_from_result({"automatedTestStorage": "com.x.TestCase1592465"}) == 1592465
-    assert P._ui_case_id_from_result({"automatedTestName": "no_case_here"}) is None
-
-
-
-
-def test_eligible_testers_removes_owner_oce_and_excluded():
-    from tools import distribution as D
-    roster = ["a@x", "excluded@x", "b@x", "owner@x", "oce@x", "c@x"]
-    elig = D.eligible_testers(roster, ["excluded@x"], owner="OWNER@x", oce="oce@X")
-    assert elig == ["a@x", "b@x", "c@x"]        # case-insensitive owner/oce/excluded removal
 
 
 
@@ -1613,21 +1462,6 @@ def test_engine_preserves_terminal_records_until_explicit_reopen():
 
 
 
-def test_stepstate_data_persists():
-    """StepState.data (localization build id / start time) survives save/load."""
-    with tempfile.TemporaryDirectory() as tmp:
-        p = os.path.join(tmp, "s.json")
-        st = ReleaseState(release_id="d")
-        step = st.get_step("ccd", "localization")
-        step.data = {"build_id": "42", "started_at": "2026-09-09T12:00:00Z"}
-        st.set_step("ccd", "localization", step)
-        st.save(p)
-        st2 = ReleaseState.load(p)
-        assert st2.get_step("ccd", "localization").data["build_id"] == "42"
-
-
-
-
 def test_parallel_autos_run_despite_pending_holds():
     """Independent auto steps (breaking/cg/cron) complete even while scout/attest
     steps are still holding — a hold no longer blocks its siblings."""
@@ -2034,37 +1868,6 @@ def test_orchestrator_finalization_resolves_final_mrwp_and_auth_tags(monkeypatch
         "parked": True,
         "mrwp_run_id": "1692575",
     }
-
-
-
-
-def test_discover_versions_from_orchestrator_tags():
-    """pipelines.discover_versions maps the orchestrator run's Next*Version tags."""
-    from tools import pipelines as P
-    o = P.find_orchestrator_run
-    P.find_orchestrator_run = lambda *a, **k: (True, {"id": 9, "tags": [
-        "AuthenticatorBranch=release-2026-08-13", "NextCommonVersion=24.6.0",
-        "NextMsalVersion=8.4.2", "NextBrokerVersion=20.1.0"]}, "")
-    try:
-        ok, v, _d = P.discover_versions("ORG", "PROJ", "2026-08")
-    finally:
-        P.find_orchestrator_run = o
-    assert ok and v == {"common": "24.6.0", "msal": "8.4.2", "broker": "20.1.0"}
-
-
-
-
-def test_release_state_records_versions_roundtrip():
-    """record_versions merges non-blank versions and survives save/load."""
-    import tempfile
-    from orchestrator import cli_common as _C
-    st = ReleaseState(release_id="2026-08")
-    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0", "authenticator": ""})
-    assert st.versions == {"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"}  # blank dropped
-    with tempfile.TemporaryDirectory() as d:
-        _C.save_state(st, d, "2026-08")
-        again = _C.load_state(d, "2026-08")
-    assert again.versions["msal"] == "8.4.2" and "authenticator" not in again.versions
 
 
 

@@ -146,6 +146,23 @@ def cmd_record_check(args):
     return 0
 
 
+def cmd_override_oncall(args):
+    """Record an audited continuation-only override when the release owner rotates
+    onto primary on-call after a release has already started."""
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
+    res = orch.gate.override_oncall(args.confirmed_by or st.owner_email or "", args.reason or "")
+    if "error" in res:
+        print(res["error"])
+        return 1
+    C.save_state(st, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log(
+        "readiness_oncall_overridden", item="oncall_now", reason=args.reason)
+    C.emit(args.runs_root, args.release,
+           "Recorded continuation-only on-call override; readiness entry gate remains satisfied.\n"
+           + render.readiness_followup(res, args.release), kind="oncall_override")
+    return 0
+
+
 def cmd_m365_capabilities(args):
     from orchestrator.m365_capabilities import plan
     st, _ = C.load_orch(args.runs_root, args.release, args.config)
@@ -209,3 +226,10 @@ def register(sub):
     dc.add_argument("--item", action="append", required=True, help="Item id you cannot satisfy (repeatable)")
     dc.add_argument("--reason", default="", help="Why (recorded in the event log)")
     dc.set_defaults(func=cmd_decline)
+
+    oo = sub.add_parser("override-oncall",
+                        help="Audited continuation-only override if owner becomes primary on-call mid-release")
+    oo.add_argument("--release", required=True)
+    oo.add_argument("--reason", required=True, help="Explicit owner reason for continuing")
+    oo.add_argument("--confirmed-by", default=None, help="Release owner email (defaults to state owner)")
+    oo.set_defaults(func=cmd_override_oncall)
