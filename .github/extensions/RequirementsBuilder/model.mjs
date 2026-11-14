@@ -162,7 +162,7 @@ export function acceptProposal(draft, fieldId) {
     draft.request = null;
 }
 
-const cell = (value) => value.trim().replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>") || "Unknown";
+const cell = (value) => value.trim().replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>") || "Unknown";
 
 function renderAnswer(draft, field) {
     const autoNA = applicability(draft, field);
