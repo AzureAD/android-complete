@@ -21,10 +21,8 @@ function formatPct(value: number | null): string {
 
 export function FeatureScorecardStrip({
     feature,
-    onOpenFlightRecorder,
 }: {
     feature: FactoryFeature;
-    onOpenFlightRecorder?: () => void;
 }) {
     const [expanded, setExpanded] = useState(false);
     const card = useMemo(() => computeFeatureScorecard(feature), [feature]);
@@ -80,24 +78,17 @@ export function FeatureScorecardStrip({
                             : "Stage 6 audit pending"}
                     </small>
                 </div>
-                <div className="scorecard-actions">
-                    <button
-                        type="button"
-                        className="ghost-chip-btn"
-                        onClick={() => setExpanded((prev) => !prev)}
-                    >
-                        {expanded ? "Hide breakdown ▴" : "Stage breakdown ▾"}
-                    </button>
-                    {onOpenFlightRecorder && (
+                {activeStages.length > 0 && (
+                    <div className="scorecard-actions">
                         <button
                             type="button"
                             className="ghost-chip-btn"
-                            onClick={onOpenFlightRecorder}
+                            onClick={() => setExpanded((prev) => !prev)}
                         >
-                            Transcripts →
+                            {expanded ? "Hide cost split ▴" : "Cost by stage ▾"}
                         </button>
-                    )}
-                </div>
+                    </div>
+                )}
             </div>
 
             {expanded && activeStages.length > 0 && (
@@ -162,7 +153,7 @@ export function WorkspaceAnalyticsView({
                         />
                         <span>ADO Published Only ({analytics.publishedFeatureCount})</span>
                     </label>
-                    <button type="button" className="secondary" onClick={onClose}>
+                    <button type="button" className="primary" onClick={onClose}>
                         ← Back to Feature Studio
                     </button>
                 </div>

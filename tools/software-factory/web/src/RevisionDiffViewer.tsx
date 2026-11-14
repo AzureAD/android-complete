@@ -13,7 +13,7 @@ import {
     type TextDiffResult,
     type WordDiffToken,
 } from "../../core/diff.ts";
-import type { Artifact, Json } from "../../core/lifecycle-contracts.ts";
+import type { Artifact, FactoryFeature, Json } from "../../core/lifecycle-contracts.ts";
 import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 
 export type DiffLayoutMode = "unified" | "split";
@@ -327,7 +327,12 @@ export function RequirementsRevisionDiffExplorer({
     }, [before, after]);
 
     if (history.length < 2 || !before || !after || !diff) {
-        return null;
+        const single = history[0];
+        return (
+            <div className="studio-callout neutral">
+                <strong>Single Saved Brief Revision{single ? ` (Revision ${single.number})` : ""}</strong> — This feature brief was approved in a single revision ({single ? `${single.requirements.length} success criteria` : "no prior edits"}). Whenever you edit the brief or accept AI intake suggestions, word-level diffs between revisions appear here automatically.
+            </div>
+        );
     }
 
     const options = history.map((rev) => ({
@@ -903,5 +908,141 @@ export function PlanRevisionDiffExplorer({
                 </section>
             ))}
         </div>
+    );
+}
+
+export type DiffStageKey = "brief" | "design" | "plan";
+
+export function FeatureRevisionDiffHub({
+    feature,
+    designArtifact,
+    allDesignArtifacts = [],
+    planArtifact,
+    allPlanArtifacts = [],
+    initialStage,
+    onAskAi,
+}: {
+    feature: FactoryFeature;
+    designArtifact?: Artifact;
+    allDesignArtifacts?: Artifact[];
+    planArtifact?: Artifact;
+    allPlanArtifacts?: Artifact[];
+    initialStage?: DiffStageKey;
+    onAskAi?: (ctx: FeatureQaContext) => void;
+}) {
+    const designSnapshots = useMemo(
+        () => (designArtifact ? buildDesignSnapshots(designArtifact, allDesignArtifacts) : []),
+        [designArtifact, allDesignArtifacts],
+    );
+    const planSnapshots = useMemo(
+        () => (planArtifact ? buildPlanSnapshots(planArtifact, allPlanArtifacts) : []),
+        [planArtifact, allPlanArtifacts],
+    );
+
+    const defaultStage: DiffStageKey = initialStage
+        || (designSnapshots.length >= 2
+            ? "design"
+            : planSnapshots.length >= 2
+                ? "plan"
+                : feature.history.length >= 2
+                    ? "brief"
+                    : designArtifact
+                        ? "design"
+                        : planArtifact
+                            ? "plan"
+                            : "brief");
+
+    const [activeStage, setActiveStage] = useState<DiffStageKey>(defaultStage);
+
+    return (
+        <section className="revision-diff-hub" aria-label="Stage 1, 2 and 3 Revision Diff Explorer">
+            <div className="diff-hub-header">
+                <div>
+                    <span className="eyebrow">REVISION DIFF VIEWER · UNIFIED &amp; SIDE-BY-SIDE</span>
+                    <h3>Compare Author Drafts, Reviewer Rounds &amp; Scope Revisions</h3>
+                </div>
+                <div className="diff-stage-tabs" role="tablist" aria-label="Select stage diff">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeStage === "brief"}
+                        className={`diff-stage-tab ${activeStage === "brief" ? "active" : ""}`}
+                        onClick={() => setActiveStage("brief")}
+                    >
+                        <span>Stage 1 · Brief &amp; Criteria</span>
+                        <span className={`diff-count-chip ${feature.history.length >= 2 ? "has-diff" : ""}`}>
+                            {feature.history.length >= 2 ? `${feature.history.length} revs` : "1 rev"}
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeStage === "design"}
+                        className={`diff-stage-tab ${activeStage === "design" ? "active" : ""}`}
+                        onClick={() => setActiveStage("design")}
+                    >
+                        <span>Stage 2 · Architecture Design</span>
+                        <span className={`diff-count-chip ${designSnapshots.length >= 2 ? "has-diff" : ""}`}>
+                            {designSnapshots.length >= 2
+                                ? `${designSnapshots.length} rounds`
+                                : designSnapshots.length === 1
+                                    ? "1st-pass ✓"
+                                    : "pending"}
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeStage === "plan"}
+                        className={`diff-stage-tab ${activeStage === "plan" ? "active" : ""}`}
+                        onClick={() => setActiveStage("plan")}
+                    >
+                        <span>Stage 3 · PBI Plan</span>
+                        <span className={`diff-count-chip ${planSnapshots.length >= 2 ? "has-diff" : ""}`}>
+                            {planSnapshots.length >= 2
+                                ? `${planSnapshots.length} rounds`
+                                : planSnapshots.length === 1
+                                    ? "1st-pass ✓"
+                                    : "pending"}
+                        </span>
+                    </button>
+                </div>
+            </div>
+
+            {activeStage === "brief" && (
+                <RequirementsRevisionDiffExplorer
+                    history={feature.history}
+                    onAskAi={onAskAi}
+                />
+            )}
+
+            {activeStage === "design" && (
+                designArtifact ? (
+                    <DesignRevisionDiffExplorer
+                        artifact={designArtifact}
+                        allDesignArtifacts={allDesignArtifacts}
+                        onAskAi={onAskAi}
+                    />
+                ) : (
+                    <div className="studio-callout neutral">
+                        <strong>No Design Specification Yet</strong> — Run Stage 2 (Design) to capture Author vs. Independent Reviewer design rounds and compare section-by-section diffs here.
+                    </div>
+                )
+            )}
+
+            {activeStage === "plan" && (
+                planArtifact ? (
+                    <PlanRevisionDiffExplorer
+                        artifact={planArtifact}
+                        allPlanArtifacts={allPlanArtifacts}
+                        onAskAi={onAskAi}
+                    />
+                ) : (
+                    <div className="studio-callout neutral">
+                        <strong>No PBI Plan Yet</strong> — Run Stage 3 (Plan) after approving Design to compare Planner vs. Independent Reviewer PBI decomposition rounds here.
+                    </div>
+                )
+            )}
+        </section>
     );
 }

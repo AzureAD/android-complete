@@ -100,6 +100,7 @@ export function App() {
     const [theme, setTheme] = useState<"light" | "dark">("dark");
     const [featureFilter, setFeatureFilter] = useState("");
     const [activeStageIdx, setActiveStageIdx] = useState<number>(0);
+    const [stage1SubTab, setStage1SubTab] = useState<"brief" | "diff">("brief");
     const [flightOpen, setFlightOpen] = useState(false);
     const [qaOpen, setQaOpen] = useState(false);
     const [qaPinnedContext, setQaPinnedContext] = useState<FeatureQaContext | null>(null);
@@ -245,6 +246,7 @@ export function App() {
         setEditing(false);
         setCreating(false);
         setAnalyticsOpen(false);
+        setStage1SubTab("brief");
         setSelectedId(id);
         setFlightOpen(false);
         setQaPinnedContext(null);
@@ -337,7 +339,6 @@ export function App() {
     }
 
     const workspace = worktree?.repositoryName || project?.workspace.split(/[\\/]/).filter(Boolean).pop() || "Local workspace";
-    const activeWorktreeSlug = worktree?.isLinkedWorktree ? worktree.worktreeName : null;
     const formOpen = creating || editing;
     const intake = selected?.factory.artifacts.find((artifact) => artifact.id === selected.currentArtifacts.intake);
     const intakeRunning = selected?.factory.executions.some((run) => run.kind === "intake" && ["starting", "running", "paused"].includes(run.status));
@@ -354,20 +355,54 @@ export function App() {
 
     return <div className="app-shell" data-theme={theme}>
         <aside className="sidebar">
-            <a className="brand" href="/" aria-label="Software Factory home"><span className="brand-mark"><FactoryMark /></span><span>Software<br /><strong>Factory</strong></span></a>
-            <div className="workspace">
-                <span className="eyebrow">UNIFIED REPOSITORY</span>
-                <strong>{workspace}</strong>
+            <div className="sidebar-brand-row">
+                <a className="brand" href="/" aria-label="Software Factory home">
+                    <span className="brand-mark"><FactoryMark /></span>
+                    <span>Software <strong>Factory</strong></span>
+                </a>
+                <span className="version-chip">0.2</span>
+            </div>
+
+            <div className="workspace-compact" title={worktree?.workspace || project?.workspace || workspace}>
+                <span className="workspace-repo-name">{workspace}</span>
                 {worktree?.branch && (
-                    <span className="worktree-context-chip" title={worktree.workspace}>
-                        ⎇ {worktree.branch}{activeWorktreeSlug ? ` · worktree` : ""}
+                    <span className="worktree-context-chip">
+                        ⎇ {worktree.branch.length > 26 ? `${worktree.branch.slice(0, 24)}…` : worktree.branch}
                     </span>
                 )}
-                <span>All linked git worktrees unified.</span>
             </div>
-            <div className="sidebar-heading"><span>FEATURES</span><span>{visibleFeatures.length.toString().padStart(2, "0")}</span></div>
-            <button className="new-feature" onClick={newFeature} disabled={busy}><span aria-hidden="true">+</span> New feature</button>
-            {visibleFeatures.length > 2 && (
+
+            <div className="sidebar-primary-nav" role="navigation" aria-label="Primary workspace views">
+                <button
+                    type="button"
+                    className={`sidebar-view-btn ${!analyticsOpen && !creating ? "active" : ""}`}
+                    onClick={() => { setAnalyticsOpen(false); setCreating(false); }}
+                >
+                    <span>Feature Studio</span>
+                    <span className="sidebar-count-pill">{visibleFeatures.length}</span>
+                </button>
+                <button
+                    type="button"
+                    className={`sidebar-view-btn ${analyticsOpen ? "active" : ""}`}
+                    onClick={() => { setCreating(false); setEditing(false); setAnalyticsOpen(true); }}
+                >
+                    <span>Scorecard &amp; Analytics</span>
+                    <span className="sidebar-count-pill">
+                        {workspaceAnalytics.convergence.firstPushCiGreenRatePct !== null
+                            ? `${workspaceAnalytics.convergence.firstPushCiGreenRatePct}% CI`
+                            : `${workspaceAnalytics.totalExecutions} runs`}
+                    </span>
+                </button>
+            </div>
+
+            <div className="sidebar-heading">
+                <span>FEATURES</span>
+                <button type="button" className="sidebar-new-btn" onClick={newFeature} disabled={busy}>
+                    + New
+                </button>
+            </div>
+
+            {visibleFeatures.length > 4 && (
                 <input
                     className="sidebar-search"
                     type="search"
@@ -377,6 +412,7 @@ export function App() {
                     onChange={(e) => setFeatureFilter(e.target.value)}
                 />
             )}
+
             <nav aria-label="Features" className="feature-nav">
                 {visibleFeatures
                     .filter((f) => !featureFilter.trim() || f.current.title.toLowerCase().includes(featureFilter.toLowerCase()))
@@ -397,23 +433,24 @@ export function App() {
                             <span className={isRunning ? "status-dot pulse" : feature.status === "ready_for_design" ? "status-dot ready" : "status-dot"} />
                             <span className="feature-link-body">
                                 <strong>{feature.current.title}</strong>
-                                <small>{step.title}</small>
                                 <span className="feature-link-badges">
-                                    <span className="mini-stage-pill">Stage {step.stage + 1}/6</span>
-                                    {feature.shared && <span className="mini-ado-pill">ADO #{feature.shared.target.workItemId}</span>}
+                                    <span className="mini-stage-pill">S{step.stage + 1}/6 · {step.stage === 5 ? "Verify" : ["Brief", "Design", "Plan", "Backlog", "Code", "Verify"][step.stage]}</span>
+                                    {feature.shared
+                                        ? <span className="mini-ado-pill">ADO #{feature.shared.target.workItemId}</span>
+                                        : <span className="mini-draft-pill">Local draft</span>}
                                     {isCrossWorktree && originLeaf && (
                                         <span
                                             className="mini-worktree-pill"
                                             title={`Origin worktree: ${originWorkspace}${prov?.originBranch ? ` (${prov.originBranch})` : ""}`}
                                         >
-                                            ⎇ {originLeaf.length > 16 ? `${originLeaf.slice(-14)}` : originLeaf}
+                                            ⎇ {originLeaf.length > 14 ? `${originLeaf.slice(-12)}` : originLeaf}
                                         </span>
                                     )}
                                 </span>
                             </span>
                         </button>;
                     })}
-                {!busy && visibleFeatures.length === 0 && <p className="sidebar-empty">Your next idea starts here.</p>}
+                {!busy && visibleFeatures.length === 0 && <p className="sidebar-empty">No features yet — click + New above.</p>}
                 {supersededDraftIds.size > 0 && (
                     <button
                         type="button"
@@ -421,183 +458,190 @@ export function App() {
                         onClick={() => setShowSupersededDrafts((prev) => !prev)}
                     >
                         {showSupersededDrafts
-                            ? `Hide ${supersededDraftIds.size} pre-publish local draft${supersededDraftIds.size === 1 ? "" : "s"}`
+                            ? `Hide ${supersededDraftIds.size} archived local draft${supersededDraftIds.size === 1 ? "" : "s"}`
                             : `Show ${supersededDraftIds.size} archived pre-publish draft${supersededDraftIds.size === 1 ? "" : "s"}`}
                     </button>
                 )}
             </nav>
-            {!formOpen && (
-                <div className="sidebar-flight-box">
-                    <div className="sidebar-heading"><span>OBSERVABILITY &amp; AI</span><span>{selected?.factory.executions.length ?? 0}</span></div>
-                    <button
-                        type="button"
-                        className={`sidebar-flight-btn ${analyticsOpen ? "active" : ""}`}
-                        onClick={() => setAnalyticsOpen(!analyticsOpen)}
-                    >
-                        <span className="sidebar-qa-glyph" aria-hidden="true">📊</span>
-                        <span className="feature-link-body">
-                            <strong>Scorecard &amp; Analytics</strong>
-                            <small>AI credits, convergence &amp; 1st-push CI</small>
-                        </span>
-                    </button>
-                    {selected && (
-                        <>
-                            <button
-                                type="button"
-                                className={`sidebar-flight-btn ${flightOpen && !analyticsOpen ? "active" : ""}`}
-                                onClick={() => { setAnalyticsOpen(false); setFlightOpen(!flightOpen); }}
-                            >
-                                <span className={`status-dot ${selected.factory.executions.some((e) => ["starting", "running"].includes(e.status)) ? "pulse" : "ready"}`} />
-                                <span className="feature-link-body">
-                                    <strong>Subagent Flight Recorder</strong>
-                                    <small>Prompts, reasoning &amp; full transcripts</small>
-                                </span>
-                            </button>
-                            <button
-                                type="button"
-                                className={`sidebar-flight-btn sidebar-qa-btn ${qaOpen ? "active" : ""}`}
-                                onClick={() => setQaOpen(!qaOpen)}
-                            >
-                                <span className="sidebar-qa-glyph" aria-hidden="true">✦</span>
-                                <span className="feature-link-body">
-                                    <strong>Ask Copilot (Q&amp;A)</strong>
-                                    <small>Design, PBI &amp; code follow-up sidecar</small>
-                                </span>
-                            </button>
-                        </>
-                    )}
-                </div>
-            )}
-            <div className="chat-note"><span className="eyebrow">CHAT + DASHBOARD</span><p>Saved chat actions appear here automatically. Free-form chat messages are not copied.</p></div>
-            <div className="sidebar-footer"><span className="status-dot ready" /> Native Dynamic Workflows <span>0.2 Studio</span></div>
+
+            <div className="sidebar-footer">
+                <span className="status-dot ready" />
+                <span>Unified Worktrees · Guarded Workflows</span>
+            </div>
         </aside>
 
         <main>
-            <header className="topbar"><span>WORKSPACE <span className="slash">/</span> {workspace} <span className="slash">/</span> {analyticsOpen ? "Scorecard & Analytics" : "Features"}</span><div>
-                <button
-                    type="button"
-                    className={`text-button ${analyticsOpen ? "active" : ""}`}
-                    onClick={() => setAnalyticsOpen(!analyticsOpen)}
-                >
-                    📊 Scorecard
-                </button>
-                {selected && !formOpen && (
-                    <button type="button" className={`text-button ask-copilot-topbar-btn ${qaOpen ? "active" : ""}`} onClick={() => setQaOpen(!qaOpen)}>
-                        ✦ Ask Copilot
+            <header className="topbar">
+                <div className="topbar-left">
+                    <div className="topbar-mode-pills" role="tablist" aria-label="Workspace surface">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={!analyticsOpen}
+                            className={`topbar-mode-pill ${!analyticsOpen ? "active" : ""}`}
+                            onClick={() => setAnalyticsOpen(false)}
+                        >
+                            Feature Studio
+                        </button>
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={analyticsOpen}
+                            className={`topbar-mode-pill ${analyticsOpen ? "active" : ""}`}
+                            onClick={() => { setCreating(false); setEditing(false); setAnalyticsOpen(true); }}
+                        >
+                            Scorecard &amp; Analytics
+                        </button>
+                    </div>
+                    {!analyticsOpen && selected && !formOpen && (
+                        <span className="topbar-crumb" title={selected.current.title}>
+                            <span className="slash">/</span>
+                            {selected.shared ? `ADO #${selected.shared.target.workItemId}` : "Local Draft"}
+                        </span>
+                    )}
+                </div>
+
+                <div className="topbar-right">
+                    {selected && !formOpen && !analyticsOpen && (
+                        <button
+                            type="button"
+                            className={`text-button ask-copilot-topbar-btn ${qaOpen ? "active" : ""}`}
+                            onClick={() => setQaOpen(!qaOpen)}
+                        >
+                            ✦ Ask Copilot
+                        </button>
+                    )}
+                    <button className="text-button" onClick={() => setSettings(!settings)}>
+                        {settings ? "Close Connections" : "Connections"}
                     </button>
-                )}
-                <button className="text-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")}>
-                    {theme === "light" ? "Dark Studio" : "Light Mode"}
-                </button>
-                <button className="text-button" onClick={() => setSettings(!settings)}>Connections</button>
-                <button className="text-button" disabled={busy} onClick={() => void act(async () => { setDoctor(await request("/api/doctor")); })}>Check setup</button>
-                <button className="text-button" disabled={busy} onClick={() => void act(async () => { await refresh(); setNotice("Registry refreshed. Unsaved edits are preserved."); })}>Refresh</button>
-                <span className={`sync-badge ${syncError ? "offline" : streamStatus === "live" ? "live-sse" : ""}`} role="status">
-                    {syncError
-                        ? "Updates disconnected"
-                        : streamStatus === "live"
-                            ? `● Live${syncedAt ? ` · ${new Date(syncedAt).toLocaleTimeString()}` : ""}`
-                            : syncedAt
-                                ? `Synced ${new Date(syncedAt).toLocaleTimeString()}`
-                                : "Connecting..."}
-                </span>
-            </div></header>
+                    <button className="text-button" disabled={busy} onClick={() => void act(async () => { setDoctor(await request("/api/doctor")); })}>
+                        Check setup
+                    </button>
+                    <button className="text-button" disabled={busy} onClick={() => void act(async () => { await refresh(); setNotice("Synced latest state."); })}>
+                        Refresh
+                    </button>
+                    <button className="text-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")}>
+                        {theme === "light" ? "Dark" : "Light"}
+                    </button>
+                    <span className={`sync-badge ${syncError ? "offline" : streamStatus === "live" ? "live-sse" : ""}`} role="status">
+                        {syncError
+                            ? "Offline"
+                            : streamStatus === "live"
+                                ? "● Live"
+                                : syncedAt
+                                    ? "Synced"
+                                    : "Connecting…"}
+                    </span>
+                </div>
+            </header>
+
             <div className="content">
-                <section className="workspace-title">
-                    <div>
-                        <span className="eyebrow">SOFTWARE FACTORY · FEATURE STUDIO &amp; CONTROL PLANE</span>
-                        <h1>Your feature workspace</h1>
-                        <p>Pick a feature. Inspect Builder vs. Reviewer rounds, Revision Diffs, Plan DAGs, and live Subagent Transcripts.</p>
-                    </div>
-                    <div className="studio-kpi-ribbon" aria-label="Workspace telemetry">
-                        <div className="kpi-tile">
-                            <strong>{visibleFeatures.length}</strong>
-                            <span>{visibleFeatures.length === 1 ? "feature" : "features"}</span>
-                        </div>
-                        <div className="kpi-tile">
-                            <strong>{visibleFeatures.filter((f) => Boolean(f.shared)).length}</strong>
-                            <span>ADO synced</span>
-                        </div>
-                        <button
-                            type="button"
-                            className={`kpi-tile kpi-tile-interactive ${analyticsOpen ? "active" : ""}`}
-                            title="Open Workspace Run Scorecard, AI Credits & Convergence Analytics"
-                            onClick={() => setAnalyticsOpen(!analyticsOpen)}
-                        >
-                            <strong>
-                                {workspaceAnalytics.convergence.firstPushCiGreenRatePct !== null
-                                    ? `${workspaceAnalytics.convergence.firstPushCiGreenRatePct}%`
-                                    : `${workspaceAnalytics.totalCredits.toFixed(0)} cr`}
-                            </strong>
-                            <span>{workspaceAnalytics.convergence.firstPushCiGreenRatePct !== null ? "1st-push CI ↗" : "scorecard ↗"}</span>
-                        </button>
-                        <button
-                            type="button"
-                            className={`kpi-tile kpi-tile-interactive ${flightOpen && !analyticsOpen ? "active" : ""}`}
-                            title="Open Subagent Flight Recorder & Full Transcripts"
-                            onClick={() => {
-                                if (selected && !formOpen) {
-                                    setAnalyticsOpen(false);
-                                    setFlightOpen(true);
-                                }
-                            }}
-                        >
-                            <strong>{workspaceAnalytics.totalExecutions}</strong>
-                            <span>agent runs ↗</span>
-                        </button>
-                    </div>
-                </section>
-                {syncError && <div role="alert" className="message error">Live updates are disconnected: {syncError} Last saved content is shown; unsaved edits are preserved.</div>}
+                {syncError && <div role="alert" className="message notice">Reconnecting live updates ({syncError}). Saved state and edits remain intact.</div>}
                 {settings && <FactorySettings execute={execute} />}
                 {error && <div role="alert" className="message error">{error}</div>}
                 {notice && <div role="status" className="message notice">{notice}</div>}
-                {!formOpen && <section className="card ado-sync-card" aria-label="Team features">
-                    <div className="ado-sync-header">
-                        <div>
-                            <span className="eyebrow">{selected?.shared ? "SHARED AUTHORITY · AZURE DEVOPS" : "COLLABORATION & SHARED AUTHORITY"}</span>
-                            <h2>{selected?.shared ? `Shared ADO Feature #${selected.shared.target.workItemId}` : "Local draft or team feature"}</h2>
+                {doctor !== undefined && (
+                    <section className="card preflight">
+                        <div className="card-heading">
+                            <h2>{doctor.runtime.ready ? "Local runtime ready" : "Local runtime needs repair"}</h2>
+                            <button className="text-button" onClick={() => setDoctor(undefined)}>Close</button>
                         </div>
-                        {selected?.shared && (
-                            <div className="ado-sync-badges">
-                                <span className="studio-pill emerald">Revision {selected.shared.revision}</span>
-                                {selected.shared.lock && (
-                                    <span className="studio-pill amber">
-                                        Active lock: {selected.shared.lock.kind} ({selected.shared.lock.actor.displayName})
+                        <p>{doctor.runtime.message}</p>
+                        {doctor.runtime.recoveryCommand && (
+                            <>
+                                <p>Run this from the repository root, then explicitly retry. No AI work runs during repair.</p>
+                                <pre className="code-snippet-box">{doctor.runtime.recoveryCommand}</pre>
+                            </>
+                        )}
+                    </section>
+                )}
+
+                {!formOpen && !analyticsOpen && (
+                    <section className="feature-context-bar" aria-label="Selected feature header">
+                        <div className="feature-context-main">
+                            <div className="feature-context-title-group">
+                                <span className="eyebrow">
+                                    {selected?.shared
+                                        ? `AZURE DEVOPS SHARED FEATURE · REV ${selected.shared.revision}`
+                                        : selected
+                                            ? "LOCAL FEATURE DRAFT · UNPUBLISHED"
+                                            : "SOFTWARE FACTORY"}
+                                </span>
+                                <h1>{selected ? selected.current.title : "Select or create a feature"}</h1>
+                            </div>
+                            <div className="feature-context-badges">
+                                {selected && (
+                                    <span className={selected.status === "ready_for_design" ? "tag approved" : "tag"}>
+                                        {displayStatus(selected)}
                                     </span>
                                 )}
-                                <a
-                                    className="secondary ado-link-btn"
-                                    href={`https://dev.azure.com/${encodeURIComponent(selected.shared.target.organization)}/${encodeURIComponent(selected.shared.target.project)}/_workitems/edit/${selected.shared.target.workItemId}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                >
-                                    Open authoritative ADO Feature ↗
-                                </a>
+                                {selected?.shared && (
+                                    <a
+                                        className="studio-pill purple ado-header-pill"
+                                        href={`https://dev.azure.com/${encodeURIComponent(selected.shared.target.organization)}/${encodeURIComponent(selected.shared.target.project)}/_workitems/edit/${selected.shared.target.workItemId}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        ADO #{selected.shared.target.workItemId} ↗
+                                    </a>
+                                )}
+                                {selected?.shared?.lock && (
+                                    <span className="studio-pill amber">
+                                        Lock: {selected.shared.lock.kind} ({selected.shared.lock.actor.displayName})
+                                    </span>
+                                )}
                             </div>
+                        </div>
+
+                        {selected?.shared?.lock && (
+                            <details className="ado-switch-drawer" style={{ marginTop: 10 }}>
+                                <summary>Shared claim active ({selected.shared.lock.actor.displayName}) — inspect or recover</summary>
+                                <div className="ado-switch-body">
+                                    <p className="field-help">Stop or inspect the original owner and reconcile uncertain provider sends first. Releasing does not cancel native work.</p>
+                                    <label htmlFor="shared-recovery-reason">Investigation and recovery reason</label>
+                                    <textarea id="shared-recovery-reason" value={recoveryReason} onChange={(event) => setRecoveryReason(event.target.value)} />
+                                    <button className="secondary" disabled={busy || !recoveryReason.trim()} onClick={() => void act(async () => {
+                                        await execute({ kind: "release_shared_claim", featureId: selected.id, claimId: selected.shared!.lock!.id, reason: recoveryReason });
+                                        setRecoveryReason("");
+                                    })}>Review claim release</button>
+                                </div>
+                            </details>
                         )}
-                    </div>
-                    {!selected?.shared && (
-                        <p className="muted">Publish deliberately to an existing ADO Feature. Versioned attachments hold the shared requirements, artifacts and approvals. Local historical approvals are not transferred. The signed-in ADO user must have edit permission to approve.</p>
-                    )}
-                    {selected?.shared?.lock && <p role="status" className="muted">Shared operation: {selected.shared.lock.kind}, owned by {selected.shared.lock.actor.displayName}.
-                        {" "}Inspect the owner and receipts before recovery; do not start a competing run.</p>}
-                    {selected?.shared?.lock && <details><summary>Recover an inspected shared claim</summary>
-                        <p>Stop or inspect the original owner and reconcile uncertain provider sends first. Releasing does not cancel native work.</p>
-                        <label htmlFor="shared-recovery-reason">Investigation and recovery reason</label>
-                        <textarea id="shared-recovery-reason" value={recoveryReason} onChange={(event) => setRecoveryReason(event.target.value)} />
-                        <button className="secondary" disabled={busy || !recoveryReason.trim()} onClick={() => void act(async () => {
-                            await execute({ kind: "release_shared_claim", featureId: selected.id, claimId: selected.shared!.lock!.id, reason: recoveryReason });
-                            setRecoveryReason("");
-                        })}>Review claim release</button>
-                    </details>}
-                    {selected?.shared ? (
-                        <details className="ado-switch-drawer">
-                            <summary>Open or switch to another shared ADO Feature</summary>
+
+                        <details className="ado-switch-drawer" open={!selected}>
+                            <summary>
+                                {selected?.shared
+                                    ? "Open or import another shared ADO Feature"
+                                    : "Publish this draft to Azure DevOps or open an existing ADO Feature"}
+                            </summary>
                             <div className="ado-switch-body">
-                                <label htmlFor="ado-feature-id">ADO Feature work item ID</label>
-                                <input id="ado-feature-id" inputMode="numeric" value={adoFeatureId} onChange={(event) => setAdoFeatureId(event.target.value)} placeholder="e.g. 3802483" />
-                                <div className="factory-actions">
-                                    <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>Open team feature</button>
+                                {!selected?.shared && (
+                                    <p className="field-help" style={{ marginTop: 0 }}>
+                                        Publishing binds requirements, artifacts, and stage approvals to an authoritative Azure DevOps Feature work item.
+                                    </p>
+                                )}
+                                <div className="ado-inline-controls">
+                                    <input
+                                        id="ado-feature-id"
+                                        aria-label="ADO Feature work item ID"
+                                        inputMode="numeric"
+                                        value={adoFeatureId}
+                                        onChange={(event) => setAdoFeatureId(event.target.value)}
+                                        placeholder="ADO Feature ID (e.g. 3822464)"
+                                    />
+                                    <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>
+                                        Open ADO Feature
+                                    </button>
+                                    {!selected?.shared && selected && (
+                                        <>
+                                            <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("publish_feature"))}>
+                                                Link &amp; Publish to ID
+                                            </button>
+                                            <button className="primary" disabled={busy} onClick={() => void act(() => teamAction("publish_feature", 0, true))}>
+                                                Create &amp; Publish New ADO Feature
+                                            </button>
+                                        </>
+                                    )}
                                     <button className="secondary" disabled={busy} onClick={() => void act(async () => {
                                         const result = await execute({ kind: "list_shared_features" });
                                         if (!Array.isArray(result.features)) throw new Error("ADO returned no team feature list.");
@@ -606,40 +650,24 @@ export function App() {
                                                 typeof entry.organization !== "string" || typeof entry.project !== "string") throw new Error("Invalid shared feature reference.");
                                             return { organization: entry.organization, project: entry.project, workItemId: entry.workItemId };
                                         }));
-                                    })}>Find team features</button>
+                                    })}>
+                                        Browse Team Features
+                                    </button>
                                 </div>
-                                {teamFeatures.map((target) => <button key={target.workItemId} className="text-button" disabled={busy}
-                                    onClick={() => void act(async () => { await execute({ kind: "open_shared_feature", target }); })}>Open Feature #{target.workItemId}</button>)}
+                                {teamFeatures.length > 0 && (
+                                    <div className="factory-actions" style={{ marginTop: 8 }}>
+                                        {teamFeatures.map((target) => (
+                                            <button key={target.workItemId} className="ghost-chip-btn" disabled={busy}
+                                                onClick={() => void act(async () => { await execute({ kind: "open_shared_feature", target }); })}>
+                                                Open Feature #{target.workItemId}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </details>
-                    ) : (
-                        <>
-                            <label htmlFor="ado-feature-id">ADO Feature work item ID</label>
-                            <input id="ado-feature-id" inputMode="numeric" value={adoFeatureId} onChange={(event) => setAdoFeatureId(event.target.value)} placeholder="Enter existing ADO Feature ID to link or open" />
-                            <div className="factory-actions">
-                                <button className="secondary" disabled={busy || !adoFeatureId} onClick={() => void act(() => teamAction("open_shared_feature"))}>Open team feature</button>
-                                <button className="secondary" disabled={busy || !selected || !!selected.shared || !adoFeatureId}
-                                    onClick={() => void act(() => teamAction("publish_feature"))}>Publish draft to ADO</button>
-                                <button className="secondary" disabled={busy || !selected || !!selected.shared}
-                                    onClick={() => void act(() => teamAction("publish_feature", 0, true))}>Create &amp; publish ADO Feature</button>
-                                <button className="secondary" disabled={busy} onClick={() => void act(async () => {
-                                    const result = await execute({ kind: "list_shared_features" });
-                                    if (!Array.isArray(result.features)) throw new Error("ADO returned no team feature list.");
-                                    setTeamFeatures(result.features.map((entry) => {
-                                        if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.workItemId !== "number" ||
-                                            typeof entry.organization !== "string" || typeof entry.project !== "string") throw new Error("Invalid shared feature reference.");
-                                        return { organization: entry.organization, project: entry.project, workItemId: entry.workItemId };
-                                    }));
-                                })}>Find team features</button>
-                            </div>
-                            {teamFeatures.map((target) => <button key={target.workItemId} className="text-button" disabled={busy}
-                                onClick={() => void act(async () => { await execute({ kind: "open_shared_feature", target }); })}>Open Feature #{target.workItemId}</button>)}
-                        </>
-                    )}
-                </section>}
-                {doctor !== undefined && <section className="card preflight"><div className="card-heading"><h2>{doctor.runtime.ready ? "Local runtime ready" : "Local runtime needs repair"}</h2><button className="text-button" onClick={() => setDoctor(undefined)}>Close</button></div>
-                    <p>{doctor.runtime.message}</p>{doctor.runtime.recoveryCommand && <><p>Run this from the repository root, then explicitly retry. No AI work runs during repair.</p><pre className="code-snippet-box">{doctor.runtime.recoveryCommand}</pre></>}
-                </section>}
+                    </section>
+                )}
 
                 {formOpen ? <section className="card editor">
                     <div className="card-heading"><div><span className="eyebrow">FEATURE BRIEF</span><h2>{creating ? "Start with the problem." : "Refine the brief and success criteria."}</h2></div><span className="tag">DRAFT</span></div>
@@ -683,99 +711,112 @@ export function App() {
                         onPinQaContext={setQaPinnedContext}
                         stage1View={
                             <section className="feature-detail">
-                                <div className="card-heading">
-                                    <span className="eyebrow">FEATURE BRIEF / REVISION {selected.current.number}</span>
-                                    <span className={selected.status === "ready_for_design" ? "tag approved" : "tag"}>{displayStatus(selected)}</span>
-                                </div>
-                                <h2>{selected.current.title}</h2>
-                                <p className="muted">The saved brief and success criteria. Changes from chat appear automatically.</p>
-                                {selected.current.description && <section className="feature-brief"><h3>The idea</h3><p>{selected.current.description}</p></section>}
-                                <div className="criteria-heading">
-                                    <h3>What does done look like?</h3>
-                                    <button className="secondary" disabled={busy || intakeRunning || selected.factory.cancelled || selected.lifecycleStatus === "completed"} onClick={() => void act(async () => {
-                                        const result = await execute({ kind: "start_workflow", featureId: selected.id, workflow: "intake" });
-                                        if (result.outcome === "workflow_requested") setNotice("Draft requested. Progress and any errors appear above.");
-                                    })}>{intakeRunning ? "Factory is drafting..." : "Ask Factory for another draft"}</button>
-                                </div>
-                                <p className="field-help">Optional AI help uses Copilot usage and asks for confirmation first. It never approves or replaces your criteria automatically.</p>
-                                {intake && <IntakeSuggestion artifact={intake} disabled={busy} onReview={reviewSuggestions} />}
-                                {!selected.current.requirements.length && <p className="muted">No success criteria yet. Add your own or ask Factory for a draft. You can keep refining the idea without starting design.</p>}
-                                <div className="requirements-list">
-                                    {selected.current.requirements.map((requirement) => (
-                                        <div key={requirement.id} className="requirement">
-                                            <span>{requirement.id}</span>
-                                            <p>{requirement.text}</p>
-                                            <button
-                                                type="button"
-                                                className="ghost-chip-btn ask-ai-chip"
-                                                onClick={() => openAskCopilot({
-                                                    kind: "requirement",
-                                                    title: requirement.id,
-                                                    subtitle: selected.current.title,
-                                                    snippet: requirement.text,
-                                                })}
-                                            >
-                                                ✦ Ask AI
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                                {!!selected.current.designTasks?.length && <section className="design-obligations" aria-label="Design obligations">
-                                    <h3>Work for the design agents</h3>
-                                    <ul>{selected.current.designTasks.map((task) => <li key={task}>{task}</li>)}</ul>
-                                    <p className="field-help">Approval authorizes design of this scope; it does not require these engineering tasks to be solved already. They must be addressed in the design and independent review.</p>
-                                </section>}
-                                <div className="unknowns">
-                                    <h3>Open questions saved in this brief</h3>
-                                    {selected.current.blockingUnknowns.length
-                                        ? <ul>{selected.current.blockingUnknowns.map((unknown, index) => <li key={index}>{unknown}</li>)}</ul>
-                                        : <p><span className="checkmark" aria-hidden="true">+</span> {selected.currentProgress?.question ? "No additional questions saved in the brief. Chat questions are tracked separately in shared activity." : "No open questions saved in the brief."}</p>}
-                                </div>
-                                {(() => {
-                                    const stage0Approval = [...selected.approvals].reverse().find((a) => a.revisionId === selected.current.id) || selected.approvals.at(-1);
-                                    if (!stage0Approval) return null;
-                                    return (
-                                        <div className="scope-approval-receipt" style={{ marginBottom: 14 }}>
-                                            <strong>✓ Stage 0 Scope Approval Recorded</strong>
-                                            <span>
-                                                Approved by {stage0Approval.actor?.ado?.displayName || stage0Approval.actor?.reference || "authenticated operator"} via {stage0Approval.actor?.channel || "studio"} on{" "}
-                                                {new Date(stage0Approval.createdAt).toLocaleString()}
-                                            </span>
-                                        </div>
-                                    );
-                                })()}
-                                <div className="revision-receipt">
-                                    <span>REVISION</span><code>{selected.current.id.slice(0, 12)}…</code>
-                                    <span>FEATURE</span><code>{selected.id.slice(0, 12)}…</code>
-                                    {provenanceMap[selected.id]?.originWorkspace && (
-                                        <>
-                                            <span>WORKTREE</span>
-                                            <code title={provenanceMap[selected.id]!.originWorkspace}>
-                                                {provenanceMap[selected.id]!.originWorktree}
-                                            </code>
-                                        </>
-                                    )}
-                                </div>
-                                {selected.history.length > 1 && (
-                                    <details className="contextual-action-drawer" style={{ marginTop: 14, marginBottom: 14 }}>
-                                        <summary>
-                                            Brief &amp; Criteria Revision Diff ({selected.history.length} saved revisions)
-                                        </summary>
-                                        <div className="drawer-body">
-                                            <RequirementsRevisionDiffExplorer
-                                                history={selected.history}
-                                                onAskAi={openAskCopilot}
-                                            />
-                                        </div>
-                                    </details>
-                                )}
-                                <div className="form-actions">
-                                    <button className="secondary" disabled={busy} onClick={edit}>Edit brief and criteria</button>
-                                    <button className="primary" disabled={busy || !selected.shared || selected.status === "ready_for_design" || !selected.current.requirements.length || selected.current.blockingUnknowns.length > 0} onClick={() => approve(selected)}>
-                                        {!selected.shared ? "Publish before approving" : selected.status === "ready_for_design" ? "Approved for design" : "Approve for design"}
+                                <div className="studio-subnav" style={{ marginBottom: 14 }}>
+                                    <button
+                                        type="button"
+                                        className={stage1SubTab === "brief" ? "studio-tab active" : "studio-tab"}
+                                        onClick={() => setStage1SubTab("brief")}
+                                    >
+                                        Brief &amp; Success Criteria ({selected.current.requirements.length})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={stage1SubTab === "diff" ? "studio-tab active" : "studio-tab"}
+                                        onClick={() => setStage1SubTab("diff")}
+                                    >
+                                        Revision Diff ({selected.history.length})
                                     </button>
                                 </div>
-                                <p className="approval-help">Approval applies only to this revision. It does not start a workflow or authorize remote changes.</p>
+
+                                {stage1SubTab === "diff" ? (
+                                    <RequirementsRevisionDiffExplorer
+                                        history={selected.history}
+                                        onAskAi={openAskCopilot}
+                                    />
+                                ) : (
+                                    <>
+                                        <div className="card-heading">
+                                            <span className="eyebrow">FEATURE BRIEF · REVISION {selected.current.number}</span>
+                                            <span className={selected.status === "ready_for_design" ? "tag approved" : "tag"}>{displayStatus(selected)}</span>
+                                        </div>
+                                        {selected.current.description && (
+                                            <section className="feature-brief">
+                                                <h3>Problem &amp; Intent</h3>
+                                                <p>{selected.current.description}</p>
+                                            </section>
+                                        )}
+                                        <div className="criteria-heading">
+                                            <h3>Success Criteria ({selected.current.requirements.length})</h3>
+                                            <button className="secondary" disabled={busy || intakeRunning || selected.factory.cancelled || selected.lifecycleStatus === "completed"} onClick={() => void act(async () => {
+                                                const result = await execute({ kind: "start_workflow", featureId: selected.id, workflow: "intake" });
+                                                if (result.outcome === "workflow_requested") setNotice("Draft requested. Progress and any errors appear above.");
+                                            })}>{intakeRunning ? "Factory is drafting..." : "Suggest criteria with AI"}</button>
+                                        </div>
+                                        {intake && <IntakeSuggestion artifact={intake} disabled={busy} onReview={reviewSuggestions} />}
+                                        {!selected.current.requirements.length && <p className="muted">No success criteria yet. Add your own or ask Factory for a draft.</p>}
+                                        <div className="requirements-list">
+                                            {selected.current.requirements.map((requirement) => (
+                                                <div key={requirement.id} className="requirement">
+                                                    <span>{requirement.id}</span>
+                                                    <p>{requirement.text}</p>
+                                                    <button
+                                                        type="button"
+                                                        className="ghost-chip-btn ask-ai-chip"
+                                                        onClick={() => openAskCopilot({
+                                                            kind: "requirement",
+                                                            title: requirement.id,
+                                                            subtitle: selected.current.title,
+                                                            snippet: requirement.text,
+                                                        })}
+                                                    >
+                                                        ✦ Ask AI
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {!!selected.current.designTasks?.length && <section className="design-obligations" aria-label="Design obligations">
+                                            <h3>Design Obligations ({selected.current.designTasks.length})</h3>
+                                            <ul>{selected.current.designTasks.map((task) => <li key={task}>{task}</li>)}</ul>
+                                        </section>}
+                                        {selected.current.blockingUnknowns.length > 0 && (
+                                            <div className="unknowns">
+                                                <h3>Blocking Open Questions</h3>
+                                                <ul>{selected.current.blockingUnknowns.map((unknown, index) => <li key={index}>{unknown}</li>)}</ul>
+                                            </div>
+                                        )}
+                                        {(() => {
+                                            const stage0Approval = [...selected.approvals].reverse().find((a) => a.revisionId === selected.current.id) || selected.approvals.at(-1);
+                                            if (!stage0Approval) return null;
+                                            return (
+                                                <div className="scope-approval-receipt" style={{ marginBottom: 14 }}>
+                                                    <strong>✓ Stage 0 Scope Approval Recorded</strong>
+                                                    <span>
+                                                        Approved by {stage0Approval.actor?.ado?.displayName || stage0Approval.actor?.reference || "authenticated operator"} via {stage0Approval.actor?.channel || "studio"} on{" "}
+                                                        {new Date(stage0Approval.createdAt).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
+                                        <div className="revision-receipt">
+                                            <span>REVISION</span><code>{selected.current.id.slice(0, 12)}…</code>
+                                            <span>FEATURE</span><code>{selected.id.slice(0, 12)}…</code>
+                                            {provenanceMap[selected.id]?.originWorkspace && (
+                                                <>
+                                                    <span>WORKTREE</span>
+                                                    <code title={provenanceMap[selected.id]!.originWorkspace}>
+                                                        {provenanceMap[selected.id]!.originWorktree}
+                                                    </code>
+                                                </>
+                                            )}
+                                        </div>
+                                        <div className="form-actions">
+                                            <button className="secondary" disabled={busy} onClick={edit}>Edit brief &amp; criteria</button>
+                                            <button className="primary" disabled={busy || !selected.shared || selected.status === "ready_for_design" || !selected.current.requirements.length || selected.current.blockingUnknowns.length > 0} onClick={() => approve(selected)}>
+                                                {!selected.shared ? "Publish before approving" : selected.status === "ready_for_design" ? "Approved for design" : "Approve for design"}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
                             </section>
                         }
                     />

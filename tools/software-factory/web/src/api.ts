@@ -73,12 +73,42 @@ function isSessionExpired(status: number, payload: unknown): boolean {
     return true;
 }
 
+function isTransientNetworkError(failure: unknown): boolean {
+    if (failure instanceof TypeError) return true;
+    if (failure instanceof Error && /failed to fetch|networkerror|load failed/i.test(failure.message)) {
+        return true;
+    }
+    return false;
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function request<T>(url: string, options?: RequestInit): Promise<T> {
-    const response = await fetch(url, { credentials: "same-origin", ...options });
+    const method = (options?.method || "GET").toUpperCase();
+    const canSafeRetry = url !== "/api/session" && (method === "GET" || url === "/api/commands/preview");
+
+    let response: Response;
+    try {
+        response = await fetch(url, { credentials: "same-origin", ...options });
+    } catch (failure) {
+        if (canSafeRetry && isTransientNetworkError(failure)) {
+            await delay(350);
+            try {
+                response = await fetch(url, { credentials: "same-origin", ...options });
+            } catch {
+                throw new Error("Local Studio server is temporarily unreachable. Reconnecting automatically…");
+            }
+        } else if (isTransientNetworkError(failure)) {
+            throw new Error("Could not reach the local Studio server. Verify `cli.ts serve` is running and retry.");
+        } else {
+            throw failure;
+        }
+    }
+
     const payload: unknown = await response.json();
     if (!response.ok) {
-        const method = (options?.method || "GET").toUpperCase();
-        const canSafeRetry = url !== "/api/session" && (method === "GET" || url === "/api/commands/preview");
         if (isSessionExpired(response.status, payload) && url !== "/api/session") {
             try {
                 const freshCsrf = await refreshSession();

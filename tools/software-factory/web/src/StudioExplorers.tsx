@@ -369,15 +369,13 @@ export function DesignStudioExplorer({
                                 Author vs. Reviewer ({reviews.length})
                             </button>
                         )}
-                        {designSnapshots.length >= 2 && (
-                            <button
-                                type="button"
-                                className={studioTab === "diff" ? "studio-tab active" : "studio-tab"}
-                                onClick={() => setStudioTab("diff")}
-                            >
-                                Revision Diff ({designSnapshots.length})
-                            </button>
-                        )}
+                        <button
+                            type="button"
+                            className={studioTab === "diff" ? "studio-tab active" : "studio-tab"}
+                            onClick={() => setStudioTab("diff")}
+                        >
+                            Revision Diff ({designSnapshots.length})
+                        </button>
                         {(traceability.length > 0 || references.length > 0) && (
                             <button
                                 type="button"
@@ -900,23 +898,19 @@ export function PlanStudioExplorer({
                         <span className="studio-pill purple">{reviewHistory.length} Planner vs. Reviewer Round{reviewHistory.length === 1 ? "" : "s"}</span>
                     )}
                 </div>
-                {(reviewHistory.length > 0 || planSnapshots.length >= 2) && (
-                    <div className="studio-subnav">
-                        <button type="button" className={viewMode === "dag" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("dag")}>
-                            Execution Waves &amp; PBI Specs
+                <div className="studio-subnav">
+                    <button type="button" className={viewMode === "dag" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("dag")}>
+                        Execution Waves &amp; PBI Specs
+                    </button>
+                    {reviewHistory.length > 0 && (
+                        <button type="button" className={viewMode === "reviews" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("reviews")}>
+                            Planner vs. Reviewer ({reviewHistory.length})
                         </button>
-                        {reviewHistory.length > 0 && (
-                            <button type="button" className={viewMode === "reviews" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("reviews")}>
-                                Planner vs. Reviewer ({reviewHistory.length})
-                            </button>
-                        )}
-                        {planSnapshots.length >= 2 && (
-                            <button type="button" className={viewMode === "diff" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("diff")}>
-                                Plan Revision Diff ({planSnapshots.length})
-                            </button>
-                        )}
-                    </div>
-                )}
+                    )}
+                    <button type="button" className={viewMode === "diff" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("diff")}>
+                        Revision Diff ({planSnapshots.length})
+                    </button>
+                </div>
             </div>
 
             {rawPlanSummary && (
@@ -1408,26 +1402,6 @@ export function CodeArenaExplorer({
                             {String(item.itemId || `Item ${idx + 1}`)} ({String(item.status || item.recommendation || "run")})
                         </button>
                     ))}
-                </div>
-            )}
-
-            {codeViewTab === "arena" && hasObserverDetails && (
-                <div className={`studio-callout ${observerStatus === "ready-for-human-merge" ? "success" : "info"} observer-teaser-bar`}>
-                    <div>
-                        <strong>
-                            {observerStatus === "ready-for-human-merge"
-                                ? `✓ PR Observer verified PR #${prNumber || ""} ready for human merge`
-                                : `PR Observer status: ${observerStatus}`}
-                        </strong>
-                        <span className="muted">
-                            {" "}— {repairs.length > 0
-                                ? `completed ${repairs.length} verified tactical CI/review repair round${repairs.length === 1 ? "" : "s"} and confirmed CI pipelines passing.`
-                                : "verified live CI pipelines and PR review threads."}
-                        </span>
-                    </div>
-                    <button type="button" className="secondary" onClick={() => setCodeViewTab("observer")}>
-                        View PR Observer &amp; CI Work →
-                    </button>
                 </div>
             )}
 
