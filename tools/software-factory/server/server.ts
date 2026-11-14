@@ -13,6 +13,7 @@ import { Application } from "../core/application.ts";
 import { FactoryError, MAX_COMMAND_BYTES, type Actor } from "../core/contracts.ts";
 import { runtimeReport } from "../core/doctor.ts";
 import type { ExecutionTraceEntry, FactoryFeature, Json } from "../core/lifecycle-contracts.ts";
+import { StudioQaService, type QaResponder } from "./qa.ts";
 import { readExecutionTranscript } from "./transcripts.ts";
 
 function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
@@ -314,13 +315,14 @@ function ensureStudioBuild(assetDirectory: string): void {
     }
 }
 
-export async function startServer(options: { application: Application; port?: number; assets?: string }) {
+export async function startServer(options: { application: Application; port?: number; assets?: string; qaResponder?: QaResponder }) {
     const assetDirectory = options.assets || fileURLToPath(new URL("../web/dist/", import.meta.url));
     if (!options.assets) ensureStudioBuild(assetDirectory);
     if (!existsSync(path.join(assetDirectory, "index.html"))) {
         throw new FactoryError("ui_not_built", "Build the optional web UI before starting its server: npm --prefix web run build.", 500);
     }
     const assets = realpathSync(assetDirectory);
+    const qaService = new StudioQaService({ application: options.application, responder: options.qaResponder });
     const sessionToken = randomBytes(32).toString("hex");
     const csrf = randomBytes(32).toString("hex");
     let origin = "";
@@ -366,6 +368,27 @@ export async function startServer(options: { application: Application; port?: nu
                 if (!execution) throw new FactoryError("execution_not_found", "The requested workflow execution does not exist on this feature.", 404);
                 const requestedAgentId = url.searchParams.get("agentId") || undefined;
                 json(response, 200, readExecutionTranscript(execution, requestedAgentId));
+            } else if (/^\/api\/features\/([^/]+)\/qa$/.test(url.pathname)) {
+                const match = /^\/api\/features\/([^/]+)\/qa$/.exec(url.pathname);
+                let featureId = "";
+                try { featureId = decodeURIComponent(match?.[1] ?? ""); }
+                catch { throw new FactoryError("invalid_path", "Invalid feature identifier.", 400); }
+                if (!featureId) throw new FactoryError("route_not_found", "Expected /api/features/:featureId/qa.", 404);
+                if (request.method === "GET") {
+                    json(response, 200, qaService.getFeatureQa(featureId));
+                } else if (request.method === "POST") {
+                    if (request.headers.origin !== origin || !matches(request.headers["x-software-factory-csrf"]?.toString(), csrf)) {
+                        throw new FactoryError("confirmation_forbidden", "A same-origin application session and anti-forgery token are required.", 403);
+                    }
+                    if (request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json") {
+                        throw new FactoryError("invalid_content_type", "Q&A requests must use application/json.", 415);
+                    }
+                    const body = await readBody(request);
+                    const result = qaService.handleRequest(featureId, body);
+                    json(response, result.statusCode, result.payload);
+                } else {
+                    throw new FactoryError("method_not_allowed", "Expected GET or POST on /api/features/:featureId/qa.", 405);
+                }
             } else if (request.method === "GET" && url.pathname.startsWith("/api/gates/")) {
                 const featureId = url.pathname.slice("/api/gates/".length);
                 const feature = await options.application.feature(featureId);
@@ -443,9 +466,12 @@ export async function startServer(options: { application: Application; port?: nu
     cookieName = `software_factory_${address.port}`;
     return {
         url: origin,
-        close: () => new Promise<void>((resolve, reject) => {
-            server.close((error) => error ? reject(error) : resolve());
-            server.closeAllConnections();
-        }),
+        close: async () => {
+            await new Promise<void>((resolve, reject) => {
+                server.close((error) => error ? reject(error) : resolve());
+                server.closeAllConnections();
+            });
+            await qaService.close();
+        },
     };
 }

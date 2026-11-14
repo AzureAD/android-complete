@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Artifact, Configuration, ConfigRevision, FactoryFeature, Json, RepositoryTarget } from "../../core/lifecycle-contracts.ts";
+import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import { request } from "./api";
 import { nextStep, stageLabels, type AvailableGate } from "../../core/progress.ts";
+import { AskCopilotDrawer, type QaFeedbackBridgeAction } from "./AskCopilotDrawer";
 import { ScopeSummary } from "./Confirmation";
 import {
     CodeArenaExplorer,
@@ -26,6 +28,7 @@ export function ArtifactDocument({
     onSelectItemForOps,
     onPrefillWaiver,
     onPrefillPrFeedback,
+    onAskAi,
 }: {
     artifact: Artifact;
     feature?: FactoryFeature;
@@ -33,6 +36,7 @@ export function ArtifactDocument({
     onSelectItemForOps?: (itemId: string) => void;
     onPrefillWaiver?: (itemId: string, criterion: string) => void;
     onPrefillPrFeedback?: (itemId: string, feedbackBody: string, prNumber?: number) => void;
+    onAskAi?: (context: FeatureQaContext) => void;
 }) {
     const body = artifact.content;
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -41,7 +45,7 @@ export function ArtifactDocument({
     if (artifact.kind === "design" && body.design && typeof body.design === "object" && !Array.isArray(body.design)) {
         const sections = body.design.sections;
         if (sections && typeof sections === "object" && !Array.isArray(sections)) {
-            return <DesignStudioExplorer artifact={artifact} onAppendFeedback={onAppendFeedback} />;
+            return <DesignStudioExplorer artifact={artifact} onAppendFeedback={onAppendFeedback} onAskAi={onAskAi} />;
         }
     }
     if ((artifact.kind === "plan" || artifact.kind === "planning_attempt") && Array.isArray(body.items)) {
@@ -51,11 +55,12 @@ export function ArtifactDocument({
                 feature={feature}
                 onAppendFeedback={onAppendFeedback}
                 onSelectItemForOps={onSelectItemForOps}
+                onAskAi={onAskAi}
             />
         );
     }
     if (artifact.kind === "implementation" || artifact.kind === "implementation_attempt") {
-        return <CodeArenaExplorer artifact={artifact} />;
+        return <CodeArenaExplorer artifact={artifact} onAskAi={onAskAi} />;
     }
     if (artifact.kind === "monitor" && feature) {
         return (
@@ -64,6 +69,7 @@ export function ArtifactDocument({
                 feature={feature}
                 onPrefillWaiver={onPrefillWaiver}
                 onPrefillPrFeedback={onPrefillPrFeedback}
+                onAskAi={onAskAi}
             />
         );
     }
@@ -95,6 +101,10 @@ export function FactoryPanel({
     onActiveStageChange,
     externalFlightOpen,
     onFlightOpenChange,
+    externalQaOpen,
+    onQaOpenChange,
+    qaPinnedContext,
+    onPinQaContext,
 }: {
     feature: FactoryFeature;
     execute: Execute;
@@ -105,6 +115,10 @@ export function FactoryPanel({
     onActiveStageChange?: (stageIndex: number) => void;
     externalFlightOpen?: boolean;
     onFlightOpenChange?: (open: boolean) => void;
+    externalQaOpen?: boolean;
+    onQaOpenChange?: (open: boolean) => void;
+    qaPinnedContext?: FeatureQaContext | null;
+    onPinQaContext?: (ctx: FeatureQaContext | null) => void;
 }) {
     const [gates, setGates] = useState<GateResult[]>([]);
     const [error, setError] = useState("");
@@ -126,6 +140,22 @@ export function FactoryPanel({
     const setFlightOpen = (next: boolean) => {
         setInternalFlightOpen(next);
         onFlightOpenChange?.(next);
+    };
+    const [internalQaOpen, setInternalQaOpen] = useState(false);
+    const [internalQaContext, setInternalQaContext] = useState<FeatureQaContext | null>(null);
+    const qaOpen = externalQaOpen !== undefined ? externalQaOpen : internalQaOpen;
+    const setQaOpen = (next: boolean) => {
+        setInternalQaOpen(next);
+        onQaOpenChange?.(next);
+    };
+    const activeQaContext = qaPinnedContext !== undefined ? qaPinnedContext : internalQaContext;
+    const setQaContext = (ctx: FeatureQaContext | null) => {
+        setInternalQaContext(ctx);
+        onPinQaContext?.(ctx);
+    };
+    const openAskAi = (ctx?: FeatureQaContext | null) => {
+        if (ctx !== undefined) setQaContext(ctx);
+        setQaOpen(true);
     };
     const [minutes, setMinutes] = useState("60");
     const [maxCreditsCap, setMaxCreditsCap] = useState("");
@@ -245,6 +275,29 @@ export function FactoryPanel({
         setPrDrawerOpen(true);
         pickStage(5);
         setTimeout(() => prComposerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
+    };
+
+    const handleQaBridgeAction = (action: QaFeedbackBridgeAction) => {
+        setQaOpen(false);
+        if (action.target === "design") {
+            pickStage(1);
+            appendFeedback(action.snippet);
+            return;
+        }
+        if (action.target === "plan") {
+            pickStage(2);
+            appendFeedback(action.snippet);
+            return;
+        }
+        const fallbackItemId = (() => {
+            const plan = latest("plan");
+            const body = plan?.content && typeof plan.content === "object" && !Array.isArray(plan.content)
+                ? plan.content as Record<string, Json>
+                : null;
+            const first = body && Array.isArray(body.items) ? body.items[0] : null;
+            return first && typeof first === "object" && !Array.isArray(first) && typeof first.id === "string" ? first.id : "PBI-1";
+        })();
+        prefillPrFeedback(action.itemId || itemId || fallbackItemId, action.snippet);
     };
 
     const actNext = () => {
@@ -480,6 +533,19 @@ export function FactoryPanel({
                 </div>
                 <span className="mode-switch-cta">{flightOpen ? "Viewing ▴" : "Open Transcripts →"}</span>
             </button>
+            <button
+                type="button"
+                aria-expanded={qaOpen}
+                className={`mode-switch-tab qa-tab ${qaOpen ? "active" : ""}`}
+                onClick={() => setQaOpen(!qaOpen)}
+            >
+                <span className="mode-switch-icon">✦</span>
+                <div className="mode-switch-copy">
+                    <strong>Ask Copilot · Read-Only Q&amp;A</strong>
+                    <small>Ask about design choices, PBIs, diffs &amp; PRs without disrupting runs</small>
+                </div>
+                <span className="mode-switch-cta">{qaOpen ? "Open ▸" : "Ask AI →"}</span>
+            </button>
         </div>
 
         <div className="phase-track-header">
@@ -500,6 +566,13 @@ export function FactoryPanel({
                     </button>
                 )}
             </div>
+            <button
+                type="button"
+                className="ghost-chip-btn ask-ai-chip"
+                onClick={() => openAskAi()}
+            >
+                ✦ Ask Copilot about {stageLabels[selectedStage]}
+            </button>
         </div>
 
         <div className="phase-track" role="group" aria-label="Feature progress">
@@ -769,7 +842,7 @@ export function FactoryPanel({
                     )}
                     {designArtifact ? (
                         <>
-                            <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} />
+                            <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} onAskAi={openAskAi} />
                             {currentGate?.stage === "design" && (
                                 <div className="gate-decision-bar">
                                     {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
@@ -857,7 +930,7 @@ export function FactoryPanel({
                     )}
                     {planArtifact ? (
                         <>
-                            <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} />
+                            <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} onAskAi={openAskAi} />
                             {currentGate?.stage === "plan" && (
                                 <div className="gate-decision-bar">
                                     {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
@@ -954,6 +1027,18 @@ export function FactoryPanel({
                                                         PR Opened ↗
                                                     </a>
                                                 )}
+                                                <button
+                                                    type="button"
+                                                    className="ghost-chip-btn ask-ai-chip"
+                                                    onClick={() => openAskAi({
+                                                        kind: "pbi",
+                                                        title: `${wi.key} (ADO #${wi.adoId}) — ${wi.title}`,
+                                                        subtitle: wi.repository || wi.status,
+                                                        snippet: `ADO Work Item #${wi.adoId} (${wi.status}) · Repository: ${wi.repository}${wi.prUrl ? ` · PR: ${wi.prUrl}` : ""}`,
+                                                    })}
+                                                >
+                                                    ✦ Ask AI
+                                                </button>
                                             </div>
                                         </div>
                                         <h4>{wi.title}</h4>
@@ -1000,7 +1085,7 @@ export function FactoryPanel({
                         </div>
                     )}
                     {codeArtifact ? (
-                        <ArtifactDocument artifact={codeArtifact} feature={feature} />
+                        <ArtifactDocument artifact={codeArtifact} feature={feature} onAskAi={openAskAi} />
                     ) : (
                         <div className="studio-empty-lens">
                             <span className="studio-pill emerald">STAGE 5 · IMPLEMENTATION &amp; PR OBSERVER</span>
@@ -1031,6 +1116,7 @@ export function FactoryPanel({
                             feature={feature}
                             onPrefillWaiver={prefillWaiver}
                             onPrefillPrFeedback={prefillPrFeedback}
+                            onAskAi={openAskAi}
                         />
                     ) : (
                         <div className="studio-empty-lens">
@@ -1200,6 +1286,16 @@ export function FactoryPanel({
                 {feature.factory.schedule && <span className="muted">Next check: {new Date(feature.factory.schedule.nextAt).toLocaleString()}</span>}
             </div>
         </details>
+
+        <AskCopilotDrawer
+            open={qaOpen}
+            feature={feature}
+            activeStageIndex={selectedStage}
+            pinnedContext={activeQaContext}
+            onPinContext={setQaContext}
+            onClose={() => setQaOpen(false)}
+            onUseInFeedback={handleQaBridgeAction}
+        />
     </section>;
 }
 

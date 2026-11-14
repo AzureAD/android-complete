@@ -13,6 +13,7 @@ import type {
     TranscriptAgentSummary,
     TranscriptMessageItem,
 } from "../../core/lifecycle-contracts.ts";
+import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import { workerGuidance } from "../../runtime/guidance.ts";
 import { request } from "./api";
 
@@ -265,9 +266,11 @@ function roleDisplayName(role?: string, label?: string): {
 export function DesignStudioExplorer({
     artifact,
     onAppendFeedback,
+    onAskAi,
 }: {
     artifact: Artifact;
     onAppendFeedback?: (snippet: string) => void;
+    onAskAi?: (context: FeatureQaContext) => void;
 }) {
     const body = isRecord(artifact.content) ? artifact.content : {};
     const design = isRecord(body.design) ? body.design : {};
@@ -439,15 +442,31 @@ export function DesignStudioExplorer({
                                                     </div>
                                                 )}
                                             </div>
-                                            {onAppendFeedback && (
-                                                <button
-                                                    type="button"
-                                                    className="ghost-chip-btn"
-                                                    onClick={() => onAppendFeedback(`[Design section: ${formatSectionTitle(name)}] `)}
-                                                >
-                                                    + Comment on section
-                                                </button>
-                                            )}
+                                            <div className="studio-badge-row">
+                                                {onAskAi && (
+                                                    <button
+                                                        type="button"
+                                                        className="ghost-chip-btn ask-ai-chip"
+                                                        onClick={() => onAskAi({
+                                                            kind: "design-section",
+                                                            title: formatSectionTitle(name),
+                                                            subtitle: coveredReqs.length ? `Covers ${coveredReqs.join(", ")}` : undefined,
+                                                            snippet: (typeof content === "string" ? content : JSON.stringify(content)).slice(0, 6000),
+                                                        })}
+                                                    >
+                                                        ✦ Ask AI
+                                                    </button>
+                                                )}
+                                                {onAppendFeedback && (
+                                                    <button
+                                                        type="button"
+                                                        className="ghost-chip-btn"
+                                                        onClick={() => onAppendFeedback(`[Design section: ${formatSectionTitle(name)}] `)}
+                                                    >
+                                                        + Comment on section
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                         <div className="markdown-prose">
                                             <Markdown
@@ -570,15 +589,31 @@ export function DesignStudioExplorer({
                                                 </div>
                                                 <p className="finding-evidence"><strong>Evidence:</strong> {String(finding.evidence || "")}</p>
                                                 <p className="finding-fix"><strong>Required Change:</strong> {String(finding.requiredChange || "")}</p>
-                                                {onAppendFeedback && (
-                                                    <button
-                                                        type="button"
-                                                        className="ghost-chip-btn"
-                                                        onClick={() => onAppendFeedback(`[Finding ${id} (${finding.location})]: ${finding.requiredChange} `)}
-                                                    >
-                                                        + Copy into human revision feedback
-                                                    </button>
-                                                )}
+                                                <div className="studio-badge-row">
+                                                    {onAskAi && (
+                                                        <button
+                                                            type="button"
+                                                            className="ghost-chip-btn ask-ai-chip"
+                                                            onClick={() => onAskAi({
+                                                                kind: "review-finding",
+                                                                title: `Design Finding ${id} (${severity.toUpperCase()})`,
+                                                                subtitle: String(finding.location || ""),
+                                                                snippet: `Evidence: ${String(finding.evidence || "")}\nRequired Change: ${String(finding.requiredChange || "")}`,
+                                                            })}
+                                                        >
+                                                            ✦ Ask AI
+                                                        </button>
+                                                    )}
+                                                    {onAppendFeedback && (
+                                                        <button
+                                                            type="button"
+                                                            className="ghost-chip-btn"
+                                                            onClick={() => onAppendFeedback(`[Finding ${id} (${finding.location})]: ${finding.requiredChange} `)}
+                                                        >
+                                                            + Copy into human revision feedback
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                         );
                                     })}
@@ -727,11 +762,13 @@ export function PlanStudioExplorer({
     feature,
     onAppendFeedback,
     onSelectItemForOps,
+    onAskAi,
 }: {
     artifact: Artifact;
     feature?: FactoryFeature;
     onAppendFeedback?: (snippet: string) => void;
     onSelectItemForOps?: (itemId: string) => void;
+    onAskAi?: (context: FeatureQaContext) => void;
 }) {
     const body = isRecord(artifact.content) ? artifact.content : {};
     const items = asArray(body.items).filter(isRecord);
@@ -924,6 +961,20 @@ export function PlanStudioExplorer({
                                     <h4>{String(selectedItem.title)}</h4>
                                 </div>
                                 <div className="pbi-inspector-actions">
+                                    {onAskAi && (
+                                        <button
+                                            type="button"
+                                            className="ghost-chip-btn ask-ai-chip"
+                                            onClick={() => onAskAi({
+                                                kind: "pbi",
+                                                title: `${String(selectedItem.id)} — ${String(selectedItem.title)}`,
+                                                subtitle: String(selectedItem.repository || ""),
+                                                snippet: String(selectedItem.description || "").slice(0, 6000),
+                                            })}
+                                        >
+                                            ✦ Ask AI
+                                        </button>
+                                    )}
                                     {onAppendFeedback && (
                                         <button
                                             type="button"
@@ -1169,6 +1220,19 @@ export function PlanStudioExplorer({
                                                     {(activeIdx < reviewHistory.length - 1) && (
                                                         <span className="studio-pill emerald">Addressed in Round {activeIdx + 2} ✓</span>
                                                     )}
+                                                    {onAskAi && (
+                                                        <button
+                                                            type="button"
+                                                            className="ghost-chip-btn ask-ai-chip"
+                                                            onClick={() => onAskAi({
+                                                                kind: "review-finding",
+                                                                title: `Plan Objection #${fIdx + 1} (Round ${activeIdx + 1})`,
+                                                                snippet: f,
+                                                            })}
+                                                        >
+                                                            ✦ Ask AI
+                                                        </button>
+                                                    )}
                                                 </div>
                                                 <p className="finding-evidence">{f}</p>
                                             </div>
@@ -1188,7 +1252,13 @@ export function PlanStudioExplorer({
     );
 }
 
-export function CodeArenaExplorer({ artifact }: { artifact: Artifact }) {
+export function CodeArenaExplorer({
+    artifact,
+    onAskAi,
+}: {
+    artifact: Artifact;
+    onAskAi?: (context: FeatureQaContext) => void;
+}) {
     const body = isRecord(artifact.content) ? artifact.content : {};
     const items: Record<string, Json>[] = artifact.kind === "implementation_attempt"
         ? [body]
@@ -1487,6 +1557,25 @@ export function CodeArenaExplorer({ artifact }: { artifact: Artifact }) {
                             <div className="arena-pane-header">
                                 <span className="studio-pill blue">CODING BUILDER</span>
                                 <h4>Builder Output — {String(activeItem?.itemId || "PBI")} (Round {selectedRoundIdx + 1})</h4>
+                                {onAskAi && (
+                                    <button
+                                        type="button"
+                                        className="ghost-chip-btn ask-ai-chip"
+                                        onClick={() => onAskAi({
+                                            kind: "implementation",
+                                            title: `${String(activeItem?.itemId || "PBI")} — Round ${selectedRoundIdx + 1}`,
+                                            subtitle: `${effectiveFiles.length} file(s), ${effectiveTests.length} test(s)`,
+                                            path: selectedFilePath || effectiveFiles[0],
+                                            snippet: [
+                                                typeof currentRound?.builderSummary === "string" ? currentRound.builderSummary : "",
+                                                effectiveFiles.length ? `Files: ${effectiveFiles.join(", ")}` : "",
+                                                effectiveTests.length ? `Tests: ${effectiveTests.join(", ")}` : "",
+                                            ].filter(Boolean).join("\n\n").slice(0, 6000),
+                                        })}
+                                    >
+                                        ✦ Ask AI
+                                    </button>
+                                )}
                             </div>
                             {typeof currentRound?.builderSummary === "string" && currentRound.builderSummary ? (
                                 <div className="builder-summary-box markdown-prose compact-prose">
@@ -1583,6 +1672,21 @@ export function CodeArenaExplorer({ artifact }: { artifact: Artifact }) {
                                                         <code className="mono-chip">{String(finding.id)}</code>
                                                         <span className="mono-chip blue">{String(finding.category || "correctness")}</span>
                                                         <code className="location-chip">{String(finding.file)}:{String(finding.location)}</code>
+                                                        {onAskAi && (
+                                                            <button
+                                                                type="button"
+                                                                className="ghost-chip-btn ask-ai-chip"
+                                                                onClick={() => onAskAi({
+                                                                    kind: "review-finding",
+                                                                    title: `Code Finding ${String(finding.id)} (${severity.toUpperCase()})`,
+                                                                    subtitle: `${String(finding.file)}:${String(finding.location)}`,
+                                                                    path: String(finding.file),
+                                                                    snippet: `Evidence: ${String(finding.evidence)}\nRequired Fix: ${String(finding.requiredChange)}`,
+                                                                })}
+                                                            >
+                                                                ✦ Ask AI
+                                                            </button>
+                                                        )}
                                                     </div>
                                                     <p className="finding-evidence"><strong>Evidence:</strong> {String(finding.evidence)}</p>
                                                     <p className="finding-fix"><strong>Required Fix:</strong> {String(finding.requiredChange)}</p>
@@ -1604,11 +1708,13 @@ export function DeliveryCommandCenter({
     feature,
     onPrefillWaiver,
     onPrefillPrFeedback,
+    onAskAi,
 }: {
     artifact: Artifact;
     feature: FactoryFeature;
     onPrefillWaiver?: (itemId: string, criterion: string) => void;
     onPrefillPrFeedback?: (itemId: string, feedbackBody: string, prNumber?: number) => void;
+    onAskAi?: (context: FeatureQaContext) => void;
 }) {
     const body = isRecord(artifact.content) ? artifact.content : {};
     const items = asArray(body.items).filter(isRecord);
@@ -1679,18 +1785,38 @@ export function DeliveryCommandCenter({
                                         AB#{String(item.adoId)} · {String(item.status)} ↗
                                     </a>
                                 </div>
-                                {pr ? (
-                                    <a
-                                        href={String(pr.url)}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className={`studio-pill ${pr.status === "merged" || resolvedChecks === "passing" ? "emerald" : resolvedChecks === "failing" ? "crimson" : "purple"}`}
-                                    >
-                                        PR #{String(pr.number)}: {String(pr.status).toUpperCase()} · CI: {resolvedChecks.toUpperCase()} {resolvedChecks === "passing" ? "✓ " : ""}↗
-                                    </a>
-                                ) : (
-                                    <span className="studio-pill amber">Not Dispatched Yet (Wave Dependency)</span>
-                                )}
+                                <div className="studio-badge-row">
+                                    {pr ? (
+                                        <a
+                                            href={String(pr.url)}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className={`studio-pill ${pr.status === "merged" || resolvedChecks === "passing" ? "emerald" : resolvedChecks === "failing" ? "crimson" : "purple"}`}
+                                        >
+                                            PR #{String(pr.number)}: {String(pr.status).toUpperCase()} · CI: {resolvedChecks.toUpperCase()} {resolvedChecks === "passing" ? "✓ " : ""}↗
+                                        </a>
+                                    ) : (
+                                        <span className="studio-pill amber">Not Dispatched Yet (Wave Dependency)</span>
+                                    )}
+                                    {onAskAi && (
+                                        <button
+                                            type="button"
+                                            className="ghost-chip-btn ask-ai-chip"
+                                            onClick={() => onAskAi({
+                                                kind: "pr",
+                                                title: pr ? `${key} · PR #${String(pr.number)}` : `${key} — ${String(item.title)}`,
+                                                subtitle: `${String(item.repository)} · AB#${String(item.adoId)}`,
+                                                snippet: [
+                                                    String(item.title),
+                                                    pr ? `PR #${String(pr.number)} (${String(pr.status)}, checks: ${resolvedChecks}) ${String(pr.url)}` : "No PR yet",
+                                                    ...itemValidation.map((v) => `[${String(v.status)}] ${String(v.criterion)}: ${String(v.evidence)}`),
+                                                ].join("\n").slice(0, 6000),
+                                            })}
+                                        >
+                                            ✦ Ask AI
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                             <h4>{String(item.title)}</h4>
 

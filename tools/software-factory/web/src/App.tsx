@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { parseRequirements, parseSuccessCriteria, type Command, type Feature, type Project, type Requirement, type Requirements } from "../../core/contracts.ts";
 import { parseIntakeProposal, type Artifact, type FactoryFeature, type Json, type ConfigRevision } from "../../core/lifecycle-contracts.ts";
+import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import type { SharedTarget } from "../../core/shared-contracts.ts";
 import { FactoryPanel, FactorySettings } from "./FactoryPanel";
 import { Confirmation, type ConfirmationRequest } from "./Confirmation";
@@ -84,6 +85,12 @@ export function App() {
     const [featureFilter, setFeatureFilter] = useState("");
     const [activeStageIdx, setActiveStageIdx] = useState<number>(0);
     const [flightOpen, setFlightOpen] = useState(false);
+    const [qaOpen, setQaOpen] = useState(false);
+    const [qaPinnedContext, setQaPinnedContext] = useState<FeatureQaContext | null>(null);
+    const openAskCopilot = (ctx?: FeatureQaContext | null) => {
+        if (ctx !== undefined) setQaPinnedContext(ctx);
+        setQaOpen(true);
+    };
     const refreshing = useRef(false);
     const refreshSequence = useRef(0);
     const authorityReadAt = useRef(0);
@@ -157,6 +164,7 @@ export function App() {
         setCreating(false);
         setSelectedId(id);
         setFlightOpen(false);
+        setQaPinnedContext(null);
         setError("");
         setNotice("");
     }
@@ -297,7 +305,7 @@ export function App() {
             </nav>
             {selected && !formOpen && (
                 <div className="sidebar-flight-box">
-                    <div className="sidebar-heading"><span>OBSERVABILITY</span><span>{selected.factory.executions.length}</span></div>
+                    <div className="sidebar-heading"><span>OBSERVABILITY &amp; AI</span><span>{selected.factory.executions.length}</span></div>
                     <button
                         type="button"
                         className={`sidebar-flight-btn ${flightOpen ? "active" : ""}`}
@@ -309,6 +317,17 @@ export function App() {
                             <small>Prompts, reasoning &amp; full transcripts</small>
                         </span>
                     </button>
+                    <button
+                        type="button"
+                        className={`sidebar-flight-btn sidebar-qa-btn ${qaOpen ? "active" : ""}`}
+                        onClick={() => setQaOpen(!qaOpen)}
+                    >
+                        <span className="sidebar-qa-glyph" aria-hidden="true">✦</span>
+                        <span className="feature-link-body">
+                            <strong>Ask Copilot (Q&amp;A)</strong>
+                            <small>Design, PBI &amp; code follow-up sidecar</small>
+                        </span>
+                    </button>
                 </div>
             )}
             <div className="chat-note"><span className="eyebrow">CHAT + DASHBOARD</span><p>Saved chat actions appear here automatically. Free-form chat messages are not copied.</p></div>
@@ -317,6 +336,11 @@ export function App() {
 
         <main>
             <header className="topbar"><span>WORKSPACE <span className="slash">/</span> {workspace} <span className="slash">/</span> Features</span><div>
+                {selected && !formOpen && (
+                    <button type="button" className={`text-button ask-copilot-topbar-btn ${qaOpen ? "active" : ""}`} onClick={() => setQaOpen(!qaOpen)}>
+                        ✦ Ask Copilot
+                    </button>
+                )}
                 <button className="text-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")}>
                     {theme === "light" ? "Dark Studio" : "Light Mode"}
                 </button>
@@ -479,6 +503,10 @@ export function App() {
                         onActiveStageChange={setActiveStageIdx}
                         externalFlightOpen={flightOpen}
                         onFlightOpenChange={setFlightOpen}
+                        externalQaOpen={qaOpen}
+                        onQaOpenChange={setQaOpen}
+                        qaPinnedContext={qaPinnedContext}
+                        onPinQaContext={setQaPinnedContext}
                         stage1View={
                             <section className="feature-detail">
                                 <div className="card-heading">
@@ -503,6 +531,18 @@ export function App() {
                                         <div key={requirement.id} className="requirement">
                                             <span>{requirement.id}</span>
                                             <p>{requirement.text}</p>
+                                            <button
+                                                type="button"
+                                                className="ghost-chip-btn ask-ai-chip"
+                                                onClick={() => openAskCopilot({
+                                                    kind: "requirement",
+                                                    title: requirement.id,
+                                                    subtitle: selected.current.title,
+                                                    snippet: requirement.text,
+                                                })}
+                                            >
+                                                ✦ Ask AI
+                                            </button>
                                         </div>
                                     ))}
                                 </div>

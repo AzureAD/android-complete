@@ -6,15 +6,16 @@ import http from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { startServer } from "../server/server.ts";
+import type { QaResponder } from "../server/qa.ts";
 import { MAX_COMMAND_BYTES } from "../core/contracts.ts";
 import { actor, transportFixture as fixture, requirements } from "./helpers.ts";
 
-async function setup() {
+async function setup(qaResponder?: QaResponder) {
     const f = fixture();
     const assets = path.join(f.directory, "assets");
     mkdirSync(assets);
     writeFileSync(path.join(assets, "index.html"), "<!doctype html><title>Software Factory</title>");
-    const server = await startServer({ application: f.app, assets });
+    const server = await startServer({ application: f.app, assets, qaResponder });
     const bootstrap = await fetch(`${server.url}/api/session`);
     const cookie = bootstrap.headers.get("set-cookie")?.split(";")[0];
     assert.ok(cookie);
@@ -184,6 +185,188 @@ test("GET /api/executions/:featureId/:executionId/transcript indexes full subage
     } finally {
         if (previousStateRoot === undefined) delete process.env.SOFTWARE_FACTORY_SESSION_STATE_ROOT;
         else process.env.SOFTWARE_FACTORY_SESSION_STATE_ROOT = previousStateRoot;
+        await f.cleanup();
+    }
+});
+
+test("Studio AI Q&A streams read-only multi-turn answers, tracks pinned context, blocks concurrent turns per feature, supports session reset, and never mutates Factory state", async () => {
+    let releaseFirstTurn: (() => void) | undefined;
+    const firstTurnStarted = new Promise<void>((resolve) => {
+        releaseFirstTurn = () => resolve();
+    });
+    let gateFirstTurn = new Promise<void>(() => {});
+    gateFirstTurn = new Promise<void>((resolve) => {
+        const prev = releaseFirstTurn;
+        releaseFirstTurn = () => {
+            prev?.();
+            resolve();
+        };
+    });
+
+    const seenTurns: Array<{ sessionId: string; turnIndex: number; question: string; contextTitle?: string; contextPack: string }> = [];
+    let notifyTurn1Entered: (() => void) | undefined;
+    const turn1Entered = new Promise<void>((resolve) => { notifyTurn1Entered = resolve; });
+
+    const responder: QaResponder = async (turn) => {
+        seenTurns.push({
+            sessionId: turn.sessionId,
+            turnIndex: turn.turnIndex,
+            question: turn.question,
+            contextTitle: turn.context?.title,
+            contextPack: turn.contextPack,
+        });
+        turn.onPhase("Inspecting design and source files…");
+        turn.onStepStart("call-1", "grep", "LastRequestTelemetry in common");
+        turn.onDelta("Analyzing `LastRequestTelemetry`… ");
+        if (turn.turnIndex === 1) {
+            notifyTurn1Entered?.();
+            await gateFirstTurn;
+        }
+        turn.onStepComplete("call-1", true);
+        const finalAnswer = `Analyzing \`LastRequestTelemetry\`… Grounded answer for turn #${turn.turnIndex} (${turn.context?.title ?? "general"}).`;
+        return finalAnswer;
+    };
+
+    const f = await setup(responder);
+    try {
+        const feature = f.app.execute({ kind: "create_feature", requestId: "qa-feature", input: requirements() }, actor);
+        const beforeSnapshot = f.app.lifecycle.store.view(feature.id);
+
+        // CSRF enforcement on POST /api/features/:featureId/qa
+        const missingCsrf = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, {
+            method: "POST",
+            headers: { ...f.headers, "X-Software-Factory-CSRF": "" },
+            body: JSON.stringify({ action: "ask", question: "Should fail CSRF" }),
+        });
+        assert.equal(missingCsrf.status, 403);
+
+        // Initial GET returns empty Q&A state + summary
+        const initialRes = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, { headers: f.headers });
+        assert.equal(initialRes.status, 200);
+        const initialQa = await initialRes.json() as {
+            activeSession: unknown;
+            entries: unknown[];
+            contextSummary: { requirementsCount: number };
+        };
+        assert.equal(initialQa.activeSession, null);
+        assert.equal(initialQa.entries.length, 0);
+        assert.equal(initialQa.contextSummary.requirementsCount, beforeSnapshot.current.requirements.length);
+
+        // Turn 1 with pinned context starts asynchronously and exposes live partial delta + running step
+        const ask1Res = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, {
+            method: "POST",
+            headers: f.headers,
+            body: JSON.stringify({
+                action: "ask",
+                question: "Why did we choose a cap of 25 failed requests?",
+                context: {
+                    kind: "design-section",
+                    title: "5. State, Failures & Reversibility",
+                    snippet: "Cap failed entries at 25 to respect HTTP header limits.",
+                },
+            }),
+        });
+        assert.equal(ask1Res.status, 202);
+        await turn1Entered;
+
+        const midFlightRes = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, { headers: f.headers });
+        const midFlightQa = await midFlightRes.json() as {
+            entries: Array<{ status: string; answer: string; livePhase: string | null; liveSteps: Array<{ toolName: string; status: string }> }>;
+        };
+        assert.equal(midFlightQa.entries.length, 1);
+        assert.equal(midFlightQa.entries[0]?.status, "running");
+        assert.ok(midFlightQa.entries[0]?.answer.includes("Analyzing `LastRequestTelemetry`"));
+        assert.equal(midFlightQa.entries[0]?.liveSteps[0]?.toolName, "grep");
+        assert.equal(midFlightQa.entries[0]?.liveSteps[0]?.status, "running");
+
+        // Concurrent question on the same feature returns 409 qa_busy instead of corrupting turn order
+        const busyRes = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, {
+            method: "POST",
+            headers: f.headers,
+            body: JSON.stringify({ action: "ask", question: "Concurrent question while running" }),
+        });
+        assert.equal(busyRes.status, 409);
+
+        // Release Turn 1 and poll until completed
+        releaseFirstTurn?.();
+        let completedQa: {
+            activeSession: { sessionId: string; turnCount: number } | null;
+            entries: Array<{ id: string; sessionId: string; turnIndex: number; status: string; answer: string; liveSteps: Array<{ status: string }> }>;
+        } | undefined;
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+            const poll = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, { headers: f.headers });
+            const body = await poll.json() as NonNullable<typeof completedQa>;
+            if (body.entries[0]?.status === "completed") {
+                completedQa = body;
+                break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.ok(completedQa?.activeSession);
+        const firstSessionId = completedQa.activeSession.sessionId;
+        assert.equal(completedQa.activeSession.turnCount, 1);
+        assert.ok(completedQa.entries[0]?.answer.includes("Grounded answer for turn #1"));
+        assert.equal(completedQa.entries[0]?.liveSteps[0]?.status, "completed");
+
+        // Turn 2 reuses the same multi-turn sessionId
+        const ask2Res = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, {
+            method: "POST",
+            headers: f.headers,
+            body: JSON.stringify({ action: "ask", question: "What happens if an older app sends pipes?" }),
+        });
+        assert.equal(ask2Res.status, 202);
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+            const poll = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, { headers: f.headers });
+            const body = await poll.json() as NonNullable<typeof completedQa>;
+            if (body.entries[1]?.status === "completed") {
+                completedQa = body;
+                break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.equal(completedQa?.activeSession?.sessionId, firstSessionId);
+        assert.equal(completedQa?.activeSession?.turnCount, 2);
+        assert.equal(seenTurns.length, 2);
+        assert.equal(seenTurns[0]?.sessionId, firstSessionId);
+        assert.equal(seenTurns[1]?.sessionId, firstSessionId);
+        assert.ok(seenTurns[0]?.contextPack.includes(feature.current.title));
+
+        // Reset closes active session while keeping prior Q&A history visible, and Turn 3 starts a fresh sessionId
+        const resetRes = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, {
+            method: "POST",
+            headers: f.headers,
+            body: JSON.stringify({ action: "reset" }),
+        });
+        assert.equal(resetRes.status, 200);
+        const afterReset = await resetRes.json() as NonNullable<typeof completedQa>;
+        assert.equal(afterReset.activeSession, null);
+        assert.equal(afterReset.entries.length, 2);
+
+        const ask3Res = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, {
+            method: "POST",
+            headers: f.headers,
+            body: JSON.stringify({ action: "ask", question: "Fresh session question" }),
+        });
+        assert.equal(ask3Res.status, 202);
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+            const poll = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, { headers: f.headers });
+            const body = await poll.json() as NonNullable<typeof completedQa>;
+            if (body.entries[2]?.status === "completed") {
+                completedQa = body;
+                break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.ok(completedQa?.activeSession);
+        assert.notEqual(completedQa.activeSession.sessionId, firstSessionId);
+        assert.equal(completedQa.activeSession.turnCount, 1);
+        assert.equal(completedQa.entries.length, 3);
+
+        // Verify zero mutation of FactoryFeature revisions, approvals, artifacts, executions, or status
+        const afterSnapshot = f.app.lifecycle.store.view(feature.id);
+        assert.deepEqual(afterSnapshot, beforeSnapshot);
+    } finally {
+        releaseFirstTurn?.();
         await f.cleanup();
     }
 });

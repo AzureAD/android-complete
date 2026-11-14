@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+import type { FeatureQaContext, FeatureQaResponse } from "../../core/qa-contracts.ts";
+
 let currentCsrf = "";
 let sessionListeners: Array<(csrf: string) => void> = [];
 let rehandshakeInFlight: Promise<string> | null = null;
@@ -80,4 +82,42 @@ export async function request<T>(url: string, options?: RequestInit): Promise<T>
         throw new Error(extractErrorMessage(response.status, payload));
     }
     return payload as T;
+}
+
+export async function fetchFeatureQa(featureId: string): Promise<FeatureQaResponse> {
+    return request<FeatureQaResponse>(`/api/features/${encodeURIComponent(featureId)}/qa`);
+}
+
+export async function askFeatureQa(
+    featureId: string,
+    question: string,
+    context?: FeatureQaContext | null,
+    resetSession?: boolean,
+): Promise<FeatureQaResponse> {
+    const csrf = currentCsrf || await refreshSession();
+    return request<FeatureQaResponse>(`/api/features/${encodeURIComponent(featureId)}/qa`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Software-Factory-CSRF": csrf,
+        },
+        body: JSON.stringify({
+            action: "ask",
+            question,
+            ...(context ? { context } : {}),
+            ...(resetSession ? { resetSession: true } : {}),
+        }),
+    });
+}
+
+export async function resetFeatureQa(featureId: string): Promise<FeatureQaResponse> {
+    const csrf = currentCsrf || await refreshSession();
+    return request<FeatureQaResponse>(`/api/features/${encodeURIComponent(featureId)}/qa`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Software-Factory-CSRF": csrf,
+        },
+        body: JSON.stringify({ action: "reset" }),
+    });
 }
