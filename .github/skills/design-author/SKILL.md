@@ -48,6 +48,26 @@ For Android-specific designs, also include:
 - **Rollout plan** — Feature flag stages, ECS configuration
 - **Cross-repo impact** — Which repos need changes and in what order
 
+### Human design approval surface
+
+For the Android-complete Dev Design Dynamic Workflow, generate and publish a
+separate **Human Design Review Brief** alongside the authoritative detailed design
+for the same revision. Use the
+[paired-document contract](../../extensions/DevDesignDoc/README.md#primary-human-design-review-brief-and-paired-publication):
+decisions needed first, customer outcome/scope, plain-language architecture/flow,
+recommendations/alternatives/tradeoffs, evidence versus assumptions, consequential
+risks/safeguards and accountable owners/blockers. The brief is the primary human
+approval surface; reviewers drill into linked detail rather than reading the entire
+spec. Preserve the full specification and existing gates.
+
+Independently check consistency/completeness; target ten minutes within the complete
+rendered 1,800-word/16,000-character budget without silently omitting critical
+information. Publish both artifacts together and bind human approval to their exact
+paired revision. Regenerate/re-review both after substantive edits and highlight
+changes since the verified prior human review; never reuse stale approval.
+Design approval is not rollout permission. This human brief is distinct from the
+design-time pre-mortem authoring brief and the later post-implementation pre-mortem.
+
 ### Required default-off feature flags
 
 Every runtime feature, including small/single-repo features, needs the

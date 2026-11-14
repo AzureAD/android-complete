@@ -86,37 +86,120 @@ session storage. A request to draft is not automatically requirements approval.
    per-change necessity register: baseline trace, existing behavior, requested delta,
    necessity, counterevidence search, classification and verification. Generate the
    required accessibility design, default-off flag register/isolation and a pre-mortem
-   authoring brief/post-implementation handoff in the same artifact.
+   authoring brief/post-implementation handoff in the detailed design. In the same
+   author call, derive a separate Human Design Review Brief from that authoritative
+   design; do not author a competing design or replace detailed contracts.
 4. Check sections, revision, exact evidence digest, links and trace/necessity coverage.
    Already-handled behavior is `preserve-existing` / `regression-only`; optional
    improvements are deferred. Required work needs a `confirmed-gap`. Unresolved
    claims cannot become implementation mandates or a review-ready artifact.
-   Validate flag contracts and change mappings before independent review.
+   Validate flag contracts, change mappings, brief coverage/support links and the
+   complete rendered brief's text budget before independent review.
 5. Spawn a separate independent reviewer against the fixed rubric in `workflow.mjs`.
    The reviewer reads pinned sources, seeks disconfirming paths for every proposed
    change, and checks for mandates missing from the register. Per-change checks and
-   the review bind to the exact design digest; every check must pass.
+   the review bind to the exact design/evidence digests and paired revision; every check must pass.
    `accessibilityDesignAndVerification`, `defaultOffFeatureIsolation` and
-   `preMortemAndReleaseGates` are mandatory.
+   `preMortemAndReleaseGates` and `humanDesignReviewBrief` are mandatory. The reviewer
+   receives the exact rendered brief and separately checks consistency, completeness,
+   visible risks, evidence versus assumptions and accuracy of changes since review.
    Reviewers return `references` (empty if none) for discoveries outside the initial
    reference list, with fresh IDs and full repository/revision/path/locator metadata.
    Discoveries must match exact `sourceManifest` pairs; malformed, duplicate,
    reused or conflicting IDs and unpinned sources fail closed.
 6. Fix and re-review at most twice; never change requirements or waive criteria.
 7. Return the full JSON human gate packet, including the approved input, evidence,
-   design artifact, validation/review history, fix count, rubric, reasons, and next action.
+   design artifact, validation/review history, fix count, rubric, reasons, next action
+   and the paired publication-ready Markdown documents for the exact reviewed revision.
 
-The `design.sections` object is the design artifact; the workflow returns it rather
-than writing a design document into a repository. The runtime journals step outputs.
+The `design.sections` object and structured registers remain the authoritative
+detailed design; `design.humanReviewBrief` contains its derived human decision
+document. The workflow returns both rather than writing files into a repository.
+The runtime journals step outputs.
 `GO to Planning` and `reviewReady: true` are only automated recommendations when all
 structural checks, per-change checks and rubric criteria pass with no findings or
 blocking unknowns. Other packets contain diagnostic drafts, not validated deliverables.
 The packet always
-says `humanApproval: "pending"`. Review provenance, design, remaining nonblocking
-assumptions/open decisions, and repository revisions before explicitly approving
-planning. `NO-GO` means validation/review failed or two fixes were exhausted.
+says `humanApproval: "pending"`. Humans review the brief first, drilling into linked
+detail as needed, and inspect provenance/remaining decisions before explicitly
+approving the precise pair for planning. `NO-GO` means validation/review failed or two fixes were exhausted.
 No ADO items, code changes, merges, deployments, or human approvals are created.
 `ctx.pause()` is not used.
+
+### Primary Human Design Review Brief and paired publication
+
+The separate brief is an engineer-facing **decision document**, not a compressed
+implementation spec. Its target is a ten-minute read / roughly two to three pages.
+The measurable gate is **1,800 whitespace-delimited words and 16,000 JavaScript
+string characters** across the entire rendered document, including automatically
+copied baseline/delta records, assumptions, unknowns, links and change history.
+No physical-page estimate is enforced. Over-budget output returns for bounded
+revision, then fails closed if it still cannot fit; it is never truncated and
+approval-critical information must never be omitted to meet either budget.
+
+The brief puts decisions needed first, with recommendations, rejected alternatives,
+meaningful tradeoffs, accountable owners and approval-blocker declarations covering
+every change. It then shows customer outcome, changed/unchanged behavior, scope and
+non-goals; proposed architecture in plain language and a simple flow diagram;
+supported evidence versus assumptions and unresolved questions; and consequential
+security/authentication, accessibility, compatibility/cross-repo, default-off and
+rollback risks/safeguards. All five risk categories require owned substantive impact
+and safeguards or explicit justified N/A. Role owners may be proposed when people
+are unconfirmed; do not invent assigned people or approval.
+
+Content, decisions and risks link via section/evidence IDs into **the same**
+authoritative detailed design. The renderer generates its stable section/evidence
+anchors and copies every baseline/delta, design/evidence assumption, evidence unknown
+and open design decision verbatim so those cannot silently disappear from the brief.
+These copies count against the budget. Consequential risks must be visible in the
+brief, not concealed behind links. Empty evidence IDs are allowed for clearly labeled
+proposals/N/A; independent review must reject unsupported claims presented as facts.
+
+`humanDesignReviewBrief` and all five Boolean `review.briefChecks` must pass with a
+substantive rationale, as well as existing gates. The reviewer compares both
+documents with pinned evidence, requirements and verified prior-review snapshots;
+it rejects omissions, contradictions, link-only safeguards, invented certainty,
+unjustified N/A and stale change explanations. These are independent agent judgments,
+not keyword-based semantic certification.
+
+Only a GO packet supplies `pairedDocuments` and `approvalRevision`; diagnostic
+drafts supply neither. `pairedDocuments` contains exactly
+`human-design-review-brief.md` (the primary document) and `detailed-design.md`, their
+UTF-8 Markdown byte SHA-256 hashes, common revision and prior-review context. The
+pair revision binds the entire structured design **including the brief**, exact
+evidence digest, requirements revision and prior-review identity. Both documents
+display that revision and cross-link. Publish the complete pair together in one
+revision-scoped private artifact collection/commit, preserving these relative names
+and exact bytes; never publish just one or mix revisions. The workflow itself has
+no external publisher/write permissions: returning one packet is atomic, but the
+caller is responsible for durable publication and checking the manifest hashes.
+`validatePairedDocuments(pair, design, availableEvidence, priorHumanReview)` compares
+the entire manifest and exact rendered bytes with the reviewed snapshots; it rejects
+missing documents, mixed revisions and post-review edits even if someone recalculates
+the edited file's hash. Publishers should use this check before displaying an approval
+surface and after reading back their durable publication.
+Publication failure must not become human approval or planning permission.
+
+Human approval must record this exact `approvalRevision`, reviewer and durable
+approval reference. It remains pending in every workflow packet; no old approval
+is imported. Post-review edits require regeneration and independent review of both
+artifacts, a new publication and fresh human approval. Approval of this design does
+not certify implemented flags/accessibility, validate monitoring queries, authorize
+PBI dispatch or permit rollout. Full pre-mortem authoring still waits for all
+implementation completion and authorized dispatch of its dedicated PBI.
+
+For regeneration after human review, optionally pass `priorHumanReview` containing
+the prior `design` snapshot, `revision` from its `pairedDocuments`, durable human
+review `reference`, and `priorReviewContext` copied from that manifest (null for an
+initial pair). The input rejects mismatched/legacy unpaired snapshots; the evidence
+worker must inspect the review record and return matching `priorReviewVerification`
+before a reviewed delta may be claimed. Historical sources are comparison data,
+not current source evidence. Current pins still require independent inspection.
+The runtime identifies changed sections/registers, evidence and requirements revision;
+the author also explains substantive changes, new/resolved decisions and risks.
+Reviewers compare snapshots rather than trusting that explanation. For a first
+review, explicitly say so rather than inventing a review history. A resumed unchanged
+run may replay the same pair, but always returns human approval pending.
 
 ### Accessibility design and evidence
 
@@ -212,7 +295,7 @@ state; and owned validation/release prerequisites. It includes a
 AB# and durable URL with reuse subject to backlog verification. After human design
 approval, planning/backlog creation includes or reuses the dedicated author/review
 child PBI and establishes reciprocal links. This design-only workflow creates no
-work items and does not publish a separate Markdown file. Before authoring, the
+work items and does not publish the future pre-mortem Markdown file. Before authoring, the
 artifact status is `Pending implementation completion and PBI dispatch`; its
 future URL is not a design/planning/backlog prerequisite.
 
@@ -263,7 +346,7 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v10` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v11` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
@@ -276,7 +359,8 @@ schemas, prompts, or rubric change. Steps have no intentional external side effe
 so replay does not publish duplicate artifacts.
 The combined accessibility/default-off/post-implementation handoff does not reuse
 prior v5 outputs, accessibility-only v6, pre-mortem-only v7, design-time
-full-pre-mortem/default-off v8 or pre-accessibility post-implementation v9 outputs.
+full-pre-mortem/default-off v8, pre-accessibility post-implementation v9 or unpaired
+v10 outputs. Human-review snapshots likewise cannot reuse legacy unpaired artifacts.
 
 ## Checks
 
@@ -285,6 +369,7 @@ Run from the repository root (Node.js 18 or newer):
 ```powershell
 node --check .github\extensions\DevDesignDoc\extension.mjs
 node --check .github\extensions\DevDesignDoc\workflow.mjs
+node --check .github\extensions\DevDesignDoc\workflow.test.mjs
 node --test .github\extensions\DevDesignDoc\workflow.test.mjs
 ```
 
@@ -313,6 +398,14 @@ without telling the reviewer the expected classification; confirm it follows the
 terminal chain, rejects unnecessary forwarding, and identifies the genuine gap.
 Separately verify extension discovery and a human-approved representative run in
 a compatible Copilot runtime; mocks do not validate live agent quality.
+
+Paired-brief regressions cover missing/unsupported content and risk categories,
+every-change decision coverage, exact word-budget edges, long unbroken content,
+copied assumptions/unknowns, rejected hidden/mismatched risks despite passing rubric,
+fresh review after repair, stale review digests, verified/unverified prior-review
+snapshots, accurate change metadata, same-revision Markdown/hashes/support anchors
+and v10 isolation/v11 journal replay without additional agents. They do not test an
+external publisher or run a paid live-design quality eval.
 
 The same baseline/necessity requirements apply to the `design-author` skill and
 direct authoring. An interrupted or skipped independent review must be labeled

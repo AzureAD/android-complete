@@ -34,6 +34,7 @@ export const rubric = Object.freeze([
     "measurableTelemetryAndSuccess", "accessibilityDesignAndVerification", "testsEvalsAndDependencies",
     "preMortemAndReleaseGates",
     "defaultOffFeatureIsolation",
+    "humanDesignReviewBrief",
 ]);
 
 const referenceSchema = object({
@@ -46,6 +47,9 @@ const evidenceSchema = object({
     approvalVerification: object({
         verified: { type: "boolean" }, revision: text, reference: text, rationale: text,
     }),
+    priorReviewVerification: { anyOf: [{ type: "null" }, object({
+        verified: { type: "boolean" }, revision: text, reference: text, rationale: text,
+    })] },
     references: list(referenceSchema),
     facts: list(object({ statement: text, referenceIds: texts })),
     sourceVerification: list(object({
@@ -68,6 +72,29 @@ const featureFlagSchema = object({
     })),
     configurationPolicy: text, productionEnablement: text, testCohort: text, rollback: text, verification: text,
 });
+export const briefWordBudget = 1800;
+export const briefCharacterBudget = 16000;
+export const riskCategories = Object.freeze([
+    "securityAuthentication", "accessibility", "compatibilityCrossRepo", "defaultOff", "rollback",
+]);
+const briefContentSchema = object({ text, sectionIds: texts, evidenceIds: texts });
+const briefSchema = object({
+    outcomeAndScope: briefContentSchema,
+    architecture: briefContentSchema,
+    flowDiagram: text,
+    decisions: list(object({
+        changeIds: texts, question: text, recommendation: text, rejectedAlternatives: texts,
+        tradeoffs: text, owner: text, approvalBlocker: { type: "boolean" },
+        sectionIds: texts, evidenceIds: texts,
+    })),
+    evidenceAndUncertainty: briefContentSchema,
+    risks: list(object({
+        category: { type: "string", enum: riskCategories },
+        applicability: { type: "string", enum: ["applicable", "not-applicable"] },
+        impact: text, safeguards: text, owner: text, sectionIds: texts, evidenceIds: texts,
+    })),
+    changesSincePriorReview: text,
+});
 const designSchema = object({
     stage0Revision: text, evidenceDigest: text,
     sections: object(Object.fromEntries(sections.map((key) => [key, text]))),
@@ -87,6 +114,7 @@ const designSchema = object({
         }),
     })),
     assumptions: texts, openDecisions: texts, blockingUnknowns: texts,
+    humanReviewBrief: briefSchema,
 });
 const findingSchema = object({
     id: text, rubricId: { type: "string", enum: rubric },
@@ -94,7 +122,7 @@ const findingSchema = object({
     location: text, evidence: text, requiredChange: text,
 });
 const reviewSchema = object({
-    designDigest: text, evidenceDigest: text, references: list(referenceSchema),
+    designDigest: text, evidenceDigest: text, pairRevision: text, references: list(referenceSchema),
     criteria: list(object({ id: { type: "string", enum: rubric }, pass: { type: "boolean" } })),
     changeChecks: list(object({
         changeId: text, baselineVerified: { type: "boolean" },
@@ -102,6 +130,11 @@ const reviewSchema = object({
         referenceIds: texts, rationale: text,
     })),
     findings: list(findingSchema), blockingUnknowns: texts,
+    briefChecks: object({
+        consistent: { type: "boolean" }, complete: { type: "boolean" },
+        risksVisible: { type: "boolean" }, evidenceDistinguished: { type: "boolean" },
+        revisionChangesAccurate: { type: "boolean" }, rationale: text,
+    }),
 });
 
 const boundaries = `You are a design-only worker. Read repository sources; return JSON, not files.
@@ -114,6 +147,11 @@ not a missing input. Never require final design approval before generating its c
 Report blocking uncertainty explicitly. A recommendation is not human approval.`;
 
 export const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+export const pairRevision = (design, priorReviewContext = null) => digest({
+    stage0Revision: design.stage0Revision, evidenceDigest: design.evidenceDigest, design,
+    priorReviewContext: priorReviewContext
+        ? { revision: priorReviewContext.revision, reference: priorReviewContext.reference } : null,
+});
 const sourceKey = (source) => JSON.stringify([source.repository, source.revision]);
 const linked = (values, ids) => strings(values) && values.length > 0 &&
     unique(values) && values.every((id) => ids.has(id));
@@ -143,10 +181,20 @@ export function validateStage0(args) {
         errors.push("A nonempty sourceManifest of unique repository/full Git commit object ID pairs is required (40 hexadecimal SHA-1 or 64 hexadecimal SHA-256 characters; refs and abbreviated hashes are not accepted).");
     }
     if (args.context !== undefined && !nonempty(args.context)) errors.push("Optional context must be nonempty text.");
+    const prior = args.priorHumanReview;
+    if (prior !== undefined && (!record(prior) || !record(prior.design) ||
+        !record(prior.design.humanReviewBrief) || !nonempty(prior.design.stage0Revision) ||
+        !nonempty(prior.design.evidenceDigest) || !record(prior.design.sections) ||
+        !sections.every((key) => nonempty(prior.design.sections[key])) || !nonempty(prior.reference) ||
+        (prior.priorReviewContext !== null && (!record(prior.priorReviewContext) ||
+            !nonempty(prior.priorReviewContext.revision) || !nonempty(prior.priorReviewContext.reference))) ||
+        prior.revision !== pairRevision(prior.design, prior.priorReviewContext))) {
+        errors.push("Prior human review requires the exact paired design snapshot, matching pair revision and inspectable review reference; legacy/unpaired snapshots are not reusable.");
+    }
     return errors;
 }
 
-export function validateEvidence(evidence, stage0, sourceManifest) {
+export function validateEvidence(evidence, stage0, sourceManifest, priorHumanReview) {
     if (!record(evidence) || !Array.isArray(evidence.references) || !Array.isArray(evidence.facts) ||
         !["conflicts", "assumptions", "unknowns", "blockingUnknowns"].every((key) => strings(evidence[key]))) {
         return ["Evidence worker returned no valid structured evidence."];
@@ -155,6 +203,13 @@ export function validateEvidence(evidence, stage0, sourceManifest) {
     if (!record(approval) || approval.verified !== true || !nonempty(approval.rationale) ||
         approval.revision !== stage0.revision || approval.reference !== stage0.approval.reference) {
         return ["Evidence worker could not verify the approval record for the exact Stage 0 revision."];
+    }
+    if (priorHumanReview) {
+        const prior = evidence.priorReviewVerification;
+        if (!record(prior) || prior.verified !== true || !nonempty(prior.rationale) ||
+            prior.revision !== priorHumanReview.revision || prior.reference !== priorHumanReview.reference) {
+            return ["Evidence worker could not verify the supplied prior human review for its exact paired revision."];
+        }
     }
     const refs = evidence.references;
     if (!refs.length || refs.some((r) => !record(r) ||
@@ -234,7 +289,141 @@ function validateFeatureFlags(design, evidence) {
     return [];
 }
 
-export function validateDesign(design, stage0, evidence) {
+const sectionAnchor = (key) => key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+const sectionLabel = (key) => key.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`);
+const riskLabels = {
+    securityAuthentication: "Security and authentication", accessibility: "Accessibility",
+    compatibilityCrossRepo: "Compatibility and cross-repository contracts",
+    defaultOff: "Default-off isolation", rollback: "Rollback and recovery",
+};
+const supportLinks = (item) => [
+    ...item.sectionIds.map((id) => `[${sectionLabel(id)}](detailed-design.md#${sectionAnchor(id)})`),
+    ...item.evidenceIds.map((id) => `[${id}](detailed-design.md#evidence-${encodeURIComponent(id)})`),
+].join(", ");
+const wordCount = (markdown) => markdown.trim().split(/\s+/u).length;
+
+function revisionChanges(design, priorHumanReview) {
+    if (!priorHumanReview) return "Initial human review; no earlier paired approval is reused.";
+    const previous = priorHumanReview.design;
+    const changed = sections.filter((key) => previous.sections?.[key] !== design.sections[key]);
+    const registers = ["changes", "featureFlags", "traceability", "assumptions", "openDecisions", "blockingUnknowns"];
+    const changedRegisters = registers.filter((key) => digest(previous[key] ?? null) !== digest(design[key]));
+    return `Prior reviewed pair: ${priorHumanReview.revision} (${priorHumanReview.reference}).\n` +
+        `Changed detailed sections: ${changed.join(", ") || "none"}.\n` +
+        `Changed registers: ${changedRegisters.join(", ") || "none"}.\n` +
+        `Evidence changed: ${previous.evidenceDigest !== design.evidenceDigest}. ` +
+        `Requirements revision changed: ${previous.stage0Revision !== design.stage0Revision}. ` +
+        `Brief changed: ${digest(previous.humanReviewBrief) !== digest(design.humanReviewBrief)}.\n` +
+        "This pair requires fresh human review; prior approval is not carried forward.";
+}
+
+export function renderHumanReviewBrief(design, evidence, priorHumanReview) {
+    const brief = design.humanReviewBrief;
+    const content = (part) => `${part.text}\n\nSupporting detail: ${supportLinks(part)}`;
+    const items = (label, values) => `**${label}:** ${values.length ? values.map((value) => `\n- ${value}`).join("") : "None recorded."}`;
+    return [
+        "# Human Design Review Brief",
+        `Paired revision: ${pairRevision(design, priorHumanReview)}. Human approval: pending. Design approval is not rollout approval.`,
+        "## Decisions needed from the human",
+        ...brief.decisions.map((decision) =>
+            `### ${decision.question}\nRecommended: ${decision.recommendation}\n` +
+            `Rejected alternatives: ${decision.rejectedAlternatives.join("; ")}\nTradeoffs: ${decision.tradeoffs}\n` +
+            `Accountable owner: ${decision.owner}. Approval blocker: ${decision.approvalBlocker ? "Yes" : "No"}.\n` +
+            `Changes: ${decision.changeIds.join(", ")}. Supporting detail: ${supportLinks(decision)}`),
+        "## Customer outcome, behavior and scope",
+        content(brief.outcomeAndScope),
+        ...design.changes.map((change) => `**${change.id} (${change.classification}; ${change.implementation}):** ` +
+            `Current baseline: ${change.baselineBehavior} Proposed delta: ${change.requestedDelta}\n` +
+            (change.runtimeBehaviorChange
+                ? `Default-off flags: ${change.flagIds.join(", ")}. Disabled behavior must preserve the baseline; implementation verification is pending.\n`
+                : `No runtime change: ${change.noFlagReason}\n`) +
+            `Supporting detail: ${supportLinks(change)}`),
+        "## Proposed architecture",
+        content(brief.architecture), brief.flowDiagram,
+        "## Evidence versus assumptions and unresolved questions",
+        content(brief.evidenceAndUncertainty),
+        items("Design assumptions", design.assumptions), items("Evidence assumptions", evidence.assumptions),
+        items("Evidence unknowns", evidence.unknowns), items("Open human decisions", design.openDecisions),
+        items("Design approval blockers", design.blockingUnknowns),
+        items("Evidence approval blockers", evidence.blockingUnknowns),
+        "## Consequential risks and safeguards",
+        ...brief.risks.map((risk) => `**${riskLabels[risk.category]} (${risk.applicability === "applicable" ? "Applicable" : "N/A"}):** ${risk.impact}\n` +
+            `Safeguards / justified N/A: ${risk.safeguards}\nAccountable owner: ${risk.owner}.\n` +
+            `Supporting detail: ${supportLinks(risk)}`),
+        "## What changed since prior human review",
+        revisionChanges(design, priorHumanReview), brief.changesSincePriorReview,
+        "Approve only this exact paired revision, with an accountable reviewer and durable approval reference. " +
+        "Drill into the linked authoritative detailed design as needed; unresolved approval blockers prevent approval. " +
+        "Pre-mortem authoring remains pending all implementation completion and authorized PBI dispatch. " +
+        "Telemetry/query validation, runtime accessibility acceptance and release/enablement remain separate gates.",
+    ].join("\n\n");
+}
+
+export function validateHumanReviewBrief(design, evidence, priorHumanReview) {
+    const brief = design.humanReviewBrief;
+    const ids = new Set(evidence.references.map((ref) => ref.id));
+    const supported = (item) => record(item) && linked(item.sectionIds, new Set(sections)) &&
+        strings(item.evidenceIds) && unique(item.evidenceIds) && item.evidenceIds.every((id) => ids.has(id));
+    if (!record(brief) ||
+        !["outcomeAndScope", "architecture", "evidenceAndUncertainty"].every((key) =>
+            supported(brief[key]) && nonempty(brief[key].text)) ||
+        !nonempty(brief.flowDiagram) || !nonempty(brief.changesSincePriorReview) ||
+        !Array.isArray(brief.decisions) || !brief.decisions.length ||
+        brief.decisions.some((decision) => !supported(decision) ||
+            !["question", "recommendation", "tradeoffs", "owner"].every((key) => nonempty(decision[key])) ||
+            typeof decision.approvalBlocker !== "boolean" ||
+            !strings(decision.rejectedAlternatives) || !decision.rejectedAlternatives.length ||
+            !linked(decision.changeIds, new Set(design.changes.map((change) => change.id)))) ||
+        design.changes.some((change) => !brief.decisions.some((decision) => decision.changeIds.includes(change.id))) ||
+        !Array.isArray(brief.risks) || brief.risks.length !== riskCategories.length ||
+        !unique(brief.risks.map((risk) => risk?.category)) ||
+        brief.risks.some((risk) => !supported(risk) || !riskCategories.includes(risk.category) ||
+            !["applicable", "not-applicable"].includes(risk.applicability) ||
+            !["impact", "safeguards", "owner"].every((key) => nonempty(risk[key])))) {
+        return ["Human review brief requires supported outcome/scope, architecture/flow, owned decisions covering every change with alternatives/tradeoffs, evidence/uncertainties, all risk categories with justified N/A, and revision changes."];
+    }
+    const rendered = renderHumanReviewBrief(design, evidence, priorHumanReview);
+    const words = wordCount(rendered);
+    return words > briefWordBudget || rendered.length > briefCharacterBudget
+        ? [`Human review brief is ${words} words / ${rendered.length} characters; budget is ${briefWordBudget} words / ${briefCharacterBudget} characters. Rewrite without omitting approval-critical decisions, evidence, uncertainties or risks; never truncate.`]
+        : [];
+}
+
+export function renderPairedDocuments(design, evidence, priorHumanReview) {
+    const revision = pairRevision(design, priorHumanReview);
+    const detailed = [
+        "# Authoritative detailed design",
+        `Paired revision: ${revision}. Human approval: pending.`,
+        "[Primary human approval surface](human-design-review-brief.md).",
+        ...sections.map((key) => `<a id="${sectionAnchor(key)}"></a>\n## ${key}\n${design.sections[key]}`),
+        "## Authoritative registers",
+        "```json\n" + JSON.stringify({
+            stage0Revision: design.stage0Revision, evidenceDigest: design.evidenceDigest,
+            changes: design.changes, featureFlags: design.featureFlags, traceability: design.traceability,
+            assumptions: design.assumptions, openDecisions: design.openDecisions, blockingUnknowns: design.blockingUnknowns,
+        }, null, 2) + "\n```",
+        "## Pinned evidence and provenance",
+        ...evidence.references.map((ref) => `<a id="evidence-${encodeURIComponent(ref.id)}"></a>\n### ${ref.id}\n` +
+            "```json\n" + JSON.stringify(ref, null, 2) + "\n```"),
+        "```json\n" + JSON.stringify(evidence, null, 2) + "\n```",
+    ].join("\n\n");
+    const documents = [
+        { path: "human-design-review-brief.md", markdown: renderHumanReviewBrief(design, evidence, priorHumanReview) },
+        { path: "detailed-design.md", markdown: detailed },
+    ].map((document) => ({ ...document, sha256: createHash("sha256").update(document.markdown).digest("hex") }));
+    return {
+        revision,
+        priorReviewContext: priorHumanReview
+            ? { revision: priorHumanReview.revision, reference: priorHumanReview.reference } : null,
+        primaryDocument: documents[0].path, documents,
+    };
+}
+
+export function validatePairedDocuments(pair, design, evidence, priorHumanReview) {
+    return record(pair) && digest(pair) === digest(renderPairedDocuments(design, evidence, priorHumanReview));
+}
+
+export function validateDesign(design, stage0, evidence, priorHumanReview) {
     if (!record(design)) return ["Author returned no valid design."];
     const errors = [];
     if (design.stage0Revision !== stage0.revision) errors.push("Design changed the approved Stage 0 revision.");
@@ -279,11 +468,14 @@ export function validateDesign(design, stage0, evidence) {
         errors.push("Every requirement/change needs a classified baseline/delta/necessity record, matching scenario traces and counterevidence; already-handled behavior is regression-only, optional work is deferred, and unresolved claims block readiness.");
     } else {
         errors.push(...validateFeatureFlags(design, evidence));
+        if (errors.length === 0) {
+            errors.push(...validateHumanReviewBrief(design, evidence, priorHumanReview));
+        }
     }
     return errors;
 }
 
-export function validateReview(review, design, evidence, sourceManifest = evidence.sourceVerification) {
+export function validateReview(review, design, evidence, sourceManifest = evidence.sourceVerification, priorHumanReview) {
     if (!record(review) || !Array.isArray(review.criteria) || review.criteria.length !== rubric.length ||
         !unique(review.criteria.map((c) => c?.id)) ||
         rubric.some((id) => !review.criteria.some((c) => c?.id === id && typeof c.pass === "boolean")) ||
@@ -296,6 +488,7 @@ export function validateReview(review, design, evidence, sourceManifest = eviden
             ids.has(r.id) || !sources.has(sourceKey(r)))) return false;
     for (const reference of review.references) ids.add(reference.id);
     if (review.designDigest !== digest(design) || review.evidenceDigest !== digest(evidence) ||
+        review.pairRevision !== pairRevision(design, priorHumanReview) ||
         !Array.isArray(review.changeChecks) ||
         review.changeChecks.length !== design.changes.length ||
         !unique(review.changeChecks.map((c) => c?.changeId)) ||
@@ -303,6 +496,9 @@ export function validateReview(review, design, evidence, sourceManifest = eviden
         review.changeChecks.some((c) => !record(c) ||
             !["baselineVerified", "necessityConfirmed", "counterevidenceVerified"].every((key) => typeof c[key] === "boolean") ||
             !linked(c.referenceIds, ids) || !nonempty(c.rationale))) return false;
+    if (!record(review.briefChecks) || !nonempty(review.briefChecks.rationale) ||
+        !["consistent", "complete", "risksVisible", "evidenceDistinguished", "revisionChangesAccurate"]
+            .every((key) => typeof review.briefChecks[key] === "boolean")) return false;
     return unique(review.findings.map((f) => f?.id)) && review.findings.every((f) =>
         record(f) && rubric.includes(f.rubricId) && ["blocker", "major", "minor"].includes(f.severity) &&
         ["id", "location", "evidence", "requiredChange"].every((key) => nonempty(f[key])));
@@ -322,14 +518,18 @@ export async function runDesignFeature(ctx) {
     let fixes = 0;
     let stage0 = ctx.args?.stage0 ?? null;
     let sourceManifest = ctx.args?.sourceManifest ?? null;
+    let priorHumanReview = ctx.args?.priorHumanReview;
     const packet = (recommendation, reasons) => ({
         recommendation, humanApproval: "pending", reasons, fixIterations: fixes,
         stage0, sourceManifest, evidence, availableEvidence: availableEvidence(),
         referenceDiscoveries, design, reviews: history,
         reviewReady: recommendation === "GO to Planning",
+        pairedDocuments: recommendation === "GO to Planning"
+            ? renderPairedDocuments(design, availableEvidence(), priorHumanReview) : null,
+        approvalRevision: recommendation === "GO to Planning" ? pairRevision(design, priorHumanReview) : null,
         rubric: [...rubric],
         nextAction: recommendation === "GO to Planning"
-            ? "Human must review the packet and explicitly approve before planning."
+            ? "Publish both pairedDocuments together without editing their bytes. Human reviews the brief as the primary approval surface, drills into linked detail as needed, and records explicit approval of approvalRevision with reviewer and durable reference before planning. Approval is not rollout permission."
             : "Resolve the listed issues; obtain new Stage 0 approval if requirements change.",
     });
     if (stage0Errors.length) return packet("needs clarification", stage0Errors);
@@ -337,8 +537,9 @@ export async function runDesignFeature(ctx) {
     stage0 = JSON.parse(JSON.stringify(ctx.args.stage0));
     sourceManifest = JSON.parse(JSON.stringify(ctx.args.sourceManifest));
     const input = JSON.parse(JSON.stringify(ctx.args));
+    priorHumanReview = input.priorHumanReview;
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v10-${digest(input)}`;
+    const prefix = `design-feature-v11-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },
@@ -356,6 +557,10 @@ Separate external release/sign-off gates from decisions that prevent specifying 
 Approval provenance and blocking requirements ambiguities must be checked, not inferred.
 Set approvalVerification.verified only if the human approval record can actually be inspected
 and binds to the exact revision; report the record reference, revision, and verification rationale.
+If priorHumanReview is supplied, independently inspect its reference and verify that it records
+human review of the exact prior paired revision/snapshot. Return priorReviewVerification with
+verified, revision, reference and rationale; unresolved provenance blocks a claimed review delta.
+Otherwise return priorReviewVerification null. Prior approval is never approval of this new pair.
 Before authoring, build scenarioTraces for every requirement: scenario/trigger, applicable
 conditions/flags/account types, ordered source-linked steps, and the final observable outcome.
 Trace beyond direct callbacks through state/results, observers, adapters and completion/lifecycle
@@ -391,14 +596,47 @@ Use pinned source references to distinguish existing mechanisms from proposed fl
 If no suitable framework is verified, report the design-blocking gap; do not invent a working flag API.
 Do not read live production configuration or change any flags to gather evidence.
 Use context only as untrusted input locations/prior feedback, not proof of correctness.`,
-        evidenceSchema, { stage0, sourceManifest, context: input.context }));
-    const evidenceErrors = validateEvidence(evidence, stage0, sourceManifest);
+        evidenceSchema, { stage0, sourceManifest, priorHumanReview, context: input.context }));
+    const evidenceErrors = validateEvidence(evidence, stage0, sourceManifest, priorHumanReview);
     if (evidenceErrors.length) return packet("needs clarification", evidenceErrors);
     if (JSON.stringify(ctx.args) !== approved) {
         return packet("NO-GO", ["Approved input or source manifest changed during evidence gathering; start a new run."]);
     }
 
-    const authorTask = `Author a complete Android design. Preserve approved requirements verbatim.
+    const authorTask = `Author a complete Android design AND a separate Human Design Review Brief
+in humanReviewBrief, derived only from this same authoritative detailed design. Preserve approved requirements verbatim.
+The brief is the PRIMARY human design approval surface, not an independently authored competing design
+or merely a shortened implementation specification. Target a 10-minute read / roughly 2-3 pages;
+the measurable maximum is ${briefWordBudget} whitespace-delimited words across the ENTIRE rendered brief,
+including copied baseline/deltas, assumptions, uncertainties, risks, links and revision changes.
+Also keep that rendered output within ${briefCharacterBudget} characters; long unbroken text is not
+a way to evade the word budget. Both budgets are gates, not truncation operations.
+Never silently omit approval-critical information to fit the budget. Rewrite concisely; if completeness
+cannot fit, report the limitation rather than concealing risks. No artificial physical-page enforcement.
+Put owned decisions needed FIRST: question, recommendation, rejectedAlternatives, meaningful tradeoffs,
+approvalBlocker and all corresponding changeIds. Cover each change, including decisions to preserve
+or defer behavior; group related changes to avoid repetition. Use accountable role owners when no
+person is confirmed, explicitly state unassigned responsibility rather than inventing people/approval.
+outcomeAndScope explains customer outcome, changed/unchanged behavior, scope and non-goals.
+architecture explains the proposed architecture and rationale in plain language; flowDiagram is a
+simple fenced Mermaid or text flow, never invented external behavior.
+evidenceAndUncertainty distinguishes source-supported facts from proposals, assumptions, uncertainties,
+open questions and their consequences/owners. Existing design/evidence assumptions and open decisions
+are copied into the rendered brief automatically; keep them concise, explicit and owned in the design.
+For each brief content/decision/risk, link sectionIds to supporting sections in THIS authoritative
+design, and evidenceIds to its pinned evidence. Empty evidenceIds is acceptable for clearly labeled
+proposals or justified N/A, never for an asserted verified fact; reviewers independently challenge this.
+Include every risk category: ${riskCategories.join(", ")}. For each give applicability, consequential
+impact, safeguards and accountable owner; not-applicable requires an explicit substantive justification.
+Never bury consequential security/authentication, accessibility, compatibility/cross-repo, default-off
+or rollback risks, approval blockers or unsupported claims only behind links. The brief must show them.
+All recommendations, rejected alternatives, tradeoffs and risks must agree with the detailed design;
+revise both in the same author/revision output, never resolve an inconsistency by changing only the brief.
+changesSincePriorReview explains substantive changes and new/resolved decisions, assumptions and risks
+since the supplied verified priorHumanReview; absent a prior review, state this is the initial review.
+The runtime also identifies changed sections/registers/evidence and binds both documents to a new pair
+revision. Substantive edits require regenerating and independently reviewing the pair; stale approvals
+cannot be reused. Preserve all existing gates; design approval is not rollout approval.
 Use all required section keys: ${sections.join(", ")}.
 Include problem, goals/non-goals, platform applicability/priority, architecture and data/control
 flow across repository boundaries, at least two alternatives and a justified decision, public/internal
@@ -515,13 +753,13 @@ Render these records visibly in the design. Keep UX-first explanation and prior 
 do not replace comprehensive implementation contracts with a short summary.`;
     const designStep = (key, producer) => step(`${digest(availableEvidence())}-${key}`, producer);
     design = await designStep("design", () => ask("Design author", authorTask, designSchema,
-        { stage0, sourceManifest, evidence, evidenceDigest: digest(evidence), context: input.context }));
+        { stage0, sourceManifest, evidence, evidenceDigest: digest(evidence), priorHumanReview, context: input.context }));
     for (let round = 0; round <= 2; round++) {
         if (JSON.stringify(ctx.args) !== approved) {
             return packet("NO-GO", ["Approved input changed during the run; start a new run."]);
         }
         const currentEvidence = availableEvidence();
-        const errors = validateDesign(design, stage0, currentEvidence);
+        const errors = validateDesign(design, stage0, currentEvidence, priorHumanReview);
         if (errors.length === 0) {
             if (design.blockingUnknowns.length) return packet("needs clarification", design.blockingUnknowns);
             const review = await designStep(`independent-review-${round}-${digest(design)}-${digest(history)}`, () => ask("Independent design reviewer",
@@ -529,6 +767,24 @@ do not replace comprehensive implementation contracts with a short summary.`;
 Apply the fixed rubric: ${rubric.join(", ")}. Check every criterion and every approved requirement,
 source currency/conflicts, alternatives, open decisions, measurable targets, Android IPC/security
 boundaries, OneAuth ownership and backwards compatibility. Do not edit the design or requirements.
+For humanDesignReviewBrief, independently compare the ENTIRE rendered brief with the authoritative
+detailed design, evidence, approved requirements and verified priorHumanReview, not just citations.
+Return briefChecks for consistent, complete, risksVisible, evidenceDistinguished,
+revisionChangesAccurate with a substantive rationale. Every check must pass independently of rubric.
+Check consequential decisions, architecture/rationale, rejected alternatives and meaningful tradeoffs;
+customer outcomes, changed/unchanged behavior, scope/non-goals; facts versus assumptions, uncertainties,
+open decisions, approval blockers and accountable owners. Decisions needed must appear first.
+Require a simple accurate flow and specific support links into the SAME detailed design.
+Reject link-only/hidden risks, mismatched safeguards/default-off/rollback contracts, invented evidence,
+certainty or approval, unjustified N/A, and decisions/risks omitted from either artifact.
+Require all five consequential risk categories, including accessibility and cross-repo compatibility,
+with substantive impact/safeguards or justified N/A. Do not endorse a skeletal brief merely because
+structural fields/links exist; evaluate whether engineers can make informed judgments in ten minutes.
+Compare prior/current snapshots: reject stale or inaccurate change explanations and unexplained
+substantive changes. The new exact pair always needs human approval; no prior approval is inherited.
+Both documents must be published together without post-review edits, bound to this review's designDigest
+and evidenceDigest. Echo the supplied pairRevision to bind the prior-review identity as well.
+The brief is primary for human approval; detail remains authoritative drill-in.
 For accessibilityDesignAndVerification, assess the mandatory accessibility section against affected
 UI, approved requirements/IDs, owning guidance, screen/state coverage and testsAndEvals.
 Require concrete semantics, TalkBack/focus, keyboard-only, scaling/reflow, target-size and contrast/
@@ -590,8 +846,10 @@ For each issue return a unique ID, rubric ID, severity, exact location, evidence
 Do not waive criteria or silently downgrade findings. Unresolved blocking unknowns prohibit GO.`,
                 reviewSchema, { stage0, sourceManifest, evidence: currentEvidence, design,
                     evidenceDigest: digest(currentEvidence), designDigest: digest(design),
+                    renderedBrief: renderHumanReviewBrief(design, currentEvidence, priorHumanReview),
+                    pairRevision: pairRevision(design, priorHumanReview), priorHumanReview,
                     rubric, priorReviews: history, context: input.context }));
-            if (!validateReview(review, design, currentEvidence, sourceManifest)) return packet("NO-GO", ["Independent reviewer failed or returned malformed output."]);
+            if (!validateReview(review, design, currentEvidence, sourceManifest, priorHumanReview)) return packet("NO-GO", ["Independent reviewer failed or returned malformed output."]);
             history.push({ round, review });
             if (review.references.length) referenceDiscoveries.push({ round, references: review.references });
             if (JSON.stringify(ctx.args) !== approved) {
@@ -599,6 +857,8 @@ Do not waive criteria or silently downgrade findings. Unresolved blocking unknow
             }
             if (review.blockingUnknowns.length) return packet("needs clarification", review.blockingUnknowns);
             if (!review.references.length && review.criteria.every((c) => c.pass) && review.findings.length === 0 &&
+                ["consistent", "complete", "risksVisible", "evidenceDistinguished", "revisionChangesAccurate"]
+                    .every((key) => review.briefChecks[key]) &&
                 review.changeChecks.every((c) => c.baselineVerified && c.necessityConfirmed && c.counterevidenceVerified)) {
                 return packet("GO to Planning", ["Structural trace/necessity gates and independent source review passed. Human approval is still required."]);
             }
@@ -612,7 +872,7 @@ Do not waive criteria or silently downgrade findings. Unresolved blocking unknow
             `${authorTask}\nFix all validation and review findings without changing Stage 0 or the rubric.
 Do not claim an issue is resolved by deleting requirements, evidence, or review criteria.`,
             designSchema, { stage0, sourceManifest, evidence: availableEvidence(),
-                evidenceDigest: digest(availableEvidence()), design, rubric, history, context: input.context }));
+                evidenceDigest: digest(availableEvidence()), design, rubric, history, priorHumanReview, context: input.context }));
     }
 }
 
@@ -628,7 +888,9 @@ export const workflowDefinition = {
         // Semantic validation runs inside the workflow so missing approval returns a gate packet.
         argsSchema: {
             type: "object", required: ["stage0", "sourceManifest"],
-            properties: { stage0: { type: "object" }, sourceManifest: list(sourceSchema), context: text },
+            properties: { stage0: { type: "object" }, sourceManifest: list(sourceSchema), context: text,
+                priorHumanReview: object({ revision: text, reference: text, design: designSchema,
+                    priorReviewContext: { anyOf: [{ type: "null" }, object({ revision: text, reference: text })] } }) },
         },
         limits: {
             maxConcurrentSubagents: 1, maxTotalSubagents: 7,
