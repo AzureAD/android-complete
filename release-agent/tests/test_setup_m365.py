@@ -591,6 +591,36 @@ def test_registration_preserves_quoted_metadata_and_literal_instruction_text(tmp
     assert check_skill_registration(agent, profile / "m-skills")["ok"]
 
 
+def test_bootstrap_queues_skill_upsert_in_scout_sync_state_to_override_cloud_tombstones(tmp_path):
+    result, capture, _, profile, agent = bootstrap_case(tmp_path, install_skill=True, skill_only=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    sync_file = profile / "m-sync-state.json"
+    sync_file.write_text(json.dumps({
+        "deviceId": "dev-123",
+        "boundUserId": "user-123",
+        "lastSuccessfulPullAt": "2026-11-14T05:00:00.000Z",
+        "pendingWrites": [],
+        "lastApplied": {
+            "clawpilot/v1/skills/local-example-hello": {
+                "clientUpdatedAt": "2026-07-22T01:21:08.082Z",
+                "serverUpdatedAt": "2026-07-22T01:21:12.222Z",
+            },
+        },
+    }), encoding="utf-8")
+
+    refreshed = run_bootstrap(result.args, capture, agent)
+    assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
+    sync_state = json.loads(sync_file.read_text(encoding="utf-8"))
+    assert isinstance(sync_state["pendingWrites"], list) and len(sync_state["pendingWrites"]) == 1
+    write = sync_state["pendingWrites"][0]
+    assert write["key"] == "clawpilot/v1/skills/local-release-agent"
+    assert write["deletedAt"] is None and write["schemaVersion"] == 1
+    assert "enabled" not in write["value"] and write["value"]["name"] == "release-agent"
+    applied = sync_state["lastApplied"]["clawpilot/v1/skills/local-release-agent"]
+    assert applied["clientUpdatedAt"] == write["clientUpdatedAt"] and applied["serverUpdatedAt"] == ""
+    assert "clawpilot/v1/skills/local-example-hello" in sync_state["lastApplied"]
+
+
 @pytest.mark.parametrize("source", ["explicit", "environment", "path", "configured", "default"])
 def test_agency_launcher_discovery_accepts_user_specific_locations(tmp_path, monkeypatch, source):
     launcher = tmp_path / "tools in a different folder" / "agency.exe"

@@ -129,38 +129,46 @@ if (-not $ScoutSkillsDir) { $ScoutSkillsDir = Join-Path $ScoutRoot 'm-skills' }
 $ScoutSkillsDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ScoutSkillsDir)
 $env:RELEASE_AGENT_SCOUT_ROOT = $ScoutRoot
 
-# Stop all Scout processes and relaunch the app. Returns $true if it relaunched.
-function Restart-Scout {
+function Resolve-ScoutExecutable {
   $procs = @(Get-Process -Name 'scout' -ErrorAction SilentlyContinue)
   $candidates = @($procs | Where-Object { $_.Path } | Select-Object -ExpandProperty Path)
   foreach ($name in @('scout', 'scout.exe')) {
     $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command) { $candidates += $command.Source }
   }
-  if ($env:LOCALAPPDATA) { $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Microsoft Scout\scout.exe' }
-  if ($env:ProgramFiles) { $candidates += Join-Path $env:ProgramFiles 'Microsoft Scout\scout.exe' }
-  $exe = Resolve-SetupPath -Value $ScoutExe -Candidates $candidates -Label 'Scout executable' -Parameter ScoutExe
-  if (-not $exe) { return $false }
+  if ($env:LOCALAPPDATA) {
+    $candidates += Join-Path $env:LOCALAPPDATA 'Programs\scout\scout.exe'
+    $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Microsoft Scout\scout.exe'
+  }
+  if ($env:ProgramFiles) {
+    $candidates += Join-Path $env:ProgramFiles 'scout\scout.exe'
+    $candidates += Join-Path $env:ProgramFiles 'Microsoft Scout\scout.exe'
+  }
+  return Resolve-SetupPath -Value $ScoutExe -Candidates $candidates -Label 'Scout executable' -Parameter ScoutExe
+}
+
+function Stop-RunningScout {
+  $procs = @(Get-Process -Name 'scout' -ErrorAction SilentlyContinue)
   if ($procs.Count) {
-    Write-Host "  Closing Scout ($($procs.Count) process(es)) ..." -ForegroundColor DarkYellow
+    Write-Host "  Closing running Scout ($($procs.Count) process(es)) before updating files ..." -ForegroundColor DarkYellow
     $procs | ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {} }
-    # Wait for the processes to actually exit before relaunching (single-instance lock).
-    for ($i = 0; $i -lt 20 -and (Get-Process -Name 'scout' -ErrorAction SilentlyContinue); $i++) {
+    for ($i = 0; $i -lt 24 -and (Get-Process -Name 'scout' -ErrorAction SilentlyContinue); $i++) {
       Start-Sleep -Milliseconds 250
     }
   }
+  return ($procs.Count -gt 0)
+}
+
+function Start-ScoutDetached {
+  param([Parameter(Mandatory = $true)][string]$Exe)
   Write-Host "  Relaunching Scout ..." -ForegroundColor DarkYellow
-  # Launch fully DETACHED so Scout does NOT inherit this console — otherwise its
-  # Electron startup logs spill into the terminal after setup returns. Win32_Process
-  # Create starts it in a brand-new process with no console attachment.
   $launched = $false
   try {
-    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "`"$exe`"" } -ErrorAction Stop
+    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "`"$Exe`"" } -ErrorAction Stop
     if ($r.ReturnValue -eq 0) { $launched = $true }
   } catch {}
   if (-not $launched) {
-    # Fallback: explorer.exe launches the app as its child, also detached from our console.
-    try { Start-Process explorer.exe -ArgumentList "`"$exe`""; $launched = $true } catch {}
+    try { Start-Process explorer.exe -ArgumentList "`"$Exe`""; $launched = $true } catch {}
   }
   return $launched
 }
@@ -207,6 +215,60 @@ function Read-ScoutSkillDefinition {
     description = $values.description
     instructions = $instructions
   }
+}
+
+function Update-ScoutSkillSyncState {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScoutRoot,
+    [Parameter(Mandatory = $true)]$Entry
+  )
+  $syncFile = Join-Path $ScoutRoot 'm-sync-state.json'
+  if (-not (Test-Path -LiteralPath $syncFile -PathType Leaf)) { return $false }
+  try {
+    $state = ConvertFrom-ScoutSkillJson -Json ([IO.File]::ReadAllText($syncFile))
+  } catch {
+    return $false
+  }
+  if ($null -eq $state -or $state.deviceId -isnot [string]) { return $false }
+  $syncKey = "clawpilot/v1/skills/$($Entry.id)"
+  $nowIso = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+  $syncedValue = [ordered]@{
+    id = [string]$Entry.id
+    name = [string]$Entry.name
+    description = [string]$Entry.description
+    instructions = [string]$Entry.instructions
+    createdAt = if ($Entry.createdAt) { [string]$Entry.createdAt } else { $nowIso }
+    scope = 'local'
+  }
+  $existingWrites = @()
+  if ($null -ne $state.pendingWrites) {
+    $existingWrites = @($state.pendingWrites | Where-Object { $null -ne $_ -and $_.key -cne $syncKey })
+  }
+  $writeRecord = [PSCustomObject][ordered]@{
+    key = $syncKey
+    value = [PSCustomObject]$syncedValue
+    clientUpdatedAt = $nowIso
+    deletedAt = $null
+    schemaVersion = 1
+  }
+  $state | Add-Member -NotePropertyName pendingWrites -NotePropertyValue ([object[]]@($existingWrites + $writeRecord)) -Force
+  if ($null -eq $state.lastApplied) {
+    $state | Add-Member -NotePropertyName lastApplied -NotePropertyValue ([PSCustomObject]@{}) -Force
+  }
+  $appliedStamp = [PSCustomObject][ordered]@{
+    clientUpdatedAt = $nowIso
+    serverUpdatedAt = ''
+  }
+  $state.lastApplied | Add-Member -NotePropertyName $syncKey -NotePropertyValue $appliedStamp -Force
+  $temporary = "$syncFile.$([Guid]::NewGuid().ToString('N')).tmp"
+  try {
+    $json = ConvertTo-Json -InputObject $state -Depth 100
+    [IO.File]::WriteAllText($temporary, $json, [Text.UTF8Encoding]::new($false))
+    [IO.File]::Move($temporary, $syncFile, $true)
+  } finally {
+    if (Test-Path -LiteralPath $temporary -PathType Leaf) { Remove-Item -LiteralPath $temporary -Force }
+  }
+  return $true
 }
 
 function Update-ScoutSkillRegistration {
@@ -369,6 +431,15 @@ $skillRegistrationChecked = $false
 $skillRegistrationPending = $false
 $skillRegistrationResult = $null
 
+$ResolvedScoutExe = $null
+$ScoutStoppedBeforeInstall = $false
+if (-not $SkillOnly -and -not $NoRestartScout -and -not $InsideScout) {
+  $ResolvedScoutExe = Resolve-ScoutExecutable
+  if ($ResolvedScoutExe) {
+    $ScoutStoppedBeforeInstall = Stop-RunningScout
+  }
+}
+
 Write-Host "1. Skill install/refresh"
 if ($SkipSkillInstall) {
   Write-Host "  Skipped (-SkipSkillInstall)."
@@ -407,8 +478,9 @@ if ($SkipSkillInstall) {
     $skillInstalled = $true
     Write-Host "  [OK] Skill files refreshed and SHA-256 verified ($($files.Count) files)." -ForegroundColor Green
     $registration = Update-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -Definition $definition
+    $syncedToCloudQueue = Update-ScoutSkillSyncState -ScoutRoot $ScoutRoot -Entry $registration.entry
     if ($registration.backup) { Write-Host "  Registry backup: $($registration.backup)" -ForegroundColor DarkGray }
-    Write-Host "  [OK] Local skill record saved: $($registration.entry.id)" -ForegroundColor Green
+    Write-Host "  [OK] Local skill record saved: $($registration.entry.id)$(if ($syncedToCloudQueue) { ' (queued for Scout sync)' })" -ForegroundColor Green
     Write-Host "  Reload Scout and start a new conversation to load the updated instructions." -ForegroundColor DarkYellow
     $skillRegistrationResult = Test-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName 'release-agent'
     if ($skillRegistrationResult.ok) {
@@ -597,7 +669,7 @@ if (-not $haveInfra) {
   }
 }
 
-$needsReload = ($restartNeeded -or $skillInstalled)
+$needsReload = ($restartNeeded -or $skillInstalled -or $ScoutStoppedBeforeInstall)
 if ($needsReload) {
   Write-Host "`nScout must reload to pick up the newly-installed skill / MCP server(s)."
   if ($NoRestartScout) {
@@ -608,16 +680,19 @@ if ($needsReload) {
     Write-Host "  so restarting would kill it. Close and reopen Scout manually." -ForegroundColor Yellow
     if ($skillInstalled -and -not $skillRegistrationChecked) { $skillRegistrationPending = $true }
   } else {
-    $done = Restart-Scout
+    if (-not $ResolvedScoutExe) { $ResolvedScoutExe = Resolve-ScoutExecutable }
+    if (-not $ScoutStoppedBeforeInstall) { [void](Stop-RunningScout) }
+    $done = if ($ResolvedScoutExe) { Start-ScoutDetached -Exe $ResolvedScoutExe } else { $false }
     if ($done) {
-      Write-Host "  Scout restarted — the skill/MCP servers will load on launch." -ForegroundColor Green
-      if ($skillInstalled -and -not $skillRegistrationChecked) {
-        $skillRegistrationResult = Wait-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName 'release-agent'
+      Write-Host "  Scout restarted — verifying skill persistence after startup sync ..." -ForegroundColor Green
+      if ($skillInstalled) {
+        Start-Sleep -Seconds 6
+        $skillRegistrationResult = Wait-ScoutSkillRegistration -ScoutSkillsDir $ScoutSkillsDir -SkillName 'release-agent' -TimeoutSeconds 15
         if ($skillRegistrationResult.ok) {
           $skillRegistrationChecked = $true
           Write-Host "  [OK] Scout registry contains release-agent ($($skillRegistrationResult.detail))" -ForegroundColor Green
         } else {
-          Write-Host "  [ ] Scout did not register release-agent after restart: $($skillRegistrationResult.detail)" -ForegroundColor Yellow
+          Write-Host "  [ ] Scout did not retain release-agent after restart: $($skillRegistrationResult.detail)" -ForegroundColor Yellow
           $ok = $false
         }
       }
