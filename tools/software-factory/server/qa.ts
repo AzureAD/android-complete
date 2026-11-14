@@ -36,13 +36,14 @@ const QA_TIMEOUT_MS = 180_000;
 
 const QA_SYSTEM_INSTRUCTIONS = [
     "You are the Software Factory Studio Advisor — a strictly read-only engineering & architecture copilot embedded inside the Software Factory dashboard.",
-    "Your job is to help the engineer understand, stress-test, and verify requirements, architecture designs, independent reviewer findings, planned PBIs, and code implementations/PRs for this feature WITHOUT disrupting any active Factory workflow.",
+    "Your job is to help the engineer understand, stress-test, and verify requirements, architecture designs, independent reviewer findings, author/planner/coder resolutions, planned PBIs, and code implementations/PRs for this feature WITHOUT disrupting any active Factory workflow.",
     "",
     "Operating rules:",
-    "1. Strictly read-only: never attempt to edit files, run shell commands, or mutate Factory/ADO/GitHub state. Use only read-only file/search tools (`view`, `read`, `glob`, `grep`, `rg`) when you need deeper code evidence beyond the Feature Context Pack.",
-    "2. Evidence-first: ground claims in the Feature Context Pack and actual repository source files (`path:line` citations when referencing code).",
-    "3. Concise & high-signal: lead with the direct answer, explain trade-offs or edge cases clearly, and avoid boilerplate filler.",
-    "4. Actionable guidance: if the user spots a gap or asks how to change a design, PBI, or implementation, provide crisp, concrete wording they can apply to revision feedback or PR review comments.",
+    "1. Strictly read-only: never attempt to edit files, run shell commands, or mutate Factory/ADO/GitHub state.",
+    "2. Where Factory artifacts live: ALL Software Factory feature metadata, Stage 0 requirements, Stage 2 design sections/change-records/traceability/evidence/review rounds, Stage 3 plan & PBI review rounds, Stage 5 coder/reviewer/observer/repair records, and Stage 6 acceptance validation results live in the Software Factory SQLite/ADO database and are ALREADY serialized inline in the Feature Context Pack below — they do NOT exist as files in the git worktree. NEVER search the workspace for Factory artifact UUIDs, review JSONs, or execution logs.",
+    "3. When to use workspace read tools: use read-only file/search tools (`view`, `read`, `glob`, `grep`, `rg`) ONLY when you need to inspect actual product source code, unit tests, build scripts, `design-docs`, or `1ES-Pipelines` beyond what is already quoted in the Feature Context Pack.",
+    "4. How multi-round reviews & resolutions work: in Design, Plan, and Code review histories, Round N records the Independent Reviewer's objections (`findings` with `evidence` + `requiredChange`, failed `criteria`, `validationErrors`, `blockingUnknowns`), and Round N+1 records how the Author/Planner/Coder resolved them (visible via Round N+1's `changeChecks` rationales, updated `CHG-*` / traceability / section / PBI / builder summaries, and zero remaining findings).",
+    "5. Concise, evidence-first & actionable: lead with the direct answer, cite exact finding IDs (`F-1`, `CHG-6`, `[R1]`) and `path:line` source references, explain trade-offs clearly, and when asked how to change something, provide concrete wording ready for revision feedback or PR review comments.",
 ].join("\n");
 
 export interface QaResponderTurnInput {
@@ -242,33 +243,153 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
         if (assumptions.length) {
             lines.push("### Design Assumptions", ...assumptions.map((a) => `- ${a}`));
         }
+        const designChanges = asArray(innerDesign.changes ?? content.changes);
+        if (designChanges.length) {
+            lines.push("### Design Change Records (`CHG-*`)");
+            for (const rawChg of designChanges.slice(0, 30)) {
+                const chg = asRecord(rawChg);
+                if (!chg) continue;
+                const id = typeof chg.id === "string" ? chg.id : "CHG";
+                const cls = typeof chg.classification === "string" ? chg.classification : "";
+                const impl = typeof chg.implementation === "string" ? chg.implementation : "";
+                const reqs = asArray(chg.requirementIds).filter((v): v is string => typeof v === "string");
+                const baseline = typeof chg.baselineBehavior === "string" ? truncateText(chg.baselineBehavior, 500) : "";
+                const delta = typeof chg.requestedDelta === "string" ? truncateText(chg.requestedDelta, 600) : "";
+                const meta = [cls ? `\`${cls}\`` : "", impl ? `impl=\`${impl}\`` : "", reqs.length ? `reqs=${reqs.map((r) => `[${r}]`).join(",")}` : ""].filter(Boolean).join(", ");
+                lines.push(`- **${id}**${meta ? ` (${meta})` : ""}`);
+                if (baseline) lines.push(`  - **Baseline:** ${baseline}`);
+                if (delta) lines.push(`  - **Requested Delta:** ${delta}`);
+            }
+        }
+        const traceability = asArray(innerDesign.traceability ?? content.traceability);
+        if (traceability.length) {
+            lines.push("### Requirement Traceability Matrix");
+            for (const rawTrace of traceability.slice(0, 30)) {
+                const tr = asRecord(rawTrace);
+                if (!tr) continue;
+                const reqId = typeof tr.requirementId === "string" ? tr.requirementId : "?";
+                const secIds = asArray(tr.sectionIds).filter((v): v is string => typeof v === "string");
+                const evIds = asArray(tr.evidenceIds).filter((v): v is string => typeof v === "string");
+                const verif = typeof tr.verification === "string" ? truncateText(tr.verification, 600) : "";
+                lines.push(`- **[${reqId}]** → sections: ${secIds.map((s) => `\`${s}\``).join(", ") || "n/a"} | evidence: ${evIds.map((e) => `\`${e}\``).join(", ") || "n/a"}${verif ? ` | verification: ${verif}` : ""}`);
+            }
+        }
         const evidence = asRecord(content.evidence);
         const references = asArray(evidence?.references ?? content.references);
         if (references.length) {
-            lines.push("### Key Source Citations");
-            for (const ref of references.slice(0, 25)) {
+            lines.push("### Key Source Citations (`REF-*`)");
+            for (const ref of references.slice(0, 35)) {
                 const r = asRecord(ref);
                 if (!r) continue;
-                const loc = [r.repository, r.path, r.line ? `:${String(r.line)}` : ""].filter(Boolean).join("/");
+                const refId = typeof r.id === "string" && r.id ? `**[${r.id}]** ` : "";
+                const repoPath = [r.repository, r.path].filter((v): v is string => typeof v === "string" && Boolean(v)).join("/");
+                const locator = typeof r.locator === "string" && r.locator
+                    ? r.locator
+                    : (r.line !== undefined ? `line ${String(r.line)}` : "");
                 const note = typeof r.note === "string" ? r.note : typeof r.reason === "string" ? r.reason : "";
-                lines.push(`- \`${loc || JSON.stringify(r)}\`${note ? ` — ${note}` : ""}`);
+                lines.push(`- ${refId}\`${repoPath || JSON.stringify(r)}\`${locator ? ` (${locator})` : ""}${note ? ` — ${note}` : ""}`);
+            }
+        }
+        const facts = asArray(evidence?.facts);
+        if (facts.length) {
+            lines.push("### Verified Codebase Evidence Facts");
+            for (const rawFact of facts.slice(0, 25)) {
+                const fact = asRecord(rawFact);
+                if (!fact || typeof fact.statement !== "string") continue;
+                const refIds = asArray(fact.referenceIds).filter((v): v is string => typeof v === "string");
+                lines.push(`- ${truncateText(fact.statement, 500)}${refIds.length ? ` (${refIds.map((id) => `\`${id}\``).join(", ")})` : ""}`);
             }
         }
         if (reviews.length) {
-            lines.push("### Independent Design Review History");
+            lines.push("### Independent Design Review & Resolution History");
             reviews.forEach((rawRound, idx) => {
                 const roundObj = asRecord(rawRound);
                 const innerReview = asRecord(roundObj?.review) ?? roundObj;
-                const status = typeof roundObj?.status === "string" ? roundObj.status : typeof innerReview?.status === "string" ? innerReview.status : "reviewed";
+                const validationErrors = asArray(roundObj?.validationErrors).filter((v): v is string => typeof v === "string");
+                const criteria = asArray(innerReview?.criteria).map(asRecord).filter((c): c is Record<string, unknown> => Boolean(c));
+                const failedCriteria = criteria.filter((c) => c.pass === false).map((c) => String(c.id ?? "criterion"));
                 const findings = asArray(innerReview?.findings);
-                lines.push(`- **Round ${idx + 1}** (\`${status}\`, ${findings.length} finding(s))`);
-                for (const rawFinding of findings.slice(0, 10)) {
+                const blockingUnknowns = asArray(innerReview?.blockingUnknowns).filter((v): v is string => typeof v === "string");
+                const changeChecks = asArray(innerReview?.changeChecks).map(asRecord).filter((c): c is Record<string, unknown> => Boolean(c));
+                const reviewerRefs = asArray(innerReview?.references).map(asRecord).filter((r): r is Record<string, unknown> => Boolean(r));
+                const rawStatus = typeof roundObj?.status === "string"
+                    ? roundObj.status
+                    : typeof innerReview?.status === "string"
+                        ? innerReview.status
+                        : (validationErrors.length === 0 && findings.length === 0 && failedCriteria.length === 0 && blockingUnknowns.length === 0
+                            ? "approved"
+                            : "changes-requested");
+                const criteriaLabel = criteria.length
+                    ? `, rubric=${criteria.length - failedCriteria.length}/${criteria.length} passed${failedCriteria.length ? ` (failed: ${failedCriteria.map((c) => `\`${c}\``).join(", ")})` : ""}`
+                    : "";
+                lines.push(`- **Round ${idx + 1}** (\`${rawStatus}\`, ${findings.length} finding(s)${criteriaLabel})`);
+                for (const vErr of validationErrors.slice(0, 10)) {
+                    lines.push(`  - **[VALIDATION ERROR]** ${truncateText(vErr, 500)}`);
+                }
+                for (const unknown of blockingUnknowns.slice(0, 10)) {
+                    lines.push(`  - **[BLOCKING UNKNOWN]** ${truncateText(unknown, 500)}`);
+                }
+                for (const rawFinding of findings.slice(0, 20)) {
+                    if (typeof rawFinding === "string") {
+                        lines.push(`  - [FINDING] ${truncateText(rawFinding, 700)}`);
+                        continue;
+                    }
                     const f = asRecord(rawFinding);
                     if (!f) continue;
                     const sev = typeof f.severity === "string" ? f.severity.toUpperCase() : "NOTE";
-                    const title = typeof f.title === "string" ? f.title : typeof f.section === "string" ? f.section : "Finding";
-                    const detail = typeof f.detail === "string" ? f.detail : typeof f.message === "string" ? f.message : "";
-                    lines.push(`  - [${sev}] **${title}**: ${truncateText(detail, 450)}`);
+                    const id = typeof f.id === "string" && f.id ? `${f.id}: ` : "";
+                    const rubric = typeof f.rubricId === "string" && f.rubricId
+                        ? f.rubricId
+                        : (typeof f.category === "string" && f.category ? f.category : "");
+                    const title = typeof f.title === "string" && f.title
+                        ? f.title
+                        : (typeof f.section === "string" && f.section ? f.section : "");
+                    const location = typeof f.location === "string" && f.location ? f.location : "";
+                    const evidenceText = typeof f.evidence === "string" && f.evidence
+                        ? f.evidence
+                        : (typeof f.detail === "string" && f.detail
+                            ? f.detail
+                            : (typeof f.message === "string" && f.message
+                                ? f.message
+                                : (typeof f.description === "string" ? f.description : "")));
+                    const requiredChange = typeof f.requiredChange === "string" && f.requiredChange
+                        ? f.requiredChange
+                        : (typeof f.fix === "string" && f.fix
+                            ? f.fix
+                            : (typeof f.recommendation === "string" ? f.recommendation : ""));
+                    const headerParts = [
+                        `[${sev}]`,
+                        `**${id}${title || rubric || "Finding"}**`,
+                        title && rubric ? `(\`${rubric}\`)` : "",
+                        location ? `@ \`${location}\`` : "",
+                    ].filter(Boolean).join(" ");
+                    lines.push(`  - ${headerParts}`);
+                    if (evidenceText) {
+                        lines.push(`    - **Reviewer Objection / Evidence:** ${truncateText(evidenceText, 1_000)}`);
+                    }
+                    if (requiredChange) {
+                        lines.push(`    - **Required Change:** ${truncateText(requiredChange, 800)}`);
+                    }
+                }
+                if (reviewerRefs.length) {
+                    lines.push(`  - **Reviewer Counter-Evidence / Verification Citations (Round ${idx + 1}):**`);
+                    for (const rr of reviewerRefs.slice(0, 15)) {
+                        const rId = typeof rr.id === "string" && rr.id ? `[${rr.id}] ` : "";
+                        const rPath = [rr.repository, rr.path].filter((v): v is string => typeof v === "string" && Boolean(v)).join("/");
+                        const rLoc = typeof rr.locator === "string" && rr.locator ? ` (${rr.locator})` : "";
+                        lines.push(`    - ${rId}\`${rPath}\`${rLoc}`);
+                    }
+                }
+                if (changeChecks.length) {
+                    lines.push(`  - **Change & Resolution Verification Checks (Round ${idx + 1}):**`);
+                    for (const chk of changeChecks.slice(0, 20)) {
+                        const chgId = typeof chk.changeId === "string" ? chk.changeId : "CHG";
+                        const allVerified = chk.baselineVerified !== false && chk.necessityConfirmed !== false && chk.counterevidenceVerified !== false;
+                        const statusTag = allVerified ? "VERIFIED" : "FLAGGED";
+                        const rationale = typeof chk.rationale === "string" ? truncateText(chk.rationale, 800) : "";
+                        const refs = asArray(chk.referenceIds).filter((v): v is string => typeof v === "string");
+                        lines.push(`    - **${chgId}** [\`${statusTag}\`]${refs.length ? ` (${refs.map((r) => `\`${r}\``).join(", ")})` : ""}${rationale ? `: ${rationale}` : ""}`);
+                    }
                 }
             });
         }
@@ -279,8 +400,9 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
     if (planArtifact) {
         const content = asRecord(planArtifact.content) ?? {};
         const items = asArray(content.items);
+        const planReviewHistory = asArray(content.reviewHistory);
         plannedPbiCount = items.length;
-        lines.push("", `## 3. Implementation Plan & PBIs (Artifact \`${planArtifact.id}\`, ${plannedPbiCount} PBI(s))`);
+        lines.push("", `## 3. Implementation Plan & PBIs (Artifact \`${planArtifact.id}\`, ${plannedPbiCount} PBI(s), ${planReviewHistory.length} review round(s))`);
         if (typeof content.summary === "string" && content.summary.trim()) {
             lines.push(truncateText(content.summary, 2_000));
         }
@@ -307,6 +429,34 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
                 lines.push(truncateText(item.description, 2_200));
             }
         }
+        if (planReviewHistory.length) {
+            lines.push("### Independent Plan Review & Revision History");
+            planReviewHistory.forEach((rawAttempt, idx) => {
+                const attemptObj = asRecord(rawAttempt);
+                if (!attemptObj) return;
+                const candidate = asRecord(attemptObj.candidate);
+                const candidateItems = asArray(candidate?.items).map(asRecord).filter((i): i is Record<string, unknown> => Boolean(i));
+                const rev = asRecord(attemptObj.review);
+                const valErr = typeof attemptObj.validationError === "string" ? attemptObj.validationError : "";
+                const findings = asArray(rev?.findings);
+                const passed = rev?.pass === true && !valErr && findings.length === 0;
+                lines.push(`- **Plan Round ${idx + 1}** (\`${passed ? "approved" : valErr ? "validation-error" : "changes-requested"}\`, ${candidateItems.length} candidate PBI(s), ${findings.length} finding(s))`);
+                if (typeof candidate?.summary === "string" && candidate.summary.trim()) {
+                    lines.push(`  - **Planner Candidate Summary:** ${truncateText(candidate.summary, 600)}`);
+                }
+                if (valErr) {
+                    lines.push(`  - **[VALIDATION ERROR]** ${truncateText(valErr, 500)}`);
+                }
+                for (const rawF of findings.slice(0, 15)) {
+                    if (typeof rawF === "string") {
+                        lines.push(`  - **Reviewer Finding:** ${truncateText(rawF, 700)}`);
+                    } else {
+                        const fRec = asRecord(rawF);
+                        if (fRec) lines.push(`  - **Reviewer Finding:** ${truncateText(JSON.stringify(fRec), 700)}`);
+                    }
+                }
+            });
+        }
     }
 
     // Stage 4–6: Backlog Work Items, Coding Implementation & PRs
@@ -315,18 +465,46 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
     const dispatchOps = operations.filter((op) => op.kind === "dispatch" && op.status === "completed");
     const prBindings = asArray((feature.factory as unknown as Record<string, unknown>).prBindings);
     const implByItem = new Map<string, Record<string, unknown>>();
+    const mergeImplRecord = (key: string, incoming: Record<string, unknown>) => {
+        const prev = implByItem.get(key);
+        if (!prev) {
+            implByItem.set(key, { ...incoming });
+            return;
+        }
+        const prevHistory = asArray(prev.reviewHistory);
+        const nextHistory = asArray(incoming.reviewHistory);
+        const prevFiles = asArray(prev.files);
+        const nextFiles = asArray(incoming.files);
+        const prevTests = asArray(prev.testsAddedOrUpdated);
+        const nextTests = asArray(incoming.testsAddedOrUpdated);
+        const prevRepairs = asArray(prev.repairs);
+        const nextRepairs = asArray(incoming.repairs);
+        implByItem.set(key, {
+            ...prev,
+            ...incoming,
+            reviewHistory: nextHistory.length >= prevHistory.length ? nextHistory : prevHistory,
+            files: nextFiles.length > 0 ? nextFiles : prevFiles,
+            testsAddedOrUpdated: nextTests.length > 0 ? nextTests : prevTests,
+            repairs: nextRepairs.length >= prevRepairs.length ? nextRepairs : prevRepairs,
+            receipt: asRecord(incoming.receipt) ?? asRecord(prev.receipt) ?? undefined,
+            observer: asRecord(incoming.observer) ?? asRecord(prev.observer) ?? undefined,
+            observerStatus: typeof incoming.observerStatus === "string" && incoming.observerStatus
+                ? incoming.observerStatus
+                : prev.observerStatus,
+        });
+    };
+    for (const attempt of attemptArtifacts) {
+        const rec = asRecord(attempt.content);
+        const key = typeof rec?.itemId === "string" ? rec.itemId : typeof rec?.id === "string" ? rec.id : undefined;
+        if (rec && key) mergeImplRecord(key, rec);
+    }
     if (implementationArtifact) {
         const implContent = asRecord(implementationArtifact.content);
         for (const entry of asArray(implContent?.items)) {
             const rec = asRecord(entry);
             const key = typeof rec?.itemId === "string" ? rec.itemId : typeof rec?.id === "string" ? rec.id : undefined;
-            if (rec && key) implByItem.set(key, rec);
+            if (rec && key) mergeImplRecord(key, rec);
         }
-    }
-    for (const attempt of attemptArtifacts) {
-        const rec = asRecord(attempt.content);
-        const key = typeof rec?.itemId === "string" ? rec.itemId : typeof rec?.id === "string" ? rec.id : undefined;
-        if (rec && key) implByItem.set(key, rec);
     }
 
     const prUrls = new Set<string>();
@@ -355,9 +533,12 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
         }
         for (const [itemId, impl] of implByItem.entries()) {
             const receipt = asRecord(impl.receipt);
+            const observer = asRecord(impl.observer);
             const branch = typeof impl.branch === "string" ? impl.branch : typeof receipt?.branch === "string" ? receipt.branch : "";
             const status = typeof impl.status === "string" ? impl.status : "recorded";
-            const observerStatus = typeof impl.observerStatus === "string" ? impl.observerStatus : "";
+            const observerStatus = typeof impl.observerStatus === "string"
+                ? impl.observerStatus
+                : (typeof observer?.status === "string" ? observer.status : "");
             const prUrl = typeof receipt?.url === "string" ? receipt.url : typeof impl.prUrl === "string" ? impl.prUrl : "";
             const headSha = typeof receipt?.headSha === "string" ? receipt.headSha : "";
             lines.push(`### Implementation Record: ${itemId} (\`${status}\`${observerStatus ? `, observer=\`${observerStatus}\`` : ""})`);
@@ -377,17 +558,128 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
                     }
                 }
             }
+            const testsUpdated = asArray(impl.testsAddedOrUpdated).filter((v): v is string => typeof v === "string");
+            if (testsUpdated.length) {
+                lines.push(`- **Tests Added / Updated:** ${testsUpdated.map((t) => `\`${t}\``).join(", ")}`);
+            }
+            const codeReviewHistory = asArray(impl.reviewHistory);
+            if (codeReviewHistory.length) {
+                lines.push(`- **Code Builder vs. Independent Reviewer Rounds (${codeReviewHistory.length}):**`);
+                codeReviewHistory.forEach((rawRound, rIdx) => {
+                    const rObj = asRecord(rawRound);
+                    if (!rObj) return;
+                    const rev = asRecord(rObj.review);
+                    const rCriteria = asArray(rev?.criteria).map(asRecord).filter((c): c is Record<string, unknown> => Boolean(c));
+                    const rFindings = asArray(rev?.findings);
+                    const valErr = typeof rObj.validationError === "string" ? rObj.validationError : "";
+                    const pass = rev?.pass === true && rFindings.length === 0 && !valErr;
+                    const roundNum = typeof rObj.round === "number" ? rObj.round : rIdx + 1;
+                    lines.push(`  - **Round ${roundNum}** (\`${pass ? "approved" : valErr ? "validation-error" : "changes-requested"}\`, ${rFindings.length} finding(s))`);
+                    if (typeof rObj.builderSummary === "string" && rObj.builderSummary.trim()) {
+                        lines.push(`    - **Builder Summary:** ${truncateText(rObj.builderSummary, 900)}`);
+                    }
+                    if (valErr) {
+                        lines.push(`    - **Builder Validation Error:** ${truncateText(valErr, 400)}`);
+                    }
+                    if (typeof rev?.summary === "string" && rev.summary.trim()) {
+                        lines.push(`    - **Reviewer Summary:** ${truncateText(rev.summary, 700)}`);
+                    }
+                    for (const crit of rCriteria.slice(0, 12)) {
+                        const cStatus = typeof crit.status === "string" ? crit.status.toUpperCase() : "CHECKED";
+                        const cText = typeof crit.criterion === "string" ? crit.criterion : "";
+                        const cEv = typeof crit.evidence === "string" ? truncateText(crit.evidence, 400) : "";
+                        lines.push(`    - **Criterion [${cStatus}]** ${cText}${cEv ? ` — ${cEv}` : ""}`);
+                    }
+                    for (const rawF of rFindings.slice(0, 15)) {
+                        const f = asRecord(rawF);
+                        if (!f) continue;
+                        const sev = typeof f.severity === "string" ? f.severity.toUpperCase() : "MAJOR";
+                        const fId = typeof f.id === "string" && f.id ? `${f.id} ` : "";
+                        const cat = typeof f.category === "string" && f.category ? `(\`${f.category}\`) ` : "";
+                        const loc = [f.file, f.location].filter((v): v is string => typeof v === "string" && Boolean(v)).join(":");
+                        const ev = typeof f.evidence === "string" ? truncateText(f.evidence, 600) : "";
+                        const reqFix = typeof f.requiredChange === "string" ? truncateText(f.requiredChange, 500) : "";
+                        lines.push(`    - **[${sev}] ${fId}${cat}${loc ? `@ \`${loc}\`` : ""}**`);
+                        if (ev) lines.push(`      - **Evidence:** ${ev}`);
+                        if (reqFix) lines.push(`      - **Required Fix:** ${reqFix}`);
+                    }
+                });
+            }
+            if (observer) {
+                lines.push(`- **PR Observer Verdict:** status=\`${observerStatus || String(observer.status ?? "observed")}\``);
+                if (typeof observer.summary === "string" && observer.summary.trim()) {
+                    lines.push(`  - **Observer Summary:** ${truncateText(observer.summary, 900)}`);
+                }
+                const obsEvidence = asArray(observer.evidence).filter((v): v is string => typeof v === "string");
+                for (const ev of obsEvidence.slice(0, 12)) {
+                    lines.push(`  - **Verified:** ${truncateText(ev, 350)}`);
+                }
+            }
+            const repairs = asArray(impl.repairs);
+            if (repairs.length) {
+                lines.push(`- **Post-PR Tactical CI / Review Repairs (${repairs.length}):**`);
+                repairs.forEach((rawOp, repIdx) => {
+                    const op = asRecord(rawOp);
+                    const rep = asRecord(op?.repair) ?? op ?? {};
+                    const builder = asRecord(rep.builder);
+                    const rev = asRecord(rep.review);
+                    const repReceipt = asRecord(op?.receipt);
+                    const fromSha = typeof rep.expectedHead === "string" ? rep.expectedHead.slice(0, 8) : "initial";
+                    const toSha = typeof repReceipt?.headSha === "string"
+                        ? repReceipt.headSha.slice(0, 8)
+                        : (typeof rep.headSha === "string" ? rep.headSha.slice(0, 8) : "pushed");
+                    lines.push(`  - **Tactical Repair #${repIdx + 1}** (\`${fromSha} → ${toSha}\`, status=\`${String(op?.status ?? "completed")}\`)`);
+                    if (typeof builder?.summary === "string" && builder.summary.trim()) {
+                        lines.push(`    - **Builder Root-Cause Fix:** ${truncateText(builder.summary, 600)}`);
+                    }
+                    if (typeof rev?.summary === "string" && rev.summary.trim()) {
+                        lines.push(`    - **Pre-Push Review (\`${String(rev.verdict ?? "pass")}\`):** ${truncateText(rev.summary, 500)}`);
+                    }
+                });
+            }
         }
         if (monitorArtifact) {
             const mon = asRecord(monitorArtifact.content) ?? {};
             const prs = asArray(mon.prs);
-            if (prs.length) {
-                lines.push("### Latest Stage 6 Monitor Snapshot");
+            const validation = asArray(mon.validation);
+            const monReviews = asArray(mon.reviews);
+            const monErrors = asArray(mon.errors).filter((v): v is string => typeof v === "string");
+            if (prs.length || validation.length || monReviews.length || monErrors.length) {
+                lines.push("### Latest Stage 6 Monitor & Acceptance Validation Snapshot");
                 for (const rawPr of prs) {
                     const pr = asRecord(rawPr);
                     if (!pr) continue;
                     if (typeof pr.url === "string" && pr.url) prUrls.add(pr.url);
-                    lines.push(`- **${String(pr.key ?? "PR")}** #${String(pr.number ?? "?")}: status=\`${String(pr.status ?? "?")}\`, checks=\`${String(pr.checks ?? "?")}\`${typeof pr.url === "string" ? ` (${pr.url})` : ""}`);
+                    lines.push(`- **${String(pr.key ?? "PR")}** #${String(pr.number ?? "?")}: status=\`${String(pr.status ?? "?")}\`, checks=\`${String(pr.checks ?? "?")}\`${typeof pr.head === "string" ? `, head=\`${pr.head.slice(0, 10)}\`` : ""}${typeof pr.url === "string" ? ` (${pr.url})` : ""}`);
+                }
+                if (validation.length) {
+                    lines.push("- **Stage 6 Acceptance Criteria Validation:**");
+                    for (const rawVal of validation.slice(0, 25)) {
+                        const v = asRecord(rawVal);
+                        if (!v) continue;
+                        const status = typeof v.status === "string" ? v.status.toUpperCase() : "CHECKED";
+                        const itemId = typeof v.itemId === "string" ? `${v.itemId}: ` : "";
+                        const crit = typeof v.criterion === "string" ? v.criterion : "";
+                        const ev = typeof v.evidence === "string" ? truncateText(v.evidence, 500) : "";
+                        lines.push(`  - **[${status}]** ${itemId}${crit}${ev ? ` — ${ev}` : ""}`);
+                    }
+                }
+                if (monReviews.length) {
+                    lines.push("- **Stage 6 Independent Delivery Review:**");
+                    for (const rawRev of monReviews.slice(0, 10)) {
+                        const mr = asRecord(rawRev);
+                        if (!mr) continue;
+                        const itemId = typeof mr.itemId === "string" ? mr.itemId : "PR";
+                        const status = typeof mr.status === "string" ? mr.status : (mr.pass === true ? "approved" : "changes-requested");
+                        const mFindings = asArray(mr.findings);
+                        lines.push(`  - **${itemId}** (round ${String(mr.round ?? 1)}, \`${status}\`, ${mFindings.length} finding(s))`);
+                        for (const mf of mFindings.slice(0, 10)) {
+                            lines.push(`    - ${truncateText(typeof mf === "string" ? mf : JSON.stringify(mf), 500)}`);
+                        }
+                    }
+                }
+                for (const err of monErrors.slice(0, 10)) {
+                    lines.push(`- **[MONITOR ERROR]** ${truncateText(err, 400)}`);
                 }
             }
         }
@@ -395,12 +687,7 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
 
     const packText = lines.join("\n");
     const fingerprint = createHash("sha256")
-        .update(JSON.stringify({
-            revisionId: feature.current.id,
-            lifecycleStatus: feature.lifecycleStatus,
-            artifactIds: artifacts.map((a) => `${a.kind}:${a.id}`),
-            prCount: prUrls.size,
-        }))
+        .update(packText)
         .digest("hex")
         .slice(0, 16);
 

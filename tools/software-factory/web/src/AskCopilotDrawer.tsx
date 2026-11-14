@@ -394,7 +394,7 @@ export function AskCopilotDrawer({
                         <div className="qa-empty-card">
                             <h4>Ask anything about this feature&apos;s design, PBIs, or code</h4>
                             <p className="muted">
-                                Copilot has full read-only context across your approved brief, 10-section design, reviewer objections, planned PBIs, implementation rounds, PR status, and target repositories (`view`, `grep`, `glob`, and read-only `git`/`gh`).
+                                Copilot has full read-only context across your approved brief, 10-section design, reviewer objections &amp; author resolutions, planned PBIs, implementation rounds, PR status, and target repositories (<code>view</code>, <code>grep</code>, <code>glob</code>).
                             </p>
                             <p className="field-help">
                                 Tip: Click <strong>✦ Ask AI</strong> on any Design section, Reviewer finding, PBI card, or Implementation round in the workspace to pin it here.
