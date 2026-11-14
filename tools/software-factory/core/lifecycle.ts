@@ -429,6 +429,29 @@ export class Lifecycle {
             if (state.executions.some((item) => item.kind === kind && item.status === "error" && item.admissionClaim && !item.runtimeId)) {
                 throw new FactoryError("native_admission_uncertain", "A previous submission has no confirmed native run ID. Inspect its owner and explicitly supersede/reconcile that admission before starting more paid work.", 409);
             }
+            if (kind === "implement" && resolvedDelivery?.mode === "local") {
+                const prov = this.store.registry.provenance(featureId);
+                const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+                if (prov?.codingWorkspace && normalize(prov.codingWorkspace) !== normalize(this.store.registry.project.workspace) && existsSync(prov.codingWorkspace)) {
+                    const hasUnpushedAttempt = state.artifacts.some((art) => {
+                        if (art.kind !== "implementation_attempt" || art.requirementsRevision !== feature.current.id) return false;
+                        const content = art.content && typeof art.content === "object" && !Array.isArray(art.content) ? art.content as Record<string, unknown> : null;
+                        if (!content || content.receipt) return false;
+                        const itemId = typeof content.itemId === "string" ? content.itemId : "";
+                        if (!itemId) return false;
+                        const alreadyPublished = state.prBindings.some((b) => b.itemId === itemId) ||
+                            state.operations.some((op) => op.itemId === itemId && op.kind === "dispatch" && op.status === "completed");
+                        return !alreadyPublished;
+                    });
+                    if (hasUnpushedAttempt) {
+                        throw new FactoryError(
+                            "cross_worktree_checkout_conflict",
+                            `Unpushed local coding changes for this feature were bound in sibling worktree "${prov.codingWorktree || prov.codingWorkspace}" (${prov.codingWorkspace}). Push or reconcile from that worktree before starting local coding here.`,
+                            409,
+                        );
+                    }
+                }
+            }
             const existingDesign = kind === "design" ? this.store.latest(featureId, "design") : null;
             if (existingDesign && object(existingDesign.content, "Design packet").recommendation === "GO to Planning") {
                 throw new FactoryError("revision_request_required", "A current design already exists. Request a reviewed revision rather than silently replacing it.", 409);
@@ -452,6 +475,9 @@ export class Lifecycle {
             };
             state.sessionBinding = binding;
             state.executions.push(execution);
+            if (kind === "implement" && resolvedDelivery?.mode === "local") {
+                this.store.registry.recordCodingProvenance(featureId);
+            }
             this.store.event(state, "workflow_requested", execution.id, { actor: execution.requestedBy, message: `${kind} workflow requested.` });
             return execution;
         });

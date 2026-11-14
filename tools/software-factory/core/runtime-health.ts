@@ -1,31 +1,155 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { createRequire } from "node:module";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FactoryError } from "./contracts.ts";
 import type { CommandRunner } from "../providers/cli.ts";
 
-export function resolveRepositoryRoot(workspace: string): string {
-    const canonical = realpathSync(workspace);
+export interface WorktreeInfo {
+    workspace: string;
+    repositoryRoot: string;
+    worktreeName: string;
+    repositoryName: string;
+    isLinkedWorktree: boolean;
+    branch: string | null;
+    remoteOrigin: string | null;
+}
+
+export function normalizeGitRemote(rawUrl: string): string | null {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return null;
+    const sshMatch = /^(?:ssh:\/\/)?(?:[^@]+@)?([a-zA-Z0-9._-]+)[:/]([^/].*?)(?:\.git)?\/?$/.exec(trimmed);
+    if (sshMatch?.[1] && sshMatch[2] && !trimmed.startsWith("http://") && !trimmed.startsWith("https://") && !trimmed.startsWith("file://")) {
+        return `${sshMatch[1].toLowerCase()}/${sshMatch[2].replace(/^\/+/, "").toLowerCase()}`;
+    }
     try {
-        const dotGit = path.join(canonical, ".git");
-        if (!statSync(dotGit).isFile()) return canonical;
+        const parsed = new URL(trimmed);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "ssh:") {
+            const cleanPath = parsed.pathname.replace(/^\/+/, "").replace(/\.git\/?$/i, "").replace(/\/+$/, "");
+            if (parsed.hostname && cleanPath) {
+                return `${parsed.hostname.toLowerCase()}/${cleanPath.toLowerCase()}`;
+            }
+        }
+    } catch {
+        // Non-URL local path remote; ignore unless canonicalizable.
+    }
+    return null;
+}
+
+function resolveGitDirs(canonicalWorkspace: string): { gitDir: string; commonDir: string } | null {
+    try {
+        const dotGit = path.join(canonicalWorkspace, ".git");
+        if (!existsSync(dotGit)) return null;
+        const stat = statSync(dotGit);
+        if (stat.isDirectory()) {
+            return { gitDir: dotGit, commonDir: dotGit };
+        }
+        if (!stat.isFile()) return null;
         const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
-        if (!match?.[1]) return canonical;
-        const gitDir = path.resolve(canonical, match[1].trim());
+        if (!match?.[1]) return null;
+        const gitDir = path.resolve(canonicalWorkspace, match[1].trim());
         const commonFile = path.join(gitDir, "commondir");
         const commonDir = existsSync(commonFile) && statSync(commonFile).isFile()
             ? path.resolve(gitDir, readFileSync(commonFile, "utf8").trim())
             : gitDir;
-        if (path.basename(commonDir).toLowerCase() === ".git") {
-            return realpathSync(path.dirname(commonDir));
+        return { gitDir, commonDir };
+    } catch {
+        return null;
+    }
+}
+
+function readGitBranchFromDir(gitDir: string): string | null {
+    try {
+        const headFile = path.join(gitDir, "HEAD");
+        if (!existsSync(headFile)) return null;
+        const head = readFileSync(headFile, "utf8").trim();
+        if (!head) return null;
+        const refMatch = /^ref:\s*refs\/heads\/(.+)$/.exec(head);
+        if (refMatch?.[1]) return refMatch[1].trim();
+        const anyRef = /^ref:\s*(.+)$/.exec(head);
+        if (anyRef?.[1]) return anyRef[1].trim();
+        return `detached@${head.slice(0, 8)}`;
+    } catch {
+        return null;
+    }
+}
+
+function readOriginRemoteFromCommonDir(commonDir: string): string | null {
+    try {
+        const configFile = path.join(commonDir, "config");
+        if (!existsSync(configFile)) return null;
+        const lines = readFileSync(configFile, "utf8").split(/\r?\n/);
+        let inOrigin = false;
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                inOrigin = /^\[remote\s+"origin"\]$/i.test(trimmed);
+                continue;
+            }
+            if (inOrigin) {
+                const urlMatch = /^url\s*=\s*(.+)$/i.exec(trimmed);
+                if (urlMatch?.[1]) {
+                    return normalizeGitRemote(urlMatch[1]);
+                }
+            }
         }
     } catch {
-        // Fall back to the canonical workspace path when not a linked git worktree.
+        // Ignore unreadable git config.
+    }
+    return null;
+}
+
+export function resolveRepositoryRoot(workspace: string): string {
+    const canonical = realpathSync(workspace);
+    const dirs = resolveGitDirs(canonical);
+    if (dirs && path.basename(dirs.commonDir).toLowerCase() === ".git") {
+        try {
+            return realpathSync(path.dirname(dirs.commonDir));
+        } catch {
+            return canonical;
+        }
     }
     return canonical;
+}
+
+export function resolveWorktreeInfo(workspace: string): WorktreeInfo {
+    const canonical = existsSync(workspace) ? realpathSync(workspace) : path.resolve(workspace);
+    const repoRoot = existsSync(workspace) ? resolveRepositoryRoot(canonical) : canonical;
+    const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+    const dirs = existsSync(workspace) ? resolveGitDirs(canonical) : null;
+    return {
+        workspace: canonical,
+        repositoryRoot: repoRoot,
+        worktreeName: path.basename(canonical) || canonical,
+        repositoryName: path.basename(repoRoot) || repoRoot,
+        isLinkedWorktree: normalize(canonical) !== normalize(repoRoot),
+        branch: dirs ? readGitBranchFromDir(dirs.gitDir) : null,
+        remoteOrigin: dirs ? readOriginRemoteFromCommonDir(dirs.commonDir) : null,
+    };
+}
+
+export function linkedWorktreePaths(repositoryRoot: string): string[] {
+    const results: string[] = [];
+    try {
+        const wtDir = path.join(repositoryRoot, ".git", "worktrees");
+        if (!existsSync(wtDir) || !statSync(wtDir).isDirectory()) return results;
+        for (const entry of readdirSync(wtDir)) {
+            const gitdirFile = path.join(wtDir, entry, "gitdir");
+            if (!existsSync(gitdirFile) || !statSync(gitdirFile).isFile()) continue;
+            const rawTarget = readFileSync(gitdirFile, "utf8").trim();
+            if (!rawTarget) continue;
+            const resolvedGitFile = path.resolve(path.join(wtDir, entry), rawTarget);
+            const wtPath = path.basename(resolvedGitFile).toLowerCase() === ".git"
+                ? path.dirname(resolvedGitFile)
+                : resolvedGitFile;
+            results.push(existsSync(wtPath) ? realpathSync(wtPath) : wtPath);
+        }
+    } catch {
+        // Ignore unreadable .git/worktrees metadata.
+    }
+    return results;
 }
 
 export async function ensureSubrepoWorktree(

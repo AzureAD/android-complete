@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLOutputValue } from "node:sqlite";
@@ -10,7 +10,22 @@ import {
     type Actor, type Approval, type AuditEvent, type Feature, type Project, type Requirements, type Revision,
 } from "./contracts.ts";
 import { lifecycleSchema } from "./lifecycle-store.ts";
-import { resolveRepositoryRoot } from "./runtime-health.ts";
+import { linkedWorktreePaths, resolveRepositoryRoot, resolveWorktreeInfo, type WorktreeInfo } from "./runtime-health.ts";
+
+export interface FeatureProvenance {
+    featureId: string;
+    originWorkspace: string;
+    originWorktree: string;
+    originBranch: string | null;
+    updatedWorkspace: string;
+    updatedWorktree: string;
+    updatedBranch: string | null;
+    codingWorkspace: string | null;
+    codingWorktree: string | null;
+    codingBranch: string | null;
+}
+
+export type RegistryChangeEvent = { kind: string; featureId?: string };
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -38,13 +53,19 @@ export function contentHash(input: Requirements): string {
 
 export class Registry {
     private readonly db: DatabaseSync;
+    private readonly listeners = new Set<(event: RegistryChangeEvent) => void>();
+    private readonly projectWorkspaceById = new Map<string, string>();
     readonly project: Project;
+    readonly worktreeInfo: WorktreeInfo;
+    readonly projectIds: readonly string[];
     readonly databasePath: string;
 
     constructor(databasePath: string, workspace: string) {
         const canonical = realpathSync(workspace);
         const repoRoot = resolveRepositoryRoot(canonical);
-        const identity = process.platform === "win32" ? repoRoot.toLowerCase() : repoRoot;
+        const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+        const identity = normalize(repoRoot);
+        this.worktreeInfo = resolveWorktreeInfo(canonical);
         mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o700 });
         const directory = realpathSync(path.dirname(path.resolve(databasePath)));
         const relative = path.relative(canonical, directory);
@@ -69,6 +90,18 @@ export class Registry {
                         id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
                         request_id TEXT NOT NULL, request_hash TEXT NOT NULL, current_revision TEXT NOT NULL,
                         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(project_id, request_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS feature_provenance (
+                        feature_id TEXT PRIMARY KEY REFERENCES features(id),
+                        origin_workspace TEXT NOT NULL,
+                        origin_worktree TEXT NOT NULL,
+                        origin_branch TEXT,
+                        updated_workspace TEXT NOT NULL,
+                        updated_worktree TEXT NOT NULL,
+                        updated_branch TEXT,
+                        coding_workspace TEXT,
+                        coding_worktree TEXT,
+                        coding_branch TEXT
                     );
                     CREATE TABLE IF NOT EXISTS revisions (
                         id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES features(id),
@@ -100,10 +133,62 @@ export class Registry {
                 .run(randomUUID(), identity, repoRoot);
             const row = this.db.prepare("SELECT id, workspace FROM projects WHERE identity = ?").get(identity);
             if (!row) throw new FactoryError("storage_corrupt", "Project registration failed.", 500);
-            this.project = { id: column(row, "id"), workspace: canonical };
+            const primaryId = column(row, "id");
+            this.project = { id: primaryId, workspace: canonical };
+
+            const unified = new Set<string>([primaryId]);
+            const isGitRepo = existsSync(path.join(repoRoot, ".git"));
+            const knownWorktrees = new Set<string>(
+                isGitRepo ? linkedWorktreePaths(repoRoot).map(normalize) : [],
+            );
+            const repoDirEscaped = path.basename(repoRoot).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const copilotWorktreePattern = isGitRepo && repoDirEscaped
+                ? new RegExp(`[\\\\/]copilot-worktrees[\\\\/]${repoDirEscaped}[\\\\/][^\\\\/]+$`, process.platform === "win32" ? "i" : "")
+                : null;
+
+            const allProjects = this.db.prepare("SELECT id, workspace FROM projects").all();
+            for (const projRow of allProjects) {
+                const pid = column(projRow, "id");
+                const pws = column(projRow, "workspace");
+                this.projectWorkspaceById.set(pid, pws);
+                if (pid === primaryId) continue;
+                if (knownWorktrees.has(normalize(pws)) || (copilotWorktreePattern !== null && copilotWorktreePattern.test(pws))) {
+                    unified.add(pid);
+                    continue;
+                }
+                if (existsSync(pws)) {
+                    try {
+                        const candidateRoot = resolveRepositoryRoot(pws);
+                        if (normalize(candidateRoot) === identity) {
+                            unified.add(pid);
+                            continue;
+                        }
+                        if (this.worktreeInfo.remoteOrigin) {
+                            const candidateInfo = resolveWorktreeInfo(pws);
+                            if (candidateInfo.remoteOrigin && candidateInfo.remoteOrigin === this.worktreeInfo.remoteOrigin) {
+                                unified.add(pid);
+                            }
+                        }
+                    } catch {
+                        // Keep unrelated or inaccessible workspaces isolated.
+                    }
+                }
+            }
+            this.projectIds = [...unified];
         } catch (error) {
             this.db.close();
             throw error;
+        }
+    }
+
+    onChange(listener: (event: RegistryChangeEvent) => void): () => void {
+        this.listeners.add(listener);
+        return () => { this.listeners.delete(listener); };
+    }
+
+    private emit(event: RegistryChangeEvent): void {
+        for (const listener of this.listeners) {
+            try { listener(event); } catch { /* Listener errors must never disrupt storage commits */ }
         }
     }
 
@@ -135,8 +220,13 @@ export class Registry {
         };
     }
 
+    private projectPlaceholders(): string {
+        return this.projectIds.map(() => "?").join(", ");
+    }
+
     get(featureId: string): Feature {
-        const row = this.db.prepare("SELECT * FROM features WHERE id = ? AND project_id = ?").get(featureId, this.project.id);
+        const row = this.db.prepare(`SELECT * FROM features WHERE id = ? AND project_id IN (${this.projectPlaceholders()})`)
+            .get(featureId, ...this.projectIds);
         if (!row) throw new FactoryError("feature_not_found", "Feature not found in this project.", 404);
         const history = this.db.prepare("SELECT * FROM revisions WHERE feature_id = ? ORDER BY number").all(featureId).map((item) => this.revision(item));
         const current = history.find((item) => item.id === column(row, "current_revision"));
@@ -153,21 +243,119 @@ export class Registry {
             };
         });
         return {
-            id: featureId, projectId: this.project.id,
+            id: featureId, projectId: column(row, "project_id"),
             status: approvals.some((item) => item.revisionId === current.id) ? "ready_for_design" : "requirements_review",
             createdAt: column(row, "created_at"), updatedAt: column(row, "updated_at"), current, history, approvals, audit,
         };
     }
 
     list(): Feature[] {
-        return this.db.prepare("SELECT id FROM features WHERE project_id = ? ORDER BY updated_at DESC, id")
-            .all(this.project.id).map((row) => this.get(column(row, "id")));
+        return this.db.prepare(`SELECT id FROM features WHERE project_id IN (${this.projectPlaceholders()}) ORDER BY updated_at DESC, id`)
+            .all(...this.projectIds).map((row) => this.get(column(row, "id")));
+    }
+
+    private upsertProvenance(featureId: string, mode: "create" | "update" | "coding" | "clear_coding"): void {
+        const info = resolveWorktreeInfo(this.project.workspace);
+        const existing = this.db.prepare("SELECT * FROM feature_provenance WHERE feature_id = ?").get(featureId);
+        if (!existing) {
+            this.db.prepare(`
+                INSERT INTO feature_provenance (
+                    feature_id, origin_workspace, origin_worktree, origin_branch,
+                    updated_workspace, updated_worktree, updated_branch,
+                    coding_workspace, coding_worktree, coding_branch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                featureId,
+                info.workspace,
+                info.worktreeName,
+                info.branch,
+                info.workspace,
+                info.worktreeName,
+                info.branch,
+                mode === "coding" ? info.workspace : null,
+                mode === "coding" ? info.worktreeName : null,
+                mode === "coding" ? info.branch : null,
+            );
+            return;
+        }
+        if (mode === "coding") {
+            this.db.prepare(`
+                UPDATE feature_provenance
+                SET updated_workspace = ?, updated_worktree = ?, updated_branch = ?,
+                    coding_workspace = ?, coding_worktree = ?, coding_branch = ?
+                WHERE feature_id = ?
+            `).run(info.workspace, info.worktreeName, info.branch, info.workspace, info.worktreeName, info.branch, featureId);
+        } else if (mode === "clear_coding") {
+            this.db.prepare(`
+                UPDATE feature_provenance
+                SET coding_workspace = NULL, coding_worktree = NULL, coding_branch = NULL
+                WHERE feature_id = ?
+            `).run(featureId);
+        } else if (mode === "update") {
+            this.db.prepare(`
+                UPDATE feature_provenance
+                SET updated_workspace = ?, updated_worktree = ?, updated_branch = ?
+                WHERE feature_id = ?
+            `).run(info.workspace, info.worktreeName, info.branch, featureId);
+        }
+    }
+
+    recordCodingProvenance(featureId: string, clear = false): void {
+        this.upsertProvenance(featureId, clear ? "clear_coding" : "coding");
+    }
+
+    provenance(featureId: string): FeatureProvenance | null {
+        const featureRow = this.db.prepare(`SELECT id, project_id FROM features WHERE id = ? AND project_id IN (${this.projectPlaceholders()})`)
+            .get(featureId, ...this.projectIds);
+        if (!featureRow) return null;
+        const row = this.db.prepare("SELECT * FROM feature_provenance WHERE feature_id = ?").get(featureId);
+        if (row) {
+            return {
+                featureId,
+                originWorkspace: column(row, "origin_workspace"),
+                originWorktree: column(row, "origin_worktree"),
+                originBranch: typeof row.origin_branch === "string" ? row.origin_branch : null,
+                updatedWorkspace: column(row, "updated_workspace"),
+                updatedWorktree: column(row, "updated_worktree"),
+                updatedBranch: typeof row.updated_branch === "string" ? row.updated_branch : null,
+                codingWorkspace: typeof row.coding_workspace === "string" ? row.coding_workspace : null,
+                codingWorktree: typeof row.coding_worktree === "string" ? row.coding_worktree : null,
+                codingBranch: typeof row.coding_branch === "string" ? row.coding_branch : null,
+            };
+        }
+        const fallbackWorkspace = this.projectWorkspaceById.get(column(featureRow, "project_id")) || this.worktreeInfo.repositoryRoot;
+        const fallbackInfo = resolveWorktreeInfo(fallbackWorkspace);
+        return {
+            featureId,
+            originWorkspace: fallbackInfo.workspace,
+            originWorktree: fallbackInfo.worktreeName,
+            originBranch: fallbackInfo.branch,
+            updatedWorkspace: fallbackInfo.workspace,
+            updatedWorktree: fallbackInfo.worktreeName,
+            updatedBranch: fallbackInfo.branch,
+            codingWorkspace: null,
+            codingWorktree: null,
+            codingBranch: null,
+        };
+    }
+
+    allProvenance(): Record<string, FeatureProvenance> {
+        const out: Record<string, FeatureProvenance> = {};
+        const ids = this.db.prepare(`SELECT id FROM features WHERE project_id IN (${this.projectPlaceholders()})`).all(...this.projectIds);
+        for (const r of ids) {
+            const fid = column(r, "id");
+            const prov = this.provenance(fid);
+            if (prov) out[fid] = prov;
+        }
+        return out;
     }
 
     importShared(feature: Feature): void {
         this.transaction(() => {
             const existing = this.db.prepare("SELECT project_id FROM features WHERE id=?").get(feature.id);
-            if (existing && existing.project_id !== this.project.id) throw new FactoryError("shared_project_conflict", "This shared feature is already cached for another workspace in this registry.", 409);
+            if (existing && !this.projectIds.includes(String(existing.project_id))) {
+                throw new FactoryError("shared_project_conflict", "This shared feature is already cached for another workspace in this registry.", 409);
+            }
             if (existing) {
                 const prior = this.get(feature.id);
                 for (const key of ["history", "approvals", "audit"] as const) {
@@ -197,7 +385,9 @@ export class Registry {
             const audit = this.db.prepare("SELECT sequence FROM audit WHERE feature_id=? ORDER BY sequence").all(feature.id);
             for (const entry of feature.audit.slice(audit.length)) this.event(feature.id, entry.kind, entry.revisionId, validateActor(entry.actor), entry.createdAt);
             this.db.prepare("UPDATE features SET current_revision=?, updated_at=? WHERE id=?").run(feature.current.id, feature.updatedAt, feature.id);
+            this.upsertProvenance(feature.id, existing ? "update" : "create");
         });
+        this.emit({ kind: "shared_imported", featureId: feature.id });
     }
 
     private addRevision(featureId: string, id: string, number: number, input: Requirements, now: string): void {
@@ -211,14 +401,17 @@ export class Registry {
     }
 
     create(requestId: string, input: Requirements, actor: Actor): Feature {
-        return this.transaction(() => {
-            const existing = this.db.prepare("SELECT id, request_hash FROM features WHERE project_id = ? AND request_id = ?").get(this.project.id, requestId);
+        let createdNew = false;
+        const result = this.transaction(() => {
+            const existing = this.db.prepare(`SELECT id, request_hash FROM features WHERE project_id IN (${this.projectPlaceholders()}) AND request_id = ?`)
+                .get(...this.projectIds, requestId);
             if (existing) {
                 if (column(existing, "request_hash") !== contentHash(input)) {
                     throw new FactoryError("request_conflict", "This request ID was already used with different requirements.", 409);
                 }
                 return this.get(column(existing, "id"));
             }
+            createdNew = true;
             const id = randomUUID();
             const revision = randomUUID();
             const now = new Date().toISOString();
@@ -226,26 +419,35 @@ export class Registry {
                 .run(id, this.project.id, requestId, contentHash(input), revision, now, now);
             this.addRevision(id, revision, 1, input, now);
             this.event(id, "feature_created", revision, actor, now);
+            this.upsertProvenance(id, "create");
             return this.get(id);
         });
+        if (createdNew) this.emit({ kind: "feature_created", featureId: result.id });
+        return result;
     }
 
     revise(featureId: string, expectedRevision: string, input: Requirements, actor: Actor): Feature {
-        return this.transaction(() => {
+        let changed = false;
+        const result = this.transaction(() => {
             const feature = this.get(featureId);
             this.requireRevision(feature, expectedRevision);
             if (feature.current.hash === contentHash(input)) return feature;
+            changed = true;
             const revision = randomUUID();
             const now = new Date().toISOString();
             this.addRevision(featureId, revision, feature.current.number + 1, input, now);
             this.db.prepare("UPDATE features SET current_revision = ?, updated_at = ? WHERE id = ?").run(revision, now, featureId);
             this.event(featureId, "requirements_revised", revision, actor, now);
+            this.upsertProvenance(featureId, "update");
             return this.get(featureId);
         });
+        if (changed) this.emit({ kind: "requirements_revised", featureId });
+        return result;
     }
 
     approve(featureId: string, expectedRevision: string, actor: Actor): Feature {
-        return this.transaction(() => {
+        let approvedNew = false;
+        const result = this.transaction(() => {
             const feature = this.get(featureId);
             this.requireRevision(feature, expectedRevision);
             if (!feature.current.requirements.length) {
@@ -255,13 +457,17 @@ export class Registry {
                 throw new FactoryError("blocking_unknowns", "Resolve the open questions before approving this feature for design.", 409);
             }
             if (feature.status === "ready_for_design") return feature;
+            approvedNew = true;
             const now = new Date().toISOString();
             this.db.prepare("INSERT INTO approvals VALUES (?, ?, ?, ?, ?)")
                 .run(randomUUID(), featureId, expectedRevision, JSON.stringify(actor), now);
             this.db.prepare("UPDATE features SET updated_at = ? WHERE id = ?").run(now, featureId);
             this.event(featureId, "requirements_approved", expectedRevision, actor, now);
+            this.upsertProvenance(featureId, "update");
             return this.get(featureId);
         });
+        if (approvedNew) this.emit({ kind: "requirements_approved", featureId });
+        return result;
     }
 
     private requireRevision(feature: Feature, expected: string): void {

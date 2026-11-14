@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { computeWorkspaceAnalytics } from "../core/analytics.ts";
 import { Application } from "../core/application.ts";
 import { FactoryError, MAX_COMMAND_BYTES, type Actor } from "../core/contracts.ts";
 import { runtimeReport } from "../core/doctor.ts";
@@ -16,12 +17,16 @@ import type { ExecutionTraceEntry, FactoryFeature, Json } from "../core/lifecycl
 import { StudioQaService, type QaResponder } from "./qa.ts";
 import { readExecutionTranscript } from "./transcripts.ts";
 
+export const DEFAULT_STUDIO_PORT = 49629;
+
 function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
-    const targetExecs = feature.factory.executions.filter((e) => (e.kind === "plan" || e.kind === "implement") && e.runtimeId && e.sessionId);
+    const targetExecs = feature.factory.executions.filter(
+        (e) => (e.kind === "design" || e.kind === "plan" || e.kind === "implement") && e.runtimeId && e.sessionId,
+    );
     if (!targetExecs.length) return feature;
     const cloned = structuredClone(feature);
     for (const exec of cloned.factory.executions) {
-        if ((exec.kind !== "plan" && exec.kind !== "implement") || !exec.runtimeId || !exec.sessionId) continue;
+        if ((exec.kind !== "design" && exec.kind !== "plan" && exec.kind !== "implement") || !exec.runtimeId || !exec.sessionId) continue;
         if (!/^[a-zA-Z0-9_-]+$/.test(exec.sessionId)) continue;
         const sessionDbPath = path.join(os.homedir(), ".copilot", "session-state", exec.sessionId, "session.db");
         if (!existsSync(sessionDbPath)) continue;
@@ -40,6 +45,68 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                 if (typeof row.result_json === "string" && deduped.at(-1) !== row.result_json) {
                     deduped.push(row.result_json);
                 }
+            }
+            if (exec.kind === "design") {
+                const designs: Record<string, Json>[] = [];
+                const syntheticDesignTurns: ExecutionTraceEntry[] = [];
+                let dIdx = 0;
+                let drIdx = 0;
+                for (const rawJson of deduped) {
+                    const parsed = JSON.parse(rawJson) as Record<string, Json>;
+                    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+                    if (parsed.sections && typeof parsed.sections === "object" && !Array.isArray(parsed.sections) && Array.isArray(parsed.changes)) {
+                        designs.push(parsed);
+                        syntheticDesignTurns.push({
+                            id: `${exec.id}:journal:design-author:${dIdx}`,
+                            kind: "agent_turn",
+                            timestamp: exec.updatedAt,
+                            role: "software-factory-design-author",
+                            label: `Factory:design-author:${dIdx}`,
+                            target: "software-factory-design-author",
+                            status: "completed",
+                            outputPreview: rawJson.slice(0, 30_000),
+                        });
+                        dIdx++;
+                    } else if (typeof parsed.designDigest === "string" && Array.isArray(parsed.findings)) {
+                        syntheticDesignTurns.push({
+                            id: `${exec.id}:journal:design-review:${drIdx}`,
+                            kind: "agent_turn",
+                            timestamp: exec.updatedAt,
+                            role: "software-factory-design-reviewer",
+                            label: `Factory:design-review:${drIdx}`,
+                            target: "software-factory-design-reviewer",
+                            status: "completed",
+                            outputPreview: rawJson.slice(0, 30_000),
+                        });
+                        drIdx++;
+                    }
+                }
+                exec.trace ??= [];
+                for (const turn of syntheticDesignTurns) {
+                    const existingIdx = exec.trace.findIndex((t) => t.kind === "agent_turn" && t.label === turn.label && t.status === "completed");
+                    if (existingIdx >= 0) {
+                        if (!exec.trace[existingIdx]!.outputPreview || exec.trace[existingIdx]!.outputPreview!.length < (turn.outputPreview?.length || 0)) {
+                            exec.trace[existingIdx] = { ...exec.trace[existingIdx]!, outputPreview: turn.outputPreview };
+                        }
+                    } else {
+                        exec.trace.push(turn);
+                    }
+                }
+                for (const art of cloned.factory.artifacts) {
+                    if (art.kind === "design" && art.executionId === exec.id &&
+                        art.content && typeof art.content === "object" && !Array.isArray(art.content)) {
+                        const contentObj = art.content as Record<string, Json>;
+                        if (Array.isArray(contentObj.reviews)) {
+                            contentObj.reviews = contentObj.reviews.map((entry, idx) => {
+                                if (entry && typeof entry === "object" && !Array.isArray(entry) && !("candidate" in entry) && designs[idx]) {
+                                    return { ...(entry as Record<string, Json>), candidate: designs[idx]! };
+                                }
+                                return entry;
+                            });
+                        }
+                    }
+                }
+                continue;
             }
             if (exec.kind === "implement") {
                 const syntheticImplTurns: ExecutionTraceEntry[] = [];
@@ -315,7 +382,13 @@ function ensureStudioBuild(assetDirectory: string): void {
     }
 }
 
-export async function startServer(options: { application: Application; port?: number; assets?: string; qaResponder?: QaResponder }) {
+export async function startServer(options: {
+    application: Application;
+    port?: number;
+    fallbackOnBusy?: boolean;
+    assets?: string;
+    qaResponder?: QaResponder;
+}) {
     const assetDirectory = options.assets || fileURLToPath(new URL("../web/dist/", import.meta.url));
     if (!options.assets) ensureStudioBuild(assetDirectory);
     if (!existsSync(path.join(assetDirectory, "index.html"))) {
@@ -327,6 +400,64 @@ export async function startServer(options: { application: Application; port?: nu
     const csrf = randomBytes(32).toString("hex");
     let origin = "";
     let cookieName = "";
+    let boundPort = 0;
+
+    const sseClients = new Set<ServerResponse>();
+    const broadcastSse = (eventName: string, payload: unknown) => {
+        if (sseClients.size === 0) return;
+        const frame = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+        for (const client of sseClients) {
+            if (client.destroyed || client.writableEnded) {
+                sseClients.delete(client);
+                continue;
+            }
+            try {
+                client.write(frame);
+            } catch {
+                sseClients.delete(client);
+            }
+        }
+    };
+
+    let stateDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingReason = "state";
+    let pendingFeatureId: string | undefined;
+    const scheduleStateBroadcast = (reason: string, featureId?: string) => {
+        pendingReason = reason;
+        if (featureId) pendingFeatureId = featureId;
+        if (stateDebounceTimer) return;
+        stateDebounceTimer = setTimeout(() => {
+            stateDebounceTimer = null;
+            const nextFeatureId = pendingFeatureId;
+            pendingFeatureId = undefined;
+            broadcastSse("state-changed", {
+                reason: pendingReason,
+                ...(nextFeatureId ? { featureId: nextFeatureId } : {}),
+                timestamp: new Date().toISOString(),
+            });
+        }, 40);
+        stateDebounceTimer.unref?.();
+    };
+
+    const offRegistry = options.application.registry.onChange((event) => {
+        scheduleStateBroadcast(`registry:${event.kind}`, event.featureId);
+    });
+    const offLifecycle = options.application.lifecycle.store.onChange((event) => {
+        scheduleStateBroadcast(`lifecycle:${event.kind}`, event.featureId);
+    });
+    const offQa = qaService.subscribe((qaEvent) => {
+        broadcastSse(qaEvent.type, qaEvent);
+    });
+    const heartbeatTimer = setInterval(() => {
+        for (const client of sseClients) {
+            if (client.destroyed || client.writableEnded) {
+                sseClients.delete(client);
+                continue;
+            }
+            try { client.write(": heartbeat\n\n"); } catch { sseClients.delete(client); }
+        }
+    }, 15_000);
+    heartbeatTimer.unref?.();
 
     async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
         response.setHeader("X-Content-Type-Options", "nosniff");
@@ -341,20 +472,52 @@ export async function startServer(options: { application: Application; port?: nu
         const url = new URL(request.url || "/", origin);
         if (url.pathname === "/api/session" && request.method === "GET") {
             response.setHeader("Set-Cookie", `${cookieName}=${sessionToken}; HttpOnly; SameSite=Strict; Path=/`);
-            json(response, 200, { csrf, project: options.application.registry.project });
+            json(response, 200, {
+                csrf,
+                project: options.application.registry.project,
+                worktree: options.application.registry.worktreeInfo,
+            });
             return;
         }
         if (url.pathname.startsWith("/api/")) {
             const cookie = request.headers.cookie?.split(";").map((value) => value.trim())
                 .find((value) => value.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
             if (!matches(cookie, sessionToken)) throw new FactoryError("session_required", "Reload the local application to establish a session.", 401);
-            if (request.method === "GET" && url.pathname === "/api/features") {
+            if (request.method === "GET" && url.pathname === "/api/events") {
+                request.setTimeout(0);
+                response.setTimeout(0);
+                request.socket?.setKeepAlive?.(true);
+                response.writeHead(200, {
+                    "Content-Type": "text/event-stream; charset=utf-8",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                });
+                response.flushHeaders();
+                sseClients.add(response);
+                response.write(`event: connected\ndata: ${JSON.stringify({ timestamp: new Date().toISOString(), port: boundPort })}\n\n`);
+                const cleanup = () => { sseClients.delete(response); };
+                request.on("close", cleanup);
+                response.on("close", cleanup);
+            } else if (request.method === "GET" && url.pathname === "/api/features") {
                 const rawFeatures = url.searchParams.get("cached") === "1"
                     ? options.application.cachedFeatures()
                     : await options.application.features();
-                json(response, 200, { project: options.application.registry.project,
+                json(response, 200, {
+                    project: options.application.registry.project,
+                    worktree: options.application.registry.worktreeInfo,
+                    provenance: options.application.registry.allProvenance(),
                     features: rawFeatures.map(hydrateStudioFeature),
-                    cached: url.searchParams.get("cached") === "1" });
+                    cached: url.searchParams.get("cached") === "1",
+                });
+            } else if (request.method === "GET" && url.pathname === "/api/analytics") {
+                const hydrated = options.application.cachedFeatures().map(hydrateStudioFeature);
+                json(response, 200, {
+                    worktree: options.application.registry.worktreeInfo,
+                    analytics: computeWorkspaceAnalytics(hydrated, {
+                        publishedOnly: url.searchParams.get("published") === "1",
+                    }),
+                });
             } else if (request.method === "GET" && url.pathname === "/api/doctor") {
                 json(response, 200, runtimeReport());
             } else if (request.method === "GET" && url.pathname === "/api/configuration") {
@@ -453,20 +616,62 @@ export async function startServer(options: { application: Application; port?: nu
         });
     });
     server.requestTimeout = 10_000;
-    await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(options.port ?? 0, "127.0.0.1", () => {
-            server.removeListener("error", reject);
+    const listenOnPort = (targetPort: number) => new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+            server.removeListener("listening", onListening);
+            reject(err);
+        };
+        const onListening = () => {
+            server.removeListener("error", onError);
             resolve();
-        });
+        };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(targetPort, "127.0.0.1");
     });
+
+    const requestedPort = options.port ?? 0;
+    let fallbackFrom: number | null = null;
+    try {
+        await listenOnPort(requestedPort);
+    } catch (error: unknown) {
+        const errCode = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+        if (requestedPort > 0 && options.fallbackOnBusy && errCode === "EADDRINUSE") {
+            fallbackFrom = requestedPort;
+            await listenOnPort(0);
+        } else {
+            clearInterval(heartbeatTimer);
+            if (stateDebounceTimer) clearTimeout(stateDebounceTimer);
+            offRegistry();
+            offLifecycle();
+            offQa();
+            await qaService.close();
+            throw error;
+        }
+    }
+
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("The loopback server did not acquire a port.");
+    boundPort = address.port;
     origin = `http://127.0.0.1:${address.port}`;
     cookieName = `software_factory_${address.port}`;
     return {
         url: origin,
+        port: address.port,
+        fallbackFrom,
         close: async () => {
+            clearInterval(heartbeatTimer);
+            if (stateDebounceTimer) {
+                clearTimeout(stateDebounceTimer);
+                stateDebounceTimer = null;
+            }
+            offRegistry();
+            offLifecycle();
+            offQa();
+            for (const client of sseClients) {
+                try { client.end(); } catch { /* ignore */ }
+            }
+            sseClients.clear();
             await new Promise<void>((resolve, reject) => {
                 server.close((error) => error ? reject(error) : resolve());
                 server.closeAllConnections();

@@ -7,6 +7,7 @@ import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import { request } from "./api";
 import { nextStep, stageLabels, type AvailableGate } from "../../core/progress.ts";
 import { AskCopilotDrawer, type QaFeedbackBridgeAction } from "./AskCopilotDrawer";
+import { FeatureScorecardStrip } from "./AnalyticsStudio";
 import { ScopeSummary } from "./Confirmation";
 import {
     CodeArenaExplorer,
@@ -23,6 +24,8 @@ type GateResult = AvailableGate;
 
 export function ArtifactDocument({
     artifact,
+    allDesignArtifacts,
+    allPlanArtifacts,
     feature,
     onAppendFeedback,
     onSelectItemForOps,
@@ -31,6 +34,8 @@ export function ArtifactDocument({
     onAskAi,
 }: {
     artifact: Artifact;
+    allDesignArtifacts?: Artifact[];
+    allPlanArtifacts?: Artifact[];
     feature?: FactoryFeature;
     onAppendFeedback?: (snippet: string) => void;
     onSelectItemForOps?: (itemId: string) => void;
@@ -45,13 +50,21 @@ export function ArtifactDocument({
     if (artifact.kind === "design" && body.design && typeof body.design === "object" && !Array.isArray(body.design)) {
         const sections = body.design.sections;
         if (sections && typeof sections === "object" && !Array.isArray(sections)) {
-            return <DesignStudioExplorer artifact={artifact} onAppendFeedback={onAppendFeedback} onAskAi={onAskAi} />;
+            return (
+                <DesignStudioExplorer
+                    artifact={artifact}
+                    allDesignArtifacts={allDesignArtifacts}
+                    onAppendFeedback={onAppendFeedback}
+                    onAskAi={onAskAi}
+                />
+            );
         }
     }
     if ((artifact.kind === "plan" || artifact.kind === "planning_attempt") && Array.isArray(body.items)) {
         return (
             <PlanStudioExplorer
                 artifact={artifact}
+                allPlanArtifacts={allPlanArtifacts}
                 feature={feature}
                 onAppendFeedback={onAppendFeedback}
                 onSelectItemForOps={onSelectItemForOps}
@@ -599,6 +612,11 @@ export function FactoryPanel({
             })}
         </div>
 
+        <FeatureScorecardStrip
+            feature={feature}
+            onOpenFlightRecorder={() => setFlightOpen(true)}
+        />
+
         {flightOpen && (
             <section className="flight-drawer-panel" aria-label="Live subagents and transcripts">
                 <div className="flight-drawer-head">
@@ -842,7 +860,13 @@ export function FactoryPanel({
                     )}
                     {designArtifact ? (
                         <>
-                            <ArtifactDocument artifact={designArtifact} feature={feature} onAppendFeedback={appendFeedback} onAskAi={openAskAi} />
+                            <ArtifactDocument
+                                artifact={designArtifact}
+                                allDesignArtifacts={fallbackDesignArtifacts}
+                                feature={feature}
+                                onAppendFeedback={appendFeedback}
+                                onAskAi={openAskAi}
+                            />
                             {currentGate?.stage === "design" && (
                                 <div className="gate-decision-bar">
                                     {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
@@ -930,7 +954,14 @@ export function FactoryPanel({
                     )}
                     {planArtifact ? (
                         <>
-                            <ArtifactDocument artifact={planArtifact} feature={feature} onAppendFeedback={appendFeedback} onSelectItemForOps={selectItemForOps} onAskAi={openAskAi} />
+                            <ArtifactDocument
+                                artifact={planArtifact}
+                                allPlanArtifacts={allPlanArtifacts}
+                                feature={feature}
+                                onAppendFeedback={appendFeedback}
+                                onSelectItemForOps={selectItemForOps}
+                                onAskAi={openAskAi}
+                            />
                             {currentGate?.stage === "plan" && (
                                 <div className="gate-decision-bar">
                                     {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}

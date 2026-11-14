@@ -44,9 +44,23 @@ export function lifecycleSchema(db: DatabaseSync): void {
     `);
 }
 
+export type LifecycleChangeEvent = { kind: string; featureId?: string };
+
 export class LifecycleStore {
     readonly registry: Registry;
+    private readonly listeners = new Set<(event: LifecycleChangeEvent) => void>();
     constructor(registry: Registry) { this.registry = registry; }
+
+    onChange(listener: (event: LifecycleChangeEvent) => void): () => void {
+        this.listeners.add(listener);
+        return () => { this.listeners.delete(listener); };
+    }
+
+    private emit(event: LifecycleChangeEvent): void {
+        for (const listener of this.listeners) {
+            try { listener(event); } catch { /* Listener errors must never disrupt storage commits */ }
+        }
+    }
 
     heartbeat(sessionId: string, token: string): void {
         const result = this.registry.connection.prepare(`INSERT INTO factory_resident_owner VALUES (?, ?, ?)
@@ -126,16 +140,28 @@ export class LifecycleStore {
                 .run(featureId, JSON.stringify(state));
             if (!options.localOnly) db.prepare("UPDATE features SET updated_at = ? WHERE id = ?").run(now(), featureId);
             db.exec("COMMIT");
+            this.emit({ kind: options.localOnly ? "execution_updated" : "state_changed", featureId });
             return result;
         } catch (error) { db.exec("ROLLBACK"); throw error; }
     }
 
     configuration(id?: string): ConfigRevision | null {
-        const mapping = this.registry.connection.prepare("SELECT configuration_id, mappings_json FROM factory_local_configuration WHERE project_id=?").get(this.registry.project.id);
+        const projectIds = this.registry.projectIds;
+        const placeholders = projectIds.map(() => "?").join(", ");
+        const mapping = this.registry.connection.prepare("SELECT configuration_id, mappings_json FROM factory_local_configuration WHERE project_id=?").get(this.registry.project.id)
+            || (projectIds.length > 1
+                ? this.registry.connection.prepare(`SELECT configuration_id, mappings_json FROM factory_local_configuration WHERE project_id IN (${placeholders}) ORDER BY rowid DESC LIMIT 1`).get(...projectIds)
+                : undefined);
         id ||= typeof mapping?.configuration_id === "string" ? mapping.configuration_id : undefined;
         const row = id
-            ? this.registry.connection.prepare("SELECT * FROM factory_configuration WHERE project_id = ? AND id = ?").get(this.registry.project.id, id)
-            : this.registry.connection.prepare("SELECT * FROM factory_configuration WHERE project_id = ? ORDER BY rowid DESC LIMIT 1").get(this.registry.project.id);
+            ? (this.registry.connection.prepare("SELECT * FROM factory_configuration WHERE project_id = ? AND id = ?").get(this.registry.project.id, id)
+                || (projectIds.length > 1
+                    ? this.registry.connection.prepare(`SELECT * FROM factory_configuration WHERE project_id IN (${placeholders}) AND id = ? ORDER BY rowid DESC LIMIT 1`).get(...projectIds, id)
+                    : undefined))
+            : (this.registry.connection.prepare("SELECT * FROM factory_configuration WHERE project_id = ? ORDER BY rowid DESC LIMIT 1").get(this.registry.project.id)
+                || (projectIds.length > 1
+                    ? this.registry.connection.prepare(`SELECT * FROM factory_configuration WHERE project_id IN (${placeholders}) ORDER BY rowid DESC LIMIT 1`).get(...projectIds)
+                    : undefined));
         if (!row) return null;
         if (![row.id, row.hash, row.content_json, row.created_at].every((value) => typeof value === "string")) {
             throw new FactoryError("storage_corrupt", "Invalid configuration record.", 500);
@@ -165,6 +191,7 @@ export class LifecycleStore {
             .run(config.id, this.registry.project.id, config.hash, JSON.stringify(value), JSON.stringify(actor), config.createdAt);
         this.registry.connection.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
             .run(this.registry.project.id, config.id, JSON.stringify(value));
+        this.emit({ kind: "configuration_updated" });
         return config;
     }
 

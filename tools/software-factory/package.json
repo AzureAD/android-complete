@@ -10,7 +10,7 @@
     "start": "node cli.ts serve",
     "mcp": "node mcp.ts",
     "check": "tsc --noEmit",
-    "test": "node --test tests/core.test.ts tests/chat.test.ts tests/server.test.ts tests/lifecycle.test.ts tests/providers.test.ts tests/commands.test.ts tests/intake.test.ts tests/progress.test.ts tests/chat-progress.test.ts tests/design-tasks.test.ts tests/sdk-host.test.ts tests/decisions.test.ts tests/review-handoff.test.ts tests/nested-registration.test.ts tests/registration.test.ts tests/interpreter.test.ts tests/publication.test.ts tests/reader.test.ts tests/joined-session.test.ts tests/shared.test.ts tests/ado-features.test.ts tests/design-evals.test.mjs tests/mcp.test.ts"
+    "test": "node --test tests/core.test.ts tests/chat.test.ts tests/server.test.ts tests/lifecycle.test.ts tests/providers.test.ts tests/commands.test.ts tests/intake.test.ts tests/progress.test.ts tests/chat-progress.test.ts tests/design-tasks.test.ts tests/sdk-host.test.ts tests/decisions.test.ts tests/review-handoff.test.ts tests/nested-registration.test.ts tests/registration.test.ts tests/interpreter.test.ts tests/publication.test.ts tests/reader.test.ts tests/joined-session.test.ts tests/shared.test.ts tests/ado-features.test.ts tests/design-evals.test.mjs tests/mcp.test.ts tests/studio-demo.test.ts"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.26",

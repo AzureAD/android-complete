@@ -16,6 +16,12 @@ import type {
 import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import { workerGuidance } from "../../runtime/guidance.ts";
 import { request } from "./api";
+import {
+    buildDesignSnapshots,
+    buildPlanSnapshots,
+    DesignRevisionDiffExplorer,
+    PlanRevisionDiffExplorer,
+} from "./RevisionDiffViewer";
 
 function isRecord(value: unknown): value is Record<string, Json> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -265,10 +271,12 @@ function roleDisplayName(role?: string, label?: string): {
 
 export function DesignStudioExplorer({
     artifact,
+    allDesignArtifacts,
     onAppendFeedback,
     onAskAi,
 }: {
     artifact: Artifact;
+    allDesignArtifacts?: Artifact[];
     onAppendFeedback?: (snippet: string) => void;
     onAskAi?: (context: FeatureQaContext) => void;
 }) {
@@ -298,10 +306,11 @@ export function DesignStudioExplorer({
     ].filter((v, i, a) => v && a.indexOf(v) === i);
     const conflicts = asArray(evidence.conflicts).map(String).filter(Boolean);
 
-    const [studioTab, setStudioTab] = useState<"sections" | "arena" | "traceability" | "risks">("sections");
+    const [studioTab, setStudioTab] = useState<"sections" | "arena" | "diff" | "traceability" | "risks">("sections");
     const [selectedReqId, setSelectedReqId] = useState<string | null>(null);
     const [selectedRoundIdx, setSelectedRoundIdx] = useState<number>(Math.max(0, reviews.length - 1));
     const [activeSectionFilter, setActiveSectionFilter] = useState<string | null>(null);
+    const designSnapshots = buildDesignSnapshots(artifact, allDesignArtifacts);
 
     const selectedTrace = traceability.find((row) => String(row.requirementId) === selectedReqId);
     const highlightedSections = new Set(asArray(selectedTrace?.sectionIds).map(String));
@@ -358,6 +367,15 @@ export function DesignStudioExplorer({
                                 onClick={() => setStudioTab("arena")}
                             >
                                 Author vs. Reviewer ({reviews.length})
+                            </button>
+                        )}
+                        {designSnapshots.length >= 2 && (
+                            <button
+                                type="button"
+                                className={studioTab === "diff" ? "studio-tab active" : "studio-tab"}
+                                onClick={() => setStudioTab("diff")}
+                            >
+                                Revision Diff ({designSnapshots.length})
                             </button>
                         )}
                         {(traceability.length > 0 || references.length > 0) && (
@@ -630,6 +648,14 @@ export function DesignStudioExplorer({
                 </div>
             )}
 
+            {studioTab === "diff" && (
+                <DesignRevisionDiffExplorer
+                    artifact={artifact}
+                    allDesignArtifacts={allDesignArtifacts}
+                    onAskAi={onAskAi}
+                />
+            )}
+
             {studioTab === "traceability" && (
                 <div className="traceability-studio">
                     {traceability.length > 0 && (
@@ -759,12 +785,14 @@ export function DesignStudioExplorer({
 
 export function PlanStudioExplorer({
     artifact,
+    allPlanArtifacts,
     feature,
     onAppendFeedback,
     onSelectItemForOps,
     onAskAi,
 }: {
     artifact: Artifact;
+    allPlanArtifacts?: Artifact[];
     feature?: FactoryFeature;
     onAppendFeedback?: (snippet: string) => void;
     onSelectItemForOps?: (itemId: string) => void;
@@ -775,7 +803,8 @@ export function PlanStudioExplorer({
     const reviewHistory = asArray(body.reviewHistory).filter(isRecord);
     const isLiveInProgress = body.liveInProgress === true;
     const [selectedItemId, setSelectedItemId] = useState<string | null>(items[0] ? String(items[0].id) : null);
-    const [viewMode, setViewMode] = useState<"dag" | "reviews">("dag");
+    const [viewMode, setViewMode] = useState<"dag" | "reviews" | "diff">("dag");
+    const planSnapshots = buildPlanSnapshots(artifact, allPlanArtifacts);
     const [selectedReviewRound, setSelectedReviewRound] = useState<number>(Math.max(0, reviewHistory.length - 1));
     const [summaryExpanded, setSummaryExpanded] = useState(false);
     const [roundSummaryExpanded, setRoundSummaryExpanded] = useState(false);
@@ -871,14 +900,21 @@ export function PlanStudioExplorer({
                         <span className="studio-pill purple">{reviewHistory.length} Planner vs. Reviewer Round{reviewHistory.length === 1 ? "" : "s"}</span>
                     )}
                 </div>
-                {reviewHistory.length > 0 && (
+                {(reviewHistory.length > 0 || planSnapshots.length >= 2) && (
                     <div className="studio-subnav">
                         <button type="button" className={viewMode === "dag" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("dag")}>
                             Execution Waves &amp; PBI Specs
                         </button>
-                        <button type="button" className={viewMode === "reviews" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("reviews")}>
-                            Planner vs. Reviewer ({reviewHistory.length})
-                        </button>
+                        {reviewHistory.length > 0 && (
+                            <button type="button" className={viewMode === "reviews" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("reviews")}>
+                                Planner vs. Reviewer ({reviewHistory.length})
+                            </button>
+                        )}
+                        {planSnapshots.length >= 2 && (
+                            <button type="button" className={viewMode === "diff" ? "studio-tab active" : "studio-tab"} onClick={() => setViewMode("diff")}>
+                                Plan Revision Diff ({planSnapshots.length})
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
@@ -1248,6 +1284,13 @@ export function PlanStudioExplorer({
                     </div>
                 );
             })()}
+            {viewMode === "diff" && (
+                <PlanRevisionDiffExplorer
+                    artifact={artifact}
+                    allPlanArtifacts={allPlanArtifacts}
+                    onAskAi={onAskAi}
+                />
+            )}
         </div>
     );
 }

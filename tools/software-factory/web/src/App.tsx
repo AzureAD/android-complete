@@ -1,17 +1,28 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { computeWorkspaceAnalytics, findSupersededLocalDraftIds } from "../../core/analytics.ts";
 import { parseRequirements, parseSuccessCriteria, type Command, type Feature, type Project, type Requirement, type Requirements } from "../../core/contracts.ts";
 import { parseIntakeProposal, type Artifact, type FactoryFeature, type Json, type ConfigRevision } from "../../core/lifecycle-contracts.ts";
 import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import type { SharedTarget } from "../../core/shared-contracts.ts";
+import { WorkspaceAnalyticsView } from "./AnalyticsStudio";
 import { FactoryPanel, FactorySettings } from "./FactoryPanel";
 import { Confirmation, type ConfirmationRequest } from "./Confirmation";
+import { RequirementsRevisionDiffExplorer } from "./RevisionDiffViewer";
 import { nextStep } from "../../core/progress.ts";
 import type { runtimeReport } from "../../core/doctor.ts";
 import type { DecisionPresentation } from "../../core/contracts.ts";
-import { onSessionRefreshed, request, setCsrfToken } from "./api";
+import {
+    onSessionRefreshed,
+    request,
+    setCsrfToken,
+    subscribeStudioEvents,
+    type FeatureProvenance,
+    type LiveStreamStatus,
+    type WorktreeInfo,
+} from "./api";
 
 interface Draft { title: string; description: string; requirements: string; unknowns: string; designTasks: string }
 const emptyDraft = (): Draft => ({ title: "", description: "", requirements: "", unknowns: "", designTasks: "" });
@@ -64,7 +75,12 @@ function FactoryMark() {
 
 export function App() {
     const [project, setProject] = useState<Project>();
+    const [worktree, setWorktree] = useState<WorktreeInfo>();
+    const [provenanceMap, setProvenanceMap] = useState<Record<string, FeatureProvenance>>({});
     const [features, setFeatures] = useState<FactoryFeature[]>([]);
+    const [showSupersededDrafts, setShowSupersededDrafts] = useState(false);
+    const [analyticsOpen, setAnalyticsOpen] = useState(false);
+    const [streamStatus, setStreamStatus] = useState<LiveStreamStatus>("connecting");
     const [settings, setSettings] = useState(false);
     const [adoFeatureId, setAdoFeatureId] = useState("");
     const [recoveryReason, setRecoveryReason] = useState("");
@@ -92,20 +108,51 @@ export function App() {
         setQaOpen(true);
     };
     const refreshing = useRef(false);
+    const pendingSseRefresh = useRef(false);
     const refreshSequence = useRef(0);
     const authorityReadAt = useRef(0);
     const csrf = useRef("");
     const creationId = useRef(crypto.randomUUID());
-    const selected = features.find((feature) => feature.id === selectedId);
+
+    const supersededDraftIds = useMemo(() => findSupersededLocalDraftIds(features), [features]);
+    const visibleFeatures = useMemo(
+        () => (showSupersededDrafts ? features : features.filter((f) => !supersededDraftIds.has(f.id))),
+        [features, supersededDraftIds, showSupersededDrafts],
+    );
+    const workspaceAnalytics = useMemo(() => computeWorkspaceAnalytics(features), [features]);
+    const selected = visibleFeatures.find((feature) => feature.id === selectedId)
+        || features.find((feature) => feature.id === selectedId);
 
     async function refresh(authoritative = true) {
         const sequence = ++refreshSequence.current;
         if (authoritative) authorityReadAt.current = Date.now();
-        const data = await request<{ project: Project; features: FactoryFeature[] }>(authoritative ? "/api/features" : "/api/features?cached=1");
+        const data = await request<{
+            project: Project;
+            worktree?: WorktreeInfo;
+            provenance?: Record<string, FeatureProvenance>;
+            features: FactoryFeature[];
+        }>(authoritative ? "/api/features" : "/api/features?cached=1");
         if (sequence !== refreshSequence.current) return data.features;
         setProject(data.project);
+        if (data.worktree) setWorktree(data.worktree);
+        if (data.provenance) setProvenanceMap(data.provenance);
         setFeatures((previous) => JSON.stringify(previous) === JSON.stringify(data.features) ? previous : data.features);
-        setSelectedId((previous) => (previous && data.features.some((feature) => feature.id === previous)) ? previous : data.features[0]?.id);
+        const hiddenIds = findSupersededLocalDraftIds(data.features);
+        const defaultVisible = data.features.filter((f) => !hiddenIds.has(f.id));
+        setSelectedId((previous) => {
+            if (previous && !hiddenIds.has(previous) && data.features.some((feature) => feature.id === previous)) {
+                return previous;
+            }
+            if (previous && hiddenIds.has(previous)) {
+                const oldDraft = data.features.find((f) => f.id === previous);
+                const originRevId = oldDraft?.history[0]?.id;
+                const publishedSuccessor = originRevId
+                    ? data.features.find((f) => Boolean(f.shared) && f.history[0]?.id === originRevId)
+                    : undefined;
+                if (publishedSuccessor) return publishedSuccessor.id;
+            }
+            return defaultVisible[0]?.id ?? data.features[0]?.id;
+        });
         setSyncedAt(Date.now());
         setSyncError("");
         return data.features;
@@ -117,12 +164,15 @@ export function App() {
             csrf.current = freshCsrf;
             if (!cancelled) setSyncError("");
         });
-        void request<{ csrf: string; project: Project }>("/api/session").then(async (session) => {
+        void request<{ csrf: string; project: Project; worktree?: WorktreeInfo }>("/api/session").then(async (session) => {
             if (cancelled) return;
             csrf.current = session.csrf;
             setCsrfToken(session.csrf);
+            if (session.worktree) setWorktree(session.worktree);
             const items = await refresh();
-            if (!cancelled) setSelectedId(items[0]?.id);
+            const hiddenIds = findSupersededLocalDraftIds(items);
+            const firstVisible = items.find((f) => !hiddenIds.has(f.id)) ?? items[0];
+            if (!cancelled) setSelectedId(firstVisible?.id);
         }).catch((failure: unknown) => {
             if (!cancelled) setError(failure instanceof Error ? failure.message : "Could not connect to the local registry.");
         }).finally(() => { if (!cancelled) setBusy(false); });
@@ -131,18 +181,50 @@ export function App() {
 
     useEffect(() => {
         if (!project) return;
+        let cancelled = false;
         const sync = async (force = false) => {
-            if (refreshing.current) return;
+            if (refreshing.current) {
+                pendingSseRefresh.current = true;
+                return;
+            }
             refreshing.current = true;
-            try { await refresh(force || Date.now() - authorityReadAt.current >= 15000); }
-            catch (failure) { setSyncError(failure instanceof Error ? failure.message : "Shared state could not be refreshed."); }
-            finally { refreshing.current = false; }
+            try {
+                await refresh(force || Date.now() - authorityReadAt.current >= 20000);
+            } catch (failure) {
+                if (!cancelled) setSyncError(failure instanceof Error ? failure.message : "Shared state could not be refreshed.");
+            } finally {
+                refreshing.current = false;
+                if (pendingSseRefresh.current && !cancelled) {
+                    pendingSseRefresh.current = false;
+                    void sync(false);
+                }
+            }
         };
-        const timer = setInterval(() => { void sync(); }, 2000);
+
+        const unsubscribeSse = subscribeStudioEvents({
+            onStatus: (next) => {
+                if (!cancelled) setStreamStatus(next);
+            },
+            onEvent: (event) => {
+                if (cancelled) return;
+                if (event.type === "state-changed") {
+                    const needsAuthority = event.reason.startsWith("command:publish_") || event.reason.startsWith("command:open_shared");
+                    void sync(needsAuthority);
+                }
+            },
+        });
+
+        const pollIntervalMs = streamStatus === "live" ? 25000 : 2500;
+        const timer = setInterval(() => { void sync(); }, pollIntervalMs);
         const focus = () => { void sync(true); };
         window.addEventListener("focus", focus);
-        return () => { clearInterval(timer); window.removeEventListener("focus", focus); };
-    }, [project?.id]);
+        return () => {
+            cancelled = true;
+            unsubscribeSse();
+            clearInterval(timer);
+            window.removeEventListener("focus", focus);
+        };
+    }, [project?.id, streamStatus]);
 
     function finishConfirmation(approved: boolean) {
         confirmation?.resolve(approved);
@@ -162,6 +244,7 @@ export function App() {
         if ((editing || creating) && !window.confirm("Discard your unsaved feature edits?")) return;
         setEditing(false);
         setCreating(false);
+        setAnalyticsOpen(false);
         setSelectedId(id);
         setFlightOpen(false);
         setQaPinnedContext(null);
@@ -175,6 +258,7 @@ export function App() {
         setDraft(emptyDraft());
         setCreating(true);
         setEditing(false);
+        setAnalyticsOpen(false);
         setError("");
         setNotice("");
     }
@@ -252,7 +336,8 @@ export function App() {
         });
     }
 
-    const workspace = project?.workspace.split(/[\\/]/).filter(Boolean).pop() || "Local workspace";
+    const workspace = worktree?.repositoryName || project?.workspace.split(/[\\/]/).filter(Boolean).pop() || "Local workspace";
+    const activeWorktreeSlug = worktree?.isLinkedWorktree ? worktree.worktreeName : null;
     const formOpen = creating || editing;
     const intake = selected?.factory.artifacts.find((artifact) => artifact.id === selected.currentArtifacts.intake);
     const intakeRunning = selected?.factory.executions.some((run) => run.kind === "intake" && ["starting", "running", "paused"].includes(run.status));
@@ -270,10 +355,19 @@ export function App() {
     return <div className="app-shell" data-theme={theme}>
         <aside className="sidebar">
             <a className="brand" href="/" aria-label="Software Factory home"><span className="brand-mark"><FactoryMark /></span><span>Software<br /><strong>Factory</strong></span></a>
-            <div className="workspace"><span className="eyebrow">WORKSPACE</span><strong>{workspace}</strong><span>Private drafts. Shared team features in ADO.</span></div>
-            <div className="sidebar-heading"><span>FEATURES</span><span>{features.length.toString().padStart(2, "0")}</span></div>
+            <div className="workspace">
+                <span className="eyebrow">UNIFIED REPOSITORY</span>
+                <strong>{workspace}</strong>
+                {worktree?.branch && (
+                    <span className="worktree-context-chip" title={worktree.workspace}>
+                        ⎇ {worktree.branch}{activeWorktreeSlug ? ` · worktree` : ""}
+                    </span>
+                )}
+                <span>All linked git worktrees unified.</span>
+            </div>
+            <div className="sidebar-heading"><span>FEATURES</span><span>{visibleFeatures.length.toString().padStart(2, "0")}</span></div>
             <button className="new-feature" onClick={newFeature} disabled={busy}><span aria-hidden="true">+</span> New feature</button>
-            {features.length > 2 && (
+            {visibleFeatures.length > 2 && (
                 <input
                     className="sidebar-search"
                     type="search"
@@ -284,12 +378,22 @@ export function App() {
                 />
             )}
             <nav aria-label="Features" className="feature-nav">
-                {features
+                {visibleFeatures
                     .filter((f) => !featureFilter.trim() || f.current.title.toLowerCase().includes(featureFilter.toLowerCase()))
                     .map((feature) => {
                         const step = nextStep(feature, []);
                         const isRunning = feature.factory.executions.some((e) => ["starting", "running"].includes(e.status));
-                        return <button key={feature.id} className={selectedId === feature.id && !creating ? "feature-link selected" : "feature-link"} onClick={() => navigate(feature.id)} disabled={busy}>
+                        const prov = provenanceMap[feature.id];
+                        const originWorkspace = prov?.codingWorkspace || prov?.originWorkspace;
+                        const originLeaf = prov?.codingWorktree || prov?.originWorktree || null;
+                        const isCrossWorktree = Boolean(
+                            originWorkspace
+                            && worktree?.workspace
+                            && originWorkspace.toLowerCase() !== worktree.workspace.toLowerCase()
+                            && originLeaf
+                            && originLeaf.toLowerCase() !== workspace.toLowerCase(),
+                        );
+                        return <button key={feature.id} className={selectedId === feature.id && !creating && !analyticsOpen ? "feature-link selected" : "feature-link"} onClick={() => navigate(feature.id)} disabled={busy}>
                             <span className={isRunning ? "status-dot pulse" : feature.status === "ready_for_design" ? "status-dot ready" : "status-dot"} />
                             <span className="feature-link-body">
                                 <strong>{feature.current.title}</strong>
@@ -297,37 +401,71 @@ export function App() {
                                 <span className="feature-link-badges">
                                     <span className="mini-stage-pill">Stage {step.stage + 1}/6</span>
                                     {feature.shared && <span className="mini-ado-pill">ADO #{feature.shared.target.workItemId}</span>}
+                                    {isCrossWorktree && originLeaf && (
+                                        <span
+                                            className="mini-worktree-pill"
+                                            title={`Origin worktree: ${originWorkspace}${prov?.originBranch ? ` (${prov.originBranch})` : ""}`}
+                                        >
+                                            ⎇ {originLeaf.length > 16 ? `${originLeaf.slice(-14)}` : originLeaf}
+                                        </span>
+                                    )}
                                 </span>
                             </span>
                         </button>;
                     })}
-                {!busy && features.length === 0 && <p className="sidebar-empty">Your next idea starts here.</p>}
+                {!busy && visibleFeatures.length === 0 && <p className="sidebar-empty">Your next idea starts here.</p>}
+                {supersededDraftIds.size > 0 && (
+                    <button
+                        type="button"
+                        className="superseded-toggle-btn"
+                        onClick={() => setShowSupersededDrafts((prev) => !prev)}
+                    >
+                        {showSupersededDrafts
+                            ? `Hide ${supersededDraftIds.size} pre-publish local draft${supersededDraftIds.size === 1 ? "" : "s"}`
+                            : `Show ${supersededDraftIds.size} archived pre-publish draft${supersededDraftIds.size === 1 ? "" : "s"}`}
+                    </button>
+                )}
             </nav>
-            {selected && !formOpen && (
+            {!formOpen && (
                 <div className="sidebar-flight-box">
-                    <div className="sidebar-heading"><span>OBSERVABILITY &amp; AI</span><span>{selected.factory.executions.length}</span></div>
+                    <div className="sidebar-heading"><span>OBSERVABILITY &amp; AI</span><span>{selected?.factory.executions.length ?? 0}</span></div>
                     <button
                         type="button"
-                        className={`sidebar-flight-btn ${flightOpen ? "active" : ""}`}
-                        onClick={() => setFlightOpen(!flightOpen)}
+                        className={`sidebar-flight-btn ${analyticsOpen ? "active" : ""}`}
+                        onClick={() => setAnalyticsOpen(!analyticsOpen)}
                     >
-                        <span className={`status-dot ${selected.factory.executions.some((e) => ["starting", "running"].includes(e.status)) ? "pulse" : "ready"}`} />
+                        <span className="sidebar-qa-glyph" aria-hidden="true">📊</span>
                         <span className="feature-link-body">
-                            <strong>Subagent Flight Recorder</strong>
-                            <small>Prompts, reasoning &amp; full transcripts</small>
+                            <strong>Scorecard &amp; Analytics</strong>
+                            <small>AI credits, convergence &amp; 1st-push CI</small>
                         </span>
                     </button>
-                    <button
-                        type="button"
-                        className={`sidebar-flight-btn sidebar-qa-btn ${qaOpen ? "active" : ""}`}
-                        onClick={() => setQaOpen(!qaOpen)}
-                    >
-                        <span className="sidebar-qa-glyph" aria-hidden="true">✦</span>
-                        <span className="feature-link-body">
-                            <strong>Ask Copilot (Q&amp;A)</strong>
-                            <small>Design, PBI &amp; code follow-up sidecar</small>
-                        </span>
-                    </button>
+                    {selected && (
+                        <>
+                            <button
+                                type="button"
+                                className={`sidebar-flight-btn ${flightOpen && !analyticsOpen ? "active" : ""}`}
+                                onClick={() => { setAnalyticsOpen(false); setFlightOpen(!flightOpen); }}
+                            >
+                                <span className={`status-dot ${selected.factory.executions.some((e) => ["starting", "running"].includes(e.status)) ? "pulse" : "ready"}`} />
+                                <span className="feature-link-body">
+                                    <strong>Subagent Flight Recorder</strong>
+                                    <small>Prompts, reasoning &amp; full transcripts</small>
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                className={`sidebar-flight-btn sidebar-qa-btn ${qaOpen ? "active" : ""}`}
+                                onClick={() => setQaOpen(!qaOpen)}
+                            >
+                                <span className="sidebar-qa-glyph" aria-hidden="true">✦</span>
+                                <span className="feature-link-body">
+                                    <strong>Ask Copilot (Q&amp;A)</strong>
+                                    <small>Design, PBI &amp; code follow-up sidecar</small>
+                                </span>
+                            </button>
+                        </>
+                    )}
                 </div>
             )}
             <div className="chat-note"><span className="eyebrow">CHAT + DASHBOARD</span><p>Saved chat actions appear here automatically. Free-form chat messages are not copied.</p></div>
@@ -335,7 +473,14 @@ export function App() {
         </aside>
 
         <main>
-            <header className="topbar"><span>WORKSPACE <span className="slash">/</span> {workspace} <span className="slash">/</span> Features</span><div>
+            <header className="topbar"><span>WORKSPACE <span className="slash">/</span> {workspace} <span className="slash">/</span> {analyticsOpen ? "Scorecard & Analytics" : "Features"}</span><div>
+                <button
+                    type="button"
+                    className={`text-button ${analyticsOpen ? "active" : ""}`}
+                    onClick={() => setAnalyticsOpen(!analyticsOpen)}
+                >
+                    📊 Scorecard
+                </button>
                 {selected && !formOpen && (
                     <button type="button" className={`text-button ask-copilot-topbar-btn ${qaOpen ? "active" : ""}`} onClick={() => setQaOpen(!qaOpen)}>
                         ✦ Ask Copilot
@@ -347,37 +492,57 @@ export function App() {
                 <button className="text-button" onClick={() => setSettings(!settings)}>Connections</button>
                 <button className="text-button" disabled={busy} onClick={() => void act(async () => { setDoctor(await request("/api/doctor")); })}>Check setup</button>
                 <button className="text-button" disabled={busy} onClick={() => void act(async () => { await refresh(); setNotice("Registry refreshed. Unsaved edits are preserved."); })}>Refresh</button>
-                <span className={`sync-badge ${syncError ? "offline" : ""}`} role="status">{syncError ? "Updates disconnected" : syncedAt ? `Synced ${new Date(syncedAt).toLocaleTimeString()}` : "Connecting..."}</span>
+                <span className={`sync-badge ${syncError ? "offline" : streamStatus === "live" ? "live-sse" : ""}`} role="status">
+                    {syncError
+                        ? "Updates disconnected"
+                        : streamStatus === "live"
+                            ? `● Live${syncedAt ? ` · ${new Date(syncedAt).toLocaleTimeString()}` : ""}`
+                            : syncedAt
+                                ? `Synced ${new Date(syncedAt).toLocaleTimeString()}`
+                                : "Connecting..."}
+                </span>
             </div></header>
             <div className="content">
                 <section className="workspace-title">
                     <div>
                         <span className="eyebrow">SOFTWARE FACTORY · FEATURE STUDIO &amp; CONTROL PLANE</span>
                         <h1>Your feature workspace</h1>
-                        <p>Pick a feature. Inspect Builder vs. Reviewer rounds, Plan DAGs, and live Subagent Transcripts.</p>
+                        <p>Pick a feature. Inspect Builder vs. Reviewer rounds, Revision Diffs, Plan DAGs, and live Subagent Transcripts.</p>
                     </div>
                     <div className="studio-kpi-ribbon" aria-label="Workspace telemetry">
                         <div className="kpi-tile">
-                            <strong>{features.length}</strong>
-                            <span>{features.length === 1 ? "feature" : "features"}</span>
+                            <strong>{visibleFeatures.length}</strong>
+                            <span>{visibleFeatures.length === 1 ? "feature" : "features"}</span>
                         </div>
                         <div className="kpi-tile">
-                            <strong>{features.filter((f) => Boolean(f.shared)).length}</strong>
+                            <strong>{visibleFeatures.filter((f) => Boolean(f.shared)).length}</strong>
                             <span>ADO synced</span>
-                        </div>
-                        <div className="kpi-tile">
-                            <strong>{features.reduce((sum, f) => sum + f.factory.artifacts.length, 0)}</strong>
-                            <span>artifacts</span>
                         </div>
                         <button
                             type="button"
-                            className={`kpi-tile kpi-tile-interactive ${flightOpen ? "active" : ""}`}
+                            className={`kpi-tile kpi-tile-interactive ${analyticsOpen ? "active" : ""}`}
+                            title="Open Workspace Run Scorecard, AI Credits & Convergence Analytics"
+                            onClick={() => setAnalyticsOpen(!analyticsOpen)}
+                        >
+                            <strong>
+                                {workspaceAnalytics.convergence.firstPushCiGreenRatePct !== null
+                                    ? `${workspaceAnalytics.convergence.firstPushCiGreenRatePct}%`
+                                    : `${workspaceAnalytics.totalCredits.toFixed(0)} cr`}
+                            </strong>
+                            <span>{workspaceAnalytics.convergence.firstPushCiGreenRatePct !== null ? "1st-push CI ↗" : "scorecard ↗"}</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`kpi-tile kpi-tile-interactive ${flightOpen && !analyticsOpen ? "active" : ""}`}
                             title="Open Subagent Flight Recorder & Full Transcripts"
                             onClick={() => {
-                                if (selected && !formOpen) setFlightOpen(true);
+                                if (selected && !formOpen) {
+                                    setAnalyticsOpen(false);
+                                    setFlightOpen(true);
+                                }
                             }}
                         >
-                            <strong>{features.reduce((sum, f) => sum + f.factory.executions.length, 0)}</strong>
+                            <strong>{workspaceAnalytics.totalExecutions}</strong>
                             <span>agent runs ↗</span>
                         </button>
                     </div>
@@ -492,7 +657,16 @@ export function App() {
                         <textarea id="design-tasks" rows={3} value={draft.designTasks} onChange={(event) => setDraft({ ...draft, designTasks: event.target.value })} placeholder="Engineering obligations to resolve during design." disabled={busy} />
                         <div className="form-actions"><button type="button" className="secondary" onClick={() => navigate(selectedId)} disabled={busy}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? "Saving..." : creating ? "Create feature" : "Save new revision"}</button></div>
                     </form>
-                </section> : selected ? <>
+                </section> : analyticsOpen ? (
+                    <WorkspaceAnalyticsView
+                        features={features}
+                        onSelectFeature={(id) => {
+                            setAnalyticsOpen(false);
+                            navigate(id);
+                        }}
+                        onClose={() => setAnalyticsOpen(false)}
+                    />
+                ) : selected ? <>
                     <FactoryPanel
                         key={selected.id}
                         feature={selected}
@@ -573,7 +747,28 @@ export function App() {
                                 <div className="revision-receipt">
                                     <span>REVISION</span><code>{selected.current.id.slice(0, 12)}…</code>
                                     <span>FEATURE</span><code>{selected.id.slice(0, 12)}…</code>
+                                    {provenanceMap[selected.id]?.originWorkspace && (
+                                        <>
+                                            <span>WORKTREE</span>
+                                            <code title={provenanceMap[selected.id]!.originWorkspace}>
+                                                {provenanceMap[selected.id]!.originWorktree}
+                                            </code>
+                                        </>
+                                    )}
                                 </div>
+                                {selected.history.length > 1 && (
+                                    <details className="contextual-action-drawer" style={{ marginTop: 14, marginBottom: 14 }}>
+                                        <summary>
+                                            Brief &amp; Criteria Revision Diff ({selected.history.length} saved revisions)
+                                        </summary>
+                                        <div className="drawer-body">
+                                            <RequirementsRevisionDiffExplorer
+                                                history={selected.history}
+                                                onAskAi={openAskCopilot}
+                                            />
+                                        </div>
+                                    </details>
+                                )}
                                 <div className="form-actions">
                                     <button className="secondary" disabled={busy} onClick={edit}>Edit brief and criteria</button>
                                     <button className="primary" disabled={busy || !selected.shared || selected.status === "ready_for_design" || !selected.current.requirements.length || selected.current.blockingUnknowns.length > 0} onClick={() => approve(selected)}>

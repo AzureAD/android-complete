@@ -66,6 +66,14 @@ export interface QaResponderTurnInput {
 
 export type QaResponder = (input: QaResponderTurnInput) => Promise<string>;
 
+export type QaStreamEvent =
+    | { type: "qa-started"; featureId: string; entryId: string; sessionId: string; turnIndex: number; livePhase: string }
+    | { type: "qa-delta"; featureId: string; entryId: string; delta: string; livePhase: string }
+    | { type: "qa-step"; featureId: string; entryId: string; livePhase: string; steps: FeatureQaLiveStep[] }
+    | { type: "qa-phase"; featureId: string; entryId: string; livePhase: string }
+    | { type: "qa-complete"; featureId: string; entryId: string; status: "completed" | "error" }
+    | { type: "qa-reset"; featureId: string };
+
 interface StoredSessionRow {
     session_id: string;
     feature_id: string;
@@ -754,6 +762,7 @@ export class StudioQaService {
     private readonly db: DatabaseSync;
     private readonly customResponder?: QaResponder;
     private readonly inFlight = new Map<string, InFlightTurnState>();
+    private readonly listeners = new Set<(event: QaStreamEvent) => void>();
     private clientPromise?: Promise<CopilotClient>;
     private closed = false;
 
@@ -905,6 +914,7 @@ export class StudioQaService {
         if (parsed.action === "reset") {
             const now = new Date().toISOString();
             this.db.prepare(`UPDATE qa_sessions SET active = 0, updated_at = ? WHERE feature_id = ? AND active = 1`).run(now, featureId);
+            this.emit({ type: "qa-reset", featureId });
             return { statusCode: 200, payload: this.getFeatureQa(featureId) };
         }
 
@@ -1014,8 +1024,29 @@ export class StudioQaService {
             startedMs,
         });
         this.inFlight.set(featureId, liveState);
+        this.emit({
+            type: "qa-started",
+            featureId,
+            entryId,
+            sessionId,
+            turnIndex,
+            livePhase: initialPhase,
+        });
 
         return { statusCode: 202, payload: this.getFeatureQa(featureId) };
+    }
+
+    subscribe(listener: (event: QaStreamEvent) => void): () => void {
+        this.listeners.add(listener);
+        return () => {
+            this.listeners.delete(listener);
+        };
+    }
+
+    private emit(event: QaStreamEvent): void {
+        for (const listener of this.listeners) {
+            try { listener(event); } catch { /* ignore listener errors */ }
+        }
     }
 
     private async executeTurn(params: {
@@ -1052,6 +1083,13 @@ export class StudioQaService {
                 if (!delta) return;
                 liveState.answer += delta;
                 liveState.livePhase = "Drafting answer…";
+                this.emit({
+                    type: "qa-delta",
+                    featureId: params.featureId,
+                    entryId: params.entryId,
+                    delta,
+                    livePhase: liveState.livePhase,
+                });
             },
             onStepStart: (toolCallId, toolName, target) => {
                 const step: FeatureQaLiveStep = {
@@ -1063,18 +1101,39 @@ export class StudioQaService {
                 liveState.stepsByCallId.set(toolCallId, step);
                 liveState.steps.push(step);
                 liveState.livePhase = `Inspecting ${target}…`;
+                this.emit({
+                    type: "qa-step",
+                    featureId: params.featureId,
+                    entryId: params.entryId,
+                    livePhase: liveState.livePhase,
+                    steps: liveState.steps.map((s) => ({ ...s })),
+                });
             },
             onStepComplete: (toolCallId, success) => {
                 const existing = liveState.stepsByCallId.get(toolCallId);
                 if (existing) {
                     existing.status = success ? "completed" : "failed";
                 }
+                this.emit({
+                    type: "qa-step",
+                    featureId: params.featureId,
+                    entryId: params.entryId,
+                    livePhase: liveState.livePhase,
+                    steps: liveState.steps.map((s) => ({ ...s })),
+                });
             },
             onPhase: (phase) => {
                 liveState.livePhase = phase;
+                this.emit({
+                    type: "qa-phase",
+                    featureId: params.featureId,
+                    entryId: params.entryId,
+                    livePhase: phase,
+                });
             },
         };
 
+        let finalStatus: "completed" | "error" = "completed";
         try {
             const responder = this.customResponder ?? ((input) => this.runSdkResponder(input));
             const finalText = (await responder(turnInput)).trim() || liveState.answer.trim();
@@ -1104,6 +1163,7 @@ export class StudioQaService {
                 `).run(params.turnIndex, params.fingerprint, completedAt, params.sessionId);
             }
         } catch (error: unknown) {
+            finalStatus = "error";
             if (!this.closed) {
                 const completedAt = new Date().toISOString();
                 const durationMs = Math.max(1, Date.now() - params.startedMs);
@@ -1122,6 +1182,14 @@ export class StudioQaService {
             }
         } finally {
             this.inFlight.delete(params.featureId);
+            if (!this.closed) {
+                this.emit({
+                    type: "qa-complete",
+                    featureId: params.featureId,
+                    entryId: params.entryId,
+                    status: finalStatus,
+                });
+            }
         }
     }
 

@@ -11,7 +11,13 @@ import type {
     FeatureQaEntry,
     FeatureQaResponse,
 } from "../../core/qa-contracts.ts";
-import { askFeatureQa, fetchFeatureQa, resetFeatureQa } from "./api";
+import {
+    askFeatureQa,
+    fetchFeatureQa,
+    resetFeatureQa,
+    subscribeStudioEvents,
+    type LiveStreamStatus,
+} from "./api";
 
 export interface QaFeedbackBridgeAction {
     target: "design" | "plan" | "pr";
@@ -160,6 +166,7 @@ export function AskCopilotDrawer({
     const [question, setQuestion] = useState("");
     const [error, setError] = useState("");
     const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [streamStatus, setStreamStatus] = useState<LiveStreamStatus>("connecting");
 
     const threadRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -202,7 +209,80 @@ export function AskCopilotDrawer({
     }, [open, pinnedContext]);
 
     useEffect(() => {
-        if (!open || !hasRunningEntry) return;
+        if (!open) return;
+        let cancelled = false;
+        const unsubscribe = subscribeStudioEvents({
+            onStatus: (next) => {
+                if (!cancelled) setStreamStatus(next);
+            },
+            onEvent: (ev) => {
+                if (cancelled) return;
+                if (ev.type === "qa-started" && ev.featureId === feature.id) {
+                    setQa((prev) => {
+                        if (!prev) return prev;
+                        const exists = prev.entries.some((e) => e.id === ev.entryId);
+                        if (!exists) {
+                            void fetchFeatureQa(feature.id).then((fresh) => {
+                                if (!cancelled) setQa(fresh);
+                            }).catch(() => {});
+                            return prev;
+                        }
+                        return {
+                            ...prev,
+                            entries: prev.entries.map((e) =>
+                                e.id === ev.entryId
+                                    ? { ...e, sessionId: ev.sessionId, turnIndex: ev.turnIndex, livePhase: ev.livePhase }
+                                    : e),
+                        };
+                    });
+                } else if (ev.type === "qa-delta" && ev.featureId === feature.id) {
+                    setQa((prev) => {
+                        if (!prev) return prev;
+                        return {
+                            ...prev,
+                            entries: prev.entries.map((e) =>
+                                e.id === ev.entryId
+                                    ? { ...e, answer: `${e.answer}${ev.delta}`, livePhase: ev.livePhase }
+                                    : e),
+                        };
+                    });
+                } else if (ev.type === "qa-step" && ev.featureId === feature.id) {
+                    setQa((prev) => {
+                        if (!prev) return prev;
+                        return {
+                            ...prev,
+                            entries: prev.entries.map((e) =>
+                                e.id === ev.entryId
+                                    ? { ...e, livePhase: ev.livePhase, steps: ev.steps }
+                                    : e),
+                        };
+                    });
+                } else if (ev.type === "qa-phase" && ev.featureId === feature.id) {
+                    setQa((prev) => {
+                        if (!prev) return prev;
+                        return {
+                            ...prev,
+                            entries: prev.entries.map((e) =>
+                                e.id === ev.entryId
+                                    ? { ...e, livePhase: ev.livePhase }
+                                    : e),
+                        };
+                    });
+                } else if ((ev.type === "qa-complete" || ev.type === "qa-reset") && ev.featureId === feature.id) {
+                    void fetchFeatureQa(feature.id).then((fresh) => {
+                        if (!cancelled) setQa(fresh);
+                    }).catch(() => {});
+                }
+            },
+        });
+        return () => {
+            cancelled = true;
+            unsubscribe();
+        };
+    }, [open, feature.id]);
+
+    useEffect(() => {
+        if (!open || !hasRunningEntry || streamStatus === "live") return;
         let cancelled = false;
         const timer = setInterval(() => {
             void fetchFeatureQa(feature.id)
@@ -212,12 +292,12 @@ export function AskCopilotDrawer({
                 .catch(() => {
                     // Transient polling hiccup; next tick retries quietly.
                 });
-        }, 1100);
+        }, 2500);
         return () => {
             cancelled = true;
             clearInterval(timer);
         };
-    }, [open, feature.id, hasRunningEntry]);
+    }, [open, feature.id, hasRunningEntry, streamStatus]);
 
     useEffect(() => {
         if (!open || !stickToBottomRef.current) return;
@@ -322,6 +402,11 @@ export function AskCopilotDrawer({
                         <div className="qa-drawer-title-row">
                             <h3>✦ Ask Copilot</h3>
                             <span className="studio-pill emerald">🔒 Read-Only</span>
+                            {streamStatus === "live" && (
+                                <span className="studio-pill blue" title="Real-time SSE token & tool streaming active">
+                                    ● Live Stream
+                                </span>
+                            )}
                             {qa?.activeSession && (
                                 <span className="mono-chip blue" title={`Session ${qa.activeSession.sessionId}`}>
                                     Session {qa.activeSession.sessionId.slice(0, 8)} · {qa.activeSession.turnCount} turn{qa.activeSession.turnCount === 1 ? "" : "s"}

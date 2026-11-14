@@ -46,18 +46,23 @@ async function main(): Promise<void> {
             const boards = app.lifecycle.configuration().boards;
             console.log(JSON.stringify(await app.shared.open({ organization: boards.organization, project: boards.project, workItemId: Number(args[0]) }), null, 2));
         } else {
-            let port = 0;
+            const { DEFAULT_STUDIO_PORT, startServer } = await import("./server/server.ts");
+            let port = DEFAULT_STUDIO_PORT;
+            let explicitPort = false;
             if (args.length) {
                 if (args.length !== 2 || args[0] !== "--port" || !args[1] || !/^\d+$/.test(args[1])) {
                     throw new FactoryError("usage", "serve accepts --port <0-65535> only.");
                 }
                 port = Number(args[1]);
                 if (port > 65535) throw new FactoryError("usage", "Port must be between 0 and 65535.");
+                explicitPort = true;
             }
-            const { startServer } = await import("./server/server.ts");
-            const server = await startServer({ application: app, port });
+            const server = await startServer({ application: app, port, fallbackOnBusy: !explicitPort });
             if (app.registry.list().some((feature) => app.lifecycle.store.state(feature.id).schedule)) await app.runtime();
             serving = true;
+            if (server.fallbackFrom) {
+                console.log(`[Software Factory] Default port ${server.fallbackFrom} is already in use; bound to ${server.url} instead.`);
+            }
             console.log(`Software Factory: ${server.url}\nChat and UI share ${app.registry.databasePath}\nNo AI work or remote action starts without explicit approval.`);
             let stopping = false;
             const stop = () => {
