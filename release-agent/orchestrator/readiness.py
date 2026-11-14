@@ -1,18 +1,10 @@
 """Release readiness entry gate (logic only — no presentation).
 
-A self-contained subsystem: given the readiness config (data) + the release
-run-state, it computes the checklist, runs auto verifiers, records attestations
-and declines, and decides whether the gate is signed/blocked.
-
-Returns structured data only. Rendering lives in render.py so a different
-interface (web UI, other frontend) can present the same data its own way.
-
-Required release policy blocks progression; integration capabilities are checked
-when their consuming operation needs them. Each item also declares WHO resolves it:
-  auto   -> Scout verifies it programmatically (pass/fail)
-  attest -> the engineer confirms it
-If a required item is unsatisfied the gate is not signed. If the engineer declares they
-cannot satisfy an item (decline), the gate is blocked until resolved / handed off.
+All defined readiness items are mandatory (optional `required: false` items are
+deprecated and forbidden). Each item declares `depends_on` (empty list = runs
+immediately) and `required_tools`. If a check fails due to a missing or
+misconfigured tool/connector, ONLY that specific check fails with its explicit
+reason while all other runnable checks continue executing to completion.
 """
 from __future__ import annotations
 
@@ -20,12 +12,74 @@ from . import schedule
 from .state import ReleaseState, _now
 
 
+def _validate_readiness_config(config: dict | None) -> None:
+    if not config:
+        return
+    items = config.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError("Readiness config items must be a list.")
+    by_id: dict[str, dict] = {}
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"].strip():
+            raise ValueError(f"Readiness item #{idx + 1} requires a non-empty string id.")
+        iid = item["id"]
+        if "required" in item:
+            raise ValueError(
+                f"Readiness item '{iid}' uses deprecated field 'required'; "
+                "optional items are removed and all defined items are mandatory."
+            )
+        if iid in by_id:
+            raise ValueError(f"Duplicate readiness item id: {iid}")
+        deps = item.get("depends_on", [])
+        if not isinstance(deps, list) or any(
+            not isinstance(dep, str) or not dep.strip() or dep != dep.strip()
+            for dep in deps
+        ):
+            raise ValueError(f"Readiness item '{iid}' has invalid depends_on.")
+        tools = item.get("required_tools", [])
+        if not isinstance(tools, list) or any(
+            not isinstance(tool, str) or not tool.strip() or tool != tool.strip()
+            for tool in tools
+        ):
+            raise ValueError(f"Readiness item '{iid}' has invalid required_tools.")
+        by_id[iid] = item
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(iid: str, path: tuple[str, ...]) -> None:
+        if iid in visiting:
+            raise ValueError(f"Readiness dependency cycle: {' -> '.join((*path, iid))}")
+        if iid in visited:
+            return
+        visiting.add(iid)
+        for dep in by_id[iid].get("depends_on", []):
+            if dep not in by_id:
+                raise ValueError(f"Readiness item '{iid}' depends on unknown item '{dep}'.")
+            if dep == iid:
+                raise ValueError(f"Readiness item '{iid}' cannot depend on itself.")
+            visit(dep, (*path, iid))
+        visiting.remove(iid)
+        visited.add(iid)
+
+    for iid in by_id:
+        visit(iid, ())
+
+
 def dispatch_plan(chk: dict, release_id: str, *, suspension: str = "") -> dict:
     """One host-executed readiness queue for every CLI/presentation surface."""
-    auto = [item for item in chk["items"] if item.get("required", True)
-            and item["verify"] == "auto" and not item["satisfied"]]
-    # A previously passing read with an invalidated binding needs a fresh probe.
-    pending = [item for item in auto if item["status"] in ("pending", "pass", "degraded")]
+    by_id = {item["id"]: item for item in chk["items"]}
+
+    def deps_met(item: dict) -> bool:
+        return all(by_id[dep]["satisfied"] for dep in item.get("depends_on", ()))
+
+    auto = [item for item in chk["items"] if item["verify"] == "auto" and not item["satisfied"]]
+    # A previously passing read with an invalidated binding needs a fresh probe;
+    # only items whose listed dependencies have completed are runnable now.
+    pending = [
+        item for item in auto
+        if deps_met(item) and item["status"] in ("pending", "pass", "degraded")
+    ]
     failed = [item["id"] for item in auto if item["status"] == "fail"]
     inputs = [item["id"] for item in auto
               if item["status"] not in ("pending", "pass", "degraded", "fail")]
@@ -34,14 +88,15 @@ def dispatch_plan(chk: dict, release_id: str, *, suspension: str = "") -> dict:
     elif pending:
         action = "run_auto_checks"
         instruction = (
-            "Scout must exhaust all executable readiness checks before returning to the user. "
-            "Run every pending probe and record its actual result, then re-read the checklist. "
-            "Defer optional permission/input questions until independent checks are exhausted; "
-            "never bypass a host consent prompt, retry a failure blindly, or invent a pass.")
+            "Scout must exhaust all runnable readiness checks before returning to the user. "
+            "Run every pending probe whose dependencies are met and record its actual result "
+            "(if a required tool/connector is missing or misconfigured, record fail on ONLY that "
+            "item with the exact reason and continue executing remaining checks). "
+            "Never halt early on a single check failure or invent a pass.")
     elif chk.get("blocked"):
         action, instruction = "resolve_readiness_block", "Readiness entry gate is blocked; resolve the recorded decline with the owner."
     elif failed:
-        action, instruction = "resolve_auto_checks", "Show the recorded failures and request the actual repair."
+        action, instruction = "resolve_auto_checks", "All runnable automatic checks finished; show comprehensive results (successes, failures, and specific failure reasons) and request repair or explicit owner resolution."
     elif inputs:
         action, instruction = "resolve_auto_input", "Ask for the recorded input or consent; no automatic checks remain executable."
     elif chk.get("signed"):
@@ -68,6 +123,8 @@ def _auto_check_action(item: dict, release_id: str) -> dict:
     command = f"record-check --release {release_id} --item {iid}"
     action = {
         "id": iid, "source": source, "verifier": verifier,
+        "depends_on": list(item.get("depends_on") or ()),
+        "required_tools": list(item.get("required_tools") or ()),
         "instructions": item.get("detail") or item.get("text") or "",
     }
     if source == "python":
@@ -113,6 +170,7 @@ def _auto_check_action(item: dict, release_id: str) -> dict:
 class ReadinessGate:
     def __init__(self, config: dict, state: ReleaseState):
         # config is the parsed readiness.yaml (or None if not configured)
+        _validate_readiness_config(config)
         self.config = config
         self.state = state
         # Local test mocks (set by the engine). `readiness.<item>` entries force an
@@ -166,7 +224,8 @@ class ReadinessGate:
                 "detail": it.get("detail"),
                 "links": links,
                 "verify": it.get("verify", "attest"),   # auto | attest (who resolves it)
-                "required": it.get("required", True),
+                "depends_on": list(it.get("depends_on") or ()),
+                "required_tools": list(it.get("required_tools") or ()),
                 "source": it.get("source"),              # None (python) | "scout" (skill runs it via MCP)
                 "verifier": it.get("verifier"),
                 "team_id": it.get("team_id"),            # for scout-assisted checks (e.g. on-call team)
@@ -206,7 +265,7 @@ class ReadinessGate:
     @property
     def signed(self) -> bool:
         items = self.config.get("items", []) if self.config else []
-        return all(self._item_satisfied(item) for item in items if item.get("required", True))
+        return all(self._item_satisfied(item) for item in items)
 
     @property
     def signed_at(self):
@@ -215,7 +274,6 @@ class ReadinessGate:
         times = [
             (self.state.readiness_items.get(item["id"], {}) or {}).get("at")
             for item in (self.config or {}).get("items", [])
-            if item.get("required", True)
         ]
         return max((value for value in times if value), default=None)
 
@@ -228,8 +286,7 @@ class ReadinessGate:
         return [
             item["id"]
             for item in (self.config or {}).get("items", [])
-            if item.get("required", True)
-            and (self.state.readiness_items.get(item["id"], {}) or {}).get("status")
+            if (self.state.readiness_items.get(item["id"], {}) or {}).get("status")
             == "unable"
         ]
 
@@ -242,8 +299,12 @@ class ReadinessGate:
         from . import mocks as mocks_mod
         if not self.config:
             return self.checklist()
-        for it in self.config.get("items", []):
+        items = self.config.get("items", [])
+        by_id = {it["id"]: it for it in items}
+        for it in items:
             if it.get("verify") != "auto":
+                continue
+            if any(not self._item_satisfied(by_id[dep]) for dep in it.get("depends_on", ())):
                 continue
             if pending_only and (
                     (self.state.readiness_items.get(it["id"]) or {}).get("status", "pending")
@@ -254,8 +315,11 @@ class ReadinessGate:
             mock = mocks_mod.readiness_result(self.mocks, it["id"])
             if mock is not None:
                 status, message = mock
-                self.state.readiness_items[it["id"]] = {
-                    "status": status, "message": message, "at": _now()}
+                rec = {"status": status, "message": message, "at": _now()}
+                if it["id"] == "m365_access" and status == "pass":
+                    from .m365_capabilities import binding
+                    rec["capability_binding"] = binding(self.state)
+                self.state.readiness_items[it["id"]] = rec
                 continue
             if it.get("source") == "scout":
                 continue                     # skill-run (MCP) — not executable here
@@ -264,7 +328,15 @@ class ReadinessGate:
                 self.state.readiness_items[it["id"]] = {"status": "fail",
                     "message": f"no verifier '{it.get('verifier')}' registered", "at": _now()}
                 continue
-            res = vf(it)
+            try:
+                res = vf(it)
+            except Exception as exc:
+                self.state.readiness_items[it["id"]] = {
+                    "status": "fail",
+                    "message": f"Required tool/connector error: {exc}",
+                    "at": _now(),
+                }
+                continue
             rec = {"status": res.status, "message": res.message, "at": _now()}
             if getattr(res, "details", None):
                 rec["checks"] = res.details
@@ -379,10 +451,49 @@ class ReadinessGate:
         self._refresh_signed()
         return self.checklist()
 
+    def resolve_failed_item(self, item_id: str, *, mode: str, confirmed_by: str, reason: str) -> dict:
+        """Audited owner resolution ('waived' or 'manual') for a readiness item after a tool/connector failure."""
+        by_id = {it["id"]: it for it in (self.config or {}).get("items", [])}
+        it = by_id.get(item_id)
+        if it is None:
+            return {"error": f"No such readiness item '{item_id}'."}
+        if mode not in ("waived", "manual"):
+            return {"error": f"Unsupported resolution mode '{mode}'."}
+        if not isinstance(confirmed_by, str) or not confirmed_by.strip():
+            return {"error": "An owner confirmation identity is required."}
+        if self.state.owner_email and confirmed_by.strip().casefold() != self.state.owner_email.strip().casefold():
+            return {"error": "Only the configured release owner can resolve a readiness item manually."}
+        if not isinstance(reason, str) or not reason.strip():
+            return {"error": "A non-empty reason/note is required."}
+        rec = dict(self.state.readiness_items.get(item_id) or {})
+        rec.update({
+            "status": "skipped" if mode == "waived" else "attested",
+            "message": reason.strip(),
+            "owner_resolution": {
+                "mode": mode,
+                "by": confirmed_by.strip(),
+                "reason": reason.strip(),
+                "at": _now(),
+            },
+            "at": _now(),
+        })
+        if item_id == "m365_access":
+            from .m365_capabilities import binding
+            rec["capability_binding"] = binding(self.state)
+        self.state.readiness_items[item_id] = rec
+        self._refresh_signed()
+        return self.checklist()
+
     # ---- internals ----
     def _item_satisfied(self, item: dict) -> bool:
         record = self.state.readiness_items.get(item["id"], {}) or {}
         status = record.get("status")
+        owner_res = record.get("owner_resolution")
+        if (isinstance(owner_res, dict)
+                and owner_res.get("mode") in ("waived", "manual")
+                and isinstance(owner_res.get("reason"), str)
+                and owner_res["reason"].strip()):
+            return True
         if item["id"] == "m365_access":
             from .m365_capabilities import binding
             from . import mocks as mocks_mod

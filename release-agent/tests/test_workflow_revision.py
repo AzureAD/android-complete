@@ -20,11 +20,13 @@ from orchestrator.revision import (
 )
 
 
-def _orch(tmp_path, *, bind=True):
+def _orch(tmp_path, *, bind=True, execution=None):
     config = {
         "version": 1,
         "phases": [
-            {"id": phase, "name": phase.upper(), "steps": [
+            {"id": phase, "name": phase.upper(),
+             **({"execution": execution} if execution is not None else {}),
+             "steps": [
                 {"id": "work", "name": "Work", "kind": "human_action"},
                 {"id": "approve", "name": "Approve", "kind": "approval_gate"},
             ]}
@@ -167,10 +169,10 @@ def test_semantic_phase_identity_ignores_labels_and_resolves_defaults(tmp_path):
     before = revision_id(state.workflow_revision)
     orch.config["phases"][0]["name"] = "Display-only rename"
     orch.config["phases"][0]["steps"][0]["name"] = "Another label"
-    orch.config["phases"][0]["execution"] = "sequential"
+    orch.config["phases"][0]["execution"] = "parallel"
     assert revision_id(current_revision(orch)) == before
     assert_current(orch)
-    orch.config["phases"][1]["execution"] = "parallel"
+    orch.config["phases"][1]["execution"] = "sequential"
     assert revision_id(current_revision(orch)) != before
     with pytest.raises(ValueError, match="mismatch"):
         assert_current(orch)
@@ -228,7 +230,7 @@ def test_runtime_content_identity_detects_same_size_mtime_and_excludes_nonexecut
 def test_disk_phase_change_stops_dispatch_without_restart_or_stale_cache(tmp_path):
     state, orch = _orch(tmp_path)
     config = deepcopy(orch.config)
-    config["phases"][0]["execution"] = "parallel"
+    config["phases"][0]["execution"] = "sequential"
     with open(orch.config_path, "w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream)
     assert orch.step_once().kind == "blocked"
@@ -254,7 +256,7 @@ def test_unchanged_disk_config_is_not_reparsed(tmp_path, monkeypatch):
     assert calls == 0
 
     config = deepcopy(orch.config)
-    config["phases"][0]["execution"] = "parallel"
+    config["phases"][0]["execution"] = "sequential"
     with open(orch.config_path, "w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream)
     assert orch.status_report()["workflow_revision_problem"]
@@ -319,7 +321,7 @@ def test_adoption_invalidates_earliest_change_and_later_preserving_evidence(tmp_
     record.data["last_write_review"] = last_review
     state.set_step("second", "work", record)
     old = revision_id(state.workflow_revision)
-    orch.config["phases"][1]["execution"] = "parallel"
+    orch.config["phases"][1]["execution"] = "sequential"
     before = deepcopy(asdict(state))
     plan = adoption_preview(orch)
     assert asdict(state) == before
@@ -490,7 +492,7 @@ def test_reordering_and_removed_steps_have_conservative_invalidations(tmp_path):
 @pytest.mark.parametrize("blocker", ["removed_execution", "resource", "automation_create", "automation_delete"])
 def test_adoption_refuses_ownership_outside_current_manifest(tmp_path, blocker):
     state, orch = _orch(tmp_path)
-    orch.config["phases"][0]["execution"] = "parallel"
+    orch.config["phases"][0]["execution"] = "sequential"
     entries = []
     if blocker == "removed_execution":
         state.set_step("removed", "old", StepState(
@@ -515,7 +517,7 @@ def test_resolved_resource_history_is_retained_not_mistaken_for_active_ownership
         "attempt_history": [{"status": "creating", "old_evidence": "retained"}],
     }}
     before = deepcopy(state.resources)
-    orch.config["phases"][0]["execution"] = "parallel"
+    orch.config["phases"][0]["execution"] = "sequential"
     plan = adoption_preview(orch)
     assert not plan["blockers"]
     state._checkpoint = lambda: None
@@ -528,7 +530,7 @@ def test_adoption_fences_release_scoped_unclaimed_offers_without_false_receipts(
     item = delivery.descriptor(state, "digest", {"kind": "release"}, "workiq_send_email",
                                {"to": ["owner@example.test"], "subject": "Old", "body": "Old"})
     delivery.offer(orch, item)
-    orch.config["phases"][0]["execution"] = "parallel"
+    orch.config["phases"][0]["execution"] = "sequential"
     plan = adoption_preview(orch)
     assert plan["invalidation"]["notification_offers"] == [item["id"]]
     state._checkpoint = lambda: None
@@ -549,15 +551,15 @@ def test_active_delivery_and_unfinished_completion_block_adoption(tmp_path, stat
     state.notification_deliveries[item["id"]] = {
         "descriptor": item, "status": status, "attempts": [
             {"id": "exec", "owner": "owner", "status": status, "hash": item["hash"]}]}
-    orch.config["phases"][0]["execution"] = "parallel"
+    orch.config["phases"][0]["execution"] = "sequential"
     assert adoption_preview(orch)["blockers"]
 
 
 def test_stale_review_and_atomic_save_failure_preserve_every_fact(tmp_path):
     state, orch = _orch(tmp_path)
-    orch.config["phases"][0]["execution"] = "parallel"
+    orch.config["phases"][0]["execution"] = "sequential"
     plan = adoption_preview(orch)
-    orch.config["phases"][1]["execution"] = "parallel"
+    orch.config["phases"][1]["execution"] = "sequential"
     before = deepcopy(asdict(state))
     with pytest.raises(ValueError, match="Stale"):
         adopt(orch, plan["hash"], by="owner", reason="reviewed")
@@ -581,7 +583,7 @@ def test_cli_confirmation_runs_under_release_lock_and_persists_once(tmp_path, ca
     root = tmp_path / "runs"
     state.save(str(root / state.release_id / "release-state.json"))
     config = deepcopy(orch.config)
-    config["phases"][1]["execution"] = "parallel"
+    config["phases"][1]["execution"] = "sequential"
     with open(orch.config_path, "w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream)
     args = ["--config", orch.config_path, "--runs-root", str(root), "workflow-adopt",
@@ -636,7 +638,7 @@ def test_real_atomic_replace_failure_rolls_back_and_cleans_partial_file(tmp_path
     state.save(C.state_path(root, state.release_id))
     with C.state_lock(root, state.release_id):
         loaded, current = C.load_orch(root, state.release_id, orch.config_path)
-        current.config["phases"][0]["execution"] = "parallel"
+        current.config["phases"][0]["execution"] = "sequential"
         plan = adoption_preview(current)
         before = deepcopy(asdict(loaded))
         disk = (tmp_path / "runs" / state.release_id / "release-state.json").read_bytes()
@@ -659,7 +661,7 @@ def test_cli_stale_confirmation_rechecks_registry_claim_under_lock(tmp_path, cap
     root = tmp_path / "runs"
     state.save(str(root / state.release_id / "release-state.json"))
     config = deepcopy(orch.config)
-    config["phases"][1]["execution"] = "parallel"
+    config["phases"][1]["execution"] = "sequential"
     with open(orch.config_path, "w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream)
     args = ["--config", orch.config_path, "--runs-root", str(root), "workflow-adopt",
@@ -791,7 +793,7 @@ def test_patch_recovery_still_requires_compatible_binding_and_owning_proof(
         state.save(str(path))
     elif change == "workflow":
         config = deepcopy(orch.config)
-        config["phases"][0]["execution"] = "parallel"
+        config["phases"][0]["execution"] = "sequential"
         with open(orch.config_path, "w", encoding="utf-8") as stream:
             yaml.safe_dump(config, stream)
     elif change == "contract":

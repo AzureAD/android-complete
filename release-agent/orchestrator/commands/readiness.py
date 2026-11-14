@@ -89,7 +89,7 @@ def cmd_sign(args):
     if chk["signed"]:
         print(f"Readiness signed at {chk['signed_at']}. Entry gate cleared — you can now start Phase 0.")
     else:
-        pending = [i["id"] for i in chk["items"] if i["required"] and not i["satisfied"]]
+        pending = [i["id"] for i in chk["items"] if not i["satisfied"]]
         print(f"Recorded {', '.join(ids)}. Still pending: {', '.join(pending)}")
         print(render.readiness_followup(chk, args.release))
     return 0
@@ -163,6 +163,27 @@ def cmd_override_oncall(args):
     return 0
 
 
+def cmd_resolve_readiness_manual(args):
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
+    mode = "waived" if args._mode == "waived" else "manual"
+    reason = getattr(args, "reason", None) or getattr(args, "note", None) or ""
+    res = orch.gate.resolve_failed_item(
+        args.item, mode=mode,
+        confirmed_by=getattr(args, "confirmed_by", None) or st.owner_email or "",
+        reason=reason,
+    )
+    if "error" in res:
+        print(res["error"])
+        return 1
+    C.save_state(st, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log(
+        "readiness_owner_resolved", item=args.item, mode=mode, reason=reason)
+    C.emit(args.runs_root, args.release,
+           f"[{mode.upper()}] {args.item}: {reason}\n"
+           + render.readiness_followup(res, args.release), kind="readiness_owner_resolved")
+    return 0
+
+
 def cmd_m365_capabilities(args):
     from orchestrator.m365_capabilities import plan
     st, _ = C.load_orch(args.runs_root, args.release, args.config)
@@ -233,3 +254,19 @@ def register(sub):
     oo.add_argument("--reason", required=True, help="Explicit owner reason for continuing")
     oo.add_argument("--confirmed-by", default=None, help="Release owner email (defaults to state owner)")
     oo.set_defaults(func=cmd_override_oncall)
+
+    sr = sub.add_parser("skip-readiness",
+                        help="Waive a readiness item manually with an audited owner reason")
+    sr.add_argument("--release", required=True)
+    sr.add_argument("--item", required=True)
+    sr.add_argument("--confirmed-by", default="")
+    sr.add_argument("--reason", required=True)
+    sr.set_defaults(func=cmd_resolve_readiness_manual, _mode="waived")
+
+    cmr = sub.add_parser("complete-readiness-manually",
+                         help="Record owner-attested manual completion of a readiness item")
+    cmr.add_argument("--release", required=True)
+    cmr.add_argument("--item", required=True)
+    cmr.add_argument("--confirmed-by", default="")
+    cmr.add_argument("--note", required=True)
+    cmr.set_defaults(func=cmd_resolve_readiness_manual, _mode="manual")

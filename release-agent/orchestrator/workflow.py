@@ -51,6 +51,7 @@ class StepDefinition:
     effect_recovery: Optional[EffectRecovery]
     effect_retry: bool
     depends_on: tuple[str, ...]
+    required_tools: tuple[str, ...]
     raw: Mapping[str, Any]
 
     @property
@@ -116,7 +117,7 @@ class WorkflowDefinition:
                 raise WorkflowConfigError(f"Duplicate phase id: {phase_id}")
             phase_ids.add(phase_id)
 
-            execution = raw_phase.get("execution", "sequential")
+            execution = raw_phase.get("execution", "parallel")
             if execution not in ("sequential", "parallel"):
                 raise WorkflowConfigError(
                     f"Phase {phase_id} has invalid execution mode {execution!r}."
@@ -146,11 +147,16 @@ class WorkflowDefinition:
                 step_id = _required_id(
                     raw_step.get("id"), f"step #{step_index + 1} in phase {phase_id}"
                 )
+                if "required" in raw_step:
+                    raise WorkflowConfigError(
+                        f"Step {phase_id}.{step_id} uses deprecated field 'required'; "
+                        "optional steps are removed and all defined steps are mandatory."
+                    )
                 _reject_unknown_keys(
                     raw_step,
                     {
                         "id", "name", "kind", "owner", "source", "gate",
-                        "attest", "depends_on", "maps_to", "approval_command",
+                        "attest", "depends_on", "required_tools", "maps_to", "approval_command",
                         "write_command", "write_precondition", "manual_result", "repeatable",
                         "pollable", "refresh_invalidation", "effect_mode",
                         "effect_recovery", "effect_retry", "implementation",
@@ -331,6 +337,14 @@ class WorkflowDefinition:
                     raise WorkflowConfigError(
                         f"Step {phase_id}.{step_id} has invalid depends_on."
                     )
+                required_tools = raw_step.get("required_tools", [])
+                if not isinstance(required_tools, list) or any(
+                    not isinstance(tool, str) or not tool.strip() or tool != tool.strip()
+                    for tool in required_tools
+                ):
+                    raise WorkflowConfigError(
+                        f"Step {phase_id}.{step_id} has invalid required_tools."
+                    )
                 step = StepDefinition(
                     phase_id=phase_id,
                     id=step_id,
@@ -350,6 +364,7 @@ class WorkflowDefinition:
                     effect_recovery=effect_recovery,
                     effect_retry=effect_retry,
                     depends_on=tuple(dependencies),
+                    required_tools=tuple(required_tools),
                     raw=_freeze(raw_step),
                 )
                 steps.append(step)

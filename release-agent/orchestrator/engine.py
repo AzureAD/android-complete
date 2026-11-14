@@ -770,7 +770,10 @@ class Orchestrator(StatusViewMixin):
                     )
             else:
                 # Input mocks exercise the bound handler's real build logic.
-                outcome = handler.build(self.context(pid, step["id"], permit=permit, parameters=parameters))
+                try:
+                    outcome = handler.build(self.context(pid, step["id"], permit=permit, parameters=parameters))
+                except (FileNotFoundError, OSError) as exc:
+                    outcome = Blocked(f"Required tool/connector error: {exc}")
         outcome = require_auto_outcome(outcome)
         if refresh:
             if rejected := kernel.validate_outcome_application(permit, outcome):
@@ -1272,6 +1275,50 @@ class Orchestrator(StatusViewMixin):
             phase_id, step_id,
         )
         return self.apply_outcome(permit, outcome)
+
+    @revision_checked
+    def fail_step(self, phase_id: str, step_id: str, reason: str, *,
+                  tool: str | None = None) -> NextAction:
+        """Fail ONLY this specific step (e.g. when a required tool/connector is missing or
+        misconfigured) with an explicit reason, without halting independent or satisfied-dependency steps."""
+        kernel = self._transition_kernel()
+        if rejected := kernel._invalid():
+            raise ValueError(rejected.message)
+        definition = self._workflow_definition().step(phase_id, step_id)
+        if not definition:
+            raise ValueError(f"No such step: {phase_id}/{step_id}")
+        if definition.is_gate:
+            raise ValueError(f"Gate steps require approve or deny: {phase_id}/{step_id}")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("A non-empty failure reason is required.")
+        if self._projection().step_complete(definition):
+            raise ValueError(f"Step {phase_id}/{step_id} is already complete; reopen or rerun to re-evaluate.")
+        execution = self.step_execution(phase_id, step_id)
+        if execution:
+            raise ValueError(
+                f"Step {phase_id}/{step_id} has an active execution ({execution.get('id')}); "
+                "reconcile it through its owning command or owner recovery rather than overwriting ownership."
+            )
+        phase_def = self.workflow.phase(phase_id)
+        if not self._projection().prerequisites_met(phase_def, definition):
+            missing = [k for k in self.workflow.dependency_keys(definition)
+                       if not self._projection().step_complete(self.workflow.step_by_key[k])]
+            raise ValueError(
+                f"Cannot evaluate {phase_id}/{step_id} before its dependencies complete: {', '.join(missing)}"
+            )
+        msg = (
+            f"Required tool/connector '{tool.strip()}' failed: {reason.strip()}"
+            if isinstance(tool, str) and tool.strip()
+            else reason.strip()
+        )
+        data = dict(self.state.get_step(phase_id, step_id).data or {})
+        if isinstance(tool, str) and tool.strip():
+            data["failed_tool"] = tool.strip()
+        res = kernel._apply_outcome(
+            phase_id, step_id, status="blocked", note=msg, by="scout",
+            data=data, block_holds=False,
+        )
+        return self._next_from_transition(res)
 
     @revision_checked
     def reopen_step(self, phase_id: str, step_id: str, reason: str = "",

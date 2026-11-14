@@ -156,17 +156,36 @@ def test_skill_requires_the_full_table_before_every_input_or_wait_handoff():
     assert "optional, not mandatory" not in presentation
 
 
-def test_start_distinguishes_required_policy_from_point_of_use_capabilities():
+def test_all_readiness_and_workflow_steps_are_mandatory_with_explicit_dependencies_and_tools():
+    import yaml
+
+    phases_raw = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    for phase in phases_raw["phases"]:
+        assert phase.get("execution") == "parallel"
+        for step in phase["steps"]:
+            assert "required" not in step
+            assert "depends_on" in step and isinstance(step["depends_on"], list)
+            assert "required_tools" in step and isinstance(step["required_tools"], list)
+
+    readiness_path = os.path.join(ROOT, "config", "readiness.yaml")
+    readiness_raw = yaml.safe_load(open(readiness_path, encoding="utf-8"))
+    for item in readiness_raw["items"]:
+        assert "required" not in item
+        assert "depends_on" in item and isinstance(item["depends_on"], list)
+        assert "required_tools" in item and isinstance(item["required_tools"], list)
+
     documents = [
         open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
         for path in ("SKILL.md", os.path.join("reference", "readiness-gate.md"),
                      os.path.join("reference", "starting-and-scheduling.md"))]
     for text in documents:
-        assert "required" in text.lower() and "when used" in text
+        assert "when used" not in text
+        assert "mandatory" in text.lower()
         assert "consent" in text
     from orchestrator.state import ReleaseState
     assert ReleaseState().execution_mode == "interactive"
     assert "Do not loop/retry" in documents[0] and "failed_auto_checks" in documents[0]
+    assert "fail-step" in documents[0]
 
 
 def test_init_json_and_per_write_authorization_match_the_skill():
@@ -252,7 +271,7 @@ def test_start_release_requires_explicit_folder_and_date_confirmation_before_ini
             assert banned not in text.lower()
     skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
     readiness = open(os.path.join(ROOT, "skill", "reference", "readiness-gate.md"), encoding="utf-8").read()
-    assert "complete-manually" in skill and "skip" in skill
-    assert "ICM MCP unavailable" in readiness
+    assert "complete-manually" in skill and "skip" in skill and "fail-step" in skill
+    assert "Tool/connector failure (icm)" in readiness
 
 

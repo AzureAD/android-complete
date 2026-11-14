@@ -11,7 +11,7 @@ from tests.test_m365_capabilities import evidence
 
 
 RID = "2026-11"
-SCOUT_IDS = {"ccd_confirmed", "oncall_now"}
+SCOUT_IDS = {"ccd_confirmed", "m365_access", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
 
 
 def call(capsys, root, *args):
@@ -65,7 +65,7 @@ def test_test5_python_only_state_cannot_hide_scout_queue(
     elif command == "status":
         assert "Required:" in out and "| | Type | Item | Status |" not in out
     else:
-        assert "Scout must exhaust all executable readiness checks" in out
+        assert "Scout must exhaust all runnable readiness checks" in out
         assert "Scout queue (not owner tasks)" in out
         for iid in SCOUT_IDS:
             assert f"`{iid}`" in out
@@ -114,6 +114,8 @@ def test_persisted_host_dispatch_exhausts_every_probe_before_handoff(
         elif iid == "oncall_now":
             assert probe["arguments"]["teamIds"] == [78848]
             assert item["identity_probe"]["tool"] == "icm-get_my_icm_context"
+        elif iid == "m365_access":
+            assert probe["command"] == f"m365-capabilities --release {RID}"
         else:
             pytest.fail(f"Unexecutable probe: {item}")
         if iid == "m365_access":
@@ -125,7 +127,7 @@ def test_persisted_host_dispatch_exhausts_every_probe_before_handoff(
                         "--detail", "offline probe result; explicit date decision needed" if actual == "needs_input"
                         else "offline probe result", *kwargs)
         assert code == 0
-    assert set(executed) == SCOUT_IDS and len(executed) == 2
+    assert set(executed) == SCOUT_IDS and len(executed) == 6
     assert payload["may_return_to_user"] and not payload["continue_automatically"]
     assert payload["progression_policy"] == "automatic_until_input_or_wait"
     assert payload["display_before_prompt"]
@@ -161,7 +163,7 @@ def test_input_hold_requires_evidence_and_never_satisfies_or_retries(tmp_path, m
     st, orch = C.load_orch(str(tmp_path), RID, CONFIG)
     chk = orch.gate.checklist()
     assert not next(item for item in chk["items"] if item["id"] == "silent_perms")["satisfied"]
-    assert "silent_perms" not in chk["dispatch"]["input_required_auto_checks"]
+    assert "silent_perms" in chk["dispatch"]["input_required_auto_checks"]
     assert chk["dispatch"]["continue_automatically"] and not chk["dispatch"]["may_return_to_user"]
     assert "silent_perms" not in {item["id"] for item in chk["dispatch"]["pending_auto_checks"]}
     assert "Input needed" in render.readiness_table(chk, RID)
@@ -173,8 +175,8 @@ def test_invalidated_capability_pass_is_executable_not_a_failed_probe():
     st.owner_email = "changed-owner@example.test"
     chk = orch.gate.checklist()
     plan = chk["dispatch"]
-    assert {item["id"] for item in plan["pending_auto_checks"]} == set()
-    assert plan["failed_auto_checks"] == [] and plan["may_return_to_user"]
+    assert {item["id"] for item in plan["pending_auto_checks"]} == {"m365_access"}
+    assert plan["failed_auto_checks"] == [] and not plan["may_return_to_user"]
     row = next(line for line in render.readiness_table(chk, st.release_id).splitlines()
                if "**M365 connector capabilities**" in line)
     assert "Outstanding" in row and "PASS" not in row and "prior evidence" in row
@@ -242,10 +244,7 @@ def test_dispatch_uses_configured_coordinates_not_author_defaults():
     chk = orch.gate.checklist()
     for item in chk["items"]:
         if item["id"] == "adx_access":
-            item["required"] = True
             item["cluster_uri"], item["database"] = "https://other.kusto.windows.net", "custom-db"
-        if item["id"] == "m365_access":
-            item["required"] = True
         if item["id"] == "oncall_now":
             item["team_id"] = 123456
     plan = dispatch_plan(chk, "2099-12")

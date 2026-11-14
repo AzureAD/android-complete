@@ -259,12 +259,14 @@ work. Communications bind stable plan/RC identities, not mutable UI counts.
 Changing actual RC/plan identity invalidates its real consumers.
 Gate decisions are retained with invalidation metadata rather than deleted.
 
-## Required readiness versus capabilities
+## Mandatory readiness & step-level tool validation
 
-[Readiness](config/readiness.yaml) distinguishes required release policy/human
-confirmations from `required: false` integration diagnostics, shown as "when used".
-An unavailable Teams connector does not prohibit recording a sign-off or inspecting
-local results. The actual send still checks access and exact destination/payload.
+Every item in [readiness](config/readiness.yaml) and every step in [phases](config/phases.yaml)
+is mandatory (`required: false` optional steps are deprecated and removed). Each step declares an
+explicit `depends_on` list (`[]` = no prerequisites, runs immediately) and `required_tools`.
+If a step fails because a required tool or connector is missing or misconfigured, only that
+specific step fails with its explicit reason while all other independent and satisfied-dependency
+steps continue executing to completion.
 
 `sign` records only the explicitly named human confirmations; it does not probe
 integrations. Use `verify` for requested automatic verification. A successful setup

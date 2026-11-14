@@ -220,6 +220,8 @@ class StatusViewMixin:
                 s_state = "auto"             # an agent step Scout runs itself — no user action
             out.append({
                 "id": s["id"], "name": s["name"],
+                "depends_on": list(s.get("depends_on") or ()),
+                "required_tools": list(s.get("required_tools") or ()),
                 "gate": kind == "gate",
                 "reminder": self._is_reminder(s),
                 "owner": "human" if kind in ("gate", "attest", "reminder") else "agent",
@@ -388,7 +390,7 @@ class StatusViewMixin:
             "work_dispatch": work_dispatch,
             "startup_automation": startup,
             "readiness_pending": [i["id"] for i in chk["items"]
-                                  if i["required"] and not i["satisfied"]],
+                                  if not i["satisfied"]],
             "blocked": chk["blocked"] or bool(revision_problem),
             "blocked_items": list(chk["blocked_items"]),
             "blocked_message": revision_problem or chk.get("blocked_message", ""),

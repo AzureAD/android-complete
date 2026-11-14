@@ -10,8 +10,22 @@ from orchestrator import cli_common as C
 
 
 def cmd_record_step(args):
-    """Record non-notification work, or revalidate an explicit no-delivery outcome."""
+    """Record non-notification work, revalidate an explicit no-delivery outcome,
+    or fail a specific step before any external write/send starts."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    if args.status == "fail":
+        try:
+            act = orch.fail_step(args.phase, args.step, args.detail or "",
+                                 tool=getattr(args, "tool", None))
+        except ValueError as exc:
+            print(str(exc))
+            return 1
+        C.save_state(orch.state, args.runs_root, args.release)
+        C.elog(args.runs_root, args.release).log(
+            "step_failed", phase=args.phase, step=args.step,
+            tool=getattr(args, "tool", None), detail=args.detail or "")
+        C.emit(args.runs_root, args.release, f"[fail] {args.step}: {act.message}", kind="step")
+        return 0
     try:
         handler = orch.handler(args.phase, args.step)
     except ValueError as exc:
@@ -62,14 +76,41 @@ def cmd_record_step(args):
     return 0
 
 
+def cmd_fail_step(args):
+    """Fail ONLY the specified step with an explicit reason (e.g. missing/misconfigured tool)
+    without halting independent or downstream steps whose dependencies are met."""
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    try:
+        act = orch.fail_step(args.phase, args.step, args.reason or "", tool=args.tool)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    C.save_state(orch.state, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log(
+        "step_failed", phase=args.phase, step=args.step, tool=args.tool, detail=args.reason or "")
+    C.emit(args.runs_root, args.release, f"[fail] {args.phase}.{args.step}: {act.message}", kind="step")
+    return 0
+
+
 def register(sub):
     rs = sub.add_parser("record-step",
-                        help="Record a scout-assisted phase step result (pass|attention)")
+                        help="Record a scout-assisted phase step result (pass|attention|fail)")
     rs.add_argument("--release", required=True)
     rs.add_argument("--phase", default="preflight")
     rs.add_argument("--step", required=True)
-    rs.add_argument("--status", required=True, choices=["pass", "attention"])
+    rs.add_argument("--status", required=True, choices=["pass", "attention", "fail"])
     rs.add_argument("--detail", default="")
+    rs.add_argument("--tool", default=None, help="Missing or misconfigured tool/connector name when status=fail")
     rs.add_argument("--as-of", default=None)
     rs.add_argument("--execution-id", help="Owning execution ID returned by step-action --reserve")
     rs.set_defaults(func=cmd_record_step)
+
+    fs = sub.add_parser("fail-step",
+                        help="Fail only this specific step (e.g. missing/misconfigured tool) without halting siblings")
+    fs.add_argument("--release", required=True)
+    fs.add_argument("--phase", required=True)
+    fs.add_argument("--step", required=True)
+    fs.add_argument("--tool", default=None, help="Missing or misconfigured tool/connector identifier")
+    fs.add_argument("--reason", required=True, help="Explicit failure reason shown to the user")
+    fs.add_argument("--as-of", default=None)
+    fs.set_defaults(func=cmd_fail_step)

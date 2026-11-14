@@ -101,9 +101,9 @@ def step_detail(s: dict, limit: int = 160) -> str:
 
 
 # ---- readiness entry gate (the frozen table) ----
-_ICON = {"pass": "✅", "attested": "✅", "fail": "❌", "unable": "⛔", "needs_input": "⏸",
+_ICON = {"pass": "✅", "attested": "✅", "skipped": "⏭️", "fail": "❌", "unable": "⛔", "needs_input": "⏸",
          "degraded": "⚠️", "pending": "⬜"}
-_STATUS_WORD = {"pass": "PASS", "attested": "Confirmed", "fail": "FAIL",
+_STATUS_WORD = {"pass": "PASS", "attested": "Confirmed", "skipped": "Skipped (owner)", "fail": "FAIL",
                 "unable": "Unable", "degraded": "Proceeding (not silent)",
                 "pending": "Outstanding", "needs_input": "Input needed"}
 
@@ -145,8 +145,6 @@ def readiness_table(chk: dict, release_id: str) -> str:
         status = "pending" if stale else it["status"]
         box = _ICON.get(status, "⬜")
         typ = "`[auto]`" if it["verify"] == "auto" else "`[attest]`"
-        if not it.get("required", True):
-            typ += " (when used)"
         label = it.get("label") or it["id"]
         if it.get("checks") and not stale:
             parts = [f"[{c['name']}]({c['url']}) {'✓' if c.get('ok') else '✗'}"
@@ -172,9 +170,15 @@ def readiness_table(chk: dict, release_id: str) -> str:
         lines.append("⛔ **Blocked** — cannot start: " + ", ".join(labels) + ".")
         lines.append(_cell(chk["blocked_message"]))
     elif chk["signed"]:
-        lines.append("✅ **Required readiness satisfied — entry gate cleared.** Capabilities are checked when used.")
+        lines.append("✅ **All readiness items satisfied — entry gate cleared.**")
     else:
-        pending = [i["label"] for i in chk["items"] if i.get("required", True) and not i["satisfied"]]
+        failed_items = [i for i in chk["items"] if i["status"] == "fail" and not i["satisfied"]]
+        if failed_items:
+            lines.append("❌ **Failed checks:**")
+            for fi in failed_items:
+                reason = fi.get("message") or "check failed"
+                lines.append(f"- **{_cell(fi['label'])}**: {_cell(reason)}")
+        pending = [i["label"] for i in chk["items"] if not i["satisfied"]]
         lines.append("**Outstanding:** " + ", ".join(pending))
     if not chk["signed"]:
         lines.extend(["", readiness_followup(chk, release_id)])
@@ -216,7 +220,7 @@ def attest_prompt(chk: dict) -> str:
         return "Readiness is blocked; resolve the recorded decline before attesting."
     # auto checks not yet complete
     auto_pending = [i["label"] for i in chk["items"]
-                    if i.get("required", True) and i["verify"] == "auto" and not i["satisfied"]]
+                    if i["verify"] == "auto" and not i["satisfied"]]
     if auto_pending:
         return ("Automated checks still pending: " + ", ".join(auto_pending)
                 + " — resolve these before the attestations.")
@@ -229,7 +233,7 @@ def _attest_prompt_block(chk: dict) -> str:
     at least one attest item is still outstanding."""
     if chk.get("blocked"):
         return ""
-    auto = [i for i in chk["items"] if i.get("required", True) and i["verify"] == "auto"]
+    auto = [i for i in chk["items"] if i["verify"] == "auto"]
     if auto and not all(i["satisfied"] for i in auto):
         return ""  # auto checks not finished — don't prompt for attestations yet
     outstanding = [i for i in chk["items"]
@@ -449,7 +453,7 @@ def status_brief(r: dict) -> str:
         lines.append("Next: reconcile the unattended worker, or select interactive mode with set-mode.")
     elif r.get("readiness") and not r["readiness_signed"]:
         pending = [item["label"] for item in r["readiness"]["items"]
-                   if item.get("required", True) and not item["satisfied"]]
+                   if not item["satisfied"]]
         if pending:
             lines.append("Required: " + ", ".join(pending))
     elif next_step:
@@ -573,6 +577,17 @@ def status_view(r: dict) -> str:
                          f"({r.get('current_phase_name') or ''}).")
         else:
             lines.append(f"▶ **{label}.**")
+
+    failed_steps = [
+        s for s in r.get("current_steps", [])
+        if s.get("state") == "blocked"
+    ]
+    if failed_steps and not (r.get("work_dispatch") or {}).get("continue_automatically"):
+        lines.append("")
+        lines.append("⛔ **Failed / blocked step(s) (independent steps continued to completion):**")
+        for fs in failed_steps:
+            detail = step_detail(fs, limit=240) or "Step failed; see details."
+            lines.append(f"- **{_cell(fs['name'])}**: {detail}")
 
     # 2) Phase map (overview). Icon is prefixed onto the Phase name (no separate
     # empty-header icon column — that renders with a huge gap in Scout's tables).

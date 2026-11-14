@@ -242,6 +242,10 @@ def prepare_step(args, st, orch):
     if forced_reopen:
         out["state_changed"] = True
         out["owner_forced_rerun"] = True
+    definition = orch.workflow.step(args.phase, args.step)
+    if definition is not None:
+        out["depends_on"] = list(definition.depends_on)
+        out["required_tools"] = list(definition.required_tools)
     return out
 
 
@@ -462,6 +466,8 @@ def _handler_info(config_path, phase, step):
         "rerun": True, "skip": not handler.definition.is_gate,
         "complete_manually": not handler.definition.is_gate,
         "approval_required": handler.definition.is_gate,
+        "depends_on": list(handler.definition.depends_on),
+        "required_tools": list(handler.definition.required_tools),
         "parameters": [
             {"name": item.name, "type": str(item.annotation),
              "required": item.default is MISSING,

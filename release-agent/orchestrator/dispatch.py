@@ -54,6 +54,8 @@ def phase_plan(orch, selection, readiness):
         pending.append({
             "key": step.key, "phase": step.phase_id, "step": step.id,
             "name": step.name, "kind": "engine",
+            "depends_on": list(step.depends_on),
+            "required_tools": list(step.required_tools),
             "command": f"next --release {release} --pending-only --json",
             "instruction": "Run pending engine work once; do not retry recorded failures or poll in-flight work in a tight loop.",
         })
@@ -67,14 +69,18 @@ def phase_plan(orch, selection, readiness):
         pending.append({
             "key": step.key, "phase": step.phase_id, "step": sid,
             "name": step.name, "kind": "scout",
+            "depends_on": list(step.depends_on),
+            "required_tools": list(step.required_tools),
             "command": f"step-action --release {release} --phase {step.phase_id} --step {sid}",
+            "fail_command": f"fail-step --release {release} --phase {step.phase_id} --step {sid} --reason <specific-failure-reason>",
             "write_command": step.write_command,
             "continuation": continuation,
             "instruction": (
                 "Inspect the owning step's result and follow its checked notification/write/read protocol. "
+                "If a required tool or connector is missing or misconfigured (before an active write is in flight), "
+                "fail ONLY this step with `fail-step` and continue executing all remaining independent/downstream steps. "
                 "This queue is not write or send authorization. Honor exact preview, human approval and host consent; "
-                "record actual evidence. Inspect an owned continuation once through its checked command; "
-                "an unresolved outcome requires an exact --hold-step reason, not another loop/replay."),
+                "record actual evidence."),
         })
     if selection.frontier:
         for item in selection.steps:

@@ -394,3 +394,74 @@ def test_owner_prompt_suppressed_when_non_owner_held_work_exists(tmp_path):
     assert report["work_dispatch"]["next_action"] == "resolve_phase_hold"
     assert report["handoff_ready"]
     assert "owner_prompt" not in report
+
+
+def test_non_blocking_exhaustive_execution_isolates_tool_failures_and_reports_all_reasons(tmp_path):
+    """Step-level tool failures fail ONLY the affected step, prevent its direct dependents,
+    continue executing all independent and satisfied-dependency branches, and surface every
+    specific failure reason in the rendered status view."""
+    calls = []
+    config = {"phases": [{
+        "id": "phase", "name": "Validation Phase", "execution": "parallel",
+        "steps": [
+            {"id": "missing_cli", "name": "Missing CLI step", "kind": "auto",
+             "effect_mode": "read_only", "depends_on": [], "required_tools": ["gh"]},
+            {"id": "blocked_downstream", "name": "Blocked downstream", "kind": "auto",
+             "effect_mode": "read_only", "depends_on": ["missing_cli"], "required_tools": []},
+            {"id": "healthy_root", "name": "Healthy root", "kind": "auto",
+             "effect_mode": "read_only", "depends_on": [], "required_tools": ["az"]},
+            {"id": "healthy_child", "name": "Healthy child", "kind": "auto",
+             "effect_mode": "read_only", "depends_on": ["healthy_root"], "required_tools": []},
+            {"id": "mcp_notify", "name": "Teams notification", "kind": "external",
+             "depends_on": ["healthy_root"], "required_tools": ["microsoft_teams"]},
+            {"id": "notify_child", "name": "After Teams notify", "kind": "auto",
+             "effect_mode": "read_only", "depends_on": ["mcp_notify"], "required_tools": []},
+        ],
+    }]}
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    def resolver(_phase, sid):
+        if sid == "missing_cli":
+            def fail_cli(_ctx):
+                calls.append(sid)
+                raise FileNotFoundError("gh binary not found on PATH")
+            return SimpleNamespace(ID=sid, KIND="agent", EFFECT_MODE="read_only", build=fail_cli)
+        if sid in ("blocked_downstream", "healthy_root", "healthy_child", "notify_child"):
+            def ok(_ctx, sid=sid):
+                calls.append(sid)
+                return Done(f"{sid} succeeded")
+            return SimpleNamespace(ID=sid, KIND="agent", EFFECT_MODE="read_only", build=ok)
+        if sid == "mcp_notify":
+            return SimpleNamespace(
+                ID=sid, KIND="scout", NOTIFICATION=True,
+                build=lambda _ctx: NeedsSkill("microsoft_teams-SendMessageToChannel", record_as=sid),
+            )
+        return None
+
+    st = ReleaseState(release_id="2026-11", timezone="UTC")
+    orch = Orchestrator(str(path), st, mocks={}, handler_resolver=resolver)
+
+    # First drain: missing_cli fails with FileNotFoundError, NOT halting healthy_root or healthy_child!
+    orch.run_until_gate()
+    assert calls == ["missing_cli", "healthy_root", "healthy_child"]
+    assert st.get_step("phase", "missing_cli").status == "blocked"
+    assert "gh binary not found" in st.get_step("phase", "missing_cli").note
+    assert st.is_done("phase", "healthy_root") and st.is_done("phase", "healthy_child")
+    assert st.get_step("phase", "blocked_downstream").status == "pending"
+
+    # External notification step fails due to missing/misconfigured MCP connector via fail_step:
+    orch.fail_step("phase", "mcp_notify", "Session not found (-32001)", tool="microsoft_teams")
+    orch.run_until_gate()
+    assert st.get_step("phase", "mcp_notify").status == "blocked"
+    assert st.get_step("phase", "notify_child").status == "pending"
+
+    report = orch.status_report()
+    assert report["work_dispatch"]["pending_work"] == []
+    assert report["work_dispatch"]["may_return_to_user"]
+    markdown = render.status_view(report)
+    assert "Healthy root" in markdown and "Done" in markdown
+    assert "Healthy child" in markdown
+    assert "Missing CLI step" in markdown and "gh binary not found" in markdown
+    assert "Teams notification" in markdown and "microsoft_teams" in markdown and "Session not found" in markdown
+

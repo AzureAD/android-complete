@@ -77,7 +77,7 @@ def _projection(config, state):
 
 def test_compile_classifies_steps_and_builds_indexes():
     workflow = WorkflowDefinition.compile(_config())
-    assert workflow.phase("build").execution == "sequential"
+    assert workflow.phase("build").execution == "parallel"
     assert workflow.step("build", "compile").kind == StepKind.AUTO
     assert workflow.step("build", "approve").kind == StepKind.APPROVAL_GATE
     assert workflow.step("hotfix", "patch").key == "hotfix.patch"
@@ -109,8 +109,9 @@ def test_compile_classifies_steps_and_builds_indexes():
             "attest contradicts",
         ),
         (
-            lambda cfg: cfg["phases"][0]["steps"][0].update(
-                depends_on=["approve"]
+            lambda cfg: (
+                cfg["phases"][0].update(execution="sequential"),
+                cfg["phases"][0]["steps"][0].update(depends_on=["approve"]),
             ),
             "cannot depend on later step",
         ),

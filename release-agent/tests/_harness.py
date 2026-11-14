@@ -245,6 +245,7 @@ def _pass_m365_check(orch):
 def _ready_state(st):
     """Populate every readiness fact; readiness itself remains derived."""
     orch = Orchestrator(CONFIG, st)
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
     return st
@@ -334,8 +335,9 @@ def _orch(signed=True):
     orch = Orchestrator(CONFIG, st)
     if signed:
         # scout-assisted checks (skill records them) + attest the rest + verify auto
+        orch.gate.verify()
         _pass_scout_checks(orch)
-        orch.gate.sign()  # attest attest-items + verify python-auto
+        orch.gate.sign()
         _clear_phase0_scout(orch)   # skill-run notice + CCOA lockdown → pass
         _clear_ccd_scout(orch)      # Phase-1 comms/trigger scout steps → pass (Phase 1 is gateless)
     return st, orch
@@ -368,6 +370,7 @@ def _ccd_orch(as_of):
         ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     )
     orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]))
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
     return st, orch
@@ -640,6 +643,7 @@ def _mock_orch(mocks, as_of="2026-07-02"):
         ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     )
     orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]), mocks=_safe(mocks))
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
     return st, orch

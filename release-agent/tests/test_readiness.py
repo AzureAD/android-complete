@@ -10,27 +10,24 @@ from tests._harness import *  # noqa: F401,F403
 
 # ---- readiness entry gate ----
 
-def test_unrelated_capabilities_do_not_block_required_confirmations_or_probe_on_sign(monkeypatch):
+def test_optional_required_field_is_deprecated_and_rejected():
     from orchestrator.readiness import ReadinessGate
-    from orchestrator import render
+    from orchestrator.workflow import WorkflowConfigError, WorkflowDefinition
+
     state = ReleaseState(release_id="r")
-    config = {"items": [
-        {"id": "capability", "text": "Optional connection", "verify": "auto",
-         "source": "scout", "required": False},
-        {"id": "owner_ready", "text": "Owner confirmed required readiness", "verify": "attest"},
-    ]}
-    state.readiness_items["capability"] = {"status": "fail", "at": "2026-09-11T12:00:00Z"}
-    gate = ReadinessGate(config, state)
-    monkeypatch.setattr(gate, "verify", lambda **kw: pytest.fail("Signing a fact must not probe integrations"))
-    card = render.attest_prompt_payload(gate.checklist(), state.release_id)
-    assert card["ready"] and card["confirm_items"] == ["owner_ready"]
-    gate.sign(["owner_ready"], note="Explicit owner confirmation")
-    checklist = gate.checklist()
-    assert checklist["signed"] and not checklist["blocked"]
-    assert checklist["dispatch"]["next_action"] == "complete"
-    assert not checklist["dispatch"]["pending_auto_checks"]
-    assert not checklist["all_satisfied"]
-    assert "when used" in render.readiness_table(checklist, state.release_id)
+    with pytest.raises(ValueError, match="deprecated field 'required'"):
+        ReadinessGate({"items": [
+            {"id": "capability", "text": "Optional connection", "verify": "auto",
+             "source": "scout", "required": False},
+        ]}, state)
+
+    with pytest.raises(WorkflowConfigError, match="deprecated field 'required'"):
+        WorkflowDefinition.compile({
+            "phases": [{
+                "id": "p", "name": "Phase", "execution": "parallel",
+                "steps": [{"id": "s", "name": "Step", "kind": "auto", "required": False}],
+            }],
+        })
 
 
 def test_one_read_only_task_does_not_require_global_readiness_or_advance_siblings():
@@ -58,6 +55,7 @@ def test_signing_clears_entry_gate():
     st, orch = _orch(signed=False)
     orch.run_until_gate()
     assert orch.status_report()["status"] == "readiness_gate"
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
     assert orch.gate.signed
@@ -85,6 +83,7 @@ def test_partial_sign_does_not_clear():
 def test_sign_records_evidence_note():
     """Attestations carry the engineer's confirmation as evidence (note)."""
     st, orch = _orch(signed=False)
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"],
                    note="engineer confirmed all four")
@@ -306,7 +305,7 @@ def test_readiness_prompt_always_includes_full_current_table_without_mutation(
 
 
 def test_start_continues_scout_checks_after_only_python_verification():
-    """The test3 stopping point is automatic work, never an owner handoff."""
+    """The test3 stopping point is automatic work across all 6 mandatory Scout checks."""
     from orchestrator import render
     st, orch = _orch(signed=False)
     orch.gate.verify()
@@ -315,7 +314,7 @@ def test_start_continues_scout_checks_after_only_python_verification():
     assert payload["continue_automatically"] and not payload["ready"]
     assert "answers" not in payload
     assert {item["id"] for item in payload["pending_auto_checks"]} == {
-        "ccd_confirmed", "oncall_now"}
+        "ccd_confirmed", "m365_access", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
     assert all(item["source"] == "scout" and item["verifier"]
                for item in payload["pending_auto_checks"])
     assert payload["failed_auto_checks"] == []
@@ -334,7 +333,7 @@ def test_auto_failure_does_not_hide_independent_pending_checks():
     orch.gate.record_check("oncall_now", "fail", "Read permission denied")
     payload = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
     assert payload["failed_auto_checks"] == ["oncall_now"]
-    assert len(payload["pending_auto_checks"]) == 1
+    assert len(payload["pending_auto_checks"]) == 5
     assert "oncall_now" not in {item["id"] for item in payload["pending_auto_checks"]}
     assert payload["next_action"] == "run_auto_checks" and payload["continue_automatically"]
     assert "answers" not in payload
@@ -404,17 +403,24 @@ def test_init_json_persists_once_and_hands_off_to_entry_gate(
 
 
 
-def test_failed_capability_diagnostic_does_not_close_unrelated_readiness():
+def test_failed_readiness_item_blocks_until_repaired_or_owner_resolved():
     _stub_build_defs("fail")
-    st = ReleaseState(release_id="t")
-    orch = Orchestrator(CONFIG, st)
-    orch.gate.verify()
-    _pass_scout_checks(orch)
-    orch.gate.sign()
-    assert orch.gate.signed
-    assert st.readiness_items["build_access"]["status"] == "fail"
-    assert orch.status_report()["status"] != "readiness_gate"
-    _stub_build_defs("pass")  # restore
+    try:
+        st = ReleaseState(release_id="t", owner_email="owner@example.test")
+        orch = Orchestrator(CONFIG, st)
+        orch.gate.verify()
+        _pass_scout_checks(orch)
+        orch.gate.sign()
+        assert not orch.gate.signed
+        assert st.readiness_items["build_access"]["status"] == "fail"
+        assert orch.status_report()["status"] == "readiness_gate"
+        res = orch.gate.resolve_failed_item(
+            "build_access", mode="waived",
+            confirmed_by="owner@example.test", reason="az CLI temporarily unavailable; verified in browser",
+        )
+        assert "error" not in res and orch.gate.signed
+    finally:
+        _stub_build_defs("pass")
 
 
 
@@ -452,6 +458,7 @@ def test_record_check_pass_then_sign_clears_gate():
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
+    orch.gate.verify()
     _pass_m365_check(orch)
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("silent_perms", "pass", "servers auto-approved")
@@ -492,8 +499,8 @@ def test_record_check_rejects_non_scout_item():
 
 
 
-def test_silent_perms_is_required_scout_item():
-    """silent_perms (source: scout) is a required auto item — the gate stays closed
+def test_silent_perms_is_mandatory_scout_item():
+    """silent_perms (source: scout) is a mandatory auto item — the gate stays closed
     until the skill records it, and it carries required_servers as data."""
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t")
@@ -505,15 +512,14 @@ def test_silent_perms_is_required_scout_item():
     sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
     assert sp["verify"] == "auto" and sp["source"] == "scout"
     assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm"]
-    assert not sp["required"]
-    # Interactive operation does not require globally auto-approved tools.
+    assert "required" not in sp
     _pass_m365_check(orch)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
-    assert orch.gate.signed
+    assert not orch.gate.signed
     orch.gate.record_check("silent_perms", "pass", "all servers auto-approved")
     assert orch.gate.signed
 
@@ -539,6 +545,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
+    orch.gate.verify()
     _pass_m365_check(orch)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
@@ -824,7 +831,7 @@ def test_notification_renderers_share_one_silence_gate():
     st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default",
                       owner_email="o@x.com")
     orch = Orchestrator(CONFIG, st)
-    _pass_scout_checks(orch); orch.gate.sign()
+    orch.gate.verify(); _pass_scout_checks(orch); orch.gate.sign()
     orch.as_of = date(2026, 7, 8); orch.run_until_gate()
     _drain_phase0_scout_only(orch)          # Scout's own steps done → digest is due
     r = orch.status_report()
@@ -844,7 +851,7 @@ def test_notification_renderers_share_one_silence_gate():
     st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default",
                       owner_email="o@x.com")
     orch = Orchestrator(CONFIG, st)
-    _pass_scout_checks(orch); orch.gate.sign()
+    orch.gate.verify(); _pass_scout_checks(orch); orch.gate.sign()
     orch.as_of = date(2026, 7, 8)
     orch.run_until_gate()
     _drain_phase0_scout_only(orch)          # Scout's own steps done → digest is due
@@ -898,6 +905,7 @@ def test_oncall_continuation_override_requires_started_release_and_owner(tmp_pat
     st = ReleaseState(release_id=rid, owner_email="owner@example.test", ccd="2026-11-04")
     _stub_build_defs("pass")
     orch = Orchestrator(CONFIG, st, mocks={})
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
     assert orch.gate.signed
