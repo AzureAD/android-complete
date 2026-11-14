@@ -51,6 +51,9 @@ class ExistingPattern {
 - [ ] All existing tests pass
 - [ ] New unit tests cover the happy path and error cases
 - [ ] Code follows project conventions (from copilot-instructions.md)
+- [ ] Android-complete runtime feature: false code/configuration-failure defaults; production stays off until separately approved enablement
+- [ ] Android-complete runtime feature: zero new off-path side effects across all entry points
+- [ ] Android-complete runtime feature: default/missing/invalid/unavailable/expired configuration, off/on and active-attempt rollback test evidence
 
 ## Files to Modify
 
@@ -69,3 +72,110 @@ class ExistingPattern {
 - Unit tests for [specific logic]
 - Integration tests for [cross-component interaction] (if applicable)
 - Test file location: `path/to/tests/`
+
+## Android-complete Default-off Feature Contract
+
+Every Android-complete runtime feature, including small/single-repo features,
+must have an approved default-off flag contract. Carry the exact design flag IDs,
+keys, repository/framework, owner and change mappings into implementation PBIs
+and coding instructions; do not replace it with generic "if flagged" wording.
+Use the source-verified framework in the owning repository, not a universal enum
+name or an enabled existing flag. Verify reuse scope/ownership; new keys are
+proposals until implemented. Multiple flags may be needed across repositories.
+
+The contract includes code `defaultValue: false`, `configurationFailureValue: false`
+and `productionDefaultValue: false` as Booleans, guarded entry points and placement,
+source evidence, and disabled behavior with **zero new side effects** beyond the
+minimal flag read. Cover missing/invalid/unavailable/expired configuration and
+cached/remote override precedence; preserve off unless valid authorized cohort
+enablement applies. Name production enablement/approval and rollback owners,
+approved enabled E2E test cohort, rollback triggers/propagation, active attempts
+and persisted/partial-state recovery. Do not require broad production enablement.
+
+Implementation/review owners must attach code-review/CI evidence for actual false
+defaults, configuration failures, unchanged off-path behavior, enabled behavior
+and rollback before release; release-owner approval remains separate. Design
+approval, PBI creation and documentation completion are not implemented isolation
+or activation permission. Non-runtime/documentation, regression-only and deferred
+work needs an explicit no-runtime-impact reason; size/convenience is not an exemption.
+Return missing/contradictory contracts to design/planning for approval rather than
+silently adding flags or changing an approved plan.
+
+## Android-complete Feature Pre-mortem PBI
+
+For every Android-complete feature, including non-runtime and single-repo features,
+include one dedicated child PBI, `[Feature name] - Author and review pre-mortem`.
+Verify and reuse a suitable existing item instead of duplicating it. Assign one
+owning repository, agent author and human reviewer; keep the work right-sized and
+preserve normal metadata/feature tags. Mark it `documentation/review`: agent
+authoring followed by human review, not application-code implementation.
+Use `copilot-agent-ready` only when the authoring scope/inputs are ready for
+approved dispatch; omit it from human-review-only follow-ups.
+
+**Timing and responsibilities**:
+
+1. **Design**: Capture a feature-specific authoring brief with approved requirement/
+   design revision, source evidence, known risks, telemetry/rollback inputs, gaps
+   and proposed owners. Do not draft the pre-mortem during design/implementation
+   or require its completed artifact before planning.
+2. **Planning/backlog**: After approval, create or reuse this child PBI with the
+   brief, document destination, content requirements below and named human reviewer
+   inlined. Depend on **all feature implementation PBIs**, not just one repository,
+   with no self-dependency or reverse dependency blocking implementation. Record
+   `Pre-mortem artifact: Pending implementation completion and PBI dispatch`;
+   the future artifact is not a design/planning/backlog prerequisite.
+3. **Post-implementation PBI dispatch — agent authoring**: Dispatch only after all
+   implementation PBIs meet acceptance criteria, changes are merged where
+   applicable and required implementation validation evidence is available.
+   The agent writes the complete pre-mortem against implemented, pinned source
+   revisions and the exact approved design: scenarios/impact, safeguards, actual
+   KQL drafts, monitoring/response ownership, rollback and owned validation/release prerequisites.
+   Link it to the PBI and exact approved design revision. No application-code edits,
+   flag activation or live KQL. Hand off with human review pending; agent completion
+   is not PBI acceptance.
+4. **Human review**: The named reviewer checks completeness, impact, assumptions,
+   query contracts/cohorts/denominators, owners, rollback and follow-up gaps. The
+   agent addresses revisions and the human records approval/evidence for acceptance.
+   Require that acceptance before release/production enablement, not before
+   implementation completion. Later query validation and release approval remain separate gates.
+
+List every implementation dependency by planned ID and resolve it to AB# during
+backlog creation. With no implementation PBIs, justify that fact and verify
+approved non-runtime deliverables are complete before authoring; no invented
+dependencies or exemption from the pre-mortem.
+
+Replace application-code/build acceptance criteria with document-review criteria:
+
+- Link the exact design revision/authoring-brief section using durable authorized
+  URLs and inline essential context; record a PBI back-link once its AB# is known.
+  Add the reviewable artifact URL/revision after authoring; before dispatch, retain
+  its explicit pending status rather than inventing a link.
+- Describe failure scenarios and customer impact, affected cohorts/blast radius,
+  and applicable regressions, cancellation, retry, partial state and upgrade risks.
+- Map each scenario to prevention, detection, response and accountable owners.
+- Include monitoring signals and actual KQL draft text; document telemetry
+  event/span/property contracts, table/property mappings, units/outcomes, eligibility,
+  execution and baseline cohorts, time windows, numerators/denominators,
+  deduplication/sampling and coverage gaps. No data is not proof of health.
+- Name monitoring/response owners, cadence, observation window, thresholds,
+  stop criteria and escalation; assign unresolved values rather than inventing them.
+- Document rollback triggers, decision/execution owner, default-off flag mechanism
+  for runtime features (non-flag mechanisms supplement it or apply to non-runtime work),
+  propagation limits, active/in-flight attempts, persisted/partial state,
+  cleanup/recovery and verification of preserved behavior.
+- Record validation and release prerequisites with named owners and tracking
+  items or explicit owner actions, including tests and instrumentation/query checks.
+
+Authoring/review is complete when the agent-written artifact is linked, the named
+human reviewer has recorded approval/evidence, and gaps have explicit follow-up
+owners. KQL may remain an **unexecuted pre-flight draft**
+with unresolved table/property mappings. Missing production data is expected
+while disabled and must not block document authorship/review.
+
+Before relying on monitoring for rollout, the telemetry/query-validation owner
+must validate contracts, mappings, outcomes, cohorts and denominators using an
+**approved enabled E2E test cohort** and attach evidence; broad production
+enablement is not required. The release owner separately resolves release-blocking
+gaps and approves release prerequisites and rollback readiness. Completing this
+PBI is **not rollout approval**, query validation or activation permission.
+Do not make documentation completion depend on production activation.

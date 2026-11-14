@@ -15,6 +15,22 @@ Read the skill file at `.github/skills/design-author/SKILL.md` and follow its wo
 ## Key Rules
 
 - Follow the template at `design-docs/Template/template.md`
+- Add the skill's mandatory Pre-mortem and operational readiness section for every
+  feature, including non-runtime features, as a design-time authoring brief with
+  child-PBI linkage and `Pre-mortem artifact: Pending implementation completion
+  and PBI dispatch`. After all feature implementation is complete, dispatch the
+  dependent PBI for agent drafting against implemented sources, then named human
+  review before release. Keep separate enabled-E2E query-validation/release gates;
+  no full pre-mortem draft during design or implementation, or reverse dependency.
+- Every runtime feature also needs a **Feature flags and isolation** section using
+  the [default-off contract](../skills/feature-planner/references/pbi-template.md#required-default-off-feature-contract):
+  source-verified keys/frameworks/owners, Boolean false code/configuration-failure/
+  production defaults, all guarded entry points, zero new off-path side effects,
+  configuration/override policy, approved test cohort, active-attempt rollback and
+  owned code-review/CI evidence. Map runtime changes to flags; non-runtime work
+  needs a reasoned exemption, never a size/repository exemption. Carry the exact
+  contract into PBI acceptance criteria. Do not inspect/change live production
+  configuration; design approval is not code verification or activation permission.
 - Retain the design-author skill's required **Accessibility design** section even
   if the external template omits it; map requirements section 3.6 IDs to decisions
   and Testing strategy evidence, or retain a justified non-UI/N/A.

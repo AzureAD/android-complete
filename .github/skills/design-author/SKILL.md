@@ -42,11 +42,60 @@ For Android-specific designs, also include:
 - **API surface** — Public/internal classes, methods, parameters
 - **Data flow** — Request/response flow across repos (MSAL → Common → Broker → eSTS)
 - **IPC contract changes** — Any AIDL/Bundle schema changes
-- **Feature flag** — Flag name and gating strategy
+- **Feature flag** — Required default-off runtime flag contract; reasoned N/A only for non-runtime work
 - **Telemetry** — Span names, attributes, success/failure signals
 - **Testing strategy** — Unit test approach, instrumented test needs, E2E coverage
 - **Rollout plan** — Feature flag stages, ECS configuration
 - **Cross-repo impact** — Which repos need changes and in what order
+
+### Required default-off feature flags
+
+Every runtime feature, including small/single-repo features, needs the
+[default-off contract](../feature-planner/references/pbi-template.md#required-default-off-feature-contract).
+Retain a **Feature flags and isolation** section: source-verified owning framework,
+flag key/owner, Boolean false code/configuration-failure/production defaults, all
+guarded entry points, zero new off-path side effects, override/cache behavior,
+approved enabled E2E cohort, rollback including active attempts and owned verification.
+Map each runtime change to its flag(s); documentation/regression-only/deferred
+work needs an explicit no-runtime-impact reason. Carry the contract into coding
+PBI acceptance criteria. Do not invent APIs or inspect/change live production
+configuration; design approval is not code verification or activation permission.
+
+### Required pre-mortem and PBI linkage
+
+For every Android-complete feature, including non-runtime features, add a
+**Pre-mortem and operational readiness** section containing a design-time authoring
+brief, not the pre-mortem draft. Capture feature-specific requirements/source
+evidence, known risks, telemetry/rollback inputs, open gaps and proposed owners
+for the later authoring PBI. Follow the content and acceptance contract
+in [Required Feature Pre-mortem PBI](../feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi):
+plan coverage of failure scenarios/customer impact; prevention/detection/response;
+monitoring signals and later KQL drafts with contracts, cohorts, denominators and
+coverage gaps; monitoring owner/cadence/stop criteria; rollback including active attempts; validation and
+release prerequisites with owners.
+
+Include a **Pre-mortem child PBI** field: use `Pending feature planning` before
+backlog creation, or the existing AB# ID and durable URL when available. Feature
+planning must include a dedicated child PBI to author/review the artifact, reusing
+a suitable existing item, dependent on all feature implementation PBIs.
+Record **Pre-mortem artifact: Pending implementation completion and PBI dispatch**.
+Backlog creation links the PBI to the exact design/brief revision after approval.
+Only after all feature implementation is complete may that PBI be dispatched.
+The agent then writes the complete pre-mortem (including actual KQL drafts)
+against implemented, pinned sources, links it back, and hands it to the named
+human reviewer.
+The human checks completeness/assumptions/owners/gaps and records approval;
+agent completion or design approval is not pre-mortem authoring/review acceptance.
+Do not draft it during design/implementation or require the future artifact to
+approve the design, plan or implementation. Require human-reviewed pre-mortem
+acceptance before release/production enablement, without authorizing either.
+
+Separate document review from query validation and release approval. Explicitly
+unexecuted pre-flight KQL and unresolved table/property mappings are acceptable
+with named follow-up owners; disabled features may have no production data.
+Require validation using an approved enabled E2E test cohort before monitoring
+is relied on for rollout, not broad production enablement or activation merely
+to finish the authoring PBI. Retain all existing design/plan approval gates.
 
 ### Accessibility design (required)
 

@@ -101,6 +101,26 @@ Do NOT attempt to proceed without valid accounts — fail fast with clear instru
 
 ## Workflow
 
+### Pre-mortem Authoring Dispatch
+
+For Android-complete's dedicated pre-mortem PBI, follow the
+[authoring/review contract](../feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi).
+Dispatch only after **all feature implementation PBIs** meet acceptance criteria,
+changes are merged where applicable and required implementation validation evidence
+is available. Check every dependency across repositories, not only the last merged
+PR; reject missing prerequisites rather than dispatching early. For no implementation
+PBIs, verify the contract's justified non-runtime completion case.
+
+This dispatch starts agent **document authoring**, not application-code work. Inline
+the design brief, exact approved design revision, implemented source pins/evidence,
+document destination, full content/acceptance contract and named human reviewer.
+The agent writes the full pre-mortem (including actual KQL drafts), links it to
+the PBI/design and hands off for human review; no application-code changes,
+flag activation, live KQL or autonomous PBI acceptance. The human reviews and
+records approval before release; later query-validation/release gates stay separate.
+Do not dispatch human-review-only follow-ups or count agent completion as acceptance.
+Keep existing dispatch authorization, host/account routing and metadata/state rules.
+
 ### 1. Read PBIs from ADO
 Use ADO MCP Server tools to list/get work items tagged `copilot-agent-ready`. Read the full
 PBI description — it will be needed for the dispatch prompt.

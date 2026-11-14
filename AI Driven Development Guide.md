@@ -45,6 +45,67 @@ Design → Plan → Backlog → Dispatch → Monitor
 
 The pipeline **stops between stages** and asks for your approval before proceeding. You stay in control — the AI proposes, you decide.
 
+### Default-off feature isolation
+
+Every Android-complete **runtime feature** requires a flag that defaults to
+Boolean false in code, configuration-failure handling and the planned production
+configuration. Small or single-repository features are not exemptions. Explicitly
+non-runtime/documentation, regression-only or deferred changes need a reasoned
+no-runtime-impact declaration; every feature still needs its pre-mortem.
+
+The Design Doc Dynamic Workflow generates a structured flag register and
+**Feature flags and isolation** section, maps runtime changes to pinned,
+source-evidenced contracts, deterministically rejects missing/non-false defaults
+and incomplete mappings, and independently reviews isolation. Contracts name the
+actual framework/key/owner, every guarded entry point, zero new off-path side
+effects, configuration/cache/override policy, approved enabled E2E cohort,
+active-attempt rollback and owned verification. New keys are proposals; workflow
+workers do not create flags or inspect/change live production configuration.
+
+Planning and PBI creation retain the exact contracts and code-review/CI acceptance
+evidence; gaps return for design/plan approval rather than silent scope expansion.
+Implementation owners prove actual false defaults, configuration failure handling,
+unchanged off behavior, enabled behavior and rollback. Release owners separately
+approve enablement. **Design approval is not implemented isolation or activation
+permission**; an approved enabled test cohort does not require broad rollout.
+
+### Feature pre-mortem
+
+Every Android-complete feature, including non-runtime features, requires a
+design-linked pre-mortem and a dedicated child PBI to author/review it. Planning
+includes the item; approved backlog creation verifies and reuses a suitable
+existing item rather than duplicating it, confirms the parent Feature and normal
+metadata, and records design/PBI links in both directions.
+
+The [Design Doc Dynamic Workflow](.github/extensions/DevDesignDoc/README.md#generated-feature-pre-mortem)
+generates a required feature-specific **authoring brief**, not the pre-mortem draft,
+in its JSON design artifact. Independent design review checks inputs, planned
+content, ownership and handoff. The packet records pending/existing child-PBI
+linkage and `Pre-mortem artifact: Pending implementation completion and PBI dispatch`;
+the workflow does not create the PBI or draft/publish the future document.
+Planning/backlog creation follows explicit human design approval.
+
+The dedicated PBI depends on **all feature implementation PBIs** across repositories.
+Only after every implementation item meets acceptance criteria, changes are merged
+where applicable and implementation validation evidence is available is it
+dispatched. The agent then writes the full pre-mortem against implemented, pinned
+sources and the approved design, including actual KQL drafts, and links the artifact.
+The named human reviewer checks scenarios/impact, assumptions, monitoring contracts,
+owners, rollback and gaps; the agent addresses revisions and the human records
+acceptance before release/production enablement. Agent completion is not acceptance.
+Do not create a reverse dependency making implementation wait for this document.
+For no implementation PBIs, justify that case and verify approved non-runtime
+deliverables are complete before authoring.
+
+Use the [pre-mortem content and acceptance contract](.github/skills/feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi).
+Authoring/review can finish with explicitly unexecuted pre-flight KQL, unresolved
+mappings and named follow-up owners; absent production data while disabled is
+expected. Before monitoring is used for rollout, its owner validates queries and
+telemetry against an approved enabled E2E test cohort. The release owner separately
+checks release/rollback prerequisites and approval; broad production enablement is
+not needed to validate queries. PBI completion is not rollout approval, even when
+the dashboard labels the feature complete.
+
 ---
 
 ## Prompt Commands

@@ -84,15 +84,20 @@ session storage. A request to draft is not automatically requirements approval.
    unresolved traces stop before authoring.
 3. Author structured design sections, requirement traceability, and a visible
    per-change necessity register: baseline trace, existing behavior, requested delta,
-   necessity, counterevidence search, classification and verification.
+   necessity, counterevidence search, classification and verification. Generate the
+   required accessibility design, default-off flag register/isolation and a pre-mortem
+   authoring brief/post-implementation handoff in the same artifact.
 4. Check sections, revision, exact evidence digest, links and trace/necessity coverage.
    Already-handled behavior is `preserve-existing` / `regression-only`; optional
    improvements are deferred. Required work needs a `confirmed-gap`. Unresolved
    claims cannot become implementation mandates or a review-ready artifact.
+   Validate flag contracts and change mappings before independent review.
 5. Spawn a separate independent reviewer against the fixed rubric in `workflow.mjs`.
    The reviewer reads pinned sources, seeks disconfirming paths for every proposed
    change, and checks for mandates missing from the register. Per-change checks and
    the review bind to the exact design digest; every check must pass.
+   `accessibilityDesignAndVerification`, `defaultOffFeatureIsolation` and
+   `preMortemAndReleaseGates` are mandatory.
    Reviewers return `references` (empty if none) for discoveries outside the initial
    reference list, with fresh IDs and full repository/revision/path/locator metadata.
    Discoveries must match exact `sourceManifest` pairs; malformed, duplicate,
@@ -150,6 +155,100 @@ fresh independent review, even if the discovering review otherwise passes.
 Repaired traceability and change/counterevidence records may cite discovered IDs.
 Original claims are retained for provenance, not silently endorsed over findings.
 
+### Required default-off flag contracts
+
+Every runtime feature needs a required `featureFlags` register and
+`featureFlagsAndIsolation` section. Each change declares `runtimeBehaviorChange`,
+`flagIds` and `noFlagReason`. Required runtime changes map to one or more flags;
+non-runtime/documentation, regression-only and deferred work requires a reasoned
+no-runtime-impact declaration with no flag mapping. Small/single-repo features
+cannot be exempted. Independent review challenges false non-runtime declarations.
+
+Each flag has `id`, `key`, pinned owning `repository`, source-verified `framework`,
+`owner`, `evidenceIds`, guarded `entryPoints` (repository, entry point, placement,
+disabled behavior and source evidence), `configurationPolicy`,
+`productionEnablement`, `testCohort`, `rollback` and `verification`.
+`defaultValue`, `configurationFailureValue` and `productionDefaultValue` must
+all be **Boolean false**, enforced by schema and manual validation. Validation
+also rejects missing fields, unknown/duplicate mappings, orphan flags, unpinned
+repositories and evidence that does not cover each declaring repository.
+Suitable existing default-off flags may be reused with verified scope/ownership;
+new keys remain proposals, not created configuration.
+
+Authors/reviewers cover all entry points/direct callers, zero new disabled-path
+side effects except the minimal flag read, missing/invalid/unavailable/expired
+configuration and cache/override precedence. Contracts name owners, separately
+approved production enablement, approved enabled E2E cohort, rollback propagation,
+active attempts and persisted state, and later code-review/CI evidence. Turning
+a flag off does not automatically cancel admitted work.
+
+The human packet carries these contracts into planning/PBI coding acceptance
+criteria. Missing/contradictory scope returns for approval, not silent flag
+creation. The independent `defaultOffFeatureIsolation` criterion is mandatory.
+These are design-contract checks, **not verification of implemented isolation or
+production settings**. Workers do not inspect/change live configuration, execute
+application tests or activate features; implementation and release owners verify
+code/configuration/test evidence and authorize enablement separately.
+
+### Generated feature pre-mortem
+
+The executable template is the JSON `design.sections` schema in `workflow.mjs`,
+not the external `design-docs/Template/template.md`. Every design must contain a
+nonblank `preMortemAndOperationalReadiness` section, including non-runtime and
+single-repository features. Despite the section key, author/revision prompts
+generate a self-contained **design-time authoring brief, not the pre-mortem draft**.
+The existing heading/anchor is retained for links; the complete document is written
+only after all feature implementation is complete and its dedicated PBI is dispatched.
+
+The brief captures requirements/trace/source evidence, known risks, telemetry/
+rollback inputs, gaps and proposed owners. It plans the eventual
+[feature pre-mortem contract](../../skills/feature-planner/references/pbi-template.md#required-feature-pre-mortem-pbi):
+requirement/trace-linked failure scenarios and customer impact; prevention,
+detection and response; actual KQL drafts and telemetry contracts, mappings,
+cohorts, denominators and coverage gaps; monitoring ownership, cadence, stop
+criteria and escalation; rollback including active/in-flight attempts and partial
+state; and owned validation/release prerequisites. It includes a
+`Pre-mortem child PBI: Pending feature planning` field, or a supplied existing
+AB# and durable URL with reuse subject to backlog verification. After human design
+approval, planning/backlog creation includes or reuses the dedicated author/review
+child PBI and establishes reciprocal links. This design-only workflow creates no
+work items and does not publish a separate Markdown file. Before authoring, the
+artifact status is `Pending implementation completion and PBI dispatch`; its
+future URL is not a design/planning/backlog prerequisite.
+
+The dedicated PBI depends on **all feature implementation PBIs** across repositories.
+Dispatch waits for their acceptance criteria, merged changes where applicable and
+required implementation validation evidence. Then the agent writes the full
+pre-mortem (including actual KQL drafts) against implemented, pinned source
+revisions and the exact approved design, links it to the PBI/design and hands off
+with human review pending. The named human reviewer checks completeness, impact,
+assumptions, contracts/cohorts/denominators, ownership, rollback and gaps, requests
+agent revisions and records approval/evidence before PBI acceptance and release.
+No reverse dependency may make implementation wait for the document. If no
+implementation PBIs exist, justify that case and verify the approved non-runtime
+deliverables are complete first. Human-review-only follow-ups are not agent work;
+the agent-authoring scope may use `copilot-agent-ready` when ready for approved dispatch.
+
+The fixed independent-review rubric requires `preMortemAndReleaseGates`.
+Structural validation rejects absent/blank sections or missing rubric coverage;
+the reviewer evaluates substantive brief/handoff completeness, source accuracy and gate
+separation. Placeholders, invented verified telemetry, omitted applicable rollback
+or unowned follow-ups cannot pass review merely by containing the right words.
+Findings must be repaired and independently re-reviewed within the existing bounds.
+It rejects premature full-draft generation and missing implementation dependencies;
+passing design review is not authoring completion or human pre-mortem acceptance.
+
+Pre-flight KQL may remain explicitly unexecuted with unresolved future mappings
+and accountable follow-up owners. Missing production data while disabled is
+expected, not a reason to activate production or reject document authorship.
+Before relying on monitoring for rollout, the telemetry owner validates contracts,
+mappings, outcomes, cohorts and denominators against an approved enabled E2E
+test cohort and attaches evidence. Broad production enablement is not required.
+The release owner separately approves prerequisites and rollback readiness.
+Document review, PBI completion and `GO to Planning` are not query validation,
+activation permission or rollout approval. These deferred gates do not waive
+missing evidence needed to specify current baseline behavior.
+
 ## Bounds, safety, and resume
 
 The workflow uses journaled `ctx.step` calls and sequential `ctx.agent` calls:
@@ -164,7 +263,7 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v6` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v10` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
@@ -175,6 +274,9 @@ not recheck a mutable branch or re-read edited local snapshots; do not alter sna
 in place. Start a fresh run with new pins if the source/evidence changes; change the key version when workflow semantics,
 schemas, prompts, or rubric change. Steps have no intentional external side effects,
 so replay does not publish duplicate artifacts.
+The combined accessibility/default-off/post-implementation handoff does not reuse
+prior v5 outputs, accessibility-only v6, pre-mortem-only v7, design-time
+full-pre-mortem/default-off v8 or pre-accessibility post-implementation v9 outputs.
 
 ## Checks
 
@@ -190,7 +292,13 @@ Tests use mocked agents/steps and require no SDK installation, network, or paid
 agents. They cover approval gates, rejection of mutable/abbreviated source revisions
 before checkpoint creation, full SHA-1/SHA-256 pins, source/trace validation, ordinary/hard failures,
 fixed rubric/per-change coverage, bounded fixes, recommendation semantics, and
-source/evidence-bound checkpoint identity. Synthetic executable completion fixtures
+source/evidence-bound checkpoint identity. Pre-mortem regressions cover missing/
+blank briefs, runtime/non-runtime post-implementation handoff, omitted/failed review
+criteria, repair/re-review, owned pre-flight gaps without production activation,
+and stale v5/v6/v7/v8/v9 checkpoint isolation. Default-off regressions cover missing/
+non-false contracts, invalid mappings/source ownership, non-runtime declarations,
+shared/multiple flags, schema/prompt handoff, mandatory independent criteria and
+repair/re-review. Synthetic executable completion fixtures
 also cover new pinned reviewer references, repair/re-review, invalid discoveries,
 stale digest rejection and journal replay with preserved provenance. Completion fixtures
 cover indirect handling (reuse/regression-only) and a genuinely missing handler
@@ -199,7 +307,8 @@ Accessibility fixtures cover missing/blank sections, multi-screen UI traceabilit
 planned runtime evidence, omitted/failed accessibility review criteria, bounded
 repair, justified non-UI N/A and isolation from pre-accessibility v5 checkpoints.
 These are deterministic gate tests with mocked agent judgments, **not semantic
-quality eval results**. For a live agent eval, present both synthetic variants
+quality eval results**, actual Android isolation tests or live production
+configuration verification. For a live agent eval, present both synthetic variants
 without telling the reviewer the expected classification; confirm it follows the
 terminal chain, rejects unnecessary forwarding, and identifies the genuine gap.
 Separately verify extension discovery and a human-approved representative run in

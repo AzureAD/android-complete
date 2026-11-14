@@ -36,10 +36,13 @@ const design = () => ({
     stage0Revision: "requirements-v3",
     evidenceDigest: digest(evidence()),
     sections: Object.fromEntries(sections.map((key) => [key, `Content for ${key}.`])),
+    featureFlags: [],
     traceability: [{ requirementId: "R1", sectionIds: ["requirements"], evidenceIds: ["E1"], verification: "Run compatibility test." }],
     changes: [{
         id: "C1", requirementIds: ["R1"], sectionIds: ["requirements"], traceIds: ["T1"], evidenceIds: ["E1"],
         classification: "preserve-existing", implementation: "regression-only",
+        runtimeBehaviorChange: false, flagIds: [],
+        noFlagReason: "Regression tests only; no runtime behavior changes.",
         baselineBehavior: "Existing contract is compatible.", requestedDelta: "None; preserve behavior.",
         necessity: "Compatibility already exists; regression coverage only.", verification: "Run compatibility test.",
         counterevidence: {
@@ -49,6 +52,33 @@ const design = () => ({
     }],
     assumptions: [], openDecisions: [], blockingUnknowns: [],
 });
+const runtimeDesign = () => {
+    const d = design();
+    Object.assign(d.changes[0], {
+        classification: "new-feature", implementation: "required",
+        runtimeBehaviorChange: true, flagIds: ["F1"], noFlagReason: "",
+        requestedDelta: "Add an opt-in response format for the new feature.",
+        necessity: "The existing format does not support the approved new feature.",
+        counterevidence: { ...d.changes[0].counterevidence, result: "confirmed-gap" },
+    });
+    d.featureFlags = [{
+        id: "F1", key: "EXAMPLE_FEATURE", repository: "Common", framework: "Existing flight framework",
+        owner: "Feature owner", defaultValue: false, configurationFailureValue: false,
+        productionDefaultValue: false,
+        entryPoints: [{
+            repository: "Common", entryPoint: "Example", guardPlacement: "Before new response allocation",
+            disabledBehavior: "Return the existing response without new state or telemetry.",
+            evidenceIds: ["E1"],
+        }],
+        evidenceIds: ["E1"],
+        configurationPolicy: "Missing, invalid, unavailable or expired configuration resolves false.",
+        productionEnablement: "Production stays off until separate release-owner approval.",
+        testCohort: "Only an approved enabled E2E test cohort may exercise the new path.",
+        rollback: "Feature owner disables the flag; admitted attempts finish safely and persisted state is verified.",
+        verification: "Implementation owner attaches default/configuration, off/on and rollback test results before release.",
+    }];
+    return d;
+};
 const review = (d = design()) => ({
     designDigest: digest(d), evidenceDigest: d.evidenceDigest, references: [],
     changeChecks: d.changes.map((c) => ({
@@ -131,6 +161,328 @@ test("structural checks reject missing sections, changed revision and invalid tr
     }
 });
 
+test("runtime features require Boolean false defaults and a complete flag contract before review", async () => {
+    const mutations = [
+        (d) => { d.sections.featureFlagsAndIsolation = " "; },
+        (d) => { delete d.featureFlags; },
+        (d) => { d.featureFlags = []; },
+        (d) => { d.featureFlags[0].defaultValue = true; },
+        (d) => { d.featureFlags[0].defaultValue = "false"; },
+        (d) => { delete d.featureFlags[0].defaultValue; },
+        (d) => { d.featureFlags[0].configurationFailureValue = true; },
+        (d) => { d.featureFlags[0].productionDefaultValue = true; },
+        (d) => { d.featureFlags[0].owner = " "; },
+        (d) => { d.featureFlags[0].framework = ""; },
+        (d) => { d.featureFlags[0].entryPoints = []; },
+        (d) => { d.featureFlags[0].entryPoints[0].guardPlacement = ""; },
+        (d) => { d.featureFlags[0].entryPoints[0].disabledBehavior = ""; },
+        (d) => { d.featureFlags[0].configurationPolicy = ""; },
+        (d) => { d.featureFlags[0].productionEnablement = ""; },
+        (d) => { d.featureFlags[0].testCohort = ""; },
+        (d) => { d.featureFlags[0].rollback = ""; },
+        (d) => { d.featureFlags[0].verification = ""; },
+    ];
+    for (const mutate of mutations) {
+        const d = runtimeDesign();
+        mutate(d);
+        assert.match(validateDesign(d, stage0(), evidence()).join(" "), /feature.flag|runtime change|featureFlagsAndIsolation/i);
+        const ctx = context([evidence(), d, d, d]);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.equal(packet.reviewReady, false);
+        assert.equal(ctx.calls.length, 4);
+        assert.ok(ctx.calls.every((call) => call.options.label !== "Independent design reviewer"));
+    }
+});
+
+test("flag mappings reject unknown, duplicate, orphaned and unpinned contracts", () => {
+    for (const mutate of [
+        (d) => { d.changes[0].flagIds = []; },
+        (d) => { d.changes[0].flagIds = ["missing"]; },
+        (d) => { d.changes[0].flagIds = ["F1", "F1"]; },
+        (d) => { d.featureFlags.push(structuredClone(d.featureFlags[0])); },
+        (d) => { d.featureFlags.push({ ...structuredClone(d.featureFlags[0]), id: "F2" }); },
+        (d) => { d.featureFlags[0].repository = "Unpinned"; },
+        (d) => { d.featureFlags[0].evidenceIds = ["missing"]; },
+        (d) => { d.featureFlags[0].entryPoints[0].repository = "Unpinned"; },
+        (d) => { d.featureFlags[0].entryPoints[0].evidenceIds = ["missing"]; },
+        (d) => { d.changes[0].runtimeBehaviorChange = "false"; },
+        (d) => { delete d.changes[0].runtimeBehaviorChange; },
+        (d) => { d.changes[0].noFlagReason = "Small runtime feature"; },
+    ]) {
+        const d = runtimeDesign();
+        mutate(d);
+        assert.ok(validateDesign(d, stage0(), evidence()).length);
+    }
+    const unmapped = runtimeDesign();
+    unmapped.changes.push({ ...structuredClone(unmapped.changes[0]), id: "C2", flagIds: [] });
+    assert.ok(validateDesign(unmapped, stage0(), evidence()).length);
+});
+
+test("non-runtime work requires a reasoned no-flag declaration, not an automatic exemption", async () => {
+    for (const mutate of [
+        (d) => { delete d.changes[0].noFlagReason; },
+        (d) => { d.changes[0].noFlagReason = " "; },
+        (d) => { d.changes[0].flagIds = ["F1"]; },
+        (d) => { d.changes[0].runtimeBehaviorChange = true; },
+    ]) {
+        const d = design();
+        mutate(d);
+        assert.ok(validateDesign(d, stage0(), evidence()).length);
+    }
+    const ctx = context([evidence(), design(), review()]);
+    assert.equal((await runDesignFeature(ctx)).recommendation, "GO to Planning");
+    assert.match(ctx.calls[2].prompt.split("\nDATA:\n")[0], /challenge.*non-runtime/i);
+});
+
+test("default-off contracts reach the human packet and author/reviewer schemas without activation", async () => {
+    const d = runtimeDesign();
+    const ctx = context([evidence(), d, review(d)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.humanApproval, "pending");
+    assert.deepEqual(packet.design.featureFlags, d.featureFlags);
+    const schema = ctx.calls[1].options.schema;
+    assert.ok(schema.required.includes("featureFlags"));
+    assert.ok(schema.properties.sections.required.includes("featureFlagsAndIsolation"));
+    for (const key of ["defaultValue", "configurationFailureValue", "productionDefaultValue"]) {
+        assert.equal(schema.properties.featureFlags.items.properties[key].type, "boolean");
+        assert.equal(schema.properties.featureFlags.items.properties[key].const, false);
+    }
+    const author = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+    assert.match(author, /runtimeBehaviorChange/);
+    assert.match(author, /zero new side effects/);
+    assert.match(author, /approved enabled E2E test cohort/);
+    assert.match(author, /PBI acceptance criteria/);
+    assert.match(author, /Design approval is not code\s+verification or activation permission/);
+    const reviewer = ctx.calls[2].prompt.split("\nDATA:\n")[0];
+    assert.match(reviewer, /defaultOffFeatureIsolation/);
+    assert.match(reviewer, /all relevant\s+entry points/i);
+    assert.match(ctx.calls[0].prompt.split("\nDATA:\n")[0], /existing flag framework/);
+});
+
+test("omitted or failed default-off review criterion cannot authorize planning", async () => {
+    const d = runtimeDesign();
+    const missing = review(d);
+    missing.criteria = missing.criteria.filter((c) => c.id !== "defaultOffFeatureIsolation");
+    assert.equal(validateReview(missing, d, evidence()), false);
+    assert.equal((await runDesignFeature(context([evidence(), d, missing]))).recommendation, "NO-GO");
+    const failed = review(d);
+    const criterion = failed.criteria.find((c) => c.id === "defaultOffFeatureIsolation");
+    assert.ok(criterion, "Required flag criterion is missing");
+    criterion.pass = false;
+    const packet = await runDesignFeature(context([evidence(), d, failed, d, failed, d, failed]));
+    assert.equal(packet.recommendation, "NO-GO");
+    assert.equal(packet.fixIterations, 2);
+});
+
+test("multiple runtime changes can share a flag or use separately owned pinned flags", async () => {
+    const e = evidence();
+    e.references.push({ ...e.references[0], id: "E2", repository: "Broker" });
+    e.sourceVerification.push({ ...e.sourceVerification[0], repository: "Broker" });
+    const d = runtimeDesign();
+    d.evidenceDigest = digest(e);
+    d.changes.push({ ...structuredClone(d.changes[0]), id: "C2" });
+    assert.deepEqual(validateDesign(d, stage0(), e), []);
+    const second = structuredClone(d.featureFlags[0]);
+    Object.assign(second, { id: "F2", repository: "Broker", evidenceIds: ["E2"] });
+    Object.assign(second.entryPoints[0], { repository: "Broker", evidenceIds: ["E2"] });
+    d.featureFlags.push(second);
+    d.changes[1].flagIds = ["F2"];
+    const ctx = context([e, d, review(d)]);
+    ctx.args.sourceManifest.push({ ...sourceManifest()[0], repository: "Broker" });
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.deepEqual(packet.design.featureFlags, d.featureFlags);
+    second.evidenceIds = ["E1"];
+    assert.ok(validateDesign(d, stage0(), e).length, "Flag evidence must include its owning repository");
+});
+
+test("flag-isolation findings require repair, fresh review and retained default-off contracts", async () => {
+    const d = runtimeDesign();
+    const failed = review(d);
+    const criterion = failed.criteria.find((c) => c.id === "defaultOffFeatureIsolation");
+    assert.ok(criterion, "Required flag criterion is missing");
+    criterion.pass = false;
+    failed.findings.push({
+        id: "FLAG1", rubricId: "defaultOffFeatureIsolation", severity: "major",
+        location: "featureFlags.F1.entryPoints", evidence: "A direct caller initializes new state before the guard.",
+        requiredChange: "Move the guard ahead of new state creation for the direct caller.",
+    });
+    const corrected = runtimeDesign();
+    corrected.featureFlags[0].entryPoints[0].guardPlacement = "Shared boundary before any new state creation";
+    const ctx = context([evidence(), d, failed, corrected, review(corrected)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(ctx.calls[3].options.label, "Design revision");
+    assert.match(ctx.calls[3].prompt.split("\nDATA:\n")[0], /runtimeBehaviorChange/);
+    const data = JSON.parse(ctx.calls[4].prompt.split("\nDATA:\n")[1]);
+    assert.deepEqual(data.design.featureFlags, corrected.featureFlags);
+    assert.equal(data.designDigest, digest(corrected));
+});
+
+test("missing or blank pre-mortem authoring briefs cannot produce a review-ready packet", async () => {
+    for (const value of [undefined, "", " \n "]) {
+        const incomplete = design();
+        if (value === undefined) delete incomplete.sections.preMortemAndOperationalReadiness;
+        else incomplete.sections.preMortemAndOperationalReadiness = value;
+        assert.match(validateDesign(incomplete, stage0(), evidence()).join(" "), /Missing design section: preMortemAndOperationalReadiness/);
+        const ctx = context([evidence(), incomplete, incomplete, incomplete]);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.equal(packet.reviewReady, false);
+        assert.equal(packet.fixIterations, 2);
+        assert.equal(ctx.calls.length, 4);
+        assert.ok(ctx.calls.every((call) => call.options.label !== "Independent design reviewer"));
+    }
+});
+
+test("runtime and non-runtime designs hand off a brief for post-implementation pre-mortem authoring", async () => {
+    for (const flagged of [true, false]) {
+        const d = flagged ? runtimeDesign() : design();
+        d.sections.preMortemAndOperationalReadiness = `# Pre-mortem authoring brief
+Inputs: R1 / T1 / E1 and approved requirements-v3; compatibility risk affects supported callers.
+Known monitoring contract: proposed attemptId/outcome/featureVersion; mappings require telemetry-owner follow-up.
+Later author must cover eligible/executed/baseline cohorts, failed/total attempts, sampling and no-traffic gaps.
+Rollback input: ${flagged ? "default-off flag F1" : "prior-release recovery"}; cover active attempts/partial state.
+Pre-mortem child PBI: Pending feature planning; reuse a suitable existing child if verified.
+Pre-mortem artifact: Pending implementation completion and PBI dispatch.
+Depend on all feature implementation PBIs and verify accepted/merged work and validation evidence.
+After all feature implementation is complete, dispatch for agent authoring against implemented pinned sources.
+Agent writes scenarios/impact, safeguards, actual KQL drafts, monitoring operations, rollback and release prerequisites.
+Named human reviewer checks assumptions, completeness, owners/gaps and records approval before release.
+Telemetry owner validates queries using an approved enabled E2E cohort; release owner separately approves release.
+This is an authoring brief, not a pre-mortem draft or human acceptance/rollout approval.`;
+        const ctx = context([evidence(), d, review(d)]);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "GO to Planning");
+        assert.equal(packet.humanApproval, "pending");
+        assert.equal(packet.design.sections.preMortemAndOperationalReadiness, d.sections.preMortemAndOperationalReadiness);
+        assert.deepEqual(packet.stage0, stage0());
+        assert.equal(ctx.calls.length, 3);
+        assert.ok(ctx.calls[1].options.schema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
+        const task = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+        assert.match(task, /every feature, including single-repo and non-runtime/);
+        assert.match(task, /authoring brief, not the pre-mortem draft/);
+        assert.match(task, /only after all feature implementation is complete/);
+        assert.match(task, /all feature implementation PBIs/);
+        assert.match(task, /agent writes the complete pre-mortem/);
+        assert.match(task, /actual KQL drafts/);
+        assert.match(task, /human reviewer/);
+        assert.doesNotMatch(task, /Generate a self-contained Markdown "Pre-mortem and operational readiness" document/);
+        assert.match(task, /active\/in-flight attempts/);
+        assert.match(task, /Pending feature planning/);
+        const reviewerTask = ctx.calls[2].prompt.split("\nDATA:\n")[0];
+        assert.match(reviewerTask, /preMortemAndReleaseGates/);
+        assert.match(reviewerTask, /not completion or acceptance of the pre-mortem/);
+        assert.match(reviewerTask, /reverse dependencies/);
+        assert.match(reviewerTask, /named human review before release/);
+    }
+});
+
+test("review omission or failure of the pre-mortem criterion cannot bypass its gate", async () => {
+    const missing = review();
+    missing.criteria = missing.criteria.filter((criterion) => criterion.id !== "preMortemAndReleaseGates");
+    assert.equal(validateReview(missing, design(), evidence()), false);
+    const malformed = await runDesignFeature(context([evidence(), design(), missing]));
+    assert.equal(malformed.recommendation, "NO-GO");
+    assert.equal(malformed.reviewReady, false);
+    const failed = review();
+    failed.criteria.find((criterion) => criterion.id === "preMortemAndReleaseGates").pass = false;
+    const ctx = context([evidence(), design(), failed, design(), failed, design(), failed]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "NO-GO");
+    assert.equal(packet.fixIterations, 2);
+    assert.equal(ctx.calls.length, 7);
+});
+
+test("pre-mortem authoring-brief findings require repair and a fresh independent review", async () => {
+    const d = design();
+    const failed = review(d);
+    failed.criteria.find((criterion) => criterion.id === "preMortemAndReleaseGates").pass = false;
+    failed.findings.push({
+        id: "PM1", rubricId: "preMortemAndReleaseGates", severity: "major",
+        location: "sections.preMortemAndOperationalReadiness",
+        evidence: "Rollback omitted active attempts and telemetry validation had no owner.",
+        requiredChange: "Add in-flight rollback and assign the enabled-E2E validation owner.",
+    });
+    const corrected = design();
+    corrected.sections.preMortemAndOperationalReadiness =
+        "Rollback: active/in-flight attempts retain admitted behavior; release owner verifies recovery. " +
+        "Telemetry owner validates later agent-authored queries against an approved enabled E2E test cohort before monitoring is relied on.";
+    const ctx = context([evidence(), d, failed, corrected, review(corrected)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(packet.reviews.length, 2);
+    assert.equal(ctx.calls.length, 5);
+    const revision = ctx.calls[3];
+    assert.equal(revision.options.label, "Design revision");
+    assert.ok(revision.options.schema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
+    assert.match(revision.prompt.split("\nDATA:\n")[0], /only after all feature implementation is complete/);
+    assert.match(revision.prompt.split("\nDATA:\n")[0], /actual KQL drafts/);
+    assert.equal(ctx.calls[4].options.label, "Independent design reviewer");
+    const data = JSON.parse(ctx.calls[4].prompt.split("\nDATA:\n")[1]);
+    assert.equal(data.design.sections.preMortemAndOperationalReadiness, corrected.sections.preMortemAndOperationalReadiness);
+    assert.equal(data.designDigest, digest(corrected));
+});
+
+test("owned future mapping gaps and absent production data do not require activation to plan authoring", async () => {
+    const e = evidence();
+    e.unknowns = ["Proposed telemetry mappings require enabled-E2E validation by the telemetry owner."];
+    const d = design();
+    d.evidenceDigest = digest(e);
+    d.sections.preMortemAndOperationalReadiness =
+        "Authoring brief: future query table/property mappings remain unresolved. " +
+        "No production data while disabled; telemetry owner validates later queries with an approved enabled E2E cohort. " +
+        "Agent authoring follows all implementation completion and PBI dispatch, then human review before release. " +
+        "Release owner separately approves release prerequisites; document review is not rollout approval.";
+    const ctx = context([e, d, review(d)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.humanApproval, "pending");
+    assert.deepEqual(packet.evidence.unknowns, e.unknowns);
+    assert.match(ctx.calls[0].prompt.split("\nDATA:\n")[0], /Missing production data while disabled is expected/);
+    assert.match(ctx.calls[1].prompt.split("\nDATA:\n")[0], /Broad production enablement is not required/);
+    assert.match(ctx.calls[2].prompt.split("\nDATA:\n")[0], /not rollout approval/);
+});
+
+test("combined accessibility and post-implementation handoff does not reuse v5-v9 outputs", async () => {
+    const legacyDesign = design();
+    delete legacyDesign.sections.accessibility;
+    delete legacyDesign.sections.preMortemAndOperationalReadiness;
+    delete legacyDesign.sections.featureFlagsAndIsolation;
+    delete legacyDesign.featureFlags;
+    delete legacyDesign.changes[0].runtimeBehaviorChange;
+    delete legacyDesign.changes[0].flagIds;
+    delete legacyDesign.changes[0].noFlagReason;
+    const legacyReview = review(legacyDesign);
+    legacyReview.criteria = legacyReview.criteria.filter((criterion) => criterion.id !== "preMortemAndReleaseGates");
+    const ctx = context([evidence(), design(), review()]);
+    const journal = new Map();
+    for (const version of ["v5", "v6", "v7", "v8", "v9"]) {
+        const prefix = `design-feature-${version}-${digest(ctx.args)}`;
+        const oldDesign = ["v8", "v9"].includes(version) ? design() : legacyDesign;
+        delete oldDesign.sections.accessibility;
+        const oldReview = ["v8", "v9"].includes(version) ? review(oldDesign) : legacyReview;
+        journal.set(`${prefix}-evidence`, evidence());
+        journal.set(`${prefix}-${digest(evidence())}-design`, oldDesign);
+        journal.set(`${prefix}-${digest(evidence())}-independent-review-0-${digest(oldDesign)}-${digest([])}`, oldReview);
+    }
+    ctx.step = async (key, producer) => {
+        ctx.keys.push(key);
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(ctx.calls.length, 3);
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v10-")));
+    assert.ok(packet.design.sections.preMortemAndOperationalReadiness);
+    assert.ok(packet.design.sections.accessibility);
+});
+
 test("accessibility is a required design section and omission is repaired before review", async () => {
     for (const value of [undefined, "", " "]) {
         const incomplete = design();
@@ -206,6 +558,29 @@ test("omitted accessibility review criterion fails closed even when all other ch
     assert.equal(ctx.calls.length, 3);
 });
 
+test("runtime UI retains accessibility, default-off flags and post-implementation pre-mortem gates together", async () => {
+    const { s, e, d } = accessibilityFixture();
+    const flagged = runtimeDesign();
+    d.featureFlags = flagged.featureFlags;
+    d.changes = flagged.changes;
+    d.sections.featureFlagsAndIsolation = flagged.sections.featureFlagsAndIsolation;
+    const ctx = context([e, d, review(d)], s);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.humanApproval, "pending");
+    assert.equal(packet.design.sections.accessibility, d.sections.accessibility);
+    assert.deepEqual(packet.design.featureFlags, flagged.featureFlags);
+    assert.match(ctx.calls[1].prompt, /only after all feature implementation is complete/);
+    for (const criterionId of [
+        "accessibilityDesignAndVerification", "defaultOffFeatureIsolation", "preMortemAndReleaseGates",
+    ]) {
+        assert.ok(ctx.calls[2].options.schema.properties.criteria.items.properties.id.enum.includes(criterionId));
+        const incomplete = review(d);
+        incomplete.criteria = incomplete.criteria.filter((criterion) => criterion.id !== criterionId);
+        assert.equal(validateReview(incomplete, d, e), false);
+    }
+});
+
 test("missing applicable keyboard/state coverage cannot pass and every revision retains the accessibility contract", async () => {
     const { s, e, d } = accessibilityFixture();
     d.sections.accessibility = "Applicable: R1. Reuse accessible shared components; keyboard and return-state coverage unspecified.";
@@ -261,7 +636,7 @@ test("changed accessibility schema and rubric never replay pre-accessibility v5 
     };
     assert.equal((await runDesignFeature(ctx)).recommendation, "GO to Planning");
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v6-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v10-")));
 });
 
 test("ordinary agent failures explicitly fail closed at each stage", async () => {
@@ -513,7 +888,7 @@ const discoveredReference = () => ({
 });
 function discoveryRepairFixture() {
     const original = evidence();
-    const incorrect = design();
+    const incorrect = runtimeDesign();
     Object.assign(incorrect.changes[0], {
         classification: "verified-defect", implementation: "required",
         counterevidence: { ...incorrect.changes[0].counterevidence, result: "confirmed-gap" },
@@ -744,7 +1119,7 @@ test("indirect completion is reuse/regression-only, not a missing direct callbac
 test("a genuinely missing terminal handler can justify a verified defect, but needs review", async () => {
     assert.deepEqual(completionFixture(false), ["policy-callback", "failed-results", "completion-posted"]);
     const e = completionEvidence(false);
-    const d = design();
+    const d = runtimeDesign();
     d.evidenceDigest = digest(e);
     Object.assign(d.changes[0], {
         classification: "verified-defect", implementation: "required",
@@ -763,7 +1138,7 @@ test("a genuinely missing terminal handler can justify a verified defect, but ne
 
 test("an independently disputed gap must be corrected and re-reviewed", async () => {
     const e = completionEvidence(true);
-    const incorrect = design();
+    const incorrect = runtimeDesign();
     incorrect.evidenceDigest = digest(e);
     Object.assign(incorrect.changes[0], {
         classification: "verified-defect", implementation: "required",
@@ -788,7 +1163,7 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v6-/);
+    assert.match(initial.keys[0], /^design-feature-v10-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
     changed.args.sourceManifest[0].revision = newerSourceRevision;

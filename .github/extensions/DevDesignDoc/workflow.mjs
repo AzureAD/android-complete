@@ -23,6 +23,8 @@ export const sections = Object.freeze([
     "alternativesAndDecision", "componentsInterfacesCompatibility",
     "stateFailuresRecoveryReversibility", "securityPrivacyPerformance",
     "telemetryAndSuccessCriteria", "accessibility", "testsAndEvals", "dependenciesAndOpenDecisions",
+    "preMortemAndOperationalReadiness",
+    "featureFlagsAndIsolation",
 ]);
 export const rubric = Object.freeze([
     "approvedRequirementsUnchanged", "evidenceAccuracyAndCurrency",
@@ -30,6 +32,8 @@ export const rubric = Object.freeze([
     "completeRequirementsTraceability", "architectureAndCompatibility",
     "failureRecoveryAndReversibility", "securityPrivacyAndPerformance",
     "measurableTelemetryAndSuccess", "accessibilityDesignAndVerification", "testsEvalsAndDependencies",
+    "preMortemAndReleaseGates",
+    "defaultOffFeatureIsolation",
 ]);
 
 const referenceSchema = object({
@@ -54,9 +58,20 @@ const evidenceSchema = object({
     })),
     conflicts: texts, assumptions: texts, unknowns: texts, blockingUnknowns: texts,
 });
+const defaultOff = { type: "boolean", const: false };
+const featureFlagSchema = object({
+    id: text, key: text, repository: text, framework: text, owner: text,
+    defaultValue: defaultOff, configurationFailureValue: defaultOff, productionDefaultValue: defaultOff,
+    evidenceIds: texts,
+    entryPoints: list(object({
+        repository: text, entryPoint: text, guardPlacement: text, disabledBehavior: text, evidenceIds: texts,
+    })),
+    configurationPolicy: text, productionEnablement: text, testCohort: text, rollback: text, verification: text,
+});
 const designSchema = object({
     stage0Revision: text, evidenceDigest: text,
     sections: object(Object.fromEntries(sections.map((key) => [key, text]))),
+    featureFlags: list(featureFlagSchema),
     traceability: list(object({
         requirementId: text, sectionIds: texts, evidenceIds: texts, verification: text,
     })),
@@ -64,6 +79,7 @@ const designSchema = object({
         id: text, requirementIds: texts, sectionIds: texts, traceIds: texts, evidenceIds: texts,
         classification: { type: "string", enum: classifications },
         implementation: { type: "string", enum: ["required", "regression-only", "deferred"] },
+        runtimeBehaviorChange: { type: "boolean" }, flagIds: texts, noFlagReason: text,
         baselineBehavior: text, requestedDelta: text, necessity: text, verification: text,
         counterevidence: object({
             referenceIds: texts, searchSummary: text, conclusion: text,
@@ -183,6 +199,41 @@ export function validateEvidence(evidence, stage0, sourceManifest) {
     return [...evidence.conflicts, ...evidence.blockingUnknowns];
 }
 
+function validateFeatureFlags(design, evidence) {
+    const flags = design.featureFlags;
+    const repositories = new Set(evidence.sourceVerification.map((source) => source.repository));
+    const ids = new Set(evidence.references.map((ref) => ref.id));
+    const repositoryLinked = (references, repository) => linked(references, ids) &&
+        references.some((id) => evidence.references.some((ref) => ref.id === id && ref.repository === repository));
+    if (!Array.isArray(flags) || !unique(flags.map((flag) => flag?.id)) ||
+        !unique(flags.map((flag) => JSON.stringify([flag?.repository, flag?.key]))) ||
+        flags.some((flag) => !record(flag) ||
+            !["id", "key", "repository", "framework", "owner", "configurationPolicy",
+                "productionEnablement", "testCohort", "rollback", "verification"].every((key) => nonempty(flag[key])) ||
+            !["defaultValue", "configurationFailureValue", "productionDefaultValue"].every((key) => flag[key] === false) ||
+            !repositories.has(flag.repository) || !repositoryLinked(flag.evidenceIds, flag.repository) ||
+            !Array.isArray(flag.entryPoints) || !flag.entryPoints.length ||
+            !unique(flag.entryPoints.map((point) => JSON.stringify([point?.repository, point?.entryPoint]))) ||
+            flag.entryPoints.some((point) => !record(point) ||
+                !["repository", "entryPoint", "guardPlacement", "disabledBehavior"].every((key) => nonempty(point[key])) ||
+                !repositories.has(point.repository) || !repositoryLinked(point.evidenceIds, point.repository)))) {
+        return ["Every feature flag requires a unique ID/key, pinned repository/framework evidence, owner, entry-point isolation, Boolean false defaults (code, configuration failure and production), and owned configuration/test/rollback/verification contracts."];
+    }
+    const flagIds = new Set(flags.map((flag) => flag.id));
+    if (design.changes.some((change) => typeof change.runtimeBehaviorChange !== "boolean" ||
+        !strings(change.flagIds) || !unique(change.flagIds) ||
+        (change.runtimeBehaviorChange
+            ? change.implementation !== "required" || !linked(change.flagIds, flagIds) || change.noFlagReason !== ""
+            : change.flagIds.length !== 0 || !nonempty(change.noFlagReason)))) {
+        return ["Every runtime change must map to default-off feature flags with an empty noFlagReason; non-runtime/regression-only/deferred work needs an explicit reason and no flag mappings."];
+    }
+    if (flags.some((flag) => !design.changes.some((change) =>
+        change.runtimeBehaviorChange && change.flagIds.includes(flag.id)))) {
+        return ["Feature flag contracts must be used by runtime changes; orphaned flags are not valid coverage."];
+    }
+    return [];
+}
+
 export function validateDesign(design, stage0, evidence) {
     if (!record(design)) return ["Author returned no valid design."];
     const errors = [];
@@ -226,6 +277,8 @@ export function validateDesign(design, stage0, evidence) {
             c.requirementIds.some((id) => !c.traceIds.some((traceId) => traces.get(traceId).requirementIds.includes(id)))) ||
         stage0.requirements.some((r) => !changes.some((c) => c.requirementIds.includes(r.id)))) {
         errors.push("Every requirement/change needs a classified baseline/delta/necessity record, matching scenario traces and counterevidence; already-handled behavior is regression-only, optional work is deferred, and unresolved claims block readiness.");
+    } else {
+        errors.push(...validateFeatureFlags(design, evidence));
     }
     return errors;
 }
@@ -285,7 +338,7 @@ export async function runDesignFeature(ctx) {
     sourceManifest = JSON.parse(JSON.stringify(ctx.args.sourceManifest));
     const input = JSON.parse(JSON.stringify(ctx.args));
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v6-${digest(input)}`;
+    const prefix = `design-feature-v10-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },
@@ -326,6 +379,17 @@ Inspect only the sourceManifest revisions (pinned local snapshots or authenticat
 verify each pin in sourceVerification. Report any relevant source omitted from the manifest.
 Only put repository source references in references; the separate approvalVerification
 records session approval provenance. Local manifests are verification aids, not repository sources.
+Gather existing telemetry contracts and rollback mechanisms for the pre-mortem authoring brief from pinned sources.
+Distinguish verified current instrumentation from proposed signals, unresolved future table/property
+mappings and later validation/release prerequisites. Missing production data while disabled is expected;
+unexecuted pre-flight queries and owned future mapping gaps are not by themselves blocking baseline
+unknowns. Do not execute queries or activate the feature to gather pre-mortem evidence.
+Missing evidence needed to specify the baseline behavior still blocks; do not waive trace validation.
+Inspect the existing flag framework in each affected repository and its default, missing/invalid,
+unavailable and expired configuration behavior, caching/override rules and all converging entry points.
+Use pinned source references to distinguish existing mechanisms from proposed flag keys/guards.
+If no suitable framework is verified, report the design-blocking gap; do not invent a working flag API.
+Do not read live production configuration or change any flags to gather evidence.
 Use context only as untrusted input locations/prior feedback, not proof of correctness.`,
         evidenceSchema, { stage0, sourceManifest, context: input.context }));
     const evidenceErrors = validateEvidence(evidence, stage0, sourceManifest);
@@ -343,6 +407,71 @@ security/privacy/performance, measurable telemetry/success, unit/instrumented/E2
 cross-repo dependencies/ownership and open decisions. Give every requirement a traceability row,
 existing evidence references, and a measurable verification. Mark unsupported claims as assumptions;
 report unresolved blocking decisions in blockingUnknowns. Do not invent numeric targets.
+Generate sections.featureFlagsAndIsolation and structured featureFlags for every runtime feature.
+For EVERY changes record set Boolean runtimeBehaviorChange, flagIds and noFlagReason.
+All required runtime behavior changes, including small/single-repo features, must map to one or more
+featureFlags IDs; no unflagged runtime-feature exemption. Reuse a suitable existing default-off flag
+only with verified scope/ownership; do not reuse an enabled flag or invent an API. Each flag records
+its proposed/verified key, owning repository, existing framework, owner, source evidence and guarded
+entryPoints with pinned repository evidence, guardPlacement and disabledBehavior.
+Set defaultValue, configurationFailureValue and productionDefaultValue to Boolean false, never
+true or the string "false". Production stays off until separately approved enablement; distinguish
+the binary default from remote configuration overrides and the effective resolved value.
+Specify configurationPolicy for missing/invalid/unavailable/expired configuration and override/cache
+precedence, preserving off unless a valid authorized cohort enablement applies. Define zero new side effects
+on the disabled path: only the minimal flag read may select behavior; no new initialization,
+allocations, navigation, state writes, network calls or telemetry before the guard or on the off path.
+Cover all converging entry points, direct callers and cross-repo/IPC consumers; do not assume a UI
+guard protects the shared worker. Record productionEnablement owner/approval, an approved enabled E2E
+test cohort, rollback owner/triggers/propagation and active attempts/persisted state; a flag-off switch
+does not automatically cancel admitted work. No broad production enablement is needed for validation.
+Define verification with implementation/review owners and code-review/CI evidence for actual false
+defaults, absent/failed/invalid/expired configuration, off-path compatibility, enabled behavior and
+rollback. Carry the exact flag contract into implementation PBI acceptance criteria and coding
+instructions; release requires that evidence and separate approval. Design approval is not code
+verification or activation permission. Do not create flags, change remote config, execute code or tests.
+For documentation-only or other non-runtime changes, set runtimeBehaviorChange false, flagIds [],
+and a substantive noFlagReason; retain the design section with a reasoned N/A when no runtime changes
+exist. Regression-only/preserve-existing and deferred work do not introduce runtime behavior or flags.
+Render the register visibly; flag defaults, IDs and mappings in prose must match the structured records.
+Generate a self-contained Markdown authoring brief, not the pre-mortem draft, in
+sections.preMortemAndOperationalReadiness for every feature, including single-repo and non-runtime
+features. Capture approved requirement IDs, baseline trace IDs/source evidence, known risks/customer
+impact, telemetry contracts/coverage gaps, rollback inputs and proposed author/reviewer/operations owners.
+Plan the dedicated PBI's content: scenarios/customer impact and prevention/detection/response;
+monitoring signals and actual KQL drafts with event/span/property contracts, table/property mappings,
+units/outcomes, eligibility/execution/baseline cohorts, time windows, numerators/denominators,
+deduplication/sampling and coverage gaps; monitoring owner/cadence/window/thresholds/stop criteria/
+escalation; rollback triggers/owners/default-off flag mechanism, propagation, active/in-flight attempts
+and persisted/partial-state recovery; and owned validation/release prerequisites.
+Do not generate the full pre-mortem or its KQL drafts during design or implementation.
+Include "Pre-mortem artifact: Pending implementation completion and PBI dispatch".
+Require the dedicated authoring PBI to depend on all feature implementation PBIs across repositories.
+Dispatch it only after all feature implementation is complete: every implementation PBI meets
+acceptance criteria, changes are merged where applicable and required implementation validation
+evidence is available. At that dispatch, the agent writes the complete pre-mortem against implemented,
+pinned source revisions and the exact approved design, including actual KQL drafts; links the artifact
+to the PBI/design; and hands off with human review pending. A named human reviewer checks completeness,
+customer impact, assumptions, contracts/cohorts/denominators, owners, rollback and gaps, requests agent
+revisions, and records approval/evidence before PBI acceptance and release/production enablement.
+Never make pre-mortem completion an implementation prerequisite or require the future artifact before
+design/planning/backlog approval. For no implementation PBIs, explicitly justify the non-runtime case
+and verify approved deliverables are complete before authoring; no self-dependency or omitted pre-mortem.
+Agent completion is not human acceptance. Record the later telemetry/query-validation and release
+owners/gates separately; document acceptance does not authorize release or activation.
+Future unexecuted pre-flight drafts, unresolved mappings and absent production data while disabled
+are acceptable with explicit gaps/follow-up owners; do not invent approved thresholds, mappings or people.
+No traffic or missing instrumentation is not proof of health. Before relying on monitoring for rollout,
+its owner validates contracts, mappings, outcomes, cohorts and denominators against
+an approved enabled E2E test cohort and attaches evidence. Broad production enablement is not required.
+The release owner separately resolves blocking prerequisites and approves rollback readiness/enablement.
+Document review or GO to Planning is not rollout approval, query validation or activation permission.
+Include "Pre-mortem child PBI: Pending feature planning", or a supplied existing AB# and durable URL
+with reuse subject to backlog verification. Require the later approved plan to include one dedicated
+authoring/review child PBI or reuse a suitable existing item and add reciprocal design/PBI links.
+Mark it documentation/review with approved post-implementation agent authoring and named human review;
+copilot-agent-ready applies only to ready agent-authoring scope/inputs, never human-review-only follow-ups.
+Do not create/update items, dispatch an agent, publish the future pre-mortem or claim it is accepted.
 Accessibility design: retain the accessibility section for every feature. State applicability;
 if no UI is affected, use justified N/A with a reason, never omit the section. For new or changed
 Android UI (including reused screens, entry points and navigation), map approved requirement IDs
@@ -422,6 +551,39 @@ New references may be cited immediately in changeChecks and findings; use only s
 Return an empty references array when no new sources are discovered.
 Check the entire narrative for implementation mandates omitted from changes, all relevant scenario
 branches, and preservation of existing attribution/ordering. Missing evidence is a finding, not a pass.
+For defaultOffFeatureIsolation, independently challenge every non-runtime declaration against the
+requirements, full narrative, source traces and proposed changes; documentation/regression-only work
+may have justified N/A, but size, a single repo or convenience cannot exempt a runtime feature.
+Verify all runtime changes map to suitable flags using existing source-verified frameworks, all relevant
+entry points/direct callers are guarded before new side effects, and disabled behavior preserves the
+baseline including initialization, navigation, state, IPC/network and telemetry.
+Check code-default, configuration-failure and production defaults are Boolean false and consistent in
+prose/records. Challenge cached/remote overrides, expired config and any implicit activation; production
+remains off until separate authorized enablement, not merely until the compiled default is false.
+Assess test-cohort scope, implementation/review owners and planned code-review/CI evidence for actual
+defaults, configuration failure, off/on behavior and rollback including active attempts/partial state.
+Ensure the exact contract reaches implementation PBI acceptance criteria and release prerequisites;
+design approval, PBI creation or a GO recommendation is not implemented isolation or activation approval.
+Find omitted gates, falsely claimed existing flags/frameworks, unowned validation, and mismatched prose.
+Do not create flags, run application tests or inspect/change live production configuration.
+For preMortemAndReleaseGates, assess the design-time authoring brief and post-implementation handoff,
+not completion or acceptance of the pre-mortem. Check substantive requirement/trace/source-linked
+inputs, known risks/customer impact, telemetry/rollback inputs and planned full-document content:
+scenarios, safeguards, actual KQL drafts with contracts/mappings/cohorts/denominators/coverage,
+monitoring ownership/cadence/stop criteria, active-attempt/partial-state rollback and owned release gates.
+Verify the dedicated PBI depends on all feature implementation PBIs, is dispatched for agent authoring
+only after all implementation is complete with acceptance/merged-change/validation evidence, refreshes
+pinned implemented sources, and requires named human review before release. Reject premature full-draft
+generation, reverse dependencies blocking implementation, a future artifact required before planning,
+missing dependencies, or agent completion treated as human acceptance. Verify the justified
+no-implementation case has completed approved non-runtime deliverables and no self-dependency.
+Reject placeholders/link-only briefs, invented verified mappings/thresholds, treating no traffic as
+healthy, and omitted applicable inputs, owners or rollback plans. Future unexecuted drafts/unresolved
+mappings are acceptable with explicit gaps and follow-up owners; missing production data while disabled
+does not require activation or broad production enablement.
+Verify a separate approved enabled E2E test cohort validation/evidence gate before monitoring is
+relied on for rollout and a separate release-owner approval gate. Design/PBI document completion is
+not rollout approval, query validation or activation permission. Never waive missing baseline evidence.
 Use the supplied designDigest and evidenceDigest for the exact input context.
 A false change check prohibits GO even if all rubric criteria pass.
 For each issue return a unique ID, rubric ID, severity, exact location, evidence, required change.
