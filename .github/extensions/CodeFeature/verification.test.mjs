@@ -1737,4 +1737,55 @@ test("formatPrBody space-delimits every AB# token and observer deduplicates supe
     });
     assert.equal(ciEvidenceFromSnapshot(rerunPendingSnap).status, "pending");
     assert.equal(isSnapshotWaitingForCiOnly(rerunPendingSnap), true);
+
+    // Multi-job GitHub Actions DAG race: newer workflow run 43580589320 succeeded upstream
+    // "Check if PR has a valid ADO ID" and queued intermediate "Get PR ID", before spawning
+    // leaf "AB ID validation Check" (which failed in superseded older workflow run 43580533669).
+    const multiJobMidFlight = snapshot({
+        statusCheckRollup: [
+            {
+                __typename: "CheckRun",
+                name: "Get PR ID",
+                workflowName: "AB#ID Check",
+                status: "IN_PROGRESS",
+                conclusion: "",
+                startedAt: "2026-11-14T09:27:03Z",
+                completedAt: "",
+                detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580589320/job/132400000002",
+            },
+            {
+                __typename: "CheckRun",
+                name: "Check if PR has a valid ADO ID",
+                workflowName: "AB#ID Check",
+                status: "COMPLETED",
+                conclusion: "SUCCESS",
+                startedAt: "2026-11-14T09:26:53Z",
+                completedAt: "2026-11-14T09:27:00Z",
+                detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580589320/job/132400000001",
+            },
+            {
+                __typename: "CheckRun",
+                name: "AB ID validation Check",
+                workflowName: "AB#ID Check",
+                status: "COMPLETED",
+                conclusion: "FAILURE",
+                startedAt: "2026-11-14T09:26:17Z",
+                completedAt: "2026-11-14T09:26:19Z",
+                detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580533669/job/132399999002",
+            },
+            {
+                __typename: "CheckRun",
+                name: "Check if PR has a valid ADO ID",
+                workflowName: "AB#ID Check",
+                status: "COMPLETED",
+                conclusion: "FAILURE",
+                startedAt: "2026-11-14T09:26:09Z",
+                completedAt: "2026-11-14T09:26:14Z",
+                detailsUrl: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580533669/job/132399999001",
+            },
+        ],
+        prBuilds: [],
+    });
+    assert.equal(ciEvidenceFromSnapshot(multiJobMidFlight).status, "pending");
+    assert.equal(isSnapshotWaitingForCiOnly(multiJobMidFlight), true);
 });

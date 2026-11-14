@@ -32,6 +32,11 @@ function deduplicateGitHubCheckRuns(rawRuns: Record<string, unknown>[]): Record<
         if (typeof entry.id === "string" && /^\d+$/.test(entry.id)) return BigInt(entry.id);
         return null;
     };
+    const parseActionsWorkflowRunId = (entry: Record<string, unknown>) => {
+        const rawUrl = String(entry.details_url ?? entry.html_url ?? entry.url ?? "");
+        const match = rawUrl.match(/\/actions\/runs\/(\d+)(?:\/job\/\d+)?/i);
+        return match ? BigInt(match[1]!) : null;
+    };
     const isNewer = (candidate: Record<string, unknown>, current: Record<string, unknown>) => {
         const candStart = parseMillis(candidate.started_at);
         const currStart = parseMillis(current.started_at);
@@ -42,6 +47,11 @@ function deduplicateGitHubCheckRuns(rawRuns: Record<string, unknown>[]): Record<
         const currDone = parseMillis(current.completed_at);
         if (Number.isFinite(candDone) && Number.isFinite(currDone) && candDone !== currDone) {
             return candDone > currDone;
+        }
+        const candWorkflowId = parseActionsWorkflowRunId(candidate);
+        const currWorkflowId = parseActionsWorkflowRunId(current);
+        if (candWorkflowId !== null && currWorkflowId !== null && candWorkflowId !== currWorkflowId) {
+            return candWorkflowId > currWorkflowId;
         }
         const candId = parseRunId(candidate);
         const currId = parseRunId(current);
@@ -63,20 +73,56 @@ function deduplicateGitHubCheckRuns(rawRuns: Record<string, unknown>[]): Record<
                 : "";
         return `${appScope}::${name}`;
     };
+    const maxActivityByWorkflowRun = new Map<bigint, number>();
+    const recordWorkflowActivity = (workflowRunId: bigint, entry: Record<string, unknown>) => {
+        const activity = Math.max(
+            ...[parseMillis(entry.started_at), parseMillis(entry.completed_at)].filter(Number.isFinite),
+            -Infinity,
+        );
+        const prev = maxActivityByWorkflowRun.get(workflowRunId) ?? -Infinity;
+        if (activity > prev) maxActivityByWorkflowRun.set(workflowRunId, activity);
+        else if (!maxActivityByWorkflowRun.has(workflowRunId)) maxActivityByWorkflowRun.set(workflowRunId, -Infinity);
+    };
+    const workflowRunsByKey = new Map<string, Set<bigint>>();
     const latestByKey = new Map<string, { index: number; entry: Record<string, unknown> }>();
     const unkeyed: { index: number; entry: Record<string, unknown> }[] = [];
     rawRuns.forEach((entry, index) => {
+        const workflowRunId = parseActionsWorkflowRunId(entry);
+        if (workflowRunId !== null) recordWorkflowActivity(workflowRunId, entry);
         const key = keyFor(entry);
         if (!key) {
             unkeyed.push({ index, entry });
             return;
+        }
+        if (workflowRunId !== null) {
+            let seen = workflowRunsByKey.get(key);
+            if (!seen) {
+                seen = new Set<bigint>();
+                workflowRunsByKey.set(key, seen);
+            }
+            seen.add(workflowRunId);
         }
         const existing = latestByKey.get(key);
         if (!existing || isNewer(entry, existing.entry)) {
             latestByKey.set(key, { index, entry });
         }
     });
+    const supersededWorkflowRuns = new Set<bigint>();
+    for (const seen of workflowRunsByKey.values()) {
+        if (seen.size <= 1) continue;
+        const runs = [...seen];
+        for (const candidateOld of runs) {
+            const oldActivity = maxActivityByWorkflowRun.get(candidateOld) ?? -Infinity;
+            const superseded = runs.some((candidateNew) =>
+                candidateNew > candidateOld && (maxActivityByWorkflowRun.get(candidateNew) ?? -Infinity) >= oldActivity);
+            if (superseded) supersededWorkflowRuns.add(candidateOld);
+        }
+    }
     return [...unkeyed, ...latestByKey.values()]
+        .filter((item) => {
+            const workflowRunId = parseActionsWorkflowRunId(item.entry);
+            return workflowRunId === null || !supersededWorkflowRuns.has(workflowRunId);
+        })
         .sort((a, b) => a.index - b.index)
         .map((item) => item.entry);
 }

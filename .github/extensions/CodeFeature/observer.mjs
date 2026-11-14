@@ -883,20 +883,59 @@ export function deduplicateStatusCheckRollup(checks) {
         if (!checkName) return "";
         return `check:${workflowName.toLowerCase()}::${checkName.toLowerCase()}`;
     };
+    const maxActivityByRunId = new Map();
+    const recordRunActivity = (runId, entry) => {
+        const activity = Math.max(
+            ...[
+                parseMillis(entry?.startedAt || entry?.createdAt),
+                parseMillis(entry?.completedAt || entry?.updatedAt),
+            ].filter(Number.isFinite),
+            -Infinity,
+        );
+        const prev = maxActivityByRunId.get(runId) ?? -Infinity;
+        if (activity > prev) maxActivityByRunId.set(runId, activity);
+        else if (!maxActivityByRunId.has(runId)) maxActivityByRunId.set(runId, -Infinity);
+    };
+    const runIdsByKey = new Map();
     const latestByKey = new Map();
     const unkeyed = [];
     checks.forEach((entry, index) => {
+        const ids = parseActionsIds(entry);
+        if (ids) recordRunActivity(ids.runId, entry);
         const key = keyFor(entry);
         if (!key) {
             unkeyed.push({ index, entry });
             return;
+        }
+        if (ids) {
+            let seen = runIdsByKey.get(key);
+            if (!seen) {
+                seen = new Set();
+                runIdsByKey.set(key, seen);
+            }
+            seen.add(ids.runId);
         }
         const existing = latestByKey.get(key);
         if (!existing || isNewer(entry, existing.entry)) {
             latestByKey.set(key, { index, entry });
         }
     });
+    const supersededRunIds = new Set();
+    for (const seen of runIdsByKey.values()) {
+        if (seen.size <= 1) continue;
+        const runs = [...seen];
+        for (const candidateOld of runs) {
+            const oldActivity = maxActivityByRunId.get(candidateOld) ?? -Infinity;
+            const superseded = runs.some((candidateNew) =>
+                candidateNew > candidateOld && (maxActivityByRunId.get(candidateNew) ?? -Infinity) >= oldActivity);
+            if (superseded) supersededRunIds.add(candidateOld);
+        }
+    }
     return [...unkeyed, ...latestByKey.values()]
+        .filter((item) => {
+            const ids = parseActionsIds(item.entry);
+            return !ids || !supersededRunIds.has(ids.runId);
+        })
         .sort((a, b) => a.index - b.index)
         .map((item) => item.entry);
 }

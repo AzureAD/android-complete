@@ -980,6 +980,55 @@ test("GitHub PR publication delimits Fixes AB# with a literal space and inspectP
         ];
         const pendingPr = await inspectProvider.inspectPr(repo, 3354, item.id);
         assert.equal(pendingPr.checks, "pending");
+
+        // Multi-job GitHub Actions DAG race (newest-first REST ordering):
+        // workflow run 43580589320 superseded 43580533669 on upstream "Check if PR has a valid ADO ID"
+        // and has intermediate "Get PR ID" in_progress, while leaf "AB ID validation Check" only exists
+        // on superseded run 43580533669 so far.
+        checkRunsPayload = [
+            {
+                id: 2004,
+                name: "Get PR ID",
+                status: "in_progress",
+                conclusion: null,
+                started_at: "2026-11-14T09:27:03Z",
+                completed_at: null,
+                html_url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580589320/job/2004",
+                app: { slug: "github-actions" },
+            },
+            {
+                id: 2003,
+                name: "Check if PR has a valid ADO ID",
+                status: "completed",
+                conclusion: "success",
+                started_at: "2026-11-14T09:26:53Z",
+                completed_at: "2026-11-14T09:27:00Z",
+                html_url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580589320/job/2003",
+                app: { slug: "github-actions" },
+            },
+            {
+                id: 2002,
+                name: "AB ID validation Check",
+                status: "completed",
+                conclusion: "failure",
+                started_at: "2026-11-14T09:26:17Z",
+                completed_at: "2026-11-14T09:26:19Z",
+                html_url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580533669/job/2002",
+                app: { slug: "github-actions" },
+            },
+            {
+                id: 2001,
+                name: "Check if PR has a valid ADO ID",
+                status: "completed",
+                conclusion: "failure",
+                started_at: "2026-11-14T09:26:09Z",
+                completed_at: "2026-11-14T09:26:14Z",
+                html_url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/actions/runs/43580533669/job/2001",
+                app: { slug: "github-actions" },
+            },
+        ];
+        const multiJobPendingPr = await inspectProvider.inspectPr(repo, 3354, item.id);
+        assert.equal(multiJobPendingPr.checks, "pending");
     } finally {
         h.cleanup();
     }
