@@ -11,11 +11,16 @@ REQUIRED_TOOLS = (
     "workiq_create_event", "workiq_send_email", "workiq_send_chat_message",
     "microsoft_teams-GetChat", "microsoft_teams-ListChatMembers",
     "microsoft_teams-SendMessageToUser", "microsoft_teams-SendMessageToChannel",
-    "workiq_resolve_m365_link", "workiq_download_file",
     "playwright-browser_navigate", "playwright-browser_snapshot",
-    "playwright-browser_file_upload",
     F.FETCH_TOOL,
 )
+
+_TEAMS_TOOL_ALIASES = {
+    "microsoft_teams-GetChat": ("microsoft_teams-GetChat", "teams-GetChat"),
+    "microsoft_teams-ListChatMembers": ("microsoft_teams-ListChatMembers", "teams-ListChatMembers"),
+    "microsoft_teams-SendMessageToUser": ("microsoft_teams-SendMessageToUser", "teams-SendMessageToUser"),
+    "microsoft_teams-SendMessageToChannel": ("microsoft_teams-SendMessageToChannel", "teams-SendMessageToChannel"),
+}
 
 
 def targets():
@@ -178,16 +183,157 @@ def plan(state, evidence=None):
     return {"binding": binding(state), **read_plan(state.owner_email, observations)}
 
 
+def _tool_present(available: dict, tool: str) -> bool:
+    if available.get(tool) == tool:
+        return True
+    for alias in _TEAMS_TOOL_ALIASES.get(tool, ()):
+        if available.get(alias) == alias:
+            return True
+    return False
+
+
 def missing_tools(available, *, structured_fetch=None, now=None):
     if (not isinstance(available, dict)
             or any(not isinstance(key, str) or not key.strip()
                    or not isinstance(value, str) or not value.strip()
                    for key, value in available.items())):
         raise ValueError("Record the actual loaded tool inventory, not server registration alone")
-    missing = [tool for tool in REQUIRED_TOOLS if tool != F.FETCH_TOOL and available.get(tool) != tool]
+    missing = [tool for tool in REQUIRED_TOOLS if tool != F.FETCH_TOOL and not _tool_present(available, tool)]
     if F.route(available, structured_fetch, now=now) is None:
         missing.append(F.FETCH_TOOL)
     return missing
+
+
+def fetch_live_roster_bundle(owner: str, group_mail: str | None = None, *,
+                             scout_root: str | None = None, workiq_path: str | None = None) -> dict:
+    """Fetch the configured distribution group lookup and ALL member pages directly in Python
+    via `structured_fetch.read` (`shell=False`, avoiding PowerShell `$filter`/`$select` mangling)."""
+    from . import infra
+    from tools.distribution import ConnectorObservationRequired, load_config, roster_lookup_path, roster_observed
+
+    resolved_root = infra.scout_profile_root(scout_root)
+    discovered = F.discover_cli(resolved_root, workiq_path)
+    if F.route({}, discovered) is None:
+        raise ValueError(discovered.get("detail") or "WorkIQ CLI launcher not found")
+    mail = group_mail or load_config()["roster_group"]
+    envelopes = [F.read(resolved_root, owner, roster_lookup_path(mail), discovered=discovered)]
+    while True:
+        try:
+            roster_observed(mail, {"observations": envelopes}, owner)
+            return {"observations": envelopes}
+        except ConnectorObservationRequired as exc:
+            next_path = exc.arguments["entityUrls"][0]
+            envelopes.append(F.read(resolved_root, owner, next_path, discovered=discovered))
+
+
+def fetch_live_evidence(state, *, scout_root: str | None = None,
+                        workiq_path: str | None = None) -> dict:
+    """Execute all 4 M365 readiness read checks directly in Python via `structured_fetch.read`
+    (`shell=False`, full automatic pagination, zero LLM PowerShell URL quoting or temp files)."""
+    from . import infra
+    from tools.distribution import ConnectorObservationRequired, roster_observed
+
+    owner = getattr(state, "owner_email", None)
+    if not owner:
+        raise ValueError("Release owner email is unset; set-owner before verifying M365 capabilities")
+    resolved_root = infra.scout_profile_root(scout_root)
+    discovered = F.discover_cli(resolved_root, workiq_path)
+    selected_route = F.route({}, discovered)
+    if selected_route is None:
+        raise ValueError(discovered.get("detail") or "WorkIQ CLI launcher not available")
+
+    target = targets()
+
+    # 1. Owner profile + calendar
+    profile_env = F.read(
+        resolved_root, owner, "/me?$select=id,displayName,mail,userPrincipalName", discovered=discovered)
+    profile = profile_env["result"]
+    if not m365.profile_matches(profile, owner):
+        raise ValueError(f"M365 profile does not match release owner '{owner}'")
+
+    cal_env = F.read(
+        resolved_root, owner, "/me/events?$select=id,subject,start,end&$top=1", discovered=discovered)
+    cal = cal_env["result"]
+    if not (isinstance(cal, list) or isinstance(cal, dict) and isinstance(cal.get("events", cal.get("value")), list)):
+        raise ValueError("Calendar read returned no structured event collection")
+
+    # 2. Distribution roster (group lookup + all member pages)
+    roster_bundle = fetch_live_roster_bundle(
+        owner, target["roster_group"], scout_root=resolved_root, workiq_path=workiq_path)
+    roster, _ = roster_observed(target["roster_group"], roster_bundle, owner)
+    if not roster:
+        raise ValueError(f"Roster '{target['roster_group']}' returned no eligible directory users")
+
+    # 3. Representative Teams chat + full member pagination
+    cid = quote(target["representative_chat"], safe="")
+    chat_env = F.read(resolved_root, owner, f"/chats/{cid}?$select=id,chatType,topic", discovered=discovered)
+    chat = chat_env["result"]
+    if (not isinstance(chat, dict) or chat.get("id") != target["representative_chat"]
+            or chat.get("chatType") not in ("meeting", "group")):
+        raise ValueError("Teams probe did not read the configured Code Reviews chat")
+
+    chat_members, next_path, seen_chat_pages = [], f"/chats/{cid}/members", set()
+    while next_path:
+        if next_path in seen_chat_pages or len(seen_chat_pages) >= 100:
+            raise ValueError("Cyclic/excessive Teams chat member pagination")
+        seen_chat_pages.add(next_path)
+        mem_env = F.read(resolved_root, owner, next_path, discovered=discovered)
+        mem_res = mem_env["result"]
+        if not isinstance(mem_res, dict) or not isinstance(mem_res.get("value"), list):
+            raise ValueError("Teams chat member probe returned malformed page")
+        chat_members.extend(mem_res["value"])
+        nxt = mem_res.get("@odata.nextLink")
+        if not nxt:
+            next_path = None
+        else:
+            parsed = urlsplit(nxt)
+            next_path = (
+                parsed.path.removeprefix("/v1.0") + ("?" + parsed.query if parsed.query else "")
+                if parsed.scheme else nxt
+            )
+    if not chat_members or not any(
+        isinstance(row, dict) and row.get("userId") == profile["id"] for row in chat_members
+    ):
+        raise ValueError("Teams chat membership does not include the verified release owner")
+
+    # 4. SharePoint report site + full library pagination
+    site_env = F.read(resolved_root, owner, site_path(target["report_site"]), discovered=discovered)
+    site = _site(site_env, owner)
+    lib_envelopes = []
+    while True:
+        try:
+            libraries = _libraries(site, lib_envelopes or None, owner)
+            break
+        except ConnectorObservationRequired as exc:
+            lib_envelopes.append(
+                F.read(resolved_root, owner, exc.arguments["entityUrls"][0], discovered=discovered))
+    matches = [row for row in libraries if isinstance(row, dict)
+               and row.get("name") == target["report_library"] and row.get("id")]
+    if len(matches) != 1:
+        raise ValueError(
+            f"SharePoint library '{target['report_library']}' did not resolve uniquely on {target['report_site']}"
+        )
+
+    expected = plan(state)
+    observations_summary = {
+        "profile_id": profile["id"],
+        "roster_count": len(roster),
+        "chat_id": chat["id"],
+        "site_id": site["id"],
+        "library_id": matches[0]["id"],
+    }
+    return {
+        "capability_binding": expected["binding"],
+        "structured_fetch": selected_route,
+        "checks": [
+            {"name": "owner/calendar", "ok": True, "detail": "owner identity and event read verified"},
+            {"name": "distribution roster", "ok": True, "detail": f"exact group and {len(roster)} members verified"},
+            {"name": "Teams chat/members", "ok": True, "detail": "exact representative chat and owner membership"},
+            {"name": "SharePoint library", "ok": True, "detail": "exact report site and library read"},
+        ],
+        "limitations": expected["limitations"],
+        "observation_hash": delivery.fingerprint(observations_summary),
+    }
 
 
 def validate(state, evidence, *, now=None):

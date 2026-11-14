@@ -183,7 +183,8 @@ mcp_servers:
 
   - id: teams
     name: "Microsoft Teams MCP server (Agency — group chats + rich messaging)"
-    scout_key: teams
+    scout_key: microsoft_teams
+    aliases: [teams]
     launcher: agency
     provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
     command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"

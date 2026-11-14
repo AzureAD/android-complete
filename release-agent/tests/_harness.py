@@ -69,7 +69,19 @@ def _bd_result(status):
     return _fn
 
 
-_rv.REGISTRY = {"build_defs": _bd_result("pass"), "mcp_servers": _bd_result("pass")}
+def _m365_verifier_result(status="pass"):
+    def _fn(item, state=None):
+        from orchestrator import m365_capabilities as M
+        extra = {"capability_binding": M.binding(state)} if state is not None and status == "pass" else {}
+        return _rv.VerifyResult(status, f"stubbed ({status})", [], extra=extra)
+    return _fn
+
+
+_rv.REGISTRY = {
+    "build_defs": _bd_result("pass"),
+    "mcp_servers": _bd_result("pass"),
+    "m365_capabilities": _m365_verifier_result("pass"),
+}
 
 
 
@@ -218,6 +230,7 @@ _mocks_mod.load_mocks = lambda *a, **k: dict(_SAFE_AGENTS)
 
 def _stub_build_defs(status):
     _rv.REGISTRY["build_defs"] = _bd_result(status)
+    _rv.REGISTRY.setdefault("m365_capabilities", _m365_verifier_result("pass"))
 
 
 

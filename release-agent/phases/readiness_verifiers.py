@@ -17,6 +17,7 @@ class VerifyResult:
     status: str        # "pass" | "fail"
     message: str
     details: list = None   # optional per-check breakdown: [{name, url, ok, detail}]
+    extra: dict = None     # optional structured proof fields persisted on readiness_items
 
     @property
     def ok(self) -> bool:
@@ -77,9 +78,32 @@ def verify_mcp_servers(item: dict) -> VerifyResult:
         "pass", "registered: " + ", ".join(r.get("scout_key", "?") for r in results), details)
 
 
+def verify_m365_capabilities(item: dict, state=None) -> VerifyResult:
+    """Verify owner profile/calendar, distribution roster, Teams chat/membership, and
+    SharePoint report site/library directly in Python via `structured_fetch.read`
+    (`shell=False`, full automatic pagination, no PowerShell `$filter`/`$select` mangling)."""
+    from orchestrator import m365_capabilities as M
+
+    if state is None:
+        return VerifyResult("fail", "release state missing for m365_capabilities verifier", [])
+    try:
+        proof = M.fetch_live_evidence(state)
+    except Exception as exc:
+        return VerifyResult("fail", str(exc), [])
+    checks = proof.get("checks", [])
+    extra = {k: v for k, v in proof.items() if k != "checks"}
+    return VerifyResult(
+        "pass",
+        "verified: " + ", ".join(c["name"] for c in checks),
+        details=checks,
+        extra=extra,
+    )
+
+
 REGISTRY = {
     "build_defs": verify_build_defs,
     "mcp_servers": verify_mcp_servers,
+    "m365_capabilities": verify_m365_capabilities,
 }
 
 

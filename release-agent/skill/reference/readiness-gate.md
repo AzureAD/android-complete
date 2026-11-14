@@ -12,8 +12,8 @@ No blanket write authority follows from readiness. Every owning write step needs
 - **Mandatory `[auto]` checks (Scout evaluates ALL 8 before returning control):**
   - `build_access` (`required_tools: [az]`, Python verifier via `verify`) — Release build definitions `#2828` and `#397224` accessible.
   - `mcp_servers` (`required_tools: []`, Python verifier via `verify`) — ICM, Kusto/ADX, and Teams MCP servers registered in Scout config.
+  - `m365_access` (`required_tools: [workiq]`, Python verifier via `verify`) — Profile/calendar, configured roster (all member pages), Teams membership, and report SharePoint site/library verified directly in Python via native WorkIQ CLI (`shell=False`, no PowerShell `$filter`/`$select` mangling).
   - `ccd_confirmed` (`required_tools: [az]`, `check-ccd`) — Code Complete Date is valid and reconciled with pipeline `3038`.
-  - `m365_access` (`required_tools: [workiq, microsoft_teams, sharepoint]`, `m365-capabilities`) — Profile/calendar, configured roster, Teams membership, and report SharePoint site/library readable.
   - `silent_perms` (`required_tools: [scout_settings]`, `m_get_settings`) — Auto-approval settings checked (`opt_out: true` allows owner-confirmed `degraded` for foreground interactive runs).
   - `teams_notify` (`required_tools: [scout_teams_relay]`, `m_relay_status`) — Scout Teams relay & bot reachability checked (`opt_out: true` allows `degraded` email-only fallback).
   - `adx_access` (`required_tools: [kusto]`, Kusto `print 1`) — ADX release telemetry cluster queryable.
@@ -23,13 +23,12 @@ No blanket write authority follows from readiness. Every owning write step needs
 
 ## Step-by-step entry gate execution (run immediately after `init`)
 
-1. **Run Python `[auto]` verifiers (`build_access` and `mcp_servers`):**
-   - Run `python -m orchestrator.cli verify --release <id> --pending-only`. Each Python verifier executes independently; if one fails, only that item records `fail` with its specific error while the other still runs.
+1. **Run Python `[auto]` verifiers (`build_access`, `mcp_servers`, and `m365_access`):**
+   - Run `python -m orchestrator.cli verify --release <id> --pending-only`. Python executes all three verifiers directly (`shell=False`, with full automatic Graph pagination for `m365_access`). If any verifier fails, only that item records `fail` with its specific error while the others still run.
 2. **Exhaust ALL remaining `pending_auto_checks` from `checklist --release <id> --attest-prompt --json` (do NOT halt on failure):**
    - **`ccd_confirmed` (`az`):** Run `python -m orchestrator.cli check-ccd --release <id> --json`:
      - `match` → `record-check --release <id> --item ccd_confirmed --status pass --detail "CCD <ccd> reconciled with pipeline"` (note if `compressed: true`).
      - `past` / `conflict` / `unreadable` → record `--status fail` (or `needs_input` when awaiting an owner choice between pipeline override vs custom date) with the exact reason, **and continue running the remaining `[auto]` checks first**!
-   - **`m365_access` (`workiq`, `microsoft_teams`, `sharepoint`):** Run `m365-capabilities --release <id>` and execute its read-only observations. If all observations validate, pass `--evidence-file` to `record-check --status pass`. If any required tool/connector is missing, disconnected, or errors, record `record-check --release <id> --item m365_access --status fail --detail "Tool/connector failure (<tool>): <exact error>"` and **continue to the next check**.
    - **`silent_perms` (`m_get_settings`):** Read `m_get_settings` and check `required_servers` (`shell`, `workiq`, `playwright`, `kusto`, `icm`). If all are auto-approved → `pass`; if in interactive mode without silent auto-approvals or `m_get_settings` is unavailable → record `degraded` (when opted out of unattended silent runs) or `fail` with the exact missing servers, and **continue**.
    - **`teams_notify` (`m_relay_status`):** Check `m_relay_status`. If connected/reachable → `pass`; if disconnected or unavailable → record `degraded` (`"Teams relay unavailable — proceeding with email-only fallback"`) or `fail` with the exact reason, and **continue**.
    - **`adx_access` (`kusto`):** Run `print 1` against `cluster_uri` + `database`. On success → `pass`; if `kusto` MCP is missing or errors → record `record-check --release <id> --item adx_access --status fail --detail "Tool/connector failure (kusto): <exact error>"` and **continue**.

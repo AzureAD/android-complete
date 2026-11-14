@@ -18,17 +18,36 @@ class DistributionReviewError(ValueError):
 
 
 def _inspect(args, orch, *, parameters=None, permit=None):
-    parameters = parameters or {
-        "oof": [] if args.no_oof else args.oof, "oce": args.oce,
-        "roster_file": getattr(args, "roster_file", None),
-    }
-    context = orch.context(
-        "bug_bash", S.ID, parameters=parameters,
-        permit=permit,
-        inputs=mocks_mod.load_mocks().get("bug_bash.distribute_tests", {}))
-    return S.inspect_distribution(
-        context, oof=(list(context.parameters.oof) if context.parameters.oof is not None else None),
-        oce=context.parameters.oce, roster_file=context.parameters.roster_file)
+    roster_file = getattr(args, "roster_file", None)
+    temp_roster = None
+    if not roster_file and getattr(args, "auto_roster", False) and orch.state.owner_email:
+        import os
+        import tempfile
+        from orchestrator import m365_capabilities as M
+        bundle = M.fetch_live_roster_bundle(orch.state.owner_email)
+        fd, temp_roster = tempfile.mkstemp(prefix="release-roster-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(bundle, fh)
+        roster_file = temp_roster
+    try:
+        parameters = parameters or {
+            "oof": [] if args.no_oof else args.oof, "oce": args.oce,
+            "roster_file": roster_file,
+        }
+        context = orch.context(
+            "bug_bash", S.ID, parameters=parameters,
+            permit=permit,
+            inputs=mocks_mod.load_mocks().get("bug_bash.distribute_tests", {}))
+        return S.inspect_distribution(
+            context, oof=(list(context.parameters.oof) if context.parameters.oof is not None else None),
+            oce=context.parameters.oce, roster_file=context.parameters.roster_file)
+    finally:
+        if temp_roster:
+            try:
+                import os
+                os.remove(temp_roster)
+            except OSError:
+                pass
 
 
 def plan_distribution(args, orch):
@@ -309,6 +328,8 @@ def register(sub):
     p.add_argument("--release", required=True)
     p.add_argument("--oce", default=None, help="Verified primary on-call UPN")
     p.add_argument("--roster-file", help="Fresh owner-bound exact group/member observations from verified structured WorkIQ fetch")
+    p.add_argument("--auto-roster", action="store_true",
+                   help="Fetch the configured distribution roster directly in Python via native WorkIQ CLI without shell $-query quoting")
     choice = p.add_mutually_exclusive_group()
     choice.add_argument("--oof", action="append", metavar="UPN", help="Owner-confirmed OOF tester")
     choice.add_argument("--no-oof", action="store_true", help="Confirm nobody is OOF")

@@ -305,7 +305,7 @@ def test_readiness_prompt_always_includes_full_current_table_without_mutation(
 
 
 def test_start_continues_scout_checks_after_only_python_verification():
-    """The test3 stopping point is automatic work across all 6 mandatory Scout checks."""
+    """The test3 stopping point is automatic work across all 5 remaining mandatory Scout checks."""
     from orchestrator import render
     st, orch = _orch(signed=False)
     orch.gate.verify()
@@ -314,7 +314,7 @@ def test_start_continues_scout_checks_after_only_python_verification():
     assert payload["continue_automatically"] and not payload["ready"]
     assert "answers" not in payload
     assert {item["id"] for item in payload["pending_auto_checks"]} == {
-        "ccd_confirmed", "m365_access", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
+        "ccd_confirmed", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
     assert all(item["source"] == "scout" and item["verifier"]
                for item in payload["pending_auto_checks"])
     assert payload["failed_auto_checks"] == []
@@ -333,7 +333,7 @@ def test_auto_failure_does_not_hide_independent_pending_checks():
     orch.gate.record_check("oncall_now", "fail", "Read permission denied")
     payload = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
     assert payload["failed_auto_checks"] == ["oncall_now"]
-    assert len(payload["pending_auto_checks"]) == 5
+    assert len(payload["pending_auto_checks"]) == 4
     assert "oncall_now" not in {item["id"] for item in payload["pending_auto_checks"]}
     assert payload["next_action"] == "run_auto_checks" and payload["continue_automatically"]
     assert "answers" not in payload

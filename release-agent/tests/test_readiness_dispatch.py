@@ -11,7 +11,7 @@ from tests.test_m365_capabilities import evidence
 
 
 RID = "2026-11"
-SCOUT_IDS = {"ccd_confirmed", "m365_access", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
+SCOUT_IDS = {"ccd_confirmed", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
 
 
 def call(capsys, root, *args):
@@ -72,7 +72,7 @@ def test_test5_python_only_state_cannot_hide_scout_queue(
         if command != "verify":
             assert "| | Type | Item | Status |" in out
     saved = C.load_state(str(tmp_path), RID)
-    assert set(saved.readiness_items) == {"build_access", "mcp_servers"}
+    assert set(saved.readiness_items) == {"build_access", "mcp_servers", "m365_access"}
     assert not saved.steps and not saved.notification_deliveries
     assert call(capsys, tmp_path, "checklist", "--release", RID,
                 "--attest-prompt", "--handoff", "--json")[0] == 2
@@ -127,7 +127,7 @@ def test_persisted_host_dispatch_exhausts_every_probe_before_handoff(
                         "--detail", "offline probe result; explicit date decision needed" if actual == "needs_input"
                         else "offline probe result", *kwargs)
         assert code == 0
-    assert set(executed) == SCOUT_IDS and len(executed) == 6
+    assert set(executed) == SCOUT_IDS and len(executed) == 5
     assert payload["may_return_to_user"] and not payload["continue_automatically"]
     assert payload["progression_policy"] == "automatic_until_input_or_wait"
     assert payload["display_before_prompt"]
@@ -182,13 +182,14 @@ def test_invalidated_capability_pass_is_executable_not_a_failed_probe():
     assert "Outstanding" in row and "PASS" not in row and "prior evidence" in row
 
 
-def test_verify_does_not_report_invalidated_read_proof_as_ok(tmp_path, capsys):
+def test_verify_re_runs_invalidated_m365_capability_read_proof(tmp_path, capsys):
     st, _ = _orch()
     st.owner_email = "changed-owner@example.test"
     C.save_state(st, str(tmp_path), st.release_id)
     code, out = call(capsys, tmp_path, "verify", "--release", st.release_id, "--pending-only")
-    assert code == 0 and "[PENDING] m365_access: pending" in out
-    assert "[OK] m365_access" not in out
+    assert code == 0 and "[OK] m365_access: pass" in out
+    reloaded, orch2 = C.load_orch(str(tmp_path), st.release_id, CONFIG)
+    assert next(i for i in orch2.gate.checklist()["items"] if i["id"] == "m365_access")["satisfied"]
 
 
 @pytest.mark.parametrize("hold", ["halt", "cancellation", "decline"])
@@ -253,7 +254,7 @@ def test_dispatch_uses_configured_coordinates_not_author_defaults():
         "cluster_uri": "https://other.kusto.windows.net", "database": "custom-db", "query": "print 1"}
     assert tasks["oncall_now"]["probe"]["arguments"] == {"teamIds": [123456]}
     assert "2099-12" in tasks["ccd_confirmed"]["probe"]["command"]
-    assert "2099-12" in tasks["m365_access"]["record_command"]
+    assert tasks["m365_access"]["probe"]["command"] == "verify --release 2099-12 --pending-only"
 
 
 def test_workflow_review_hold_never_authorizes_readiness_dispatch(tmp_path, monkeypatch, capsys):

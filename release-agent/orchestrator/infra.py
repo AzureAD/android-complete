@@ -192,15 +192,19 @@ def ensure_mcp_servers(req: dict, register: bool, *, scout_root=None, agency_pat
             continue
         if transport != "command":
             raise ValueError(f"Unsupported setup MCP transport: {transport}")
-        if key in existing:
-            entry = existing[key]
+        matched_key = next(
+            (cand for cand in [key, *(m.get("aliases") or [])] if cand in existing),
+            None,
+        )
+        if matched_key is not None and (key in existing or not register):
+            entry = existing[matched_key]
             required = set(m.get("readiness_tools", m.get("tools", [])) or [])
             configured = entry.get("tools") if isinstance(entry, dict) else None
             if (not isinstance(entry, dict) or entry.get("enabled") is False
                     or required and (not isinstance(configured, list)
                                      or any(not isinstance(tool, str) or not tool for tool in configured)
                                      or not required.issubset(configured))):
-                results.append({**rec, "status": "capabilities_missing",
+                results.append({**rec, "scout_key": matched_key, "status": "capabilities_missing",
                                 "detail": "Server disabled or required tool allowlist missing; "
                                           "correct configuration and restart Scout. Registration is not access proof."})
                 continue
@@ -209,11 +213,11 @@ def ensure_mcp_servers(req: dict, register: bool, *, scout_root=None, agency_pat
                 command = config.get("command") if isinstance(config, dict) else None
                 if (not isinstance(command, str)
                         or not (os.path.isfile(expand(command)) or shutil.which(expand(command)))):
-                    results.append({**rec, "status": "launcher_missing",
+                    results.append({**rec, "scout_key": matched_key, "status": "launcher_missing",
                                     "detail": "Configured Agency launcher is missing; ask for its actual path "
                                               "and review the existing server in Scout. No entry was replaced."})
                     continue
-            results.append({**rec, "status": "present", "detail": "already in Scout config"})
+            results.append({**rec, "scout_key": matched_key, "status": "present", "detail": "already in Scout config"})
             continue
         # Not registered. Is its launcher present?
         if m.get("launcher") == "agency":

@@ -329,7 +329,9 @@ class ReadinessGate:
                     "message": f"no verifier '{it.get('verifier')}' registered", "at": _now()}
                 continue
             try:
-                res = vf(it)
+                import inspect
+                params = inspect.signature(vf).parameters
+                res = vf(it, self.state) if len(params) >= 2 else vf(it)
             except Exception as exc:
                 self.state.readiness_items[it["id"]] = {
                     "status": "fail",
@@ -340,6 +342,8 @@ class ReadinessGate:
             rec = {"status": res.status, "message": res.message, "at": _now()}
             if getattr(res, "details", None):
                 rec["checks"] = res.details
+            if getattr(res, "extra", None):
+                rec.update(res.extra)
             self.state.readiness_items[it["id"]] = rec
         self._refresh_signed()
         return self.checklist()
@@ -360,7 +364,7 @@ class ReadinessGate:
         it = by_id.get(item_id)
         if it is None:
             return {"error": f"no such readiness item '{item_id}'"}
-        if not (it.get("verify") == "auto" and it.get("source") == "scout"):
+        if not (it.get("verify") == "auto" and (it.get("source") == "scout" or item_id == "m365_access")):
             return {"error": f"'{item_id}' is not a scout-assisted auto item (cannot record a result for it)"}
         valid = ("pass", "fail", "needs_input") + (("degraded",) if it.get("opt_out") else ())
         if status not in valid:
