@@ -38,6 +38,23 @@ Key sections every design spec should include:
 
 If a template file exists at the configured `design.templatePath`, follow that instead.
 
+For Android-complete's Dev Design Dynamic Workflow, generate a separate
+**Human Design Review Brief** from the same authoritative detailed design and
+publish both for one paired revision. The brief is the primary human approval
+surface: decisions needed first; customer outcome/scope; plain-language architecture
+and flow; recommendations, rejected alternatives and meaningful tradeoffs;
+evidence versus assumptions/uncertainties; consequential security/authentication,
+accessibility, compatibility/cross-repo, default-off and rollback risks/safeguards
+(justified N/A when appropriate); accountable owners and approval blockers.
+Link supporting sections/evidence in the same detailed design. Preserve full
+contracts and independently check consistency/completeness, never hide risks behind
+links. Target ten minutes with the complete rendered 1,800-word/16,000-character
+budget; fail visibly rather than silently omitting approval-critical information.
+Bind human approval to the precise published pair; substantive edits regenerate
+and re-review both, highlighting changes since verified prior review. Never reuse
+stale artifacts/approval. Design approval is not rollout approval; this human brief
+does not move full pre-mortem authoring ahead of implementation completion/dispatch.
+
 For Android-complete runtime features, retain a **Feature flags and isolation**
 section using the [default-off contract](../feature-planner/references/pbi-template.md#android-complete-default-off-feature-contract):
 source-verified owning framework, key/owner, Boolean false code/configuration-failure/

@@ -2,10 +2,13 @@
 // Licensed under the MIT License.
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
     rubric, sections, runDesignFeature, validateStage0, validateDesign,
     validateEvidence, validateReview, workflowDefinition, digest,
+    pairRevision, renderHumanReviewBrief, renderPairedDocuments, briefWordBudget, briefCharacterBudget, riskCategories,
+    validatePairedDocuments,
 } from "./workflow.mjs";
 
 const stage0 = () => ({
@@ -21,6 +24,7 @@ const evidence = () => ({
         verified: true, revision: "requirements-v3", reference: "review/123",
         rationale: "The test approval record explicitly approves requirements-v3.",
     },
+    priorReviewVerification: null,
     references: [{ id: "E1", repository: "Common", revision: sourceRevision, path: "Example.kt", locator: "Example" }],
     facts: [{ statement: "Example has an existing contract.", referenceIds: ["E1"] }],
     sourceVerification: [{ ...sourceManifest()[0], verified: true, rationale: "Inspected pinned test fixture." }],
@@ -51,6 +55,36 @@ const design = () => ({
         },
     }],
     assumptions: [], openDecisions: [], blockingUnknowns: [],
+    humanReviewBrief: {
+        outcomeAndScope: {
+            text: "Preserve the existing customer response. No runtime changes; scope is compatibility regression coverage, not new APIs.",
+            sectionIds: ["problemAndScope", "requirements"], evidenceIds: ["E1"],
+        },
+        architecture: {
+            text: "The existing caller uses Example and receives its compatible response. Keep that handoff; tests protect it.",
+            sectionIds: ["architectureAndDataControlFlow"], evidenceIds: ["E1"],
+        },
+        flowDiagram: "```mermaid\nflowchart LR\nCaller --> Example --> Response\n```",
+        decisions: [{
+            changeIds: ["C1"], question: "Preserve the current contract?",
+            recommendation: "Keep behavior and add regression coverage.",
+            rejectedAlternatives: ["Changing the existing response would break compatibility."],
+            tradeoffs: "Regression tests preserve existing behavior but do not add capabilities.",
+            owner: "Common design owner", approvalBlocker: false,
+            sectionIds: ["alternativesAndDecision", "requirements"], evidenceIds: ["E1"],
+        }],
+        evidenceAndUncertainty: {
+            text: "E1 supports the existing contract; future test execution remains unverified. No product decisions are unresolved.",
+            sectionIds: ["testsAndEvals", "dependenciesAndOpenDecisions"], evidenceIds: ["E1"],
+        },
+        risks: riskCategories.map((category) => ({
+            category, applicability: "not-applicable",
+            impact: "N/A: regression-only coverage changes no runtime paths, UI, authentication, configuration or stored state.",
+            safeguards: "Retain the existing contract; implement and review the compatibility tests before accepting the deliverable.",
+            owner: "Common design owner", sectionIds: ["requirements", "testsAndEvals"], evidenceIds: ["E1"],
+        })),
+        changesSincePriorReview: "Initial paired human review; no approval is inherited.",
+    },
 });
 const runtimeDesign = () => {
     const d = design();
@@ -77,15 +111,42 @@ const runtimeDesign = () => {
         rollback: "Feature owner disables the flag; admitted attempts finish safely and persisted state is verified.",
         verification: "Implementation owner attaches default/configuration, off/on and rollback test results before release.",
     }];
+    d.humanReviewBrief.outcomeAndScope.text =
+        "Add an opt-in response format; keep the current response unchanged when disabled. Scope excludes broad production enablement.";
+    Object.assign(d.humanReviewBrief.decisions[0], {
+        question: "Add the opt-in response behind a default-off flag?",
+        recommendation: "Use the verified flag framework and preserve the disabled contract.",
+        rejectedAlternatives: ["Replacing the response unconditionally breaks compatibility."],
+        tradeoffs: "A guarded format enables the feature while adding configuration and rollback responsibilities.",
+    });
+    for (const risk of d.humanReviewBrief.risks) {
+        if (["defaultOff", "rollback", "compatibilityCrossRepo"].includes(risk.category)) {
+            Object.assign(risk, {
+                applicability: "applicable",
+                impact: "Incorrect configuration or premature enablement could break the existing response contract.",
+                safeguards: "Default/configuration-failure/production values remain false. Verify off/on behavior and safe active-attempt rollback before separate release approval.",
+                sectionIds: ["featureFlagsAndIsolation", "stateFailuresRecoveryReversibility"],
+            });
+        }
+    }
     return d;
 };
 const review = (d = design()) => ({
     designDigest: digest(d), evidenceDigest: d.evidenceDigest, references: [],
+    pairRevision: pairRevision(d),
     changeChecks: d.changes.map((c) => ({
         changeId: c.id, baselineVerified: true, necessityConfirmed: true, counterevidenceVerified: true,
         referenceIds: ["E1"], rationale: "Independently inspected the existing terminal path.",
     })),
     criteria: rubric.map((id) => ({ id, pass: true })), findings: [], blockingUnknowns: [],
+    briefChecks: {
+        consistent: true, complete: true, risksVisible: true, evidenceDistinguished: true,
+        revisionChangesAccurate: true, rationale: "Independently compared the full paired candidate and evidence.",
+    },
+});
+const priorReview = (d = design(), priorReviewContext = null) => ({
+    revision: pairRevision(d, priorReviewContext), reference: "human-review/paired-123",
+    design: structuredClone(d), priorReviewContext,
 });
 function context(results, requirements = stage0()) {
     const calls = [];
@@ -128,6 +189,271 @@ test("valid design returns a recommendation, never human approval", async () => 
     assert.equal(ctx.calls.length, 3);
     assert.equal(ctx.calls[2].options.label, "Independent design reviewer");
     assert.match(ctx.calls[2].prompt, /Do not edit the design or requirements/);
+});
+
+test("both publication-ready documents have one exact approval revision and resolvable same-design links", async () => {
+    const packet = await runDesignFeature(context([evidence(), design(), review()]));
+    const pair = packet.pairedDocuments;
+    assert.equal(pair.revision, packet.approvalRevision);
+    assert.equal(pair.revision, pairRevision(packet.design));
+    assert.equal(pair.primaryDocument, "human-design-review-brief.md");
+    assert.equal(pair.documents.length, 2);
+    const [brief, detailed] = pair.documents;
+    assert.match(brief.markdown, /^# Human Design Review Brief/);
+    assert.ok(brief.markdown.indexOf("## Decisions needed") < brief.markdown.indexOf("## Customer outcome"));
+    for (const document of pair.documents) {
+        assert.ok(document.markdown.includes(pair.revision));
+        assert.match(document.markdown, /Human approval: pending/);
+        assert.equal(document.sha256, digestBytes(document.markdown));
+    }
+    for (const [, anchor] of brief.markdown.matchAll(/detailed-design\.md#([^)]+)\)/g)) {
+        assert.ok(detailed.markdown.includes(`<a id="${anchor}"></a>`), `Missing supporting anchor: ${anchor}`);
+    }
+    assert.match(detailed.markdown, /Primary human approval surface/);
+    assert.deepEqual(pair, renderPairedDocuments(packet.design, packet.availableEvidence));
+    assert.equal(validatePairedDocuments(pair, packet.design, packet.availableEvidence), true);
+    assert.match(packet.nextAction, /both pairedDocuments together/);
+});
+
+function digestBytes(value) {
+    // The manifest hashes actual UTF-8 Markdown bytes, not JSON-quoted text.
+    return createHash("sha256").update(value).digest("hex");
+}
+
+test("publication integrity rejects split revisions, missing documents and edited bytes even with refreshed file hashes", () => {
+    const d = design();
+    const pair = renderPairedDocuments(d, evidence());
+    const revised = design();
+    revised.sections.requirements += " A consequential new requirement.";
+    const other = renderPairedDocuments(revised, evidence());
+    for (const mutate of [
+        (p) => { p.documents.pop(); },
+        (p) => { p.documents[1] = other.documents[1]; },
+        (p) => { p.revision = other.revision; },
+        (p) => { p.documents[0].markdown += " A post-review edit."; },
+        (p) => {
+            p.documents[0].markdown += " A post-review edit.";
+            p.documents[0].sha256 = digestBytes(p.documents[0].markdown);
+        },
+    ]) {
+        const changed = structuredClone(pair);
+        mutate(changed);
+        assert.equal(validatePairedDocuments(changed, d, evidence()), false);
+    }
+    assert.equal(validatePairedDocuments(null, d, evidence()), false);
+});
+
+test("missing, unsupported and incomplete brief content is repaired before independent review", async () => {
+    for (const mutate of [
+        (d) => { delete d.humanReviewBrief; },
+        (d) => { d.humanReviewBrief.architecture.text = " "; },
+        (d) => { d.humanReviewBrief.flowDiagram = ""; },
+        (d) => { d.humanReviewBrief.outcomeAndScope.sectionIds = ["invented"]; },
+        (d) => { d.humanReviewBrief.evidenceAndUncertainty.evidenceIds = ["unknown"]; },
+        (d) => { d.humanReviewBrief.decisions = []; },
+        (d) => { d.humanReviewBrief.decisions[0].changeIds = ["unknown"]; },
+        (d) => { d.humanReviewBrief.decisions[0].owner = ""; },
+        (d) => { d.humanReviewBrief.decisions[0].rejectedAlternatives = []; },
+        (d) => { d.humanReviewBrief.decisions[0].approvalBlocker = "false"; },
+        (d) => { d.humanReviewBrief.risks.pop(); },
+        (d) => { d.humanReviewBrief.risks[1].category = d.humanReviewBrief.risks[0].category; },
+        (d) => { d.humanReviewBrief.risks[0].safeguards = ""; },
+        (d) => { d.humanReviewBrief.changesSincePriorReview = ""; },
+    ]) {
+        const malformed = design();
+        mutate(malformed);
+        const ctx = context([evidence(), malformed, design(), review()]);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "GO to Planning");
+        assert.equal(packet.fixIterations, 1);
+        assert.equal(ctx.calls[2].options.label, "Design revision");
+        assert.equal(ctx.calls.length, 4);
+    }
+});
+
+test("rendered word/character budgets include all copied approval-critical content and never truncate", async () => {
+    const d = design();
+    const initialWords = renderHumanReviewBrief(d, evidence()).trim().split(/\s+/u).length;
+    d.humanReviewBrief.outcomeAndScope.text += " word".repeat(briefWordBudget - initialWords);
+    assert.equal(renderHumanReviewBrief(d, evidence()).trim().split(/\s+/u).length, briefWordBudget);
+    assert.deepEqual(validateDesign(d, stage0(), evidence()), []);
+    d.humanReviewBrief.outcomeAndScope.text += " excess";
+    assert.match(validateDesign(d, stage0(), evidence()).join(" "), /1801 words/);
+    const packet = await runDesignFeature(context([evidence(), d, d, d]));
+    assert.equal(packet.recommendation, "NO-GO");
+    assert.equal(packet.pairedDocuments, null);
+    assert.ok(packet.design.humanReviewBrief.outcomeAndScope.text.endsWith(" excess"));
+    const unbroken = design();
+    unbroken.assumptions = ["x".repeat(briefCharacterBudget)];
+    assert.match(validateDesign(unbroken, stage0(), evidence()).join(" "), /characters/);
+    const copied = design();
+    copied.openDecisions = ["question ".repeat(briefWordBudget).trim()];
+    assert.match(validateDesign(copied, stage0(), evidence()).join(" "), /never truncate/);
+});
+
+test("rendering carries exact authoritative assumptions, unknowns and baseline deltas visibly", () => {
+    const e = evidence();
+    e.assumptions = ["Telemetry mapping is proposed, not verified; telemetry owner must validate."];
+    e.unknowns = ["Keyboard acceptance is Unverified; QA owner records enabled-cohort checks."];
+    const d = design();
+    d.evidenceDigest = digest(e);
+    d.assumptions = ["Client compatibility is assumed outside the verified handoff."];
+    d.openDecisions = ["Release owner must decide the enabled test cohort, not production rollout."];
+    const markdown = renderHumanReviewBrief(d, e);
+    for (const value of [...e.assumptions, ...e.unknowns, ...d.assumptions, ...d.openDecisions,
+        d.changes[0].baselineBehavior, d.changes[0].requestedDelta]) {
+        assert.ok(markdown.includes(value));
+    }
+    assert.deepEqual(validateDesign(d, stage0(), e), []);
+    assert.ok(markdown.includes(`No runtime change: ${d.changes[0].noFlagReason}`));
+    assert.ok(!markdown.includes("Unchanged baseline:"));
+    const runtime = runtimeDesign();
+    const runtimeMarkdown = renderHumanReviewBrief(runtime, evidence());
+    assert.ok(runtimeMarkdown.includes(`Default-off flags: ${runtime.changes[0].flagIds.join(", ")}`));
+    assert.ok(runtimeMarkdown.includes("Disabled behavior must preserve the baseline; implementation verification is pending."));
+});
+
+test("hidden or mismatched risks cannot pass solely on a passing rubric and require fresh paired review", async () => {
+    for (const check of ["consistent", "complete", "risksVisible", "evidenceDistinguished", "revisionChangesAccurate"]) {
+        const d = runtimeDesign();
+        d.humanReviewBrief.risks.find((risk) => risk.category === "rollback").safeguards =
+            "See the detailed design; rollback always cancels active work safely.";
+        const failed = review(d);
+        failed.briefChecks[check] = false;
+        failed.briefChecks.rationale = "The brief hides active-attempt risks and contradicts the authoritative rollback plan.";
+        const packet = await runDesignFeature(context([evidence(), d, failed, d, failed, d, failed]));
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.equal(packet.pairedDocuments, null);
+        assert.equal(packet.fixIterations, 2);
+        const fixed = runtimeDesign();
+        const ctx = context([evidence(), d, failed, fixed, review(fixed)]);
+        const corrected = await runDesignFeature(ctx);
+        assert.equal(corrected.recommendation, "GO to Planning");
+        assert.notEqual(corrected.approvalRevision, pairRevision(d));
+        const reviewerInput = JSON.parse(ctx.calls[4].prompt.split("\nDATA:\n")[1]);
+        assert.equal(reviewerInput.designDigest, digest(fixed));
+        assert.equal(reviewerInput.renderedBrief, corrected.pairedDocuments.documents[0].markdown);
+    }
+});
+
+test("malformed paired checks or missing brief criterion fail closed without publishing artifacts", async () => {
+    for (const mutate of [
+        (r) => { delete r.briefChecks; },
+        (r) => { delete r.pairRevision; },
+        (r) => { r.pairRevision = "stale"; },
+        (r) => { r.briefChecks.risksVisible = "true"; },
+        (r) => { r.briefChecks.rationale = " "; },
+        (r) => { r.criteria = r.criteria.filter((criterion) => criterion.id !== "humanDesignReviewBrief"); },
+    ]) {
+        const r = review();
+        mutate(r);
+        const packet = await runDesignFeature(context([evidence(), design(), r]));
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.equal(packet.approvalRevision, null);
+        assert.equal(packet.pairedDocuments, null);
+    }
+});
+
+test("a changed brief or authoritative design cannot reuse a stale review or approval revision", async () => {
+    const original = design();
+    for (const mutate of [
+        (d) => { d.humanReviewBrief.architecture.text += " The proposed flow changed."; },
+        (d) => { d.sections.securityPrivacyPerformance += " A new authentication risk requires a safeguard."; },
+    ]) {
+        const revised = structuredClone(original);
+        mutate(revised);
+        assert.notEqual(pairRevision(original), pairRevision(revised));
+        const packet = await runDesignFeature(context([evidence(), revised, review(original)]));
+        assert.equal(packet.recommendation, "NO-GO");
+        assert.equal(packet.pairedDocuments, null);
+    }
+});
+
+test("verified prior human review regenerates a fresh pair and identifies substantive changes", async () => {
+    const prior = priorReview();
+    const d = runtimeDesign();
+    d.sections.architectureAndDataControlFlow = "The proposed opt-in format is guarded at the shared Example entry point.";
+    d.humanReviewBrief.changesSincePriorReview =
+        "Added a new opt-in format, default-off ownership and active-attempt rollback safeguards; prior review covered tests only.";
+    const e = evidence();
+    e.priorReviewVerification = { verified: true, revision: prior.revision, reference: prior.reference,
+        rationale: "Inspected the supplied human review record for this exact pair." };
+    d.evidenceDigest = digest(e);
+    const r = review(d);
+    r.evidenceDigest = digest(e);
+    r.pairRevision = pairRevision(d, prior);
+    const ctx = context([e, d, r]);
+    ctx.args.priorHumanReview = prior;
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.humanApproval, "pending");
+    assert.notEqual(packet.approvalRevision, prior.revision);
+    assert.equal(packet.approvalRevision, pairRevision(d, prior));
+    const markdown = packet.pairedDocuments.documents[0].markdown;
+    assert.match(markdown, /Changed detailed sections: architectureAndDataControlFlow/);
+    assert.match(markdown, /Changed registers: changes, featureFlags/);
+    assert.ok(markdown.includes(prior.reference));
+    assert.match(markdown, /prior approval is not carried forward/);
+    assert.deepEqual(packet.pairedDocuments.priorReviewContext, { revision: prior.revision, reference: prior.reference });
+    // The next review snapshot can verify this pair without copying the entire history recursively.
+    const nextPrior = priorReview(d, packet.pairedDocuments.priorReviewContext);
+    const nextArgs = { ...ctx.args, priorHumanReview: nextPrior };
+    assert.deepEqual(validateStage0(nextArgs), []);
+    const anotherReference = { ...prior, reference: "human-review/different-reference" };
+    assert.notEqual(pairRevision(d, prior), pairRevision(d, anotherReference));
+});
+
+test("stale, legacy or unverified prior-review pairing stops before claiming a reviewed delta", async () => {
+    for (const mutate of [
+        (p) => { p.revision = "old"; },
+        (p) => { delete p.design.humanReviewBrief; },
+        (p) => { p.design.sections.requirements += " Changed after review."; },
+        (p) => { p.reference = ""; },
+        (p) => { delete p.priorReviewContext; },
+        (p) => { delete p.design.sections; p.revision = pairRevision(p.design, p.priorReviewContext); },
+        (p) => { p.design.sections.requirements = ""; p.revision = pairRevision(p.design, p.priorReviewContext); },
+        (p) => { delete p.design.evidenceDigest; p.revision = pairRevision(p.design, p.priorReviewContext); },
+    ]) {
+        const prior = priorReview();
+        mutate(prior);
+        const ctx = context([]);
+        ctx.args.priorHumanReview = prior;
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "needs clarification");
+        assert.equal(ctx.calls.length, 0);
+        assert.equal(packet.pairedDocuments, null);
+    }
+    const ctx = context([evidence()]);
+    ctx.args.priorHumanReview = priorReview();
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "needs clarification");
+    assert.match(packet.reasons.join(" "), /prior human review/);
+    assert.equal(ctx.calls.length, 1);
+});
+
+test("v10 unpaired journal artifacts are never reused and v11 replays the exact pair without paid calls", async () => {
+    const legacy = design();
+    delete legacy.humanReviewBrief;
+    const ctx = context([evidence(), design(), review()]);
+    const oldPrefix = `design-feature-v10-${digest(ctx.args)}`;
+    const journal = new Map([
+        [`${oldPrefix}-evidence`, evidence()],
+        [`${oldPrefix}-${digest(evidence())}-design`, legacy],
+    ]);
+    const step = async (key, producer) => {
+        if (!journal.has(key)) journal.set(key, await producer());
+        return journal.get(key);
+    };
+    ctx.step = step;
+    const initial = await runDesignFeature(ctx);
+    assert.equal(ctx.calls.length, 3);
+    const resumed = context([]);
+    resumed.step = step;
+    const replay = await runDesignFeature(resumed);
+    assert.deepEqual(replay.pairedDocuments, initial.pairedDocuments);
+    assert.equal(replay.approvalRevision, initial.approvalRevision);
+    assert.equal(resumed.calls.length, 0);
+    assert.equal(replay.humanApproval, "pending");
 });
 
 test("evidence is revision-bound and facts cannot cite unknown sources", () => {
@@ -283,6 +609,7 @@ test("multiple runtime changes can share a flag or use separately owned pinned f
     const d = runtimeDesign();
     d.evidenceDigest = digest(e);
     d.changes.push({ ...structuredClone(d.changes[0]), id: "C2" });
+    d.humanReviewBrief.decisions[0].changeIds.push("C2");
     assert.deepEqual(validateDesign(d, stage0(), e), []);
     const second = structuredClone(d.featureFlags[0]);
     Object.assign(second, { id: "F2", repository: "Broker", evidenceIds: ["E2"] });
@@ -478,7 +805,7 @@ test("combined accessibility and post-implementation handoff does not reuse v5-v
     const packet = await runDesignFeature(ctx);
     assert.equal(packet.recommendation, "GO to Planning");
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v10-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v11-")));
     assert.ok(packet.design.sections.preMortemAndOperationalReadiness);
     assert.ok(packet.design.sections.accessibility);
 });
@@ -636,7 +963,7 @@ test("changed accessibility schema and rubric never replay pre-accessibility v5 
     };
     assert.equal((await runDesignFeature(ctx)).recommendation, "GO to Planning");
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v10-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v11-")));
 });
 
 test("ordinary agent failures explicitly fail closed at each stage", async () => {
@@ -1163,7 +1490,7 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v10-/);
+    assert.match(initial.keys[0], /^design-feature-v11-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
     changed.args.sourceManifest[0].revision = newerSourceRevision;
