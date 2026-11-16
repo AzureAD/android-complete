@@ -104,13 +104,17 @@ export const rubric = Object.freeze([
     "prReadinessAndTraceability",
 ]);
 
-const referenceSchema = object({
-    id: text,
-    repository: text,
-    revision: text,
-    path: text,
-    locator: text,
-});
+const referenceSchema = {
+    type: "object",
+    required: ["id", "repository", "path", "locator"],
+    properties: {
+        id: text,
+        repository: text,
+        revision: text,
+        path: text,
+        locator: text,
+    },
+};
 
 const extractedTargetSchema = object({
     id: text,
@@ -123,42 +127,33 @@ const extractedTargetSchema = object({
     verificationCommands: texts,
 });
 
-const evidenceSchema = object({
-    approvalVerification: object({
-        verified: { type: "boolean" },
-        revision: text,
-        reference: text,
-        rationale: text,
-    }),
-    references: list(referenceSchema),
-    facts: list(object({ statement: text, referenceIds: texts })),
-    conflicts: texts,
-    assumptions: texts,
-    unknowns: texts,
-    blockingUnknowns: texts,
+const approvalVerificationSchema = object({
+    verified: { type: "boolean" },
+    revision: text,
+    reference: text,
+    rationale: text,
 });
 
-const extractionEvidenceSchema = object({
-    approvalVerification: object({
-        verified: { type: "boolean" },
-        revision: text,
-        reference: text,
-        rationale: text,
-    }),
-    extractedSpec: object({
-        title: text,
-        designSummary: text,
-        requirements: list(object({ id: text, text: text })),
-        targets: list(extractedTargetSchema),
-    }),
-    references: list(referenceSchema),
-    facts: list(object({ statement: text, referenceIds: texts })),
-    conflicts: texts,
-    assumptions: texts,
-    unknowns: texts,
-    blockingUnknowns: texts,
-    clarificationQuestions: texts,
-});
+const extractionEvidenceSchema = {
+    type: "object",
+    required: ["extractedSpec", "references", "facts"],
+    properties: {
+        approvalVerification: approvalVerificationSchema,
+        extractedSpec: object({
+            title: text,
+            designSummary: text,
+            requirements: list(object({ id: text, text: text })),
+            targets: list(extractedTargetSchema),
+        }),
+        references: list(referenceSchema),
+        facts: list(object({ statement: text, referenceIds: texts })),
+        conflicts: texts,
+        assumptions: texts,
+        unknowns: texts,
+        blockingUnknowns: texts,
+        clarificationQuestions: texts,
+    },
+};
 
 const fileChangeSchema = object({
     path: text,
@@ -210,35 +205,43 @@ const hostTargetImplementationSchema = object({
     }),
 });
 
-const implementationSchema = object({
-    taskRevision: text,
-    targets: list(targetImplementationSchema),
-    traceability: list(object({
-        requirementId: text,
-        targetIds: texts,
-        filePaths: texts,
-        testLocations: texts,
-        verification: text,
-    })),
-    assumptions: texts,
-    openDecisions: texts,
-    blockingUnknowns: texts,
-});
+const implementationSchema = {
+    type: "object",
+    required: ["targets", "traceability"],
+    properties: {
+        taskRevision: text,
+        targets: list(targetImplementationSchema),
+        traceability: list(object({
+            requirementId: text,
+            targetIds: texts,
+            filePaths: texts,
+            testLocations: texts,
+            verification: text,
+        })),
+        assumptions: texts,
+        openDecisions: texts,
+        blockingUnknowns: texts,
+    },
+};
 
-const hostImplementationSchema = object({
-    taskRevision: text,
-    targets: list(hostTargetImplementationSchema),
-    traceability: list(object({
-        requirementId: text,
-        targetIds: texts,
-        filePaths: texts,
-        testLocations: texts,
-        verification: text,
-    })),
-    assumptions: texts,
-    openDecisions: texts,
-    blockingUnknowns: texts,
-});
+const hostImplementationSchema = {
+    type: "object",
+    required: ["targets", "traceability"],
+    properties: {
+        taskRevision: text,
+        targets: list(hostTargetImplementationSchema),
+        traceability: list(object({
+            requirementId: text,
+            targetIds: texts,
+            filePaths: texts,
+            testLocations: texts,
+            verification: text,
+        })),
+        assumptions: texts,
+        openDecisions: texts,
+        blockingUnknowns: texts,
+    },
+};
 
 const findingSchema = object({
     id: text,
@@ -251,17 +254,21 @@ const findingSchema = object({
     requiredChange: text,
 });
 
-const reviewSchema = object({
-    criteria: list(object({ id: { type: "string", enum: rubric }, pass: { type: "boolean" } })),
-    acceptanceCriteria: list(object({
-        targetId: text,
-        criterion: text,
-        passed: { type: "boolean" },
-        evidence: text,
-    })),
-    findings: list(findingSchema),
-    blockingUnknowns: texts,
-});
+const reviewSchema = {
+    type: "object",
+    required: ["criteria", "acceptanceCriteria"],
+    properties: {
+        criteria: list(object({ id: { type: "string", enum: rubric }, pass: { type: "boolean" } })),
+        acceptanceCriteria: list(object({
+            targetId: text,
+            criterion: text,
+            passed: { type: "boolean" },
+            evidence: text,
+        })),
+        findings: list(findingSchema),
+        blockingUnknowns: texts,
+    },
+};
 
 export const slimIntakeSchema = object({
     verdict: { type: "string", enum: ["ready", "clarify", "reject"] },
@@ -307,7 +314,7 @@ Unavailable or unconfigured MCP/code-intelligence servers (such as Bluebird MCP,
 Report genuine product/requirement blocking uncertainty explicitly in blockingUnknowns.`;
 
 const readerBoundaries = `You are Stage 1 (read-only repository evidence and specification extraction) of a multi-stage coding workflow.
-Inspect repository sources and return structured JSON, not files. Later workflow stages (code-builder, code-reviewer, and PR publishing) will perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
+Inspect repository sources and return only the requested structured output (Markdown + JSON metadata block when requested, or JSON matching the supplied schema), never file edits. Later workflow stages (code-builder, code-reviewer, and PR publishing) will perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
 Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy during this stage.
 Android Auth source layout reference (avoid guessing nonexistent paths):
 - broker: broker/broker4j/src/{main,test}/com/microsoft/identity/broker4j/..., broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
@@ -2835,12 +2842,63 @@ export function discoverChangedFilesFromGit(
     }
 }
 
-export function normalizeEvidenceResponse(rawEvidence, task) {
-    if (!record(rawEvidence)) return rawEvidence;
-    if (record(rawEvidence.approvalVerification) && Array.isArray(rawEvidence.references)) {
-        return rawEvidence;
+function extractTrailingJsonMetadata(rawText) {
+    if (typeof rawText !== "string") return null;
+    const trimmed = rawText.trim();
+    if (!trimmed) return null;
+    const fenceRegex = /```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```/gi;
+    const matches = [...trimmed.matchAll(fenceRegex)];
+    for (let idx = matches.length - 1; idx >= 0; idx -= 1) {
+        try {
+            const parsed = JSON.parse(matches[idx][1].trim());
+            if (record(parsed)) return parsed;
+        } catch {
+            // Try earlier fenced block.
+        }
     }
-    if (typeof rawEvidence.verdict !== "string") return rawEvidence;
+    try {
+        const direct = JSON.parse(trimmed);
+        if (record(direct)) return direct;
+    } catch {
+        // Not raw JSON.
+    }
+    return null;
+}
+
+export function normalizeEvidenceResponse(rawEvidence, task) {
+    const candidate = typeof rawEvidence === "string"
+        ? extractTrailingJsonMetadata(rawEvidence)
+        : rawEvidence;
+    if (!record(candidate)) return rawEvidence;
+    if (Array.isArray(candidate.references) && Array.isArray(candidate.facts)) {
+        const defaultRevision = task?.revision || "HEAD";
+        const defaultReference = task?.approval?.reference || `prompt:${defaultRevision}`;
+        const references = candidate.references.map((ref) => record(ref) && ref.revision === undefined
+            ? { ...ref, revision: defaultRevision }
+            : ref);
+        const normalized = {
+            ...candidate,
+            approvalVerification: candidate.approvalVerification === undefined
+                ? {
+                    verified: true,
+                    revision: defaultRevision,
+                    reference: defaultReference,
+                    rationale: "Deterministically bound by workflow host to caller task revision and approval reference.",
+                }
+                : candidate.approvalVerification,
+            references,
+            conflicts: candidate.conflicts === undefined ? [] : candidate.conflicts,
+            assumptions: candidate.assumptions === undefined ? [] : candidate.assumptions,
+            unknowns: candidate.unknowns === undefined ? [] : candidate.unknowns,
+            blockingUnknowns: candidate.blockingUnknowns === undefined ? [] : candidate.blockingUnknowns,
+        };
+        if (record(candidate.extractedSpec) && normalized.clarificationQuestions === undefined) {
+            normalized.clarificationQuestions = [];
+        }
+        return normalized;
+    }
+    if (typeof candidate.verdict !== "string") return rawEvidence;
+    rawEvidence = candidate;
 
     const repoKey = normalizeRepositoryKey(rawEvidence.repository || task?.targets?.[0]?.repository || "broker") || "broker";
     const baseBranch = nonempty(rawEvidence.baseBranch) ? rawEvidence.baseBranch.trim() : (task?.targets?.[0]?.baseBranch || "dev");
@@ -3069,6 +3127,12 @@ export function resolveSurgicalFileContent(baseContent, rawContent) {
 export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot = "", exec = defaultExec, previousImplementation = null, requireFullOrEditsContent = false } = {}) {
     if (!record(rawImpl) || !record(task)) return rawImpl;
     if (Array.isArray(rawImpl.targets)) {
+        if (rawImpl.taskRevision === undefined && nonempty(task.revision)) {
+            rawImpl.taskRevision = task.revision;
+        }
+        if (rawImpl.assumptions === undefined) rawImpl.assumptions = [];
+        if (rawImpl.openDecisions === undefined) rawImpl.openDecisions = [];
+        if (rawImpl.blockingUnknowns === undefined) rawImpl.blockingUnknowns = [];
         for (const expectedTarget of task.targets || []) {
             const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
             const actual = rawImpl.targets.find((t) => t?.targetId === expectedTarget.id) ||
@@ -3237,7 +3301,12 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
 export function normalizeReviewResponse(rawReview, task) {
     if (!record(rawReview) || !record(task)) return rawReview;
     if (Array.isArray(rawReview.criteria) && Array.isArray(rawReview.acceptanceCriteria)) {
-        return { ...rawReview, assessmentScope: "source-review; execution verification is tracked separately" };
+        return {
+            ...rawReview,
+            findings: rawReview.findings === undefined ? [] : rawReview.findings,
+            blockingUnknowns: rawReview.blockingUnknowns === undefined ? [] : rawReview.blockingUnknowns,
+            assessmentScope: "source-review; execution verification is tracked separately",
+        };
     }
     if (typeof rawReview.verdict !== "string") return rawReview;
 
@@ -4488,7 +4557,7 @@ export async function prepareCodeFeature(ctx, dependencies = {}) {
             {
                 label,
                 agent: agentName,
-                schema,
+                ...(schema ? { schema } : {}),
                 ...(nonempty(modelOverride) ? { model: modelOverride } : {}),
             },
         );
@@ -4764,6 +4833,10 @@ export async function prepareCodeFeature(ctx, dependencies = {}) {
             ? `Your domain skill guides are ALREADY preloaded verbatim—do NOT call software_factory_read on .github guide files.
 DATA.plannedFiles lists the exact approved PBI files (${hostedPlannedFiles.length} files). Call software_factory_sources once, then inspect ONLY the existing on-disk files in DATA.plannedFiles (plus any directly referenced base class/test helper if needed) in parallel batches of 6-10 software_factory_read calls per turn—do NOT run broad repository-wide directory/glob crawls.`
             : `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.`;
+        const useMarkdownEvidence = !useSlimSchemas && !(needsSpecExtraction || intakeRound > 0);
+        const markdownEvidenceFormat = useMarkdownEvidence
+            ? `\nOUTPUT FORMAT:\nWrite a concise Markdown evidence summary of the inspected files and integration seams, followed at the end by a single fenced \`\`\`json metadata block:\n\`\`\`json\n{\n  "references": [{ "id": "E1", "repository": "${task.targets[0]?.repository || "common"}", "path": "<repo-relative-path>", "locator": "<repo-relative-path>:L<start>-L<end> — <what to add/change>" }],\n  "facts": [{ "statement": "<verified fact>", "referenceIds": ["E1"] }],\n  "conflicts": [],\n  "assumptions": [],\n  "unknowns": [],\n  "blockingUnknowns": []\n}\n\`\`\`\nOmit approvalVerification and commit hashes unless reporting an explicit mismatch; the workflow host stamps them deterministically.`
+            : "";
         const rawEvidence = await step(evidenceStepKey, () => deterministicEvidence
             ? Promise.resolve(deterministicEvidence)
             : ask(
@@ -4785,10 +4858,10 @@ ${Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
                 : ""}
 You are Stage 1 (read-only evidence and specification extraction) of a multi-stage workflow; later stages (code-builder, code-reviewer, and PR creation) execute worktree, implementation, review, and PR steps. Never report requests to implement code, manage worktrees, or run builder/reviewer stages as a conflict with your read-only role, and never report a missing workItemId as a conflict or blockingUnknown when createPullRequests is ${Boolean(createPullRequests)}.
 When the caller invokes code-feature with a design doc, PBI, or prompt, that invocation IS explicit caller authorization to implement the supplied design revision—never reject or block because a status banner inside the design doc markdown says "proposed for engineer approval" or "not yet approved or authorized for implementation".
-Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase. Every question in questions / clarificationQuestions MUST be written in clear, self-contained plain language for the developer—never reference internal IDs like F001 or R18 or dump status summaries as a question.`,
+Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase. Every question in questions / clarificationQuestions MUST be written in clear, self-contained plain language for the developer—never reference internal IDs like F001 or R18 or dump status summaries as a question.${markdownEvidenceFormat}`,
             useSlimSchemas
                 ? slimIntakeSchema
-                : (needsSpecExtraction || intakeRound > 0 ? extractionEvidenceSchema : evidenceSchema),
+                : (needsSpecExtraction || intakeRound > 0 ? extractionEvidenceSchema : undefined),
             {
                 task,
                 createPullRequests,

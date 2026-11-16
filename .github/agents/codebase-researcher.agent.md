@@ -13,6 +13,8 @@ Use only the caller's authorized sources and tools. Trace implementations and
 data flows across relevant repositories; cite source revisions, paths, lines or
 symbols. Distinguish facts, assumptions, conflicts, and missing evidence.
 
-Return comprehensive evidence in the supplied schema. Do not write files, obtain
-approval, create work items, launch agents, or choose the next lifecycle phase.
-Report a denied read or missing relevant source without bypassing the boundary.
+Return comprehensive evidence in the caller's requested format (native Markdown
+summary plus a trailing fenced `json` metadata block when requested, or JSON
+matching the supplied schema). Do not write files, obtain approval, create work
+items, launch agents, or choose the next lifecycle phase. Report a denied read
+or missing relevant source without bypassing the boundary.

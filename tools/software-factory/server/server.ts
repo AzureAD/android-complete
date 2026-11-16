@@ -81,15 +81,25 @@ function hydrateStudioFeature(feature: FactoryFeature): FactoryFeature {
                         drIdx++;
                     }
                 }
-                exec.trace ??= [];
+                const traceEntries: ExecutionTraceEntry[] = exec.trace ?? (exec.trace = []);
+                const roleOrdinal = new Map<string, number>();
                 for (const turn of syntheticDesignTurns) {
-                    const existingIdx = exec.trace.findIndex((t) => t.kind === "agent_turn" && t.label === turn.label && t.status === "completed");
+                    const ord = roleOrdinal.get(turn.role || "") ?? 0;
+                    roleOrdinal.set(turn.role || "", ord + 1);
+                    const matchingCompletedIndices: number[] = [];
+                    for (let i = 0; i < traceEntries.length; i++) {
+                        const t = traceEntries[i]!;
+                        if (t.kind === "agent_turn" && t.status === "completed" && (t.label === turn.label || t.role === turn.role)) {
+                            matchingCompletedIndices.push(i);
+                        }
+                    }
+                    const existingIdx = matchingCompletedIndices[ord] ?? -1;
                     if (existingIdx >= 0) {
-                        if (!exec.trace[existingIdx]!.outputPreview || exec.trace[existingIdx]!.outputPreview!.length < (turn.outputPreview?.length || 0)) {
-                            exec.trace[existingIdx] = { ...exec.trace[existingIdx]!, outputPreview: turn.outputPreview };
+                        if (!traceEntries[existingIdx]!.outputPreview) {
+                            traceEntries[existingIdx] = { ...traceEntries[existingIdx]!, outputPreview: turn.outputPreview };
                         }
                     } else {
-                        exec.trace.push(turn);
+                        traceEntries.push(turn);
                     }
                 }
                 for (const art of cloned.factory.artifacts) {

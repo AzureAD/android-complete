@@ -1912,6 +1912,22 @@ function formatTokens(tokens?: number): string {
     return tokens.toLocaleString();
 }
 
+function splitMarkdownTrailingJson(rawContent: string): { prose: string; metadataJson: string } | null {
+    const trimmed = rawContent.trim();
+    if (!trimmed || trimmed.startsWith("{") || trimmed.startsWith("[")) return null;
+    const match = trimmed.match(/^(?<prose>[\s\S]*?)(?:\r?\n#{2,3}\s+[^\r\n]*metadata[^\r\n]*)?\r?\n```(?:json)?\s*\r?\n(?<json>\{[\s\S]*?\})\r?\n```\s*$/i);
+    if (!match?.groups?.json) return null;
+    const prose = (match.groups.prose || "").trim();
+    if (!prose) return null;
+    try {
+        const parsed: unknown = JSON.parse(match.groups.json.trim());
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+        return { prose, metadataJson: JSON.stringify(parsed, null, 2) };
+    } catch {
+        return null;
+    }
+}
+
 function AssistantDeliverableView({ content }: { content: string }) {
     const [showFormattedJson, setShowFormattedJson] = useState(false);
     const trimmed = content.trim();
@@ -1937,6 +1953,31 @@ function AssistantDeliverableView({ content }: { content: string }) {
         } catch {
             // Not valid JSON — render as Markdown below.
         }
+    }
+    const hybrid = splitMarkdownTrailingJson(content);
+    if (hybrid) {
+        return (
+            <div className="deliverable-structured-wrap">
+                <div className="markdown-prose transcript-markdown">
+                    <Markdown remarkPlugins={[remarkGfm]}>{hybrid.prose}</Markdown>
+                </div>
+                <div className="deliverable-json-toggle-row">
+                    <button
+                        type="button"
+                        className="ghost-chip-btn"
+                        onClick={() => setShowFormattedJson(!showFormattedJson)}
+                    >
+                        {showFormattedJson ? "Hide Structured Metadata ▴" : "{ } Inspect Structured Metadata ▾"}
+                    </button>
+                </div>
+                {showFormattedJson && (
+                    <>
+                        <StructuredOutputPreview raw={hybrid.metadataJson} />
+                        <pre className="code-snippet-box">{hybrid.metadataJson}</pre>
+                    </>
+                )}
+            </div>
+        );
     }
     return (
         <div className="markdown-prose transcript-markdown">

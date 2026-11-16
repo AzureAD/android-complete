@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-    rubric, sections, runDesignFeature, validateStage0, validateDesign,
+    formatDesignMarkdown, rubric, sections, runDesignFeature, validateStage0, validateDesign,
     validateEvidence, validateReview, workflowDefinition, digest,
 } from "./workflow.mjs";
 
@@ -679,4 +679,99 @@ test("mutation of source pins during evidence gathering stops before authoring",
     assert.equal(packet.recommendation, "NO-GO");
     assert.deepEqual(packet.sourceManifest, sourceManifest());
     assert.equal(ctx.calls.length, 1);
+});
+
+test("hybrid Markdown prose outputs for evidence and design author parse cleanly with host-stamped digests and revisions", async () => {
+    const markdownEvidence = [
+        "## Evidence Summary",
+        "- Verified `Example.kt` at pinned commit without breaking existing callers.",
+        "",
+        "## Evidence Metadata",
+        "```json",
+        JSON.stringify({
+            references: [{ id: "E1", repository: "Common", path: "Example.kt", locator: "Example.kt:L1-L20" }],
+            facts: [{ statement: "Example preserves existing caller response shape.", referenceIds: ["E1"] }],
+            sourceVerification: [{ repository: "Common", verified: true, rationale: "Inspected pinned Example.kt." }],
+            scenarioTraces: [{
+                id: "T1", requirementIds: ["R1"], scenario: "Existing caller", trigger: "Call Example",
+                conditions: "Supported caller", steps: [{ behavior: "Example accepts the existing request.", referenceIds: ["E1"] }],
+                terminalOutcome: { behavior: "Existing response remains compatible.", referenceIds: ["E1"] },
+                status: "verified",
+            }],
+        }, null, 2),
+        "```",
+    ].join("\n");
+
+    const markdownDesign = [
+        "## 1. Problem and Scope",
+        "Preserve existing response contract with explicit regression coverage.",
+        "",
+        "## 2. Requirements (requirements)",
+        "- `R1`: Preserve compatibility.",
+        "",
+        "## 3. Architecture & Data/Control Flow",
+        "- `Example.kt` (`E1`) already returns the compatible payload across callers.",
+        "",
+        "## 4. Alternatives and Decision",
+        "- Alternative A: rewrite `Example.kt`. Alternative B (chosen): preserve `Example.kt` contract intact and add regression test coverage.",
+        "",
+        "## 5. Components, Interfaces, and Compatibility",
+        "- No breaking wire or IPC changes.",
+        "",
+        "## 6. State, Failures, Recovery, and Reversibility",
+        "- Stateless path; safe rollback.",
+        "",
+        "## 7. Security, Privacy, and Performance",
+        "- No PII or token material logged; zero latency overhead.",
+        "",
+        "## 8. Telemetry and Success Criteria",
+        "- Existing span attributes remain unchanged.",
+        "",
+        "## 9. Tests and Evals",
+        "- Run unit tests verifying `Example.kt`.",
+        "",
+        "## 10. Dependencies and Open Decisions",
+        "- Single-repo delivery in `Common`; no open decisions.",
+        "",
+        "## Design Metadata",
+        "```json",
+        JSON.stringify({
+            traceability: [{ requirementId: "R1", sectionIds: ["requirements"], evidenceIds: ["E1"], verification: "Run compatibility test." }],
+            changes: [{
+                id: "C1", requirementIds: ["R1"], sectionIds: ["requirements"], traceIds: ["T1"], evidenceIds: ["E1"],
+                classification: "preserve-existing", implementation: "regression-only",
+                baselineBehavior: "Existing contract is compatible.", requestedDelta: "None; preserve behavior.",
+                necessity: "Compatibility already exists; regression coverage only.", verification: "Run compatibility test.",
+                counterevidence: {
+                    referenceIds: ["E1"], searchSummary: "Inspected Example and caller completion.",
+                    conclusion: "Existing flow handles this contract.", result: "already-handled",
+                },
+            }],
+        }, null, 2),
+        "```",
+    ].join("\n");
+
+    const compactReview = {
+        references: [],
+        changeChecks: [{
+            changeId: "C1", baselineVerified: true, necessityConfirmed: true, counterevidenceVerified: true,
+            referenceIds: ["E1"], rationale: "Independently verified existing compatibility.",
+        }],
+        criteria: rubric.map((id) => ({ id, pass: true })),
+    };
+
+    const ctx = context([markdownEvidence, markdownDesign, compactReview]);
+    const packet = await runDesignFeature(ctx);
+
+    assert.equal(ctx.calls[0].options.schema, undefined, "Repository evidence runs in native Markdown mode without JSON schema");
+    assert.equal(ctx.calls[1].options.schema, undefined, "Design author runs in native Markdown mode without JSON schema");
+    assert.ok(ctx.calls[2].options.schema, "Independent design reviewer keeps compact JSON verdict schema");
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.design.stage0Revision, "requirements-v3");
+    assert.equal(packet.design.evidenceDigest, digest(packet.evidence));
+    assert.equal(packet.evidence.references[0].revision, sourceRevision);
+    assert.equal(packet.evidence.sourceVerification[0].revision, sourceRevision);
+    assert.match(packet.design.sections.problemAndScope, /Preserve existing response contract/);
+    assert.match(formatDesignMarkdown(packet.design), /## 1\. Problem and Scope \(problemAndScope\)/);
+    assert.match(formatDesignMarkdown(packet.design), /## Design Metadata/);
 });

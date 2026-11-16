@@ -2992,3 +2992,50 @@ test("prepareCodeFeature chunks >6 hosted planned files into bounded production 
         rmSync(tmp, { recursive: true, force: true });
     }
 });
+
+test("structured Repository evidence uses native Markdown + metadata fence while host stamps taskRevision and omitted empty arrays", async () => {
+    const markdownEvidence = [
+        "## Inspected Target Summary",
+        "- Verified `CommandDispatcher.java` silent dispatch path.",
+        "",
+        "```json",
+        JSON.stringify({
+            references: [
+                {
+                    id: "E1",
+                    repository: "common",
+                    path: "common4j/src/main/com/microsoft/identity/common/java/controllers/CommandDispatcher.java",
+                    locator: "common4j/src/main/com/microsoft/identity/common/java/controllers/CommandDispatcher.java:L100-L140 — CommandDispatcher.submitSilent",
+                },
+            ],
+            facts: [
+                {
+                    statement: "CommandDispatcher dispatches silent token commands after checking cache.",
+                    referenceIds: ["E1"],
+                },
+            ],
+        }, null, 2),
+        "```",
+    ].join("\n");
+
+    const compactImpl = structuredClone(implementation());
+    delete compactImpl.taskRevision;
+    delete compactImpl.assumptions;
+    delete compactImpl.openDecisions;
+    delete compactImpl.blockingUnknowns;
+
+    const compactReview = structuredClone(review());
+    delete compactReview.findings;
+    delete compactReview.blockingUnknowns;
+
+    const ctx = context([markdownEvidence, compactImpl, compactReview], task(), { verifyPrerequisites: false });
+    const packet = await runCodeFeature(ctx, { verifyLocal: () => ({ ok: true, errors: [], deferredWarnings: [], commandsAttempted: [] }) });
+
+    assert.equal("schema" in ctx.calls[0].options, false, "Repository evidence omits JSON schema in structured mode");
+    assert.ok(ctx.calls[1].options.schema, "Code builder keeps compact JSON schema");
+    assert.ok(ctx.calls[2].options.schema, "Independent code reviewer keeps compact JSON schema");
+    assert.equal(packet.recommendation, "GO to PR Review");
+    assert.equal(packet.implementation.taskRevision, "plan-v2");
+    assert.equal(packet.evidence.approvalVerification.verified, true);
+    assert.equal(packet.evidence.approvalVerification.revision, "plan-v2");
+});

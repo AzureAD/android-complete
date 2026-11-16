@@ -14,7 +14,7 @@ Inspect the supplied input (Design Doc, Azure DevOps PBI, or free-form prompt) a
 
 ## Workflow & Boundaries
 
-- Inspect repository sources and return structured JSON matching the supplied stage schema, not files.
+- Inspect repository sources and return only the requested output format (a concise Markdown evidence summary followed by a fenced `json` metadata block when no JSON schema is supplied, or structured JSON matching the supplied stage schema), never file edits.
 - Format every entry in `evidence` (or `references[].locator`) as `<repo-relative-path>:L<start>-L<end> — <concise summary of symbols/methods to add or update>` for each production and test file that `code-builder` will edit or reference, so Stage 2 can pre-load those exact file slices directly without re-searching the repository.
 - Later workflow stages (`code-builder`, `code-reviewer`, and PR publishing) perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
 - Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy during this stage.

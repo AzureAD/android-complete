@@ -333,8 +333,9 @@ export function parseIntakeProposal(value: unknown, previous: Requirement[] = []
     if (!requirements.length || new Set(requirements.map((entry) => entry.text)).size !== requirements.length) {
         throw new FactoryError("invalid_intake_proposal", "Factory must propose at least one distinct, reviewable success criterion.", 502);
     }
+    const blockingUnknowns = proposal.blockingUnknowns === undefined ? [] : strings(proposal.blockingUnknowns, "Open questions");
     const designTasks = proposal.designTasks === undefined ? [] : strings(proposal.designTasks, "Design tasks");
-    return { summary: text(proposal.summary, "Proposal explanation"), requirements, blockingUnknowns: strings(proposal.blockingUnknowns, "Open questions"),
+    return { summary: text(proposal.summary, "Proposal explanation"), requirements, blockingUnknowns,
         ...(designTasks.length ? { designTasks } : {}) };
 }
 
@@ -456,13 +457,13 @@ export function parsePlan(value: unknown, config: Configuration, requirementIds:
         const covered = strings(item.requirementIds, "Requirement IDs", true);
         if (covered.some((id) => !requirementIds.includes(id))) throw new FactoryError("invalid_plan", "A work item references an unknown requirement.");
         const criteria = strings(item.acceptanceCriteria, "Acceptance criteria", true);
-        const files = strings(item.files, "Expected files");
+        const files = item.files === undefined ? [] : strings(item.files, "Expected files");
         if (files.some((file) => /^(?:[\\/]|[A-Za-z]:[\\/])|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(file))) throw new FactoryError("invalid_plan", "Expected files must stay within the target repository.");
         if (new Set(criteria).size !== criteria.length) throw new FactoryError("invalid_plan", "Acceptance criteria must be unique within a work item.");
         return {
             id: text(item.id, "Work item key"), title: text(item.title, "Work item title"), repository, description,
             requirementIds: covered, acceptanceCriteria: criteria,
-            dependsOn: strings(item.dependsOn, "Dependencies"), files,
+            dependsOn: item.dependsOn === undefined ? [] : strings(item.dependsOn, "Dependencies"), files,
             tests: strings(item.tests, "Expected tests", true),
         };
     });
@@ -479,7 +480,7 @@ export function parsePlan(value: unknown, config: Configuration, requirementIds:
         ready.forEach((item) => remaining.delete(item.id));
     }
     return {
-        summary: text(plan.summary, "Plan summary"), items, blockingUnknowns: strings(plan.blockingUnknowns, "Blocking unknowns"),
+        summary: text(plan.summary, "Plan summary"), items, blockingUnknowns: plan.blockingUnknowns === undefined ? [] : strings(plan.blockingUnknowns, "Blocking unknowns"),
         ...(Array.isArray(plan.reviewHistory) ? { reviewHistory: plan.reviewHistory.map(jsonValue) } : {}),
     };
 }
