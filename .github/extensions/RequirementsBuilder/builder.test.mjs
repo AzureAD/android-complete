@@ -138,6 +138,24 @@ test("mandatory accessibility defaults survive export and cannot be dropped for 
     assert.match(exportMarkdown(draft), /Feature-specific requirement: Feature-specific behavior Unknown/);
 });
 
+test("switching to Authenticator UI flags prior accessibility N/A for resolution", () => {
+    const draft = createDraft("feature");
+    const field = fields.find((item) => item.heading.startsWith("3.6"));
+    const value = field.initialRows.map((row) => [...row]);
+    applyUpdate(draft, { answer: { fieldId: field.id, value, status: "na", reason: "No Authenticator UI" } });
+    assert.match(exportMarkdown(draft), /N\/A: No Authenticator UI/);
+
+    applyUpdate(draft, { metadata: { uiKind: "authenticator" } });
+
+    assert.equal(draft.answers[field.id].status, "unknown");
+    assert.deepEqual(draft.answers[field.id].value, value);
+    assert.ok(summary(draft).unknown.some((gap) => gap.id === field.id));
+    const markdown = exportMarkdown(draft);
+    assert.match(markdown, /Mandatory baseline:.*48dp by 48dp/);
+    assert.match(markdown, /Feature-specific requirement: Unknown/);
+    assert.doesNotMatch(markdown, /N\/A: No Authenticator UI/);
+});
+
 test("table values keep column shape and escape embedded pipes and multiline text", () => {
     const draft = createDraft("feature");
     applyUpdate(draft, { answer: { fieldId: tableField.id, status: "confirmed", value: [["S1", "A | B", "First\nSecond", "FLOW-1"]] } });

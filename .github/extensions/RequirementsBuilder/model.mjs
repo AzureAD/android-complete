@@ -130,6 +130,13 @@ export function applyUpdate(draft, change) {
         if (status === "confirmed" && !hasContent(value)) throw new Error("An empty answer is not confirmed.");
         draft.answers[fieldId] = { value, status, reason, source: "human" };
     }
+    if (change.metadata?.uiKind === "authenticator") {
+        for (const [fieldId, answer] of Object.entries(draft.answers)) {
+            if (fieldById.get(fieldId)?.heading.startsWith("3.6") && answer.status === "na") {
+                draft.answers[fieldId] = { ...answer, status: "unknown", reason: "" };
+            }
+        }
+    }
     for (const proposal of Object.values(draft.proposals)) proposal.stale = true;
     // Any edit invalidates an in-flight AI request; its late response must not overwrite new input.
     draft.request = null;
