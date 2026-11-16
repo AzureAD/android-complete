@@ -448,6 +448,25 @@ export async function startServer(options: {
     const offQa = qaService.subscribe((qaEvent) => {
         broadcastSse(qaEvent.type, qaEvent);
     });
+    const readDataVersion = (): number => {
+        try {
+            const row = options.application.registry.connection.prepare("PRAGMA data_version").get() as { data_version?: number } | undefined;
+            return Number(row?.data_version ?? 0);
+        } catch {
+            return 0;
+        }
+    };
+    let lastDataVersion = readDataVersion();
+    const externalWatchTimer = setInterval(() => {
+        if (sseClients.size === 0) return;
+        const current = readDataVersion();
+        if (current !== lastDataVersion) {
+            lastDataVersion = current;
+            scheduleStateBroadcast("external:sqlite");
+        }
+    }, 1000);
+    externalWatchTimer.unref?.();
+
     const heartbeatTimer = setInterval(() => {
         for (const client of sseClients) {
             if (client.destroyed || client.writableEnded) {
@@ -640,6 +659,7 @@ export async function startServer(options: {
             fallbackFrom = requestedPort;
             await listenOnPort(0);
         } else {
+            clearInterval(externalWatchTimer);
             clearInterval(heartbeatTimer);
             if (stateDebounceTimer) clearTimeout(stateDebounceTimer);
             offRegistry();
@@ -660,6 +680,7 @@ export async function startServer(options: {
         port: address.port,
         fallbackFrom,
         close: async () => {
+            clearInterval(externalWatchTimer);
             clearInterval(heartbeatTimer);
             if (stateDebounceTimer) {
                 clearTimeout(stateDebounceTimer);

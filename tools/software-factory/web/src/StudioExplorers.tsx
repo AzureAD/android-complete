@@ -16,6 +16,7 @@ import type {
 import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import { workerGuidance } from "../../runtime/guidance.ts";
 import { request } from "./api";
+import { SparklesIcon } from "./Icons";
 import {
     buildDesignSnapshots,
     buildPlanSnapshots,
@@ -470,7 +471,8 @@ export function DesignStudioExplorer({
                                                             snippet: (typeof content === "string" ? content : JSON.stringify(content)).slice(0, 6000),
                                                         })}
                                                     >
-                                                        ✦ Ask AI
+                                                        <SparklesIcon size={12} />
+                                                        <span>Ask AI</span>
                                                     </button>
                                                 )}
                                                 {onAppendFeedback && (
@@ -617,7 +619,8 @@ export function DesignStudioExplorer({
                                                                 snippet: `Evidence: ${String(finding.evidence || "")}\nRequired Change: ${String(finding.requiredChange || "")}`,
                                                             })}
                                                         >
-                                                            ✦ Ask AI
+                                                            <SparklesIcon size={12} />
+                                                            <span>Ask AI</span>
                                                         </button>
                                                     )}
                                                     {onAppendFeedback && (
@@ -1002,7 +1005,8 @@ export function PlanStudioExplorer({
                                                 snippet: String(selectedItem.description || "").slice(0, 6000),
                                             })}
                                         >
-                                            ✦ Ask AI
+                                            <SparklesIcon size={12} />
+                                            <span>Ask AI</span>
                                         </button>
                                     )}
                                     {onAppendFeedback && (
@@ -1260,7 +1264,8 @@ export function PlanStudioExplorer({
                                                                 snippet: f,
                                                             })}
                                                         >
-                                                            ✦ Ask AI
+                                                            <SparklesIcon size={12} />
+                                                            <span>Ask AI</span>
                                                         </button>
                                                     )}
                                                 </div>
@@ -1590,7 +1595,8 @@ export function CodeArenaExplorer({
                                             ].filter(Boolean).join("\n\n").slice(0, 6000),
                                         })}
                                     >
-                                        ✦ Ask AI
+                                        <SparklesIcon size={12} />
+                                        <span>Ask AI</span>
                                     </button>
                                 )}
                             </div>
@@ -1701,7 +1707,8 @@ export function CodeArenaExplorer({
                                                                     snippet: `Evidence: ${String(finding.evidence)}\nRequired Fix: ${String(finding.requiredChange)}`,
                                                                 })}
                                                             >
-                                                                ✦ Ask AI
+                                                                <SparklesIcon size={12} />
+                                                                <span>Ask AI</span>
                                                             </button>
                                                         )}
                                                     </div>
@@ -1830,7 +1837,8 @@ export function DeliveryCommandCenter({
                                                 ].join("\n").slice(0, 6000),
                                             })}
                                         >
-                                            ✦ Ask AI
+                                            <SparklesIcon size={12} />
+                                            <span>Ask AI</span>
                                         </button>
                                     )}
                                 </div>

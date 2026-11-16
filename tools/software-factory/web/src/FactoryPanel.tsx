@@ -8,6 +8,15 @@ import { request } from "./api";
 import { nextStep, stageLabels, type AvailableGate } from "../../core/progress.ts";
 import { AskCopilotDrawer, type QaFeedbackBridgeAction } from "./AskCopilotDrawer";
 import { FeatureScorecardStrip } from "./AnalyticsStudio";
+import {
+    ArrowLeftIcon,
+    CheckIcon,
+    GitCompareIcon,
+    SparklesIcon,
+    StageIcon,
+    TerminalIcon,
+    WorkflowIcon,
+} from "./Icons";
 import { FeatureRevisionDiffHub, buildDesignSnapshots, buildPlanSnapshots } from "./RevisionDiffViewer";
 import { ScopeSummary } from "./Confirmation";
 import {
@@ -565,6 +574,7 @@ export function FactoryPanel({
                     className={`studio-view-tab ${studioMode === "pipeline" ? "active" : ""}`}
                     onClick={() => selectStudioMode("pipeline")}
                 >
+                    <WorkflowIcon size={15} className="studio-tab-icon" />
                     <span>Pipeline Stages</span>
                     <span className="studio-tab-badge">
                         {selectedStage + 1}/6 · {stageLabels[selectedStage]}
@@ -577,6 +587,7 @@ export function FactoryPanel({
                     className={`studio-view-tab ${studioMode === "diffs" ? "active" : ""}`}
                     onClick={() => selectStudioMode("diffs")}
                 >
+                    <GitCompareIcon size={15} className="studio-tab-icon" />
                     <span>Revision Diffs</span>
                     <span className={`studio-tab-badge ${multiRoundStageCount > 0 ? "accent" : ""}`}>
                         {multiRoundStageCount > 0
@@ -591,6 +602,7 @@ export function FactoryPanel({
                     className={`studio-view-tab ${studioMode === "transcripts" ? "active" : ""}`}
                     onClick={() => selectStudioMode("transcripts")}
                 >
+                    <TerminalIcon size={15} className="studio-tab-icon" />
                     <span className={`status-dot ${anyRunActive ? "pulse" : "ready"}`} />
                     <span>Subagent Transcripts</span>
                     <span className="studio-tab-badge">
@@ -603,12 +615,14 @@ export function FactoryPanel({
             <div className="studio-view-bar-right">
                 {studioMode === "pipeline" && !viewingActiveStep && (
                     <button type="button" className="ghost-chip-btn" onClick={returnToActiveStep}>
-                        ← Active Step ({stageLabels[progress.stage]})
+                        <ArrowLeftIcon size={13} />
+                        <span>Active Step ({stageLabels[progress.stage]})</span>
                     </button>
                 )}
                 {studioMode !== "pipeline" && (
                     <button type="button" className="ghost-chip-btn" onClick={() => selectStudioMode("pipeline")}>
-                        ← Back to {stageLabels[selectedStage]}
+                        <ArrowLeftIcon size={13} />
+                        <span>Back to {stageLabels[selectedStage]}</span>
                     </button>
                 )}
             </div>
@@ -631,8 +645,11 @@ export function FactoryPanel({
                                 className={`phase ${isCurrent ? "current" : isPast ? "past" : ""} ${isSelected ? "selected-stage" : ""}`}
                             >
                                 <div className="phase-top-row">
-                                    <span className="phase-step-badge">{isPast ? "✓" : index + 1}</span>
+                                    <span className="phase-step-badge">{isPast ? <CheckIcon size={12} /> : index + 1}</span>
                                     <strong>{label}</strong>
+                                    <span className="phase-stage-icon">
+                                        <StageIcon index={index} size={15} />
+                                    </span>
                                 </div>
                                 <small>{stageStatusSubtitle(index)}</small>
                             </button>
@@ -1085,7 +1102,8 @@ export function FactoryPanel({
                                                         snippet: `ADO Work Item #${wi.adoId} (${wi.status}) · Repository: ${wi.repository}${wi.prUrl ? ` · PR: ${wi.prUrl}` : ""}`,
                                                     })}
                                                 >
-                                                    ✦ Ask AI
+                                                    <SparklesIcon size={12} />
+                                                    <span>Ask AI</span>
                                                 </button>
                                             </div>
                                         </div>

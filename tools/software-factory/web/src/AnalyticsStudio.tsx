@@ -7,6 +7,14 @@ import {
     type FeatureScorecard,
 } from "../../core/analytics.ts";
 import type { FactoryFeature } from "../../core/lifecycle-contracts.ts";
+import {
+    ArrowLeftIcon,
+    CpuIcon,
+    GitCompareIcon,
+    GitPullRequestIcon,
+    ShieldCheckIcon,
+    ZapIcon,
+} from "./Icons";
 import { formatDuration } from "./StudioExplorers";
 
 function formatCreditsShort(credits: number): string {
@@ -39,17 +47,17 @@ export function FeatureScorecardStrip({
         <div className="scorecard-strip" aria-label="Feature run scorecard">
             <div className="scorecard-strip-row">
                 <div className="scorecard-metric">
-                    <span className="scorecard-label">AI CREDITS</span>
+                    <span className="scorecard-label"><ZapIcon size={12} /> AI CREDITS</span>
                     <strong>{formatCreditsShort(card.totalCredits)}</strong>
                     <small>{card.totalRuns} workflow run{card.totalRuns === 1 ? "" : "s"}</small>
                 </div>
                 <div className="scorecard-metric">
-                    <span className="scorecard-label">AGENT COMPUTE</span>
+                    <span className="scorecard-label"><CpuIcon size={12} /> AGENT COMPUTE</span>
                     <strong>{card.totalActiveMs > 0 ? formatDuration(card.totalActiveMs) : "—"}</strong>
                     <small>{card.totalSubagents} specialist subagent{card.totalSubagents === 1 ? "" : "s"}</small>
                 </div>
                 <div className="scorecard-metric">
-                    <span className="scorecard-label">REVIEW CONVERGENCE</span>
+                    <span className="scorecard-label"><GitCompareIcon size={12} /> REVIEW CONVERGENCE</span>
                     <strong>
                         {[
                             card.designRounds !== null ? `Design ${card.designRounds}R` : null,
@@ -64,7 +72,7 @@ export function FeatureScorecardStrip({
                     </small>
                 </div>
                 <div className="scorecard-metric">
-                    <span className="scorecard-label">PR &amp; ACCEPTANCE GATE</span>
+                    <span className="scorecard-label"><ShieldCheckIcon size={12} /> PR &amp; ACCEPTANCE GATE</span>
                     <strong>
                         {allFirstPushCiGreen
                             ? `1st-Push Green CI (${card.firstPushCiGreenCount}/${card.prCount}) ✓`
@@ -153,36 +161,49 @@ export function WorkspaceAnalyticsView({
                         />
                         <span>ADO Published Only ({analytics.publishedFeatureCount})</span>
                     </label>
-                    <button type="button" className="primary" onClick={onClose}>
-                        ← Back to Feature Studio
+                    <button type="button" className="primary icon-label-btn" onClick={onClose}>
+                        <ArrowLeftIcon size={14} />
+                        <span>Back to Feature Studio</span>
                     </button>
                 </div>
             </header>
 
             <div className="analytics-kpi-grid">
                 <div className="analytics-kpi-card accent-emerald">
-                    <span className="eyebrow">FIRST-PUSH GREEN CI RATE</span>
+                    <div className="analytics-kpi-head">
+                        <span className="eyebrow">FIRST-PUSH GREEN CI RATE</span>
+                        <span className="kpi-icon-badge emerald"><GitPullRequestIcon size={15} /></span>
+                    </div>
                     <strong>{formatPct(analytics.convergence.firstPushCiGreenRatePct)}</strong>
                     <p>
                         {analytics.convergence.firstPushCiGreenCount} of {analytics.convergence.ciVerifiedPrCount || analytics.convergence.prCount} PRs passed full CI &amp; Copilot review on first push ({analytics.convergence.totalTacticalRepairs} repair pushes)
                     </p>
                 </div>
                 <div className="analytics-kpi-card accent-blue">
-                    <span className="eyebrow">TOTAL AI CREDITS</span>
+                    <div className="analytics-kpi-head">
+                        <span className="eyebrow">TOTAL AI CREDITS</span>
+                        <span className="kpi-icon-badge blue"><ZapIcon size={15} /></span>
+                    </div>
                     <strong>{formatCreditsShort(analytics.totalCredits)}</strong>
                     <p>
                         Avg {formatCreditsShort(analytics.avgCreditsPerExecutedFeature)} per executed feature across {analytics.totalExecutions} deduplicated workflow runs
                     </p>
                 </div>
                 <div className="analytics-kpi-card accent-purple">
-                    <span className="eyebrow">ACTIVE AGENT COMPUTE</span>
+                    <div className="analytics-kpi-head">
+                        <span className="eyebrow">ACTIVE AGENT COMPUTE</span>
+                        <span className="kpi-icon-badge purple"><CpuIcon size={15} /></span>
+                    </div>
                     <strong>{analytics.totalActiveMs > 0 ? formatDuration(analytics.totalActiveMs) : "0s"}</strong>
                     <p>
                         {analytics.totalSubagents} specialist subagent invocations across Author, Independent Reviewer &amp; Observer roles
                     </p>
                 </div>
                 <div className="analytics-kpi-card accent-emerald">
-                    <span className="eyebrow">STAGE 6 ACCEPTANCE AUDIT</span>
+                    <div className="analytics-kpi-head">
+                        <span className="eyebrow">STAGE 6 ACCEPTANCE AUDIT</span>
+                        <span className="kpi-icon-badge emerald"><ShieldCheckIcon size={15} /></span>
+                    </div>
                     <strong>{formatPct(analytics.convergence.monitorCriteriaPassRatePct)}</strong>
                     <p>
                         {analytics.convergence.monitorCriteriaAddressed} / {analytics.convergence.monitorCriteriaTotal} approved requirements independently verified in open PRs

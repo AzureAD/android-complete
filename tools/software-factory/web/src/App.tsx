@@ -10,6 +10,17 @@ import type { SharedTarget } from "../../core/shared-contracts.ts";
 import { WorkspaceAnalyticsView } from "./AnalyticsStudio";
 import { FactoryPanel, FactorySettings } from "./FactoryPanel";
 import { Confirmation, type ConfirmationRequest } from "./Confirmation";
+import {
+    ActivityPulseIcon,
+    ChartTrendIcon,
+    LayersIcon,
+    MoonIcon,
+    PlusIcon,
+    RefreshIcon,
+    SlidersIcon,
+    SparklesIcon,
+    SunIcon,
+} from "./Icons";
 import { RequirementsRevisionDiffExplorer } from "./RevisionDiffViewer";
 import { nextStep } from "../../core/progress.ts";
 import type { runtimeReport } from "../../core/doctor.ts";
@@ -183,6 +194,8 @@ export function App() {
     useEffect(() => {
         if (!project) return;
         let cancelled = false;
+        let currentStreamStatus: LiveStreamStatus = "connecting";
+        let tickCount = 0;
         const sync = async (force = false) => {
             if (refreshing.current) {
                 pendingSseRefresh.current = true;
@@ -204,6 +217,7 @@ export function App() {
 
         const unsubscribeSse = subscribeStudioEvents({
             onStatus: (next) => {
+                currentStreamStatus = next;
                 if (!cancelled) setStreamStatus(next);
             },
             onEvent: (event) => {
@@ -215,8 +229,11 @@ export function App() {
             },
         });
 
-        const pollIntervalMs = streamStatus === "live" ? 25000 : 2500;
-        const timer = setInterval(() => { void sync(); }, pollIntervalMs);
+        const timer = setInterval(() => {
+            tickCount += 1;
+            if (currentStreamStatus === "live" && tickCount % 2 !== 0) return;
+            void sync();
+        }, 2500);
         const focus = () => { void sync(true); };
         window.addEventListener("focus", focus);
         return () => {
@@ -225,7 +242,7 @@ export function App() {
             clearInterval(timer);
             window.removeEventListener("focus", focus);
         };
-    }, [project?.id, streamStatus]);
+    }, [project?.id]);
 
     function finishConfirmation(approved: boolean) {
         confirmation?.resolve(approved);
@@ -378,7 +395,10 @@ export function App() {
                     className={`sidebar-view-btn ${!analyticsOpen && !creating ? "active" : ""}`}
                     onClick={() => { setAnalyticsOpen(false); setCreating(false); }}
                 >
-                    <span>Feature Studio</span>
+                    <span className="sidebar-view-label">
+                        <LayersIcon size={15} />
+                        <span>Feature Studio</span>
+                    </span>
                     <span className="sidebar-count-pill">{visibleFeatures.length}</span>
                 </button>
                 <button
@@ -386,7 +406,10 @@ export function App() {
                     className={`sidebar-view-btn ${analyticsOpen ? "active" : ""}`}
                     onClick={() => { setCreating(false); setEditing(false); setAnalyticsOpen(true); }}
                 >
-                    <span>Scorecard &amp; Analytics</span>
+                    <span className="sidebar-view-label">
+                        <ChartTrendIcon size={15} />
+                        <span>Scorecard &amp; Analytics</span>
+                    </span>
                     <span className="sidebar-count-pill">
                         {workspaceAnalytics.convergence.firstPushCiGreenRatePct !== null
                             ? `${workspaceAnalytics.convergence.firstPushCiGreenRatePct}% CI`
@@ -397,8 +420,16 @@ export function App() {
 
             <div className="sidebar-heading">
                 <span>FEATURES</span>
-                <button type="button" className="sidebar-new-btn" onClick={newFeature} disabled={busy}>
-                    + New
+                <button
+                    type="button"
+                    className="sidebar-new-btn"
+                    aria-label="New feature"
+                    title="Create new feature"
+                    onClick={newFeature}
+                    disabled={busy}
+                >
+                    <PlusIcon size={13} />
+                    <span>New</span>
                 </button>
             </div>
 
@@ -481,7 +512,8 @@ export function App() {
                             className={`topbar-mode-pill ${!analyticsOpen ? "active" : ""}`}
                             onClick={() => setAnalyticsOpen(false)}
                         >
-                            Feature Studio
+                            <LayersIcon size={14} />
+                            <span>Feature Studio</span>
                         </button>
                         <button
                             type="button"
@@ -490,7 +522,8 @@ export function App() {
                             className={`topbar-mode-pill ${analyticsOpen ? "active" : ""}`}
                             onClick={() => { setCreating(false); setEditing(false); setAnalyticsOpen(true); }}
                         >
-                            Scorecard &amp; Analytics
+                            <ChartTrendIcon size={14} />
+                            <span>Scorecard &amp; Analytics</span>
                         </button>
                     </div>
                     {!analyticsOpen && selected && !formOpen && (
@@ -508,21 +541,50 @@ export function App() {
                             className={`text-button ask-copilot-topbar-btn ${qaOpen ? "active" : ""}`}
                             onClick={() => setQaOpen(!qaOpen)}
                         >
-                            ✦ Ask Copilot
+                            <SparklesIcon size={14} />
+                            <span>Ask Copilot</span>
                         </button>
                     )}
-                    <button className="text-button" onClick={() => setSettings(!settings)}>
-                        {settings ? "Close Connections" : "Connections"}
+                    <button
+                        type="button"
+                        className={`text-button icon-label-btn ${settings ? "active" : ""}`}
+                        onClick={() => setSettings(!settings)}
+                        title="Configure target repositories and Azure DevOps"
+                    >
+                        <SlidersIcon size={14} />
+                        <span>{settings ? "Close Connections" : "Connections"}</span>
                     </button>
-                    <button className="text-button" disabled={busy} onClick={() => void act(async () => { setDoctor(await request("/api/doctor")); })}>
-                        Check setup
-                    </button>
-                    <button className="text-button" disabled={busy} onClick={() => void act(async () => { await refresh(); setNotice("Synced latest state."); })}>
-                        Refresh
-                    </button>
-                    <button className="text-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")}>
-                        {theme === "light" ? "Dark" : "Light"}
-                    </button>
+                    <div className="topbar-icon-cluster" role="group" aria-label="Workspace utilities">
+                        <button
+                            type="button"
+                            className={`icon-button ${doctor !== undefined ? "active" : ""}`}
+                            aria-label="Check setup"
+                            title="Check runtime & environment setup"
+                            disabled={busy}
+                            onClick={() => void act(async () => { setDoctor(await request("/api/doctor")); })}
+                        >
+                            <ActivityPulseIcon size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-button"
+                            aria-label="Refresh"
+                            title="Refresh latest state"
+                            disabled={busy}
+                            onClick={() => void act(async () => { await refresh(); setNotice("Synced latest state."); })}
+                        >
+                            <RefreshIcon size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-button"
+                            aria-label={theme === "light" ? "Dark Studio" : "Light Mode"}
+                            title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+                            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+                        >
+                            {theme === "light" ? <MoonIcon size={15} /> : <SunIcon size={15} />}
+                        </button>
+                    </div>
                     <span className={`sync-badge ${syncError ? "offline" : streamStatus === "live" ? "live-sse" : ""}`} role="status">
                         {syncError
                             ? "Offline"
@@ -608,7 +670,7 @@ export function App() {
                             </details>
                         )}
 
-                        <details className="ado-switch-drawer" open={!selected}>
+                        <details className="ado-switch-drawer" open={!selected?.shared}>
                             <summary>
                                 {selected?.shared
                                     ? "Open or import another shared ADO Feature"
@@ -769,7 +831,8 @@ export function App() {
                                                             snippet: requirement.text,
                                                         })}
                                                     >
-                                                        ✦ Ask AI
+                                                        <SparklesIcon size={12} />
+                                                        <span>Ask AI</span>
                                                     </button>
                                                 </div>
                                             ))}

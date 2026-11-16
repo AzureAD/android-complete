@@ -15,6 +15,7 @@ import {
 } from "../../core/diff.ts";
 import type { Artifact, FactoryFeature, Json } from "../../core/lifecycle-contracts.ts";
 import type { FeatureQaContext } from "../../core/qa-contracts.ts";
+import { SparklesIcon, StageIcon } from "./Icons";
 
 export type DiffLayoutMode = "unified" | "split";
 
@@ -296,7 +297,8 @@ function DiffToolbar({
                 </label>
                 {onAskAi && (
                     <button type="button" className="ghost-chip-btn ask-ai-chip" onClick={onAskAi}>
-                        ✦ Ask AI about Diff
+                        <SparklesIcon size={12} />
+                        <span>Ask AI about Diff</span>
                     </button>
                 )}
             </div>
@@ -681,7 +683,8 @@ export function DesignRevisionDiffExplorer({
                                                     .join("\n"),
                                             })}
                                         >
-                                            ✦ Ask AI
+                                            <SparklesIcon size={12} />
+                                            <span>Ask AI</span>
                                         </button>
                                     )}
                                 </div>
@@ -969,6 +972,7 @@ export function FeatureRevisionDiffHub({
                         className={`diff-stage-tab ${activeStage === "brief" ? "active" : ""}`}
                         onClick={() => setActiveStage("brief")}
                     >
+                        <StageIcon index={0} size={14} className="diff-tab-icon" />
                         <span>Stage 1 · Brief &amp; Criteria</span>
                         <span className={`diff-count-chip ${feature.history.length >= 2 ? "has-diff" : ""}`}>
                             {feature.history.length >= 2 ? `${feature.history.length} revs` : "1 rev"}
@@ -981,6 +985,7 @@ export function FeatureRevisionDiffHub({
                         className={`diff-stage-tab ${activeStage === "design" ? "active" : ""}`}
                         onClick={() => setActiveStage("design")}
                     >
+                        <StageIcon index={1} size={14} className="diff-tab-icon" />
                         <span>Stage 2 · Architecture Design</span>
                         <span className={`diff-count-chip ${designSnapshots.length >= 2 ? "has-diff" : ""}`}>
                             {designSnapshots.length >= 2
@@ -997,6 +1002,7 @@ export function FeatureRevisionDiffHub({
                         className={`diff-stage-tab ${activeStage === "plan" ? "active" : ""}`}
                         onClick={() => setActiveStage("plan")}
                     >
+                        <StageIcon index={2} size={14} className="diff-tab-icon" />
                         <span>Stage 3 · PBI Plan</span>
                         <span className={`diff-count-chip ${planSnapshots.length >= 2 ? "has-diff" : ""}`}>
                             {planSnapshots.length >= 2

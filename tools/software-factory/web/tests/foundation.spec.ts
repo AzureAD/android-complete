@@ -72,15 +72,15 @@ test("requirements, approval, shared-core reads, stale edits, and mobile layout"
     await expect(page.locator(".requirement")).toHaveCount(2);
     await expect(page.locator(".requirement").first()).toContainText("Retry only transient IPC errors.");
     await expect(page.getByRole("button", { name: "Publish before approving", exact: true })).toBeDisabled();
-    await page.getByRole("button", { name: "Edit brief and criteria", exact: true }).click();
+    await page.getByRole("button", { name: "Edit brief & criteria", exact: true }).click();
     await page.getByLabel("Scope decisions needed from you").fill("");
     await page.getByRole("button", { name: "Save new revision", exact: true }).click();
     await expect(page.locator(".feature-detail .eyebrow")).toContainText("REVISION 2");
     await page.getByLabel("ADO Feature work item ID").fill("123");
-    await page.getByRole("button", { name: "Publish draft to ADO", exact: true }).click();
+    await page.getByRole("button", { name: "Link & Publish to ID", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("local history is preserved");
     await page.getByRole("button", { name: "Publish to ADO", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Shared ADO Feature #123" })).toBeVisible();
+    await expect(page.getByRole("link", { name: /ADO #123/ })).toBeVisible();
     await page.getByRole("button", { name: "Approve for design", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("Does not start AI work");
     await page.getByRole("button", { name: "Approve scope", exact: true }).click();
@@ -100,7 +100,7 @@ test("requirements, approval, shared-core reads, stale edits, and mobile layout"
     if (!feature) throw new Error("Saved feature was missing.");
     await page.screenshot({ path: test.info().outputPath("software-factory-desktop.png"), fullPage: true });
 
-    await page.getByRole("button", { name: "Edit brief and criteria", exact: true }).click();
+    await page.getByRole("button", { name: "Edit brief & criteria", exact: true }).click();
     await page.getByLabel("Feature title").fill("Unsaved browser draft");
     const session = await page.request.get(`${url}/api/session`);
     const { csrf } = await session.json() as { csrf: string };
@@ -185,7 +185,7 @@ test("a plain-language brief saves without criteria and Factory suggestions stay
     await expect(page.locator(".feature-detail .tag")).toHaveText("Needs review");
     await expect(page.getByRole("button", { name: "Publish before approving", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Run guarded design", exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: "Edit brief and criteria", exact: true }).click();
+    await page.getByRole("button", { name: "Edit brief & criteria", exact: true }).click();
     await expect(page.getByLabel("What would success look like?")).toHaveValue(
         "Document the verified prerequisites and test command.\nKeep production code, dependencies and CI unchanged.",
     );
@@ -196,7 +196,7 @@ test("a plain-language brief saves without criteria and Factory suggestions stay
 
 test("idle dashboards discover chat work, show progress and failures, and preserve drafts during live updates", async ({ page }) => {
     await page.goto(url);
-    await expect(page.getByText(/^Synced /)).toBeVisible();
+    await expect(page.locator(".sync-badge")).toHaveText(/^(● Live|Synced)$/);
     const application = new URL("../../core/application.ts", import.meta.url).href;
     const external = (script: string, ...args: string[]) => execFileSync(process.execPath, ["--input-type=module", "-e", `
         const { Application } = await import(process.argv[1]);
@@ -232,7 +232,7 @@ test("idle dashboards discover chat work, show progress and failures, and preser
     await expect(page.getByRole("dialog")).toContainText("Draft success criteria with Factory?");
     await expect(page.getByRole("dialog")).toContainText("Honor eSTS Retry-After");
     await page.getByRole("button", { name: "Not now", exact: true }).click();
-    await page.getByRole("button", { name: "Edit brief and criteria", exact: true }).click();
+    await page.getByRole("button", { name: "Edit brief & criteria", exact: true }).click();
     await page.getByLabel("Feature title").fill("Unsaved work stays here");
     external(`
         const feature = app.registry.get(process.argv[2]);
@@ -241,12 +241,12 @@ test("idle dashboards discover chat work, show progress and failures, and preser
     `, state.featureId);
     await expect(page.getByRole("alert")).toContainText("This feature changed since you started editing.", { timeout: 8000 });
     await expect(page.getByLabel("Feature title")).toHaveValue("Unsaved work stays here");
-    await page.route("**/api/features*", (route) => route.fulfill({ status: 503, contentType: "application/json",
+    await page.route(/\/api\/features(\?|$)/, (route) => route.fulfill({ status: 503, contentType: "application/json",
         body: JSON.stringify({ error: { code: "unavailable", message: "Connection lost" } }) }));
-    await expect(page.getByRole("status").filter({ hasText: "Updates disconnected" })).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole("alert").filter({ hasText: /Reconnecting live updates.*Connection lost/ })).toBeVisible({ timeout: 8000 });
     await expect(page.getByLabel("Feature title")).toHaveValue("Unsaved work stays here");
-    await page.unroute("**/api/features*");
-    await expect(page.getByText(/^Synced /)).toBeVisible({ timeout: 20000 });
+    await page.unroute(/\/api\/features(\?|$)/);
+    await expect(page.locator(".sync-badge")).toHaveText(/^(● Live|Synced)$/, { timeout: 20000 });
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
@@ -285,7 +285,7 @@ test("a completed design is readable before approval and approval offers a separ
     await settings.fill(JSON.stringify(configuration));
     await page.getByRole("button", { name: "Review & save configuration", exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Save connections", exact: true }).click();
-    await page.getByRole("button", { name: "Connections", exact: true }).click();
+    await page.getByRole("button", { name: "Close Connections", exact: true }).click();
     await page.getByRole("navigation", { name: "Features" }).getByRole("button", { name: /Readable design review.*ADO #456/ }).click();
     await expect(page.getByRole("heading", { name: "Shared source scope needs review" })).toBeVisible();
     await page.getByRole("button", { name: "Review shared reference sources", exact: true }).click();
@@ -379,7 +379,7 @@ test("scope approval carries unresolved engineering tasks into design instead of
     await page.getByRole("button", { name: "Create feature", exact: true }).click();
     await expect(page.getByRole("region", { name: "Design obligations" })).toContainText("bounded-cache overflow");
     await page.getByLabel("ADO Feature work item ID").fill("789");
-    await page.getByRole("button", { name: "Publish draft to ADO", exact: true }).click();
+    await page.getByRole("button", { name: "Link & Publish to ID", exact: true }).click();
     await page.getByRole("button", { name: "Publish to ADO", exact: true }).click();
     await expect(page.getByRole("button", { name: "Approve for design", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "Approve for design", exact: true }).click();
@@ -645,13 +645,23 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await deliveryStudio.getByRole("button", { name: "Sign off gap…" }).click();
     await expect(deliveryStudio.getByLabel("Criterion Text")).toHaveValue("Existing callers receive identical envelope keys.");
 
-    // 6. Verify Stage 1 Scope Studio & Prominent Subagent Flight Recorder + Full Conversation Transcripts
+    // 6. Verify Stage 1 Scope Studio, Semantic SVG Icons, Revision Diffs Hub & Subagent Transcripts
     await stageNav.getByRole("button", { name: /Define success/ }).click();
     const scopeStudio = page.getByRole("region", { name: "Scope and Criteria Studio" });
     await expect(scopeStudio).toContainText("Stage 0 Scope Approval Recorded");
 
-    await expect(page.locator(".sidebar-flight-btn")).toBeVisible();
-    await page.getByRole("tab", { name: /Subagent Flight Recorder & Runs/ }).click();
+    // Verify semantic SVG icons render across stage cards, studio view tabs, sidebar, and topbar
+    await expect(stageNav.locator(".phase-stage-icon svg.sf-icon")).toHaveCount(6);
+    await expect(page.locator(".studio-view-tabs .studio-view-tab svg.sf-icon")).toHaveCount(3);
+    await expect(page.locator(".sidebar-primary-nav svg.sf-icon")).toHaveCount(2);
+    await expect(page.locator(".topbar-icon-cluster svg.sf-icon")).toHaveCount(3);
+
+    // Inspect Revision Diffs Hub & Stage Diff Icons
+    await page.getByRole("tab", { name: /Revision Diffs/ }).click();
+    await expect(page.locator(".diff-stage-tabs .diff-stage-tab svg.sf-icon")).toHaveCount(3);
+
+    // Inspect Subagent Transcripts
+    await page.getByRole("tab", { name: /Subagent Transcripts/ }).click();
     const flightDock = page.getByRole("region", { name: "Live subagents and transcripts" });
     await expect(flightDock.getByLabel("Subagent Flight Recorder").getByText("48,500")).toBeVisible();
     await flightDock.locator(".swimlane-card").first().click();
@@ -683,7 +693,7 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     });
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     expect(injected401).toBe(true);
-    await expect(page.getByText(/^Synced /)).toBeVisible();
+    await expect(page.locator(".sync-badge")).toHaveText(/^(● Live|Synced)$/);
     await page.unroute("**/api/features*");
 
     // 8. Verify Dark Studio default theme, Light Mode toggle, Mobile viewport overflow safety & Connections Mapper
