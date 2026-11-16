@@ -7,6 +7,7 @@ import { mkdtemp, rm, readFile, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { get } from "node:http";
+import { runInNewContext } from "node:vm";
 import { createDraft, fields, template, exportMarkdown, applyUpdate, startAssistance, recordProposal, acceptProposal, summary, assistancePrompt, applicability, validateValue } from "./model.mjs";
 import { DraftStore } from "./store.mjs";
 import { startServer } from "./server.mjs";
@@ -14,6 +15,49 @@ import { startServer } from "./server.mjs";
 const textField = fields.find((field) => field.heading === "Current problem");
 const tableField = fields.find((field) => field.heading === "3.1 Scenarios");
 const answer = (value, status = "confirmed", reason = "") => ({ answer: { fieldId: textField.id, value, status, reason } });
+
+class TestElement {
+    constructor(tag = "") {
+        this.tag = tag;
+        this.children = [];
+        this.listeners = {};
+        this.dataset = {};
+        this.textContent = "";
+    }
+
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+    addEventListener(type, listener) { this.listeners[type] = listener; }
+    setAttribute() {}
+    focus() {}
+    dispatch(type) { return this.listeners[type]?.({ target: this }); }
+    querySelector(selector) {
+        return findElement(this, (node) => selector === `.${node.className}`);
+    }
+}
+
+function findElement(node, predicate) {
+    if (predicate(node)) return node;
+    for (const child of node.children) {
+        const found = findElement(child, predicate);
+        if (found) return found;
+    }
+    return null;
+}
+
+function findElements(node, predicate, result = []) {
+    if (predicate(node)) result.push(node);
+    for (const child of node.children) findElements(child, predicate, result);
+    return result;
+}
+
+async function waitFor(predicate) {
+    const deadline = Date.now() + 3000;
+    while (!(await predicate())) {
+        if (Date.now() >= deadline) throw new Error("Timed out waiting for the UI state.");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+}
 
 async function fixture(t, sender = async () => {}) {
     const root = await mkdtemp(join(tmpdir(), "requirements-builder-test-"));
@@ -262,6 +306,84 @@ test("HTTP autosave, revision conflicts, private export and page policy behave e
     assert.match(response.result.markdown, /Confirmed via UI/);
     assert.ok(response.result.path.startsWith(root));
     assert.doesNotMatch(await readFile(join(root, "test-feature.json"), "utf8"), /token|Bearer/);
+});
+
+test("UI keeps edits typed during an in-flight save and assistance action", async (t) => {
+    const { entry, store, request } = await fixture(t);
+    const document = {
+        createElement: (tag) => new TestElement(tag),
+        getElementById: (id) => {
+            document.elements[id] ??= new TestElement();
+            return document.elements[id];
+        },
+        querySelectorAll: () => [],
+        elements: {},
+    };
+    const updateHeld = new Promise((resolve) => { document.releaseUpdate = resolve; });
+    const assistHeld = new Promise((resolve) => { document.releaseAssist = resolve; });
+    let updateStarted;
+    let assistStarted;
+    const updateStartedPromise = new Promise((resolve) => { updateStarted = resolve; });
+    const assistStartedPromise = new Promise((resolve) => { assistStarted = resolve; });
+    let holdUpdate = true;
+    const browserFetch = async (path, options) => {
+        const result = await request(path, options.body ? JSON.parse(options.body) : null);
+        const response = new Response(JSON.stringify(result.result), {
+            status: result.status,
+            headers: { "Content-Type": "application/json" },
+        });
+        if (path === "/update" && holdUpdate) {
+            holdUpdate = false;
+            updateStarted();
+            await updateHeld;
+        }
+        if (path === "/assist") {
+            assistStarted();
+            await assistHeld;
+        }
+        return response;
+    };
+    const app = await readFile(new URL("./app.js", import.meta.url), "utf8");
+    runInNewContext(app, {
+        document,
+        window: { addEventListener() {} },
+        location: { href: entry.url },
+        URL,
+        fetch: browserFetch,
+        setTimeout,
+        clearTimeout,
+        setInterval() {},
+        structuredClone,
+    });
+
+    await waitFor(() => document.getElementById("editor").children.length > 0);
+    const questions = document.getElementById("questions");
+    questions.value = textField.id;
+    await questions.dispatch("change");
+    let input = findElements(document.getElementById("editor"), (node) => node.tag === "textarea").at(-1);
+    input.value = "First edit";
+    input.dispatch("input");
+    await updateStartedPromise;
+
+    const ask = findElement(document.getElementById("editor"), (node) => node.textContent === "Ask AI to help draft this answer");
+    const action = ask.dispatch("click");
+    input.value = "Edit while save is in flight";
+    input.dispatch("input");
+    document.releaseUpdate();
+    await assistStartedPromise;
+    assert.equal((await store.read("test-feature")).answers[textField.id].value, "Edit while save is in flight");
+
+    input = findElements(document.getElementById("editor"), (node) => node.tag === "textarea").at(-1);
+    input.value = "Edit while assistance is in flight";
+    input.dispatch("input");
+    document.releaseAssist();
+    await action;
+
+    input = findElements(document.getElementById("editor"), (node) => node.tag === "textarea").at(-1);
+    assert.equal(input.value, "Edit while assistance is in flight");
+    await waitFor(async () => (await store.read("test-feature")).answers[textField.id].value === "Edit while assistance is in flight");
+    await waitFor(() => document.getElementById("saved").textContent.startsWith("Saved in this session"));
+    assert.equal((await store.read("test-feature")).answers[textField.id].value, input.value);
 });
 
 test("HTTP AI request invokes sender without modifying confirmed answers; rejection preserves the answer", async (t) => {

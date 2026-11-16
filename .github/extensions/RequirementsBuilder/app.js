@@ -8,10 +8,19 @@ let state;
 let selected;
 let step = 0;
 let timer;
-let saving = false;
+let saveTask;
 let busy = false;
 let failed = false;
 const pending = new Map();
+
+function adopt(next) {
+    if (!state || next.draft.revision >= state.draft.revision) state = next;
+    return state;
+}
+
+function metadataValue(name) {
+    return pending.get(`meta-${name}`)?.metadata?.[name] ?? state.draft.metadata[name];
+}
 
 function error(message) {
     byId("error").textContent = message;
@@ -48,7 +57,6 @@ async function perform(action) {
     busy = true;
     try {
         await flush();
-        if (failed) throw new Error("Save did not complete. Your edits remain in the form. Resolve the error before proceeding.");
         byId("error").hidden = true;
         await action();
     } catch (exception) { error(exception.message); }
@@ -64,24 +72,28 @@ function schedule(key, change) {
 
 async function flush() {
     clearTimeout(timer);
-    while (saving) await new Promise((resolve) => setTimeout(resolve, 20));
-    saving = true;
-    try {
-        for (const [key, change] of pending) {
-            state = await api("/update", { revision: state.draft.revision, change });
-            if (pending.get(key) === change) pending.delete(key);
+    if (saveTask) return saveTask;
+    saveTask = (async () => {
+        try {
+            while (pending.size) {
+                const [key, change] = pending.entries().next().value;
+                adopt(await api("/update", { revision: state.draft.revision, change }));
+                if (pending.get(key) === change) pending.delete(key);
+            }
+            failed = false;
+            overview();
+        } catch (exception) {
+            failed = true;
+            byId("saved").textContent = "Not saved - edits retained in form";
+            throw exception;
         }
-        failed = false;
-        overview();
-    } catch (exception) {
-        failed = true;
-        byId("saved").textContent = "Not saved - edits retained in form";
-        throw exception;
-    } finally { saving = false; }
+    })();
+    try { await saveTask; }
+    finally { saveTask = null; }
 }
 
 function autoNA(field) {
-    const kind = state.draft.metadata.uiKind;
+    const kind = metadataValue("uiKind");
     if (kind === "non-ui" && /3\.[234]/.test(field.heading)) return "Non-UI feature: retain these sections as N/A; describe the caller journey in scenarios and acceptance criteria.";
     if (["non-ui", "other-ui"].includes(kind) && (field.heading.startsWith("3.6") || field.heading === "Acceptance ownership and evidence")) return "No new or changed Authenticator UI is in scope. The section remains in the export with this reason.";
     return null;
@@ -104,7 +116,7 @@ function render() {
     const available = state.fields.filter((field) => field.step === step);
     if (!available.some((field) => field.id === selected)) selected = available[0]?.id;
     byId("intro").hidden = step !== 0;
-    for (const input of document.querySelectorAll("[data-meta]")) input.value = state.draft.metadata[input.dataset.meta];
+    for (const input of document.querySelectorAll("[data-meta]")) input.value = metadataValue(input.dataset.meta);
     byId("steps").replaceChildren(...state.steps.map((name, index) => {
         const node = button(`${index + 1}. ${name}`, () => { step = index; selected = null; render(); });
         if (index === step) node.setAttribute("aria-current", "step");
@@ -132,7 +144,7 @@ function renderEditor() {
     const example = element("details", "", "example");
     example.append(element("summary", "Show an illustrative example"), element("p", field.example), element("p", "Example only - never added to your requirements automatically."));
     editor.append(example);
-    const answer = state.draft.answers[field.id];
+    const answer = pending.get(field.id)?.answer ?? state.draft.answers[field.id];
     let value = structuredClone(answer?.value ?? (field.type === "table" ? field.initialRows : ""));
     const statusLabel = element("label", "How should this answer be treated?");
     const status = element("select");
@@ -200,12 +212,12 @@ function renderAssistance(container, field) {
     container.replaceChildren();
     const actions = element("div", "", "actions");
     actions.append(button("Ask AI to help draft this answer", async () => {
-        state = await api("/assist", { revision: state.draft.revision, fieldId: field.id }); render();
+        adopt(await api("/assist", { revision: state.draft.revision, fieldId: field.id })); render();
     }));
     container.append(actions, element("p", "AI assistance submits a request to this Copilot conversation and may consume credits. It drafts from your saved notes; it does not inspect links or run workflows.", "quiet"));
     if (state.draft.request?.status === "pending") {
         container.append(element("p", "AI assistance pending. You can continue editing; edits make late proposals stale.", "quiet"), button("Cancel pending assistance", async () => {
-            state = await api("/cancel", { revision: state.draft.revision }); render();
+            adopt(await api("/cancel", { revision: state.draft.revision })); render();
         }));
     } else if (state.draft.request?.status === "failed") container.append(element("p", "AI assistance failed to submit. Your saved answers remain unchanged.", "quiet"));
     const proposal = state.draft.proposals[field.id];
@@ -214,11 +226,11 @@ function renderAssistance(container, field) {
         box.append(element("h3", "AI proposal - not yet a requirement"), element("pre", typeof proposal.value === "string" ? proposal.value : proposal.value.map((row) => row.join(" | ")).join("\n")));
         if (proposal.stale) box.append(element("p", "Inputs changed after this proposal was generated. Reject it or ask AI for a fresh proposal."));
         const accept = button("Accept as my reviewed answer", async () => {
-            state = await api("/accept", { revision: state.draft.revision, fieldId: field.id }); render();
+            adopt(await api("/accept", { revision: state.draft.revision, fieldId: field.id })); render();
         }, "primary");
         accept.disabled = Boolean(proposal.stale);
         box.append(accept, button("Reject proposal", async () => {
-            state = await api("/reject", { revision: state.draft.revision, fieldId: field.id }); render();
+            adopt(await api("/reject", { revision: state.draft.revision, fieldId: field.id })); render();
         }));
         container.append(box);
     }
@@ -247,11 +259,11 @@ byId("download").addEventListener("click", () => perform(async () => {
     byId("export-result").textContent = "Markdown draft saved privately and downloaded. Review unresolved decisions before handing it to design.";
 }));
 byId("refresh").addEventListener("click", async () => {
-    if (busy || saving) return;
+    if (busy || saveTask) return;
     busy = true;
     try {
         // Refresh the base revision without discarding pending form edits.
-        state = await api("/state");
+        adopt(await api("/state"));
         await flush();
         render();
         byId("error").hidden = true;
@@ -259,20 +271,20 @@ byId("refresh").addEventListener("click", async () => {
     finally { busy = false; }
 });
 window.addEventListener("beforeunload", (event) => {
-    if (pending.size || saving) { event.preventDefault(); event.returnValue = ""; }
+    if (pending.size || saveTask) { event.preventDefault(); event.returnValue = ""; }
 });
 async function load() {
-    try { state = await api("/state"); render(); }
+    try { adopt(await api("/state")); render(); }
     catch (exception) { error(exception.message); }
 }
 load();
 setInterval(async () => {
-    if (!state || pending.size || saving || busy || failed) return;
+    if (!state || pending.size || saveTask || busy || failed) return;
     try {
         const remote = await api("/state");
-        if (pending.size || saving || busy) return;
-        if (remote.draft.revision !== state.draft.revision) {
-            state = remote;
+        if (pending.size || saveTask || busy) return;
+        if (remote.draft.revision > state.draft.revision) {
+            adopt(remote);
             render();
         }
     } catch (exception) { error(`Could not refresh saved draft: ${exception.message}`); }
