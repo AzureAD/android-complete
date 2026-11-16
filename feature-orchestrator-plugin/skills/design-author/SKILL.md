@@ -71,6 +71,13 @@ readiness** section containing a design-time authoring brief, not a pre-mortem
 draft: requirements/source evidence, known risks, telemetry/rollback inputs, gaps
 and proposed owners. Plan coverage using the
 [pre-mortem content and acceptance contract](../feature-planner/references/pbi-template.md#android-complete-feature-pre-mortem-pbi).
+Seed **Healthy operation and failure detection** with feature-specific customer
+completion and known measurement inputs. Inline the linked contract's requirement
+for post-implementation happy-path/failure scenarios and actual scenario-mapped Kusto
+drafts: eligibility/exposure, attempts/completions, cancellation/abandonment, latency,
+denominators/cohorts, missing telemetry and owned investigation/stop/rollback actions.
+API success or absence of errors alone does not establish customer success; preserve coverage gaps
+and per-measure non-runtime applicability with alternative verification.
 This applies to every feature, including non-runtime work. Include a
 **Pre-mortem child PBI** field (`Pending feature planning`, or existing AB# and URL);
 planning includes the dedicated authoring/review child item, reusing a suitable

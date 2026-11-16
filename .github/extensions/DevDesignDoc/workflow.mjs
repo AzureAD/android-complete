@@ -33,6 +33,7 @@ export const rubric = Object.freeze([
     "failureRecoveryAndReversibility", "securityPrivacyAndPerformance",
     "measurableTelemetryAndSuccess", "accessibilityDesignAndVerification", "testsEvalsAndDependencies",
     "preMortemAndReleaseGates",
+    "healthyOperationAndFailureDetection",
     "defaultOffFeatureIsolation",
     "humanDesignReviewBrief",
 ]);
@@ -539,7 +540,7 @@ export async function runDesignFeature(ctx) {
     const input = JSON.parse(JSON.stringify(ctx.args));
     priorHumanReview = input.priorHumanReview;
     const approved = JSON.stringify(input);
-    const prefix = `design-feature-v11-${digest(input)}`;
+    const prefix = `design-feature-v12-${digest(input)}`;
     const step = (key, producer) => ctx.step(`${prefix}-${key}`, producer);
     const ask = (label, task, schema, data) => ctx.agent(
         `${boundaries}\n${task}\nDATA:\n${JSON.stringify(data)}`, { label, schema },
@@ -585,6 +586,10 @@ verify each pin in sourceVerification. Report any relevant source omitted from t
 Only put repository source references in references; the separate approvalVerification
 records session approval provenance. Local manifests are verification aids, not repository sources.
 Gather existing telemetry contracts and rollback mechanisms for the pre-mortem authoring brief from pinned sources.
+Trace customer-visible successful outcomes as well as errors: identify existing eligibility/exposure,
+attempt/completion and latency signals, correlation/deduplication keys, and missing-terminal/ingestion
+coverage. An API success alone does not establish customer success. Record unavailable signals as
+gaps; never add off-path telemetry or assume missing events mean failure, abandonment or health.
 Distinguish verified current instrumentation from proposed signals, unresolved future table/property
 mappings and later validation/release prerequisites. Missing production data while disabled is expected;
 unexecuted pre-flight queries and owned future mapping gaps are not by themselves blocking baseline
@@ -682,6 +687,29 @@ units/outcomes, eligibility/execution/baseline cohorts, time windows, numerators
 deduplication/sampling and coverage gaps; monitoring owner/cadence/window/thresholds/stop criteria/
 escalation; rollback triggers/owners/default-off flag mechanism, propagation, active/in-flight attempts
 and persisted/partial-state recovery; and owned validation/release prerequisites.
+Plan a required "Healthy operation and failure detection" section in the eventual pre-mortem.
+In this design-time brief, supply feature-specific customer-success definitions, requirement/trace/source
+links and known measurement inputs; inline the following authoring requirements for the dependent PBI.
+After implementation and dispatch, generate corresponding happy-path AND failure/degradation scenarios
+with stable scenario IDs: expected customer-visible completion (not just API success), eligibility and
+exposure, attempts, completions, cancellation versus abandonment, latency and silent/missing telemetry.
+For each applicable measure define its unit (user/device/journey/attempt), numerator/denominator,
+eligible/exposed/executing/baseline cohorts, version/flag dimensions, observation and completion windows,
+retry/deduplication/sampling rules and ingestion delay. Use existing permitted signals; never introduce
+disabled-path telemetry. Missing eligibility/exposure signals are owned coverage gaps, not invented counts.
+Generate actual Kusto (KQL) draft text, not just query titles or prose, with query IDs mapped to
+every scenario/measure, expected output columns/units, healthy baseline or explicitly unconfirmed
+target, and interpretation/action. Shared queries may cover multiple scenarios with explicit mappings.
+Cover healthy volume/completion, completion rate, abandonment/missing terminals, latency and telemetry
+coverage; separate cancellation from time-window-matured abandonment and ingestion loss. Guard zero
+denominators and low samples as insufficient evidence, never 100% success or automatic health/failure.
+Map deviations to failure scenarios/customer impact, safeguards and response. Name monitoring and
+response owners, review cadence/window, investigation triggers, stop-expansion criteria and rollback
+triggers; mark unknown targets/owners explicitly with an accountable resolution action, not approval.
+Retain this section for non-runtime work; justify each inapplicable metric/query and specify an
+observable alternative verification/owner rather than fabricate runtime telemetry or omit the section.
+Reference the exact design telemetry contract; inline scenario/query/response mappings so the
+pre-mortem remains reviewable without duplicating an entire dashboard specification.
 Do not generate the full pre-mortem or its KQL drafts during design or implementation.
 Include "Pre-mortem artifact: Pending implementation completion and PBI dispatch".
 Require the dedicated authoring PBI to depend on all feature implementation PBIs across repositories.
@@ -702,6 +730,8 @@ are acceptable with explicit gaps/follow-up owners; do not invent approved thres
 No traffic or missing instrumentation is not proof of health. Before relying on monitoring for rollout,
 its owner validates contracts, mappings, outcomes, cohorts and denominators against
 an approved enabled E2E test cohort and attaches evidence. Broad production enablement is not required.
+Include controlled happy-path and failure cases plus missing/late-terminal and zero/low-sample cases
+to verify query outputs and detection semantics; receipt of a success event alone is not validation.
 The release owner separately resolves blocking prerequisites and approves rollback readiness/enablement.
 Document review or GO to Planning is not rollout approval, query validation or activation permission.
 Include "Pre-mortem child PBI: Pending feature planning", or a supplied existing AB# and durable URL
@@ -840,6 +870,21 @@ does not require activation or broad production enablement.
 Verify a separate approved enabled E2E test cohort validation/evidence gate before monitoring is
 relied on for rollout and a separate release-owner approval gate. Design/PBI document completion is
 not rollout approval, query validation or activation permission. Never waive missing baseline evidence.
+For healthyOperationAndFailureDetection, independently assess the brief's feature-specific customer
+success definitions and measurement inputs AND its explicit post-implementation authoring requirements.
+Require the eventual "Healthy operation and failure detection" section, happy-path and failure
+scenario IDs mapped to actual KQL draft text/query IDs, output shapes/units and healthy baselines,
+not just query titles or a generic promise to monitor errors. Check eligible/exposed/executing/baseline
+cohorts, numerators/denominators, completion/observation windows, retries/deduplication/sampling,
+cancellation versus matured abandonment, latency, ingestion/missing-terminal coverage and low/zero
+sample handling. API success/no errors/no traffic alone cannot prove customer success.
+Check scenario-linked detection, monitoring/response owners, cadence and investigation/stop-expansion/
+rollback triggers; unknown targets/mappings/owners need explicit resolution actions, not invented approval.
+Reject omitted happy-path coverage or blanket N/A; accept justified per-measure non-runtime N/A only
+with observable alternative verification/ownership. Preserve default-off isolation, post-implementation
+authoring, named human review and separate enabled-E2E query-validation/release gates.
+Require planned controlled happy-path/failure, missing/late-terminal and zero/low-sample query checks,
+not merely a plan to confirm that success events arrive.
 Use the supplied designDigest and evidenceDigest for the exact input context.
 A false change check prohibits GO even if all rubric criteria pass.
 For each issue return a unique ID, rubric ID, severity, exact location, evidence, required change.
