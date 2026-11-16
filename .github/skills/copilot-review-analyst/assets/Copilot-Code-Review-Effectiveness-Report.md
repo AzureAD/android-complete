@@ -2,6 +2,11 @@
 
 **Android Auth Platform | June 10 – July 15, 2026**
 
+> **Template scope:** This historical sample covers **GitHub Copilot** only.
+> For new combined reports, title the document **AI Code Review Effectiveness**,
+> add **Foundry / AuthApp** to the same file, and replace every sample statistic
+> with the current dataset. Preserve source labels in all breakdowns and examples.
+
 ---
 
 ## Executive Summary
@@ -114,6 +119,18 @@ Declined and Unresolved comments are excluded from both the numerator and the de
 ---
 
 ## Results by Repository
+
+### Results by Review Source
+
+| Review source | Repositories | Comments | Response rate | Helpful/adopted | Precision |
+|---------------|--------------|----------|---------------|-----------------|-----------|
+| **GitHub Copilot** | Common, MSAL, Broker | 132 | 72.0% | 54.5% | 97.3% |
+| **Foundry** | AuthApp | Not collected in this historical sample | n/a | n/a | n/a |
+
+In new reports, generate this comparison from each source's own denominator,
+include all outcome buckets, and put it before the repository breakdown.
+Add a Review source column to repository and engineer/source tables. Do not
+treat missing historical Foundry data as zero traffic or a trend baseline.
 
 | Repository | Comments | Response Rate | Helpful | Declined | Not Helpful | Unresolved | Precision |
 |------------|----------|---------------|---------|----------|-------------|------------|-----------|
@@ -335,4 +352,3 @@ Based on this analysis, we see three opportunities:
 ---
 
 *Analysis conducted July 15, 2026. Data covers all PRs created June 10 – July 15, 2026 in the Common, MSAL, and Broker repositories. This report introduces a three-way verdict methodology (Helpful / Declined / Not Helpful) and a Copilot precision metric to fairly distinguish AI errors from deliberate engineer judgment calls.*
-

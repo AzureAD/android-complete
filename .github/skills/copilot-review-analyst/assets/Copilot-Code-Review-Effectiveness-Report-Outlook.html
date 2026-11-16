@@ -18,6 +18,9 @@
 </style>
 </head>
 <body style='margin:0;padding:0;background-color:#ffffff;'>
+<!-- Historical GitHub-only sample. Generate AI Code Review Effectiveness with
+     GitHub Copilot and Foundry/AuthApp in ONE report, replacing all sample data.
+     Add source columns to repository, coverage, engineer/source and example tables. -->
 
 <!-- preheader (hidden inbox preview text) -->
 <div style='display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#eef1f6;'>Copilot review effectiveness - engineers adopted 78% of 138 comments; 99.1% precision, only 1 genuine error.</div>
@@ -59,6 +62,15 @@
 </td></tr>
 
 <!-- ===================== BODY SECTIONS ===================== -->
+<tr><td style='padding:8px 40px;'>
+  <div style='font-family:Segoe UI,Arial,sans-serif;font-size:16px;font-weight:700;color:#0a3069;line-height:23px;mso-line-height-rule:exactly;'>Results by Review Source</div>
+  <table role='presentation' width='100%' cellpadding='8' cellspacing='0' border='0' style='border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif;font-size:13px;'>
+    <tr bgcolor='#f6f8fa'><td style='border:1px solid #d0d7de;'><b>Review source</b></td><td style='border:1px solid #d0d7de;'><b>Repositories</b></td><td style='border:1px solid #d0d7de;'><b>Comments</b></td><td style='border:1px solid #d0d7de;'><b>Helpful/adopted</b></td><td style='border:1px solid #d0d7de;'><b>Precision</b></td></tr>
+    <tr><td style='border:1px solid #d0d7de;'>GitHub Copilot</td><td style='border:1px solid #d0d7de;'>Common, MSAL, Broker</td><td style='border:1px solid #d0d7de;'>138</td><td style='border:1px solid #d0d7de;'>78.3%</td><td style='border:1px solid #d0d7de;'>99.1%</td></tr>
+    <tr><td style='border:1px solid #d0d7de;'>Foundry</td><td style='border:1px solid #d0d7de;'>AuthApp</td><td style='border:1px solid #d0d7de;'>Not collected in this historical sample</td><td style='border:1px solid #d0d7de;'>n/a</td><td style='border:1px solid #d0d7de;'>n/a</td></tr>
+  </table>
+  <p style='font-family:Segoe UI,Arial,sans-serif;font-size:13.5px;line-height:23px;mso-line-height-rule:exactly;color:#31404f;'>For new reports, compute each source independently and include response rate and every outcome bucket. Missing historical Foundry data is not zero activity; label its first measured period a new baseline.</p>
+</td></tr>
 <!-- Drop one or more content blocks from assets/components.html here. Each top-level section
      is a <tr><td style='padding:8px 40px;'> ... </td></tr>. Use a section-heading block first,
      then the body block(s). Insert <div> spacers for vertical rhythm (see outlook-compat.md). -->

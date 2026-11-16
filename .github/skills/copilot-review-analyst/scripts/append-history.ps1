@@ -49,7 +49,13 @@ if (-not (Test-Path $finalPath)) {
     return
 }
 
-$data = Get-Content $finalPath -Raw | ConvertFrom-Json
+$data = @(Get-Content $finalPath -Raw | ConvertFrom-Json)
+foreach ($item in $data) {
+    if (-not $item.ReviewSource) {
+        $source = if ($item.Repo -eq "authapp") { "Foundry" } else { "GitHub Copilot" }
+        $item | Add-Member -NotePropertyName ReviewSource -NotePropertyValue $source -Force
+    }
+}
 
 # --- Load coverage (Tier 2.4), if present ---
 # coverage.json is emitted by analyze.ps1 and records, per repo, how many merged human PRs
@@ -63,8 +69,9 @@ if (Test-Path $CoverageFile) {
 # --- Compute period ---
 $startDate = [datetime]::ParseExact($PeriodStart, "yyyy-MM-dd", $null)
 $endDate = [datetime]::ParseExact($PeriodEnd, "yyyy-MM-dd", $null)
-$periodDays = ($endDate - $startDate).Days
-$periodWeeks = [math]::Round($periodDays / 7, 1)
+if ($endDate -lt $startDate) { throw "PeriodEnd must not be before PeriodStart." }
+$periodDays = ($endDate - $startDate).Days + 1
+$periodWeeks = $periodDays / 7
 
 # --- Compute overall stats (canonical taxonomy) ---
 # final_classification.json now carries a fully-resolved canonical Verdict per comment
@@ -95,12 +102,16 @@ $unknownPct = if ($total -gt 0) { [math]::Round(($unknownCount / $total) * 100, 
 $repliedHelpfulRate = if ($replied -gt 0) { [math]::Round(($repliedHelpful / $replied) * 100, 1) } else { 0 }
 # Copilot precision: when Copilot was evaluable for correctness (helpful + genuinely incorrect), how often it was correct
 $precisionDenom = $confirmedHelpful + $confirmedNotHelpfulIncorrect
-$precision = if ($precisionDenom -gt 0) { [math]::Round(($confirmedHelpful / $precisionDenom) * 100, 1) } else { 0 }
+$precision = if ($precisionDenom -gt 0) { [math]::Round(($confirmedHelpful / $precisionDenom) * 100, 1) } else { $null }
 $commentsPerWeek = if ($periodWeeks -gt 0) { [math]::Round($total / $periodWeeks, 1) } else { $total }
 
 # Count unique PRs
 $humanPRs = ($data | Select-Object -Property Repo, PRNumber -Unique | Group-Object Repo | Measure-Object -Property Count -Sum).Sum
-$reviewedPRs = $humanPRs  # All PRs in final_classification had Copilot comments
+$prsWithInlineFeedback = $humanPRs
+$reviewedPRs = if ($coverage -and $coverage.overall) {
+    if ($null -ne $coverage.overall.reviewedByAI) { $coverage.overall.reviewedByAI }
+    else { $coverage.overall.reviewedByCopilot }
+} else { $prsWithInlineFeedback }
 $avgCommentsPerPR = if ($reviewedPRs -gt 0) { [math]::Round($total / $reviewedPRs, 1) } else { 0 }
 
 # --- Per-repo stats (canonical taxonomy) ---
@@ -116,6 +127,7 @@ foreach ($repoGroup in ($data | Group-Object Repo)) {
     $rConfNH = $rRepliedNH + $rDeclined   # combined dismissals for trend continuity
 
     $repoStats[$repoName] = @{
+        reviewSource         = $repoGroup.Group[0].ReviewSource
         comments             = $rTotal
         responseRate         = if ($rTotal -gt 0) { [math]::Round(($rReplied / $rTotal) * 100, 1) } else { 0 }
         helpfulPct           = if ($rTotal -gt 0) { [math]::Round(($rConfH / $rTotal) * 100, 1) } else { 0 }
@@ -123,6 +135,41 @@ foreach ($repoGroup in ($data | Group-Object Repo)) {
         notHelpfulIncorrectPct = if ($rTotal -gt 0) { [math]::Round(($rRepliedNH / $rTotal) * 100, 1) } else { 0 }
         declinedPct          = if ($rTotal -gt 0) { [math]::Round(($rDeclined / $rTotal) * 100, 1) } else { 0 }
         unresolvedPct        = if ($rTotal -gt 0) { [math]::Round(($rUnresolved / $rTotal) * 100, 1) } else { 0 }
+    }
+}
+
+# --- Per-source stats: never attribute Foundry outcomes to GitHub Copilot ---
+$sourceStats = @{}
+$sourceNames = @($data.ReviewSource)
+if ($coverage -and $coverage.perRepo) { $sourceNames += @($coverage.perRepo.reviewSource) }
+foreach ($source in @($sourceNames | Where-Object { $_ } | Select-Object -Unique)) {
+    $comments = @($data | Where-Object { $_.ReviewSource -eq $source })
+    $count = $comments.Count
+    $sourceHelpful = @($comments | Where-Object Verdict -eq "helpful").Count
+    $sourceIncorrect = @($comments | Where-Object Verdict -eq "incorrect").Count
+    $sourceDeclined = @($comments | Where-Object Verdict -eq "declined").Count
+    $sourceUnresolved = @($comments | Where-Object Verdict -eq "unresolved").Count
+    $sourceUnknown = @($comments | Where-Object Verdict -eq "unknown").Count
+    $sourceReplied = @($comments | Where-Object Replied -eq $true).Count
+    $sourceStats[$source] = [ordered]@{
+        comments = $count
+        commentsPerWeek = [math]::Round($count / $periodWeeks, 1)
+        responseRate = if ($count -gt 0) { [math]::Round($sourceReplied / $count * 100, 1) } else { 0 }
+        helpfulPct = if ($count -gt 0) { [math]::Round($sourceHelpful / $count * 100, 1) } else { 0 }
+        declinedPct = if ($count -gt 0) { [math]::Round($sourceDeclined / $count * 100, 1) } else { 0 }
+        incorrectPct = if ($count -gt 0) { [math]::Round($sourceIncorrect / $count * 100, 1) } else { 0 }
+        unresolvedPct = if ($count -gt 0) { [math]::Round($sourceUnresolved / $count * 100, 1) } else { 0 }
+        unknownPct = if ($count -gt 0) { [math]::Round($sourceUnknown / $count * 100, 1) } else { 0 }
+        helpful = $sourceHelpful; incorrect = $sourceIncorrect; declined = $sourceDeclined
+        unresolved = $sourceUnresolved; unknown = $sourceUnknown
+        precision = if ($sourceHelpful + $sourceIncorrect -gt 0) {
+            [math]::Round($sourceHelpful / ($sourceHelpful + $sourceIncorrect) * 100, 1)
+        } else { $null }
+        precisionDenominator = $sourceHelpful + $sourceIncorrect
+        repos = if ($coverage -and $coverage.perRepo) {
+            @($coverage.perRepo | Where-Object { $_.reviewSource -eq $source } | Select-Object -ExpandProperty repo -Unique)
+        } else { @($comments.Repo | Select-Object -Unique) }
+        coverage = @($coverage.perRepo | Where-Object { $_.reviewSource -eq $source })
     }
 }
 
@@ -150,16 +197,24 @@ $coverageBlock = $null
 if ($coverage -and $coverage.overall) {
     $coverageBlock = [ordered]@{
         overallPct     = $coverage.overall.reviewCoveragePct
-        reviewedPRs    = $coverage.overall.reviewedByCopilot
+        reviewedPRs    = if ($null -ne $coverage.overall.reviewedByAI) {
+            $coverage.overall.reviewedByAI
+        } else { $coverage.overall.reviewedByCopilot }
         mergedHumanPRs = $coverage.overall.mergedHumanPRs
         withFeedback   = $coverage.overall.withInlineFeedback
         noFeedback     = $coverage.overall.noFeedback
         repos          = $coverage.perRepo
+        sources        = $coverage.perSource
     }
 }
 
 # --- Build snapshot ---
 $snapshot = [ordered]@{
+    schemaVersion      = 2
+    reviewSources      = @($sourceStats.Keys | Sort-Object)
+    repositories       = if ($coverage -and $coverage.perRepo) {
+        @($coverage.perRepo.repo | Sort-Object -Unique)
+    } else { @($data.Repo | Sort-Object -Unique) }
     runDate            = (Get-Date -Format "yyyy-MM-dd")
     periodStart        = $PeriodStart
     periodEnd          = $PeriodEnd
@@ -167,6 +222,7 @@ $snapshot = [ordered]@{
     total              = $total
     commentsPerWeek    = $commentsPerWeek
     reviewedPRs        = $reviewedPRs
+    prsWithInlineFeedback = $prsWithInlineFeedback
     avgCommentsPerPR   = $avgCommentsPerPR
     responseRate       = $responseRate
     helpful            = [ordered]@{ count = $confirmedHelpful; pct = $helpfulPct }
@@ -176,10 +232,12 @@ $snapshot = [ordered]@{
     unresolved         = [ordered]@{ count = $unresolved; pct = $unresolvedPct }
     unknown            = [ordered]@{ count = $unknownCount; pct = $unknownPct }
     precision          = $precision
+    precisionDenominator = $precisionDenom
     repliedHelpfulRate = $repliedHelpfulRate
     silentAdoptions    = [ordered]@{ count = $silentHelpful; promotedBySignal = $promotedBySignal }
     coverage           = $coverageBlock
     repos              = $repoStats
+    sources            = $sourceStats
     engineers          = $engineerStats
 }
 
@@ -190,8 +248,10 @@ $snapshot = [ordered]@{
 # classification output — a nonzero unknown that was dropped would silently under-sum.
 $bucketSum = $confirmedHelpful + $confirmedNotHelpfulIncorrect + $declinedCount + $unresolved + $unknownCount
 if ($bucketSum -ne $total) {
-    Write-Warning "Snapshot buckets ($bucketSum) do not reconcile to total ($total) — off by $($total - $bucketSum). Check for verdicts outside the canonical taxonomy."
+    throw "Snapshot buckets ($bucketSum) do not reconcile to total ($total). Check for verdicts outside the canonical taxonomy."
 }
+$sourceTotal = ($sourceStats.Values | ForEach-Object { $_.comments } | Measure-Object -Sum).Sum
+if ($total -gt 0 -and $sourceTotal -ne $total) { throw "Per-source snapshot totals do not reconcile to $total." }
 
 # --- Load or create history ---
 $historyDir = Split-Path $HistoryFile -Parent
@@ -227,7 +287,7 @@ $history.Add($snapshot) | Out-Null
 $sorted = $history | Sort-Object { [datetime]::ParseExact($_.periodStart, "yyyy-MM-dd", $null) } -Descending
 
 # Save
-$sorted | ConvertTo-Json -Depth 8 | Set-Content $HistoryFile -Encoding UTF8
+ConvertTo-Json -InputObject @($sorted) -Depth 12 | Set-Content $HistoryFile -Encoding UTF8
 
 Write-Host ""
 Write-Host "================================================================"
@@ -241,7 +301,7 @@ Write-Host "  Declined: $declinedPct% ($declinedCount)"
 Write-Host "  Incorrect: $notHelpfulIncorrectPct% ($confirmedNotHelpfulIncorrect)"
 Write-Host "  Unresolved: $unresolvedPct% ($unresolved)"
 Write-Host "  Unknown: $unknownPct% ($unknownCount)"
-Write-Host "  Precision: $precision%"
+Write-Host ("  Precision: " + $(if ($null -ne $precision) { "$precision%" } else { "n/a" }))
 if ($coverageBlock) { Write-Host "  Coverage: $($coverageBlock.overallPct)% ($($coverageBlock.reviewedPRs)/$($coverageBlock.mergedHumanPRs) merged human PRs reviewed)" }
 Write-Host "  History entries: $($sorted.Count)"
 Write-Host "  Saved to: $HistoryFile"

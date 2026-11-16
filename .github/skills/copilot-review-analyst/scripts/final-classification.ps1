@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Final classification of all Copilot review comments.
+    Final classification of GitHub Copilot and Foundry review comments.
     Merges Phase 3 AI verdicts (for replied comments) with Phase 2 diff verdicts
     (for no-reply comments). Maps GitHub accounts to display names.
     Produces authoritative per-engineer and per-repo statistics.
@@ -39,8 +39,11 @@ param(
     [string]$SignalPromotionsFile = ""
 )
 
-$rawData = Get-Content "$OutputDir\raw_results.json" | ConvertFrom-Json
-$preciseData = Get-Content "$OutputDir\precise.json" | ConvertFrom-Json
+$ErrorActionPreference = "Stop"
+$rawData = @(Get-Content "$OutputDir\raw_results.json" -Raw | ConvertFrom-Json)
+$preciseData = @(Get-Content "$OutputDir\precise.json" -Raw | ConvertFrom-Json)
+$duplicateIds = @($rawData | Group-Object CommentId | Where-Object { $_.Count -gt 1 })
+if ($duplicateIds.Count -gt 0) { throw "Duplicate CommentId values; ADO IDs must include organization, repository, PR, thread, and comment." }
 
 # ========================================
 # LOAD EXTERNAL CONFIGURATION
@@ -122,12 +125,19 @@ $finalResults = @()
 
 foreach ($item in $rawData) {
     $prAuthor = $item.PRAuthor
-    $engineer = if ($accountMap.ContainsKey($prAuthor)) { $accountMap[$prAuthor] } else { $prAuthor }
+    $engineer = if ($accountMap.ContainsKey($prAuthor)) { $accountMap[$prAuthor] }
+        elseif ($item.PRAuthorName) { $item.PRAuthorName } else { $prAuthor }
     $commentId = $item.CommentId
     $repo = $item.Repo
     $prNum = $item.PRNumber
     $filePath = $item.FilePath
     $replied = $item.HasReply -eq $true
+    $source = if ($item.ReviewSource) { $item.ReviewSource }
+        elseif ($repo -eq "authapp") { "Foundry" } else { "GitHub Copilot" }
+    $platform = if ($item.Platform) { $item.Platform }
+        elseif ($repo -eq "authapp") { "Azure DevOps" } else { "GitHub" }
+    $snapshotNeedsValidation = $item.SnapshotNeedsValidation
+    $reviewedCommitRewritten = $item.ReviewedCommitRewritten
     $verdict = "unknown"
 
     if ($replied) {
@@ -140,8 +150,16 @@ foreach ($item in $rawData) {
     }
     else {
         # No reply — use Phase 2 diff verification results
-        $precise = $preciseData | Where-Object { $_.CommentId -eq $commentId }
+        $precise = $preciseData | Where-Object {
+            $_.CommentId -eq $commentId -and $_.Repo -eq $repo -and $_.PRNumber -eq $prNum
+        }
         if ($precise) {
+            if ($null -ne $precise.SnapshotNeedsValidation) {
+                $snapshotNeedsValidation = $precise.SnapshotNeedsValidation
+            }
+            if ($null -ne $precise.ReviewedCommitRewritten) {
+                $reviewedCommitRewritten = $precise.ReviewedCommitRewritten
+            }
             $pv = $precise.Verdict
             if ($pv -in @("suggestion-applied", "suggestion-likely-applied", "exact-lines-modified")) {
                 $verdict = "helpful"
@@ -206,19 +224,22 @@ foreach ($item in $rawData) {
     $finalResults += [PSCustomObject]@{
         Engineer        = $engineer
         Repo            = $repo
+        ReviewSource    = $source
+        Platform        = $platform
         PRNumber        = $prNum
         PRAuthor        = $prAuthor
         CommentId       = $commentId
         FilePath        = $filePath
+        CommentUrl      = $item.CommentUrl
+        OriginalCommitId = $item.OriginalCommitId
+        ReviewedCommitRewritten = $reviewedCommitRewritten
+        SnapshotNeedsValidation = $snapshotNeedsValidation
         Replied         = $replied
         Verdict         = $verdict
         PromotedBySignal = $promotedBySignal
         SignalTier      = $signalTier
     }
 }
-
-# Save final results
-$finalResults | ConvertTo-Json -Depth 5 | Out-File "$OutputDir\final_classification.json" -Encoding utf8
 
 # ========================================
 # VALIDATE TOTALS  (canonical taxonomy: helpful | declined | incorrect | unresolved | unknown)
@@ -237,7 +258,7 @@ $promotedCount  = ($finalResults | Where-Object { $_.PromotedBySignal }).Count
 # but the engineer chose not to take it) and "unresolved" (no evidence either way) are
 # EXCLUDED from the denominator — neither is a Copilot error.
 $precisionDenom = $totalHelp + $totalIncorrect
-$precision = if ($precisionDenom -gt 0) { [math]::Round($totalHelp / $precisionDenom * 100, 1) } else { 0 }
+$precision = if ($precisionDenom -gt 0) { "$([math]::Round($totalHelp / $precisionDenom * 100, 1))%" } else { "n/a" }
 
 Write-Host "================================================================"
 Write-Host "FINAL CLASSIFICATION VALIDATION"
@@ -245,11 +266,11 @@ Write-Host "================================================================"
 Write-Host "Total comments: $($finalResults.Count)"
 Write-Host "Helpful:    $totalHelp  (replied-helpful + silently-applied)"
 Write-Host "Declined:   $totalDeclined  (correct/reasonable, engineer declined)"
-Write-Host "Incorrect:  $totalIncorrect  (Copilot proven factually wrong)"
+Write-Host "Incorrect:  $totalIncorrect  (AI reviewer proven factually wrong)"
 Write-Host "Unresolved: $unresolved  (no reply, no diff evidence)"
 Write-Host "Unknown:    $totalUnknown"
 Write-Host "Replied: $totalReplied   Silent/ignored: $totalIgnored   Signal-promoted: $promotedCount"
-Write-Host "Copilot precision (Helpful / (Helpful + Incorrect)): $precision%"
+Write-Host "All AI review precision (Helpful / (Helpful + Incorrect)): $precision"
 Write-Host "Sum check: $($totalHelp + $totalDeclined + $totalIncorrect + $unresolved + $totalUnknown) (should be $($finalResults.Count))"
 Write-Host ""
 
@@ -273,7 +294,7 @@ if ($stray.Count -gt 0) {
 }
 # (c) sum of per-repo totals == grand total, and each repo's buckets sum to its total
 $repoSum = 0
-foreach ($rl in @("common","msal","broker")) {
+foreach ($rl in @($finalResults.Repo | Select-Object -Unique)) {
     $rc = $finalResults | Where-Object { $_.Repo -eq $rl }
     $rt = $rc.Count; $repoSum += $rt
     $rb = ($rc | Where-Object { $canon -contains $_.Verdict }).Count
@@ -289,12 +310,37 @@ foreach ($eg in ($finalResults | Group-Object Engineer)) {
 }
 if ($engSum -ne $grand) { $gateErrors += "Sum of per-engineer totals ($engSum) != grand total ($grand)" }
 
+# Source labels must reconcile and cannot conflate AuthApp Foundry with Copilot.
+$sourceSum = 0
+foreach ($group in ($finalResults | Group-Object ReviewSource)) {
+    $sourceSum += $group.Count
+    if ($group.Name -notin @("GitHub Copilot", "Foundry")) { $gateErrors += "Unknown review source: $($group.Name)" }
+}
+if ($sourceSum -ne $grand) { $gateErrors += "Sum of per-source totals ($sourceSum) != grand total ($grand)" }
+$mislabelled = @($finalResults | Where-Object {
+    ($_.Repo -eq "authapp" -and ($_.ReviewSource -ne "Foundry" -or $_.Platform -ne "Azure DevOps")) -or
+    ($_.Repo -ne "authapp" -and ($_.ReviewSource -ne "GitHub Copilot" -or $_.Platform -ne "GitHub"))
+})
+if ($mislabelled.Count -gt 0) { $gateErrors += "$($mislabelled.Count) comments have inconsistent repository/source/platform labels." }
+
 if ($gateErrors.Count -gt 0) {
     Write-Host "SELF-CONSISTENCY GATE FAILED:" -ForegroundColor Red
     $gateErrors | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
     throw "Self-consistency gate failed with $($gateErrors.Count) error(s). Report generation aborted."
 }
 Write-Host "Self-consistency gate PASSED (overall = per-repo = per-engineer; all buckets reconcile)." -ForegroundColor Green
+ConvertTo-Json -InputObject @($finalResults) -Depth 5 | Out-File "$OutputDir\final_classification.json" -Encoding utf8
+
+Write-Host ""
+Write-Host "PER-SOURCE FINAL STATS"
+foreach ($group in ($finalResults | Group-Object ReviewSource)) {
+    $helpful = @($group.Group | Where-Object Verdict -eq "helpful").Count
+    $incorrect = @($group.Group | Where-Object Verdict -eq "incorrect").Count
+    $sourcePrecision = if ($helpful + $incorrect -gt 0) {
+        "$([math]::Round($helpful / ($helpful + $incorrect) * 100, 1))%"
+    } else { "n/a" }
+    Write-Host "$($group.Name) | $($group.Count) comments | Helpful=$helpful Incorrect=$incorrect | Precision=$sourcePrecision"
+}
 
 # ========================================
 # PER-ENGINEER STATS
@@ -330,7 +376,7 @@ Write-Host "================================================================"
 Write-Host "PER-REPO FINAL STATS"
 Write-Host "================================================================"
 
-foreach ($repoLabel in @("common", "msal", "broker")) {
+foreach ($repoLabel in @($finalResults.Repo | Select-Object -Unique)) {
     $rc = $finalResults | Where-Object { $_.Repo -eq $repoLabel }
     $total = $rc.Count
     $helped = ($rc | Where-Object { $_.Verdict -eq "helpful" }).Count
@@ -340,9 +386,12 @@ foreach ($repoLabel in @("common", "msal", "broker")) {
     $replied = ($rc | Where-Object { $_.Replied -eq $true }).Count
     $prsWithComments = ($rc | Select-Object -Property PRNumber -Unique).Count
 
-    $prsFile = "$env:TEMP\${repoLabel}_prs.json"
-    $allPRs = Get-Content $prsFile | ConvertFrom-Json
-    $humanPRs = ($allPRs | Where-Object { $_.author.login -notin @("app/copilot-swe-agent", "dependabot[bot]", "github-actions[bot]") }).Count
+    $prsFile = "$OutputDir\${repoLabel}_prs.json"
+    $humanPRs = "n/a"
+    if (Test-Path $prsFile) {
+        $allPRs = @(Get-Content $prsFile -Raw | ConvertFrom-Json)
+        $humanPRs = @($allPRs | Where-Object { $_.author.login -notin @("app/copilot-swe-agent", "Copilot", "dependabot[bot]", "github-actions[bot]") }).Count
+    }
 
     Write-Host "$($repoLabel.ToUpper()) | $total comments | $prsWithComments/$humanPRs PRs reviewed | Helpful=$helped ($([math]::Round($helped/$total*100,1))%) Incorrect=$notHelped Declined=$declined Unresolved=$unresolvedR | RR=$([math]::Round($replied/$total*100,1))%"
 }
@@ -355,22 +404,22 @@ Write-Host "================================================================"
 Write-Host "OVERALL RESPONSE BEHAVIOR"
 Write-Host "================================================================"
 Write-Host "Total: $($finalResults.Count)"
-Write-Host "Replied: $totalReplied ($([math]::Round($totalReplied/$finalResults.Count*100,1))%)"
-Write-Host "Ignored: $totalIgnored ($([math]::Round($totalIgnored/$finalResults.Count*100,1))%)"
+Write-Host "Replied: $totalReplied ($([math]::Round($totalReplied/[Math]::Max(1,$finalResults.Count)*100,1))%)"
+Write-Host "Ignored: $totalIgnored ($([math]::Round($totalIgnored/[Math]::Max(1,$finalResults.Count)*100,1))%)"
 Write-Host ""
 Write-Host "Of REPLIED ($totalReplied):"
 $repliedHelp = ($finalResults | Where-Object { $_.Replied -and $_.Verdict -eq "helpful" }).Count
 $repliedNot = ($finalResults | Where-Object { $_.Replied -and $_.Verdict -eq "incorrect" }).Count
 $repliedDeclined = ($finalResults | Where-Object { $_.Replied -and $_.Verdict -eq "declined" }).Count
-Write-Host "  Helpful: $repliedHelp ($([math]::Round($repliedHelp/$totalReplied*100,1))%)"
-Write-Host "  Incorrect (Copilot proven wrong): $repliedNot ($([math]::Round($repliedNot/$totalReplied*100,1))%)"
-Write-Host "  Declined (correct/reasonable, engineer declined): $repliedDeclined ($([math]::Round($repliedDeclined/$totalReplied*100,1))%)"
+Write-Host "  Helpful: $repliedHelp ($([math]::Round($repliedHelp/[Math]::Max(1,$totalReplied)*100,1))%)"
+Write-Host "  Incorrect (AI reviewer proven wrong): $repliedNot ($([math]::Round($repliedNot/[Math]::Max(1,$totalReplied)*100,1))%)"
+Write-Host "  Declined (correct/reasonable, engineer declined): $repliedDeclined ($([math]::Round($repliedDeclined/[Math]::Max(1,$totalReplied)*100,1))%)"
 Write-Host ""
 Write-Host "Of IGNORED ($totalIgnored):"
 $ignoredHelp = ($finalResults | Where-Object { -not $_.Replied -and $_.Verdict -eq "helpful" }).Count
 $ignoredUnres = ($finalResults | Where-Object { -not $_.Replied -and $_.Verdict -eq "unresolved" }).Count
-Write-Host "  Helpful (silently applied): $ignoredHelp ($([math]::Round($ignoredHelp/$totalIgnored*100,1))%)"
-Write-Host "  Unresolved (no diff evidence): $ignoredUnres ($([math]::Round($ignoredUnres/$totalIgnored*100,1))%)"
+Write-Host "  Helpful (silently applied): $ignoredHelp ($([math]::Round($ignoredHelp/[Math]::Max(1,$totalIgnored)*100,1))%)"
+Write-Host "  Unresolved (no diff evidence): $ignoredUnres ($([math]::Round($ignoredUnres/[Math]::Max(1,$totalIgnored)*100,1))%)"
 
 Write-Host ""
 Write-Host "================================================================"

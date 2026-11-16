@@ -2,9 +2,10 @@
     "_comment": "Phase 3 outputs two files. This template shows both schemas.",
 
     "_reply_verdicts_schema": {
-        "_description": "reply-verdicts.json — AI verdict for every replied comment. Keys are comment IDs as strings.",
+        "_description": "reply-verdicts.json — AI verdict for each replied GitHub Copilot or Foundry finding. Preserve complete CommentId strings, including composite ADO keys.",
         "1234567890": "helpful",
-        "1234567891": "not-helpful"
+        "1234567891": "incorrect",
+        "ado:msazure:repo-guid:123:456:1": "declined"
     },
 
     "_reaudit_flips_schema": {
