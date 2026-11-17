@@ -11,8 +11,7 @@ CG/access check or send unrelated notices because the owner asked for status.
   retry only after repair or an explicit retry request.
 - `oneauth_access` is an engine-owned effect with durable recovery. Never clear
   its ownership or probe through a different identity after denial.
-- `confirm_reminders` records what feature owners actually completed. Sending a
-  reminder is not proof of that work. `vitals` records the owner's actual portal review.
+- `vitals` records the owner's actual Play Console vitals and policy portal review.
 - `record-fact` accepts explicit human confirmations independently of positional
   order. The relevant source binding still determines applicability. Unverified
   claims remain visibly unverified; gates do not advance implicitly.

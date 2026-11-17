@@ -291,40 +291,28 @@ def _clear_lockdown(orch):
 
 
 def _clear_phase0_scout(orch):
-    """Clear ALL Phase-0 human/scout holds (notice + flight_reminder + confirm_reminders
-    + lockdown) so the flow can advance out of Phase 0."""
+    """Clear ALL Phase-0 human/scout holds (notice + flight_reminder + lockdown + vitals)
+    so the flow can advance out of Phase 0."""
     _clear_notice(orch)
     orch.record_scout_step("preflight", "flight_reminder", "pass", "test: reminders posted")
-    orch.complete_step("preflight", "confirm_reminders", "test: owner confirmed")
     _clear_lockdown(orch)
     orch.complete_step("preflight", "vitals", "test: vitals & policy reviewed")
 
 
 
 def _clear_ccd_scout(orch):
-    """Clear the Phase-1 scout comms/trigger holds (final_reminder + pr_reminder +
-    localization) so the flow can advance out of the (gateless) Phase 1. Separate
-    from Phase-0 clearing so a test can still target these steps individually."""
-    # This is fixture seeding, not a simulated command: Phase-0 auto work may still
-    # be pending, so the production eligibility guard must not be bypassed.
-    orch.state.set_step(
-        "ccd", "final_reminder",
-        StepState(status="done", note="test: reminder emailed", by="scout"),
-    )
-    orch.state.set_step(
-        "ccd", "pr_reminder",
-        StepState(status="done", note="test: PR reminder posted", by="scout"),
-    )
-    orch.state.set_step(
-        "ccd", "localization",
-        StepState(status="done", note="test: localization triggered", by="scout"),
-    )
+    """Clear all Phase-1 scout comms/trigger holds dynamically from workflow config."""
+    for step_def in orch.workflow.phase("ccd").steps:
+        orch.state.set_step(
+            "ccd", step_def.id,
+            StepState(status="done", note=f"test: {step_def.id} completed", by="scout"),
+        )
 
 
 
 def _clear_early_phase0_scout(orch):
-    """Clear the first two Phase-0 scout/human holds (notice + flight_reminder) but LEAVE
-    confirm_reminders holding — so the flow stays IN Phase 0 with progress + a hold."""
+    """Clear the first two Phase-0 scout holds (notice + flight_reminder) but LEAVE
+    vitals holding — so the flow stays IN Phase 0 with progress + a hold."""
     _clear_notice(orch)
     orch.record_scout_step("preflight", "flight_reminder", "pass", "test: reminders posted")
 
@@ -332,7 +320,7 @@ def _clear_early_phase0_scout(orch):
 
 def _drain_phase0_scout_only(orch):
     """Run the three Phase-0 SCOUT steps (notice, flight_reminder, lockdown) — Scout's
-    own automatic work — but LEAVE the human holds (confirm_reminders, vitals). This is
+    own automatic work — but LEAVE the human hold (vitals). This is
     the state where the daily digest is actually DUE: Scout has finished its own steps,
     and the phase is still open on the human's confirmations. (A headless `tick` can't
     reach this state on its own — the skill drains scout steps; tests simulate that.)"""

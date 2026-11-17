@@ -46,7 +46,6 @@ phases:
       - { id: cg,              name: "Report critical CG alerts",               kind: auto, effect_mode: read_only, owner: agent, depends_on: [], required_tools: [gh], maps_to: [S8] }
       - { id: oneauth_access,  name: "Verify OneAuth write access (create a probe branch)", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, depends_on: [], required_tools: [az], maps_to: [S8] }
       - { id: cron,            name: "Verify Calendar Checker scheduled",       kind: auto, effect_mode: read_only, owner: agent, depends_on: [], required_tools: [az], maps_to: [S10] }
-      - { id: confirm_reminders, name: "Confirm feature owners completed flight / string / flag-freeze work", kind: attestation, owner: human, attest: true, depends_on: [flight_reminder], required_tools: [], maps_to: [S3, S4, S5, S6] }
       - { id: vitals,          name: "Confirm Play Console vitals & policy status reviewed", kind: attestation, owner: human, attest: true, depends_on: [], required_tools: [], maps_to: [S9] }
 
   - id: ccd

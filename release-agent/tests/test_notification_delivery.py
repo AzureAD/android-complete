@@ -119,13 +119,13 @@ def test_claim_uses_approved_snapshot_not_later_preparation(orch):
         D.claim(orch, item["id"], changed["hash"], "worker")
 
 
-@pytest.mark.parametrize("record_as", ["pr_reminder", "", None])
+@pytest.mark.parametrize("record_as", ["localization", "", None])
 def test_preparation_rejects_builder_ownership_mismatch(orch, monkeypatch, record_as):
     from orchestrator.commands.step_action import prepare_step
     from orchestrator.outcomes import NeedsSkill
     from steps.ccd import final_reminder
     monkeypatch.setattr(final_reminder, "build", lambda _st: NeedsSkill(
-        tool="workiq_send_email", payload={"to": ["owner@example.com"], "body": "PR reminder"},
+        tool="workiq_send_email", payload={"to": ["owner@example.com"], "body": "Reminder"},
         record_as=record_as, outbound=True))
     orch = Orchestrator(
         C.DEFAULT_CONFIG, orch.state, mocks=orch.mocks, as_of=orch.as_of, now=orch.now_local
@@ -144,7 +144,7 @@ def test_claim_and_finalization_validate_captured_step_owner(orch):
     assert item["completion"]["record_as"] == "final_reminder"
     D.offer(orch, item)
     record = orch.state.notification_deliveries[item["id"]]
-    record["descriptor"]["completion"]["record_as"] = "pr_reminder"
+    record["descriptor"]["completion"]["record_as"] = "localization"
     record["descriptor"]["hash"] = D.fingerprint(
         {k: v for k, v in record["descriptor"].items() if k != "hash"})
     with pytest.raises(ValueError, match="record_as"):
@@ -154,13 +154,13 @@ def test_claim_and_finalization_validate_captured_step_owner(orch):
     claim = D.claim(orch, item["id"], item["hash"], "A")
     D.result(orch, item["id"], claim["execution_id"], "sent", "provider receipt")
     record = orch.state.notification_deliveries[item["id"]]
-    record["descriptor"]["scope"]["step"] = "pr_reminder"
+    record["descriptor"]["scope"]["step"] = "localization"
     record["descriptor"]["hash"] = D.fingerprint(
         {k: v for k, v in record["descriptor"].items() if k != "hash"})
     with pytest.raises(ValueError, match="record_as"):
         finish(orch, item["id"])
     assert not orch.state.is_done("ccd", "final_reminder")
-    assert not orch.state.is_done("ccd", "pr_reminder")
+    assert not orch.state.is_done("ccd", "localization")
     record["descriptor"] = copy.deepcopy(item)
     assert finish(orch, item["id"])
     assert orch.state.is_done("ccd", "final_reminder")
@@ -452,7 +452,7 @@ def test_refresh_notification_cannot_be_claimed_after_phase_advances(orch):
 
 def test_notify_is_read_only_and_order_independent(orch, tmp_path):
     from orchestrator.commands.notify import _notify_payload
-    for s in ("final_reminder", "pr_reminder", "localization"):
+    for s in ("final_reminder", "localization"):
         orch.state.set_step("ccd", s, StepState(status="done"))
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
     path = Path(C.state_path(str(tmp_path), orch.state.release_id))
@@ -593,7 +593,6 @@ def test_suspended_ack_defers_completion_and_skip_suppresses_it(orch):
 def test_required_timeout_only_blocks_after_success(orch, tmp_path, capsys):
     from orchestrator.commands.localization import cmd_check_localization, cmd_record_localization_run
     orch.state.set_step("ccd", "final_reminder", StepState(status="done"))
-    orch.state.set_step("ccd", "pr_reminder", StepState(status="done"))
     orch.state.set_step("ccd", "localization", StepState(
         status="in_flight",
         execution={
@@ -633,8 +632,7 @@ def test_required_timeout_only_blocks_after_success(orch, tmp_path, capsys):
 
 def test_future_timeout_preview_cannot_authorize_early_send(orch, tmp_path, capsys, monkeypatch):
     from orchestrator.commands.localization import cmd_check_localization
-    for sid in ("final_reminder", "pr_reminder"):
-        orch.state.set_step("ccd", sid, StepState(status="done"))
+    orch.state.set_step("ccd", "final_reminder", StepState(status="done"))
     orch.state.set_step("ccd", "localization", StepState(
         status="in_flight",
         execution={

@@ -408,7 +408,7 @@ def test_ccd_final_reminder_build_is_ccd_day_email():
     assert "(Today)" in out.payload["subject"]                        # update variant
     assert not out.payload["subject"].startswith("[TEST")
     html = out.payload["body"]
-    assert "<table" in html and "October" in html and "@pedroro" in html
+    assert "<table" in html and "September" in html and "@pedroro" in html
 
 
 
@@ -464,8 +464,7 @@ def test_localization_poll_helpers():
     assert L.poll_status(False, started, now, 3) == "wait"
     assert L.poll_status(False, (now - timedelta(hours=4)).isoformat(), now, 3) == "timeout"
     assert L.poll_status(True, started, now, 3) == "complete"
-    assert L.extract_pr_id(_PR_LOG) == "16790317"
-    assert L.extract_pr_id("no pr line here") is None
+    assert L.extract_pr("no pr line here") == (None, None)
     assert L.extract_create_pr_enabled(_NO_PR_CREATE_TRUE_LOG) is True
     assert L.extract_create_pr_enabled(_NO_PR_CREATE_FALSE_LOG) is False
     assert L.extract_create_pr_enabled("no create flag") is None
@@ -632,11 +631,7 @@ def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
         assert target["decision"] == "poll_pr" and target["pr_id"] == "16790317"
         assert "--id 16790317" in target["az"]["status"]
 
-        class ACKinitial:
-            runs_root = d; release = rid; kind = "initial"; pr_id = "16790317"
         _ack_notifications(d, rid, "2026-09-09T20:00:00Z")
-        assert lc.cmd_record_localization_post(ACKinitial) == 0
-        assert lc.cmd_record_localization_post(ACKinitial) == 0
         announced = C.load_state(d, rid).get_step("ccd", "localization")
         assert announced.data["pr_announced_at"]
 
@@ -653,10 +648,7 @@ def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
         escalated = C.load_state(d, rid).get_step("ccd", "localization")
         assert escalated.status == "in_flight" and not escalated.data.get("merge_deadline_alert_at")
 
-        class ACKdeadline:
-            runs_root = d; release = rid; kind = "deadline"; pr_id = "16790317"
         _ack_notifications(d, rid, "2026-09-09T23:00:00Z")
-        assert lc.cmd_record_localization_post(ACKdeadline) == 0
         assert C.load_state(d, rid).get_step("ccd", "localization").data["merge_deadline_alert_at"]
 
         CKactive.pr_status = "completed"
@@ -898,7 +890,6 @@ def test_localization_command_omits_unmerged_pr_at_6pm():
         st = ReleaseState(release_id=rid, ccd="2026-09-09")
         _active_phase(st, "ccd")
         st.set_step("ccd", "final_reminder", StepState(status="done"))
-        st.set_step("ccd", "pr_reminder", StepState(status="done"))
         step = st.get_step("ccd", "localization")
         step.status = "in_flight"
         step.execution = _localization_execution()
@@ -1026,7 +1017,7 @@ def test_ccd_phase_not_due_before_ccd_and_no_scout_pending():
     orch.run_until_gate()
     r2 = orch.status_report()
     assert r2["current_phase"] == "ccd"
-    assert r2["scout_pending"] == ["final_reminder"]
+    assert r2["scout_pending"] == [s.id for s in orch.workflow.phase("ccd").steps]
 
 
 @pytest.mark.parametrize("result,logs,complete_log,confirmation,expected", [

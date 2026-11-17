@@ -18,6 +18,33 @@ PLAY_CONSOLE_URL = (
 ONCALL_URL = "https://aka.ms/androidoncall"
 
 
+CCOA_URL = "https://prod.change-manager.msidentity.com/ccoa-periods"
+
+
+def _is_connector_error(low: str, tool: Optional[str]) -> bool:
+    if tool:
+        return True
+    markers = (
+        "required tool/connector",
+        "az login",
+        "unauthorized",
+        "forbidden",
+        "access denied",
+        "accessdenied",
+        "401",
+        "403",
+        "aadsts",
+        "session not found",
+        "mcp",
+        "playwright",
+        "workiq",
+        "executable not found",
+        "launcher not found",
+        "not logged in",
+    )
+    return any(m in low for m in markers)
+
+
 def step_remediation(
     release_id: str,
     phase_id: str,
@@ -27,9 +54,11 @@ def step_remediation(
     tool: Optional[str] = None,
 ) -> dict:
     """Build a structured, human-actionable fix + 1-command escape hatch for a blocked step."""
-    low = f"{step_id} {tool or ''} {reason}".lower()
-    system, fix = _classify_external_fix(low, step_id=step_id, tool=tool)
     rid = release_id or "<YYYY-MM>"
+    low = f"{step_id} {tool or ''} {reason}".lower()
+    system, fix = _classify_external_fix(
+        low, step_id=step_id, tool=tool, reason=reason, release_id=rid
+    )
     return {
         "system": system,
         "how_to_fix": fix,
@@ -46,9 +75,11 @@ def step_remediation(
 
 def readiness_remediation(release_id: str, item_id: str, reason: str = "") -> dict:
     """Build a structured, human-actionable fix + 1-command escape hatch for a readiness item."""
-    low = f"{item_id} {reason}".lower()
-    system, fix = _classify_external_fix(low, step_id=item_id, tool=None)
     rid = release_id or "<YYYY-MM>"
+    low = f"{item_id} {reason}".lower()
+    system, fix = _classify_external_fix(
+        low, step_id=item_id, tool=None, reason=reason, release_id=rid
+    )
     return {
         "system": system,
         "how_to_fix": fix,
@@ -63,8 +94,50 @@ def readiness_remediation(release_id: str, item_id: str, reason: str = "") -> di
     }
 
 
-def _classify_external_fix(low: str, *, step_id: str = "", tool: Optional[str] = None) -> tuple[str, str]:
-    if "oneauth" in low or "tf401027" in low or "createbranch" in low:
+def _classify_external_fix(
+    low: str,
+    *,
+    step_id: str = "",
+    tool: Optional[str] = None,
+    reason: str = "",
+    release_id: str = "<YYYY-MM>",
+) -> tuple[str, str]:
+    clean_reason = " ".join((reason or "").split())
+    connector_err = _is_connector_error(low, tool)
+
+    # 1. Domain / policy / check findings (connector succeeded, check found a real blocker)
+    if not connector_err:
+        if step_id == "lockdown" or ("ccoa" in low and "overlap" in low):
+            return (
+                f"CCOA Change-Freeze / Lockdown Schedule ({CCOA_URL})",
+                f"{clean_reason} Reschedule past the freeze with "
+                f"`set-ccd --release {release_id} --date <YYYY-MM-DD> --reason \"Shift past CCOA lockdown\"` "
+                "and re-run, or waive with `skip` if you have an approved lockdown exception.",
+            )
+        if step_id == "cg":
+            return (
+                "Component Governance (Security Alerts)",
+                f"{clean_reason} Remediate or dismiss High/Critical alerts in Azure DevOps and retry, "
+                "or waive with `skip` if approved.",
+            )
+        if step_id == "telemetry_verify":
+            return (
+                f"Release Telemetry Verification ({ADX_DASHBOARD_URL})",
+                f"{clean_reason} Verify telemetry ingestion for the current RC build and re-run, "
+                "or waive with `skip` if approved.",
+            )
+        if step_id in (
+            "cron", "checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
+            "auth_ecs", "verify_pub", "verify_release_notes", "identify_auth_build",
+        ):
+            return (
+                "Azure Pipelines / Release Verification Check",
+                f"{clean_reason} Investigate or re-run the pipeline/stage in Azure DevOps and retry "
+                "(`task --retry`), or override with `skip` / `complete-manually`.",
+            )
+
+    # 2. External permission / tool / connector failures
+    if step_id == "oneauth_access" or "tf401027" in low or "createbranch" in low:
         return (
             "Azure DevOps — OneAuth Git Repository",
             f"Request OneAuth R/W access in MyAccess ({ONEAUTH_ACCESS_PACKAGE_URL}), "
@@ -105,7 +178,7 @@ def _classify_external_fix(low: str, *, step_id: str = "", tool: Optional[str] =
             "Ensure Microsoft 365 (WorkIQ) is signed in and enabled in Scout Settings → "
             "Permissions / Connectors, then retry.",
         )
-    if tool == "playwright" or "playwright" in low or "lockdown" in low or "ccoa" in low:
+    if tool == "playwright" or "playwright" in low or step_id == "lockdown":
         return (
             "Playwright Browser Connector (Edge SSO)",
             "Ensure Playwright browser tools are enabled in Scout Settings → Permissions "

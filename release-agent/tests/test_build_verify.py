@@ -1009,7 +1009,7 @@ def test_sim_fast_forwards_to_rc_gate_offline():
     st = res.state
     # earlier phases complete
     assert all(st.is_done("preflight", s) for s in
-               ("notice", "confirm_reminders", "vitals", "cron"))
+               ("notice", "vitals", "cron"))
     assert all(st.is_done("ccd", s) for s in ("final_reminder", "localization"))
     # the verification + report steps ran (real build() on mocks) and the human gate remains.
     for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",

@@ -128,3 +128,30 @@ def test_fail_step_attaches_actionable_remediation_and_escape_hatches(ready, tmp
     ]) == 0
     capsys.readouterr()
     assert C.load_state(str(tmp_path), st.release_id).is_done("build_verify", "rc_report_notify")
+
+
+def test_remediation_distinguishes_ccoa_overlap_finding_from_playwright_failure():
+    from orchestrator.remediation import step_remediation
+
+    overlap = step_remediation(
+        "2026-11",
+        "preflight",
+        "lockdown",
+        "1 Production CCOA lockdown(s) overlap the release window (2026-11-13..2026-12-04): "
+        "[IDNA] Black Friday / Cyber Monday (2026-11-24..2026-12-01). Shift CCD past the lockdown (set-ccd) if needed.",
+    )
+    assert "CCOA Change-Freeze" in overlap["system"]
+    assert "Playwright" not in overlap["system"]
+    assert "Playwright" not in overlap["how_to_fix"]
+    assert "Black Friday" in overlap["how_to_fix"]
+    assert "set-ccd --release 2026-11" in overlap["how_to_fix"]
+
+    pw_err = step_remediation(
+        "2026-11",
+        "preflight",
+        "lockdown",
+        "Required tool/connector 'playwright' failed: browser session disconnected",
+        tool="playwright",
+    )
+    assert "Playwright" in pw_err["system"]
+

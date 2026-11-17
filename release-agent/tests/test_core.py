@@ -477,12 +477,12 @@ def test_resolve_ccd_default_and_conflict():
 
 def test_phase0_opens_on_ccd_minus_7():
     st, orch = _ccd_orch("2026-07-01")     # window opens exactly today
-    _clear_early_phase0_scout(orch)        # clear notice + flight_reminder, hold at confirm_reminders
+    _clear_early_phase0_scout(orch)        # clear notice + flight_reminder, hold at vitals
     actions = orch.run_until_gate()
-    # Phase 0 is open and running: holding at the confirm-reminders attestation step
+    # Phase 0 is open and running: holding at the vitals attestation step
     report = orch.status_report()
     assert report["status"] == "awaiting_action"
-    assert report["current_step"] == "confirm_reminders"
+    assert report["current_step"] == "vitals"
     assert st.is_done("preflight", "notice")
 
 
@@ -763,16 +763,16 @@ def test_registry_records_step_linkage_and_reverse_lookup():
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp)
         _register_automation(reg, "m", "CCD morning", release="2026-09", purpose="reminders",
-                     steps=["ccd.final_reminder", "ccd.pr_reminder"], cleanup_when="steps_done")
+                     steps=["ccd.final_reminder"], cleanup_when="steps_done")
         _register_automation(reg, "n", "CCD noon", release="2026-09", purpose="loc",
                      steps=["ccd.localization"], cleanup_when="steps_done")
         # forward: automation -> steps
         m = reg.list(release="2026-09", step="ccd.final_reminder")[0]
-        assert m["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
+        assert m["steps"] == ["ccd.final_reminder"]
         # reverse: step -> automation
         owners = reg.list(step="ccd.localization")
         assert [e["id"] for e in owners] == ["n"]
-        assert reg.list(step="ccd.pr_reminder")[0]["id"] == "m"
+        assert reg.list(step="ccd.final_reminder")[0]["id"] == "m"
         # a step nobody drives → empty
         assert reg.list(step="build_verify.go_test") == []
         # steps present → kind auto-derives to step-driving
@@ -1216,8 +1216,7 @@ def test_due_ness_uses_owner_timezone_not_host():
     st = ReleaseState(release_id="2026-08", ccd="2026-08-20", ccd_source="manual")
     orch = Orchestrator(CONFIG, st, now=now_pt, mocks={})
     assert orch.as_of.isoformat() == "2026-08-19"               # PT date, not UTC Aug 20
-    ccd_phase = next(p for p in orch.config["phases"] if p["id"] == "ccd")
-    assert orch._phase_due(ccd_phase) is False                  # not due on PT Aug 19
+    assert orch.scheduling().phase("ccd").due is False          # not due on PT Aug 19
 
 
 
@@ -1304,7 +1303,7 @@ def test_current_steps_label_scout_not_user_action():
         assert s["reminder"] is False
     # and it's never surfaced as a user action
     assert r["action"] is None
-    assert r["scout_pending"] == ["final_reminder", "pr_reminder", "localization"]
+    assert r["scout_pending"] == [s.id for s in orch.workflow.phase("ccd").steps]
     # the rendered current-phase table says 'Scout runs this', never 'Do this'
     view = render.status_view(r)
     assert "Scout work remains" in view or "Scout action pending" in view
@@ -1378,7 +1377,7 @@ def test_terminal_step_dispatch_does_not_rebuild_payload(tmp_path, capsys, monke
     def must_not_build(_state):
         raise AssertionError("A terminal step must not rebuild a sendable payload")
 
-    for phase, sid in (("ccd", "final_reminder"), ("ccd", "pr_reminder"),
+    for phase, sid in (("ccd", "final_reminder"),
                        ("preflight", "notice"), ("preflight", "flight_reminder")):
         monkeypatch.setattr(steps.get_step(phase, sid), "build", must_not_build)
         for status in ("done", "skipped"):
@@ -1594,8 +1593,7 @@ def test_phase0_human_confirmations_are_ordered_last():
     _, orch = _orch()
     preflight = next(phase for phase in orch.config["phases"] if phase["id"] == "preflight")
     ids = [step["id"] for step in preflight["steps"]]
-    assert ids[-2:] == ["confirm_reminders", "vitals"]
-    assert ids.index("confirm_reminders") > ids.index("cron")
+    assert ids[-1:] == ["vitals"]
     assert ids.index("vitals") > ids.index("cron")
 
 
@@ -1719,7 +1717,7 @@ def test_step_knowledge_base_answers_step_questions():
     md = kb.render_knowledge("preflight", "vitals", v)
     assert "Where is policy status?" in md
     # every Phase-0 step has an entry
-    for sid in ("notice", "flight_reminder", "confirm_reminders", "lockdown",
+    for sid in ("notice", "flight_reminder", "lockdown",
                 "breaking", "cg", "vitals", "cron"):
         assert kb.get_knowledge("preflight", sid), sid
     # a step with no entry → None (skill says "no knowledge yet", doesn't invent)

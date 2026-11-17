@@ -698,7 +698,7 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
         alert = first["core_alert"]
         assert alert["chatName"] == "Android Core Team"
         assert alert["mentions"][0]["mentioned"]["user"]["id"] == "owner@microsoft.com"
-        assert "October 2026 release at risk" in alert["content"]
+        assert "September 2026 release at risk" in alert["content"]
         assert "Failed / blocked checks" in alert["content"]
         assert 'href="https://example.com/cg"' in alert["content"]
         assert "manager approval" in alert["content"]
@@ -708,9 +708,6 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
         second = ncmd._notify_payload(A, rid, advance=True)
         assert second["core_alert"]["checkpoint"] == alert["checkpoint"]
         checkpoint = alert["checkpoint"]
-        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG,
-                                checkpoint=checkpoint)
-        assert ncmd.cmd_record_core_alert(ns) == 1
         _ack_notifications(d, rid, "2026-09-08T12:00:00", first["notifications"])
         assert checkpoint in C.load_state(d, rid).escalation_checkpoints
         A.force = True

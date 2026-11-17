@@ -334,11 +334,9 @@ def test_parallel_phase_waits_on_reserved_step_without_running_it(run):
     assert orch.scout_pending_steps() == []
 
 
-@pytest.mark.parametrize("sid", ["final_reminder", "pr_reminder"])
-def test_direct_engine_reservation_enforces_ownership(run, sid):
+def test_direct_engine_reservation_enforces_ownership(run):
     st = ReleaseState.load(str(run[1]))
-    if sid == "pr_reminder":
-        st.set_step("ccd", "final_reminder", StepState(status="done"))
+    sid = "final_reminder"
     orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
     action = NeedsSkill(tool="workiq_send_email", payload={}, outbound=True, record_as=sid)
     assert orch.reserve_step("ccd", sid, action, "A").kind == "needs_skill"
@@ -358,9 +356,10 @@ def test_interrupted_execution_never_instructs_an_automatic_repeat(run, capsys, 
     execution_id = reserve(run, capsys)
     invoke(run, capsys, "record-step", "--status", "attention", "--execution-id", execution_id)
     st = ReleaseState.load(str(run[1]))
-    for sid in ("pr_reminder", "localization"):
-        st.set_step("ccd", sid, StepState(status="done"))
     orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+    for s in orch.workflow.phase("ccd").steps:
+        if s.id != "final_reminder":
+            st.set_step("ccd", s.id, StepState(status="done"))
     text = getattr(render, renderer)(orch.status_report())
     assert "Do not repeat" in text
     assert "do it, then mark" not in text and "Mark it done when complete" not in text

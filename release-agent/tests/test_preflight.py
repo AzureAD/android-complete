@@ -315,7 +315,7 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
     settled = json.loads(call("status", "--handoff", "--json", "--no-pipeline-check"))
     assert settled["work_dispatch"]["may_return_to_user"]
     assert not C.load_state(root, rid).is_done("preflight", "cg")
-    for sid in ("confirm_reminders", "vitals"):
+    for sid in ("vitals",):
         prompt = json.loads(call("step-action", "--phase", "preflight", "--step", sid))
         assert prompt["kind"] == "needs_human" and prompt["attest"]
         assert "done --step" not in prompt["prompt"]
@@ -628,9 +628,8 @@ def test_engine_holds_scout_assisted_lockdown():
     orch.record_scout_step("preflight", "flight_reminder", "pass", "posted")
     orch.run_until_gate()
     assert "flight_reminder" not in orch.status_report()["scout_pending"]
-    # confirm_reminders (attest, dep on flight_reminder now done) is a genuine user hold
-    assert "preflight.confirm_reminders" in orch.status_report()["pending_human"]
-    orch.complete_step("preflight", "confirm_reminders", "owner confirmed")
+    # vitals (attest) is a genuine user hold
+    assert "preflight.vitals" in orch.status_report()["pending_human"]
     orch.record_scout_step("preflight", "lockdown", "pass", "no overlap")
     orch.run_until_gate()
     assert orch.status_report()["scout_pending"] == []   # all scout work drained
@@ -1018,7 +1017,6 @@ def test_flight_reminder_cli_recovers_sent_post_without_duplicate(
     record = settled.notification_deliveries[item["id"]]
     assert record["completion"]["status"] == "applied"
     assert len(record["attempts"]) == 1 and record["attempts"][0]["receipt"] == receipt
-    assert not settled.is_done("preflight", "confirm_reminders")
     assert set(settled.steps) == set(client.before.steps) | {key}
     for field in fields(ReleaseState):
         if field.name not in ("updated_at", "steps", "notification_deliveries"):
@@ -1041,7 +1039,6 @@ def test_flight_reminder_cli_retry_requires_proven_not_sent(flight_reminder_cli,
     saved = client.load()
     assert saved.notification_deliveries[item["id"]]["status"] == outcome
     assert not saved.is_done("preflight", "flight_reminder")
-    assert not saved.is_done("preflight", "confirm_reminders")
     retry = client.call("claim", "--id", item["id"], "--hash", item["hash"],
                         "--executor", "replacement-worker",
                         expected=0 if outcome == "not_sent" else 1)
@@ -1053,46 +1050,6 @@ def test_flight_reminder_cli_retry_requires_proven_not_sent(flight_reminder_cli,
         assert not retry["permission_to_send"]
         assert "uncertain" in retry["error"]
         assert len(client.load().notification_deliveries[item["id"]]["attempts"]) == 1
-
-
-def test_confirm_reminders_is_attestation_hold():
-    """In the parallel Phase 0, confirm_reminders is a human attestation that becomes
-    ready only after flight_reminder is sent; it surfaces as a hold with a confirm
-    pill and clears via `done`."""
-    st, orch = _orch(signed=False)
-    orch.gate.verify()
-    _pass_scout_checks(orch)
-    orch.gate.sign()
-    _clear_notice(orch)
-    orch.record_scout_step("preflight", "flight_reminder", "pass", "sent")
-    orch.run_until_gate()
-    assert orch.status_report()["status"] == "awaiting_action"
-    # confirm_reminders (dep on flight_reminder, now done) is among the pending holds
-    assert "preflight.confirm_reminders" in orch.status_report()["pending_human"]
-    ap = orch.status_report()["active_phase"]
-    step = next(s for s in ap["steps"] if s["id"] == "confirm_reminders")
-    assert step["status"] == "confirm" and step["needs_owner"]
-    # owner attests → advances
-    orch.complete_step("preflight", "confirm_reminders", "verified with feature owners")
-    assert st.is_done("preflight", "confirm_reminders")
-
-
-
-
-def test_confirm_reminders_gated_by_flight_send():
-    """confirm_reminders must NOT be offered until flight_reminder is sent (dependency)."""
-    st, orch = _orch(signed=False)
-    orch.gate.verify()
-    _pass_scout_checks(orch)
-    orch.gate.sign()
-    _clear_notice(orch)
-    # flight_reminder NOT yet recorded → confirm_reminders is not ready
-    orch.run_until_gate()
-    report = orch.status_report()
-    assert "preflight.confirm_reminders" not in report["pending_human"]
-    assert "flight_reminder" in report["scout_pending"]
-
-
 
 
 def test_cg_report_summarizes_and_flags_high():

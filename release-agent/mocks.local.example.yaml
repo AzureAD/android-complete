@@ -34,7 +34,7 @@ preflight.cg:
 # Clears the entry gate offline and mocks every Phase-0 side-effect.
 #   Then just drive the release through Scout normally ("start a test release for
 #   <month>", "continue", …) — nothing special to type. Still sign the attest items
-#   (oncall_window, saw_ame, yubikey, play_console_access, confirm_reminders, vitals)
+#   (oncall_window, saw_ame, yubikey, play_console_access, vitals)
 #   when Scout asks — those are human confirmations with no side-effects.
 # ============================================================================
 # # -- entry gate: force the real ADO/config/MCP checks to pass --
@@ -62,7 +62,6 @@ preflight.cg:
 # ---- Phase 0 · preflight ----
 # preflight.notice:            { send_to: ["me@microsoft.com"] }  # scout — or { outcome: done }
 # preflight.flight_reminder:   { send_to: me }                    # scout — or { outcome: done }
-# preflight.confirm_reminders: { outcome: done }                  # attest
 # preflight.lockdown:          { outcome: done }                  # scout
 # preflight.breaking:          { outcome: done }                  # agent
 # preflight.cg:                { outcome: done }                  # agent  (active above)

@@ -343,15 +343,6 @@ preflight.flight_reminder:
     - q: "Why CCD-7 for strings?"
       a: "Strings merged inside the 1-week window aren't guaranteed to be localized in time, so user-facing strings must land by CCD-7."
 
-preflight.confirm_reminders:
-  summary: "Attest that feature owners completed the reminded pre-code-complete work."
-  what: >
-    Sending the reminders doesn't prove the work got done. This step holds until the
-    owner confirms feature owners actually: updated local flights, wrote pre-mortem
-    docs, merged user-facing strings by CCD-7, and left features default-OFF (or got
-    default-ON approved in the release wiki).
-  how: "Confirm with the feature owners, then mark the step done. If you can't confirm, leave it holding."
-
 preflight.lockdown:
   summary: "Detect whether a CCOA lockdown / holiday no-fly zone overlaps the release window."
   what: >
@@ -527,8 +518,7 @@ ccd.pr_reminder:
   where:
     - "Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / EXTERNAL-REFERENCES.md)."
   how: >
-    Uses notification prepare (source step, phase ccd, step pr_reminder), then
-    claim → the exact returned chat payload → notification result. To test, redirect with the
+    Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`). To test, redirect with the
     send_to mock knob ('me' = your own chat).
   faqs:
     - q: "Who approves a CCD delay or cherry-pick?"

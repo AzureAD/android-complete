@@ -1026,7 +1026,6 @@ def test_timed_step_gated_until_fire_time():
     r = _ccd_active(datetime(2026, 8, 26, 8, 0, tzinfo=tz)).status_report()
     assert r["active_phase"]["id"] == "ccd" and r["active_phase"]["due"]
     assert "final_reminder" not in r["scout_pending"]
-    assert "pr_reminder" not in r["scout_pending"]
 
     # 09:00 — the 9am comms are now runnable; the noon localization still isn't.
     r2 = _ccd_active(datetime(2026, 8, 26, 9, 0, tzinfo=tz)).status_report()
