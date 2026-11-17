@@ -7,6 +7,7 @@ without routing through interactive LLM `workiq_send_*` tools.
 from __future__ import annotations
 
 from html import escape
+import atexit
 import json
 import os
 import queue
@@ -18,6 +19,10 @@ from typing import Any, Callable
 
 
 MCPCaller = Callable[[str, str, dict[str, Any]], dict[str, Any]]
+
+
+class AgencyTransportUnavailableError(RuntimeError):
+    """Raised when `agency.exe` is absent or its MCP stdio server fails to start/respond."""
 
 
 def resolve_agency_exe(explicit: str | None = None) -> str:
@@ -47,7 +52,7 @@ def resolve_agency_exe(explicit: str | None = None) -> str:
                 exe = os.path.abspath(candidate)
                 break
     if not exe or not os.path.isfile(exe):
-        raise RuntimeError(
+        raise AgencyTransportUnavailableError(
             "Agency CLI executable not found. Install Agency (https://aka.ms/agency) "
             "or set RELEASE_AGENT_AGENCY_EXE."
         )
@@ -137,50 +142,247 @@ def call_mcp_tool(
             "params": {"name": tool_name, "arguments": arguments},
         })
         call_resp = _recv(2)
-        if "error" in call_resp:
-            raise RuntimeError(f"Agency MCP '{server}.{tool_name}' error: {call_resp['error']}")
-        result = call_resp.get("result") or {}
-        content_items = result.get("content") if isinstance(result, dict) else None
-        texts = [
-            item.get("text", "")
-            for item in (content_items or [])
-            if isinstance(item, dict) and isinstance(item.get("text"), str)
-        ]
-        combined = "\n".join(t for t in texts if t).strip()
-        if isinstance(result, dict) and result.get("isError"):
-            raise RuntimeError(f"Agency MCP '{server}.{tool_name}' failed: {combined or result}")
-        if combined:
-            stripped = combined.lstrip()
-            parsed = None
-            if stripped.startswith(("{", "[")):
-                try:
-                    val, end = json.JSONDecoder().raw_decode(stripped)
-                    trailer = stripped[end:].strip()
-                    if isinstance(val, dict):
-                        parsed = dict(val)
-                        if trailer:
-                            parsed.setdefault("_trailer", trailer)
-                    else:
-                        parsed = {"result": val, **({"_trailer": trailer} if trailer else {})}
-                except json.JSONDecodeError:
-                    parsed = None
-            if isinstance(parsed, dict):
-                if parsed.get("isError") or parsed.get("success") is False or (
-                    isinstance(parsed.get("error"), str) and parsed["error"].strip()
-                ):
-                    raise RuntimeError(
-                        f"Agency MCP '{server}.{tool_name}' rejected request: "
-                        f"{parsed.get('error') or parsed.get('message') or combined}"
-                    )
-                return parsed
-            return {"message": combined}
-        return result if isinstance(result, dict) else {"result": result}
+        return _unwrap_mcp_result(server, tool_name, call_resp)
     finally:
         try:
             proc.terminate()
             proc.wait(timeout=3)
         except Exception:
             proc.kill()
+
+
+def _unwrap_mcp_result(server: str, tool_name: str, call_resp: dict[str, Any]) -> dict[str, Any]:
+    if "error" in call_resp:
+        raise RuntimeError(f"Agency MCP '{server}.{tool_name}' error: {call_resp['error']}")
+    result = call_resp.get("result") or {}
+    content_items = result.get("content") if isinstance(result, dict) else None
+    texts = [
+        item.get("text", "")
+        for item in (content_items or [])
+        if isinstance(item, dict) and isinstance(item.get("text"), str)
+    ]
+    combined = "\n".join(t for t in texts if t).strip()
+    if isinstance(result, dict) and result.get("isError"):
+        raise RuntimeError(f"Agency MCP '{server}.{tool_name}' failed: {combined or result}")
+    if combined:
+        stripped = combined.lstrip()
+        parsed = None
+        if stripped.startswith(("{", "[")):
+            try:
+                val, end = json.JSONDecoder().raw_decode(stripped)
+                trailer = stripped[end:].strip()
+                if isinstance(val, dict):
+                    parsed = dict(val)
+                    if trailer:
+                        parsed.setdefault("_trailer", trailer)
+                else:
+                    parsed = {"result": val, **({"_trailer": trailer} if trailer else {})}
+            except json.JSONDecodeError:
+                parsed = None
+        if isinstance(parsed, dict):
+            if parsed.get("isError") or parsed.get("success") is False or (
+                isinstance(parsed.get("error"), str) and parsed["error"].strip()
+            ):
+                raise RuntimeError(
+                    f"Agency MCP '{server}.{tool_name}' rejected request: "
+                    f"{parsed.get('error') or parsed.get('message') or combined}"
+                )
+            return parsed
+        return {"message": combined}
+    return result if isinstance(result, dict) else {"result": result}
+
+
+class AgencyMcpSession:
+    """Persistent stdio JSON-RPC client for multi-call read workflows (e.g. `agency mcp workiq`)."""
+
+    def __init__(self, server: str, *, agency_exe: str | None = None, startup_timeout: float = 45.0):
+        self.server = server
+        self.exe = resolve_agency_exe(agency_exe)
+        self._lock = threading.Lock()
+        self._next_id = 1
+        self.verified_owner: str | None = None
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        self._proc = subprocess.Popen(
+            [self.exe, "mcp", server],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        threading.Thread(target=self._reader, daemon=True).start()
+        try:
+            init_id = self._alloc_id()
+            self._send({
+                "jsonrpc": "2.0",
+                "id": init_id,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "android-release-orchestrator", "version": "2.0"},
+                },
+            })
+            init_resp = self._recv(init_id, "initialize", time.monotonic() + startup_timeout)
+            if "error" in init_resp:
+                raise AgencyTransportUnavailableError(
+                    f"Agency MCP '{server}' initialize failed: {init_resp['error']}"
+                )
+            self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        except Exception as exc:
+            self.close()
+            if isinstance(exc, AgencyTransportUnavailableError):
+                raise
+            raise AgencyTransportUnavailableError(str(exc)) from exc
+
+    def _alloc_id(self) -> int:
+        rid = self._next_id
+        self._next_id += 1
+        return rid
+
+    def _reader(self) -> None:
+        assert self._proc.stdout is not None
+        try:
+            for raw in self._proc.stdout:
+                self._lines.put(raw)
+        finally:
+            self._lines.put(None)
+
+    def _send(self, payload: dict[str, Any]) -> None:
+        assert self._proc.stdin is not None
+        self._proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._proc.stdin.flush()
+
+    def _recv(self, expected_id: int, tool_name: str, deadline: float) -> dict[str, Any]:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(f"Timed out waiting for Agency MCP '{self.server}.{tool_name}' response")
+            try:
+                raw = self._lines.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise RuntimeError(f"Timed out waiting for Agency MCP '{self.server}.{tool_name}' response") from exc
+            if raw is None:
+                stderr = self._proc.stderr.read().strip() if self._proc.stderr else ""
+                raise RuntimeError(
+                    f"Agency MCP '{self.server}' exited unexpectedly before replying"
+                    + (f": {stderr[:300]}" if stderr else "")
+                )
+            text = raw.strip()
+            if not text.startswith("{"):
+                continue
+            msg = json.loads(text)
+            if msg.get("id") == expected_id:
+                return msg
+
+    @property
+    def alive(self) -> bool:
+        return self._proc.poll() is None
+
+    def call(self, tool_name: str, arguments: dict[str, Any], *, timeout: float = 60.0) -> dict[str, Any]:
+        with self._lock:
+            req_id = self._alloc_id()
+            self._send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": arguments},
+            })
+            resp = self._recv(req_id, tool_name, time.monotonic() + timeout)
+            return _unwrap_mcp_result(self.server, tool_name, resp)
+
+    def close(self) -> None:
+        if self._proc.poll() is not None:
+            return
+        try:
+            self._proc.terminate()
+            self._proc.wait(timeout=3)
+        except Exception:
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+
+
+_SHARED_SESSIONS_LOCK = threading.Lock()
+_SHARED_SESSIONS: dict[tuple[str, str], AgencyMcpSession] = {}
+
+
+def _close_all_shared_sessions() -> None:
+    with _SHARED_SESSIONS_LOCK:
+        sessions = list(_SHARED_SESSIONS.values())
+        _SHARED_SESSIONS.clear()
+    for sess in sessions:
+        sess.close()
+
+
+atexit.register(_close_all_shared_sessions)
+
+
+def get_shared_session(server: str, *, agency_exe: str | None = None) -> AgencyMcpSession:
+    exe = resolve_agency_exe(agency_exe)
+    key = (exe, server)
+    with _SHARED_SESSIONS_LOCK:
+        sess = _SHARED_SESSIONS.get(key)
+        if sess is not None and sess.alive:
+            return sess
+        if sess is not None:
+            sess.close()
+        sess = AgencyMcpSession(server, agency_exe=exe)
+        _SHARED_SESSIONS[key] = sess
+        return sess
+
+
+def _extract_workiq_fetch_data(raw: dict[str, Any], path: str) -> Any:
+    structured = raw.get("structuredContent") if isinstance(raw, dict) else None
+    results = (structured.get("results") if isinstance(structured, dict) else None) or (
+        raw.get("results") if isinstance(raw, dict) else None
+    )
+    if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict):
+        raise ValueError(f"Agency WorkIQ MCP fetch returned malformed response for '{path}'")
+    entry = results[0]
+    status = entry.get("statusCode")
+    err = entry.get("error")
+    if err or (isinstance(status, int) and status >= 400):
+        raise ValueError(
+            f"WorkIQ fetch failed (HTTP {status or 'error'}): {err or 'request rejected'}"
+        )
+    data = entry.get("data")
+    if not isinstance(data, (dict, list)):
+        raise ValueError(f"WorkIQ fetch returned empty or non-JSON entity payload for '{path}'")
+    return data
+
+
+def fetch_workiq_entity(
+    path: str,
+    owner: str,
+    *,
+    timeout: float = 60.0,
+    agency_exe: str | None = None,
+) -> Any:
+    """Read a single Graph-relative entity URL via `agency.exe mcp workiq` (`fetch`),
+    verifying once per session that the authenticated M365 user matches `owner`."""
+    from orchestrator import m365
+
+    sess = get_shared_session("workiq", agency_exe=agency_exe)
+    if (sess.verified_owner or "").casefold() != owner.casefold():
+        me_raw = sess.call(
+            "fetch",
+            {"entityUrls": ["/me?$select=id,displayName,mail,userPrincipalName"]},
+            timeout=timeout,
+        )
+        me_data = _extract_workiq_fetch_data(me_raw, "/me")
+        if not m365.profile_matches(me_data, owner):
+            raise ValueError("Connector observation account differs from the release owner")
+        sess.verified_owner = owner
+        if path == "/me?$select=id,displayName,mail,userPrincipalName":
+            return me_data
+
+    raw = sess.call("fetch", {"entityUrls": [path]}, timeout=timeout)
+    return _extract_workiq_fetch_data(raw, path)
 
 
 def _convert_teams_mentions(content: str, mentions: Any) -> tuple[str, str | None]:

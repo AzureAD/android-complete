@@ -245,7 +245,7 @@ def advance_log_summary(actions, lead=None) -> str:
 def refresh_conflict(st: ReleaseState) -> bool:
     """Best-effort: re-read the pipeline override and refresh st.ccd_conflict
     (a pipeline date that differs from our stored CCD). Once the checker has
-    already fired for this release, pipeline 3038's variable reflects future
+    already fired for this release, pipeline 3155's variable reflects future
     releases rather than an unresolved CCD conflict. Returns True if changed."""
     if not st.ccd:
         return False

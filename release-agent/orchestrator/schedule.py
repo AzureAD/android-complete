@@ -1,7 +1,7 @@
 """Schedule math for CCD-anchored phases — pure functions, no IO.
 
 The Code Complete Date (CCD) is the anchor the whole release hangs off of.
-This module mirrors the logic of ADO pipeline 3038 "Code Complete Calendar
+This module mirrors the logic of ADO pipeline 3155 "Code Complete Calendar
 Checker" so the orchestrator resolves the *same* date the pipeline would:
 
   * Default : the 2nd Wednesday of the release month.
@@ -82,7 +82,7 @@ def parse_release_month(release_id: str) -> Tuple[int, int]:
 
 
 def second_wednesday(year: int, month: int) -> date:
-    """The 2nd Wednesday of the month (pipeline 3038's default rule)."""
+    """The 2nd Wednesday of the month (pipeline 3155's default rule)."""
     weeks = calendar.monthcalendar(year, month)
     wednesdays = [w[calendar.WEDNESDAY] for w in weeks if w[calendar.WEDNESDAY] != 0]
     return date(year, month, wednesdays[1])

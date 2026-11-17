@@ -1,7 +1,7 @@
 """Step: `checker_fired` — verify the Code Complete Calendar Checker fired the release
 (Phase 2, build_verify).
 
-The checker (def 3038) runs DAILY as a cron. Every run has a "Trigger Monthly Release"
+The checker (def 3155) runs DAILY as a cron. Every run has a "Trigger Monthly Release"
 job, but it is SKIPPED on ordinary days and only runs (succeeds) on the actual Code
 Complete Day — when it launches the Release Orchestrator. This step scans the month's
 checker runs (newest first) and confirms one has a SUCCEEDED "Trigger Monthly Release"
@@ -115,12 +115,12 @@ def _verdict(context, run, result, job):
         links=links, updates=(K.stash_checker(context, bid, when),))
 
 KNOWLEDGE = {'summary': 'Confirm the Code Complete Calendar Checker fired the release on the CCD.',
- 'what': "The checker (def 3038) runs daily; its 'Trigger Monthly Release' job is SKIPPED on "
+ 'what': "The checker (def 3155) runs daily; its 'Trigger Monthly Release' job is SKIPPED on "
          'ordinary days and only runs (succeeds) on the actual Code Complete Day, when it '
          "launches the Release Orchestrator. This step scans the month's checker runs for the "
          "one whose 'Trigger Monthly Release' job succeeded.\n",
- 'where': ['Code Complete Calendar Checker (def 3038): '
-           'https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038'],
+ 'where': ['Code Complete Calendar Checker (def 3155): '
+           'https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3155'],
  'how': 'If it blocks: before Code Complete Day this is EXPECTED (nothing has triggered yet). '
         "After the CCD, a missing/failed 'Trigger Monthly Release' means the release wasn't "
         "kicked off — check the checker's latest run and its schedule, fix, and rerun the "

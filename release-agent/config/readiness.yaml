@@ -42,7 +42,7 @@ items:
   - id: ccd_confirmed
     label: "CCD reconciled with pipeline"
     text: "The Code Complete Date is valid and reconciled with the pipeline (no unresolved override)"
-    detail: "Scout validates the CCD end-to-end: an unconfirmed past default blocks until rescheduled, and it must agree with pipeline 3038's override (a differing override blocks until reconciled). Because every phase is CCD-relative, a wrong CCD misaligns the whole release. If the CCD leaves Phase 0 (CCD-7→CCD) with less than its normal 7-day window, Scout warns about the compressed prep window and still lets you proceed."
+    detail: "Scout validates the CCD end-to-end: an unconfirmed past default blocks until rescheduled, and it must agree with pipeline 3155's override (a differing override blocks until reconciled). Because every phase is CCD-relative, a wrong CCD misaligns the whole release. If the CCD leaves Phase 0 (CCD-7→CCD) with less than its normal 7-day window, Scout warns about the compressed prep window and still lets you proceed."
     verify: auto
     source: scout
     verifier: ccd_confirmed

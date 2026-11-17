@@ -130,7 +130,7 @@ def test_release_chain_provider_rejects_malformed_collections(monkeypatch, funct
 
     monkeypatch.setattr(P, "_az_json", lambda *args: (True, payload, ""))
     method = getattr(P, function)
-    args = ("ORG", "PROJ", 101) if function == "get_timeline" else ("ORG", "PROJ", 3038, "2026-10")
+    args = ("ORG", "PROJ", 101) if function == "get_timeline" else ("ORG", "PROJ", 3155, "2026-10")
     ok, value, detail = method(*args)
     assert not ok and value is None and "malformed" in detail
 
@@ -148,7 +148,7 @@ def test_release_chain_discovery_keeps_month_filtering_and_newest_selection(monk
     monkeypatch.setattr(P, "_az_json", lambda *args: (True, builds, ""))
     ok, found, _ = P.find_orchestrator_run("ORG", "PROJ", 2828, "2026-10")
     assert ok and found["id"] == 102
-    ok, found, _ = P.find_checker_runs("ORG", "PROJ", 3038, "2026-10")
+    ok, found, _ = P.find_checker_runs("ORG", "PROJ", 3155, "2026-10")
     assert ok and [row["id"] for row in found] == [102, 101]
 
 

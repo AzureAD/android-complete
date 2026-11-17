@@ -1,6 +1,6 @@
 """Step: `cron` — verify the Calendar Checker pipeline is scheduled (Phase 0, S10).
 
-Confirms pipeline 3038 is scheduled AND firing by finding a recent `schedule`-reason
+Confirms pipeline 3155 is scheduled AND firing by finding a recent `schedule`-reason
 run within the staleness window. Live ADO evidence is aged against trusted wall-clock
 UTC, never a simulated release date. Injected mock evidence intentionally uses the
 simulation clock. Passes if fresh; BLOCKS if there's no scheduled run or it's stale.
@@ -20,7 +20,7 @@ NAME = 'Verify Calendar Checker scheduled'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 
-# Step config (co-located). Pipeline 3038's cron proves it's FIRING via a recent
+# Step config (co-located). Pipeline 3155's cron proves it's FIRING via a recent
 # schedule-reason run in its build history. It's the Engineering Calendar Checker.
 CONFIG = {
     "pipeline_id": coords.pipeline_def("checker"),
@@ -98,7 +98,7 @@ def build(context: StepContext):
         f"{name} is scheduled and firing — last scheduled run {when} ({run_.get('result')}).")
 
 KNOWLEDGE = {'summary': 'Verify the Code Complete Calendar Checker pipeline is scheduled and firing.',
- 'what': "Pipeline 3038's cron lives in YAML (not exposed in its triggers), so the check "
+ 'what': "Pipeline 3155's cron lives in YAML (not exposed in its triggers), so the check "
          "proves it's actually firing by confirming a recent schedule-reason run in its build "
          'history. Live run freshness always uses the trusted current UTC clock, not a '
          "simulated --as-of release date. Blocks if there's no recent scheduled run or it's "

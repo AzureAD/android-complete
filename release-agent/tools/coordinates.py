@@ -66,7 +66,7 @@ class _Coords:
 
     # -- pipelines --
     def pipeline_def(self, key) -> int:
-        """A pipeline's definition id (e.g. 'checker' -> 3038)."""
+        """A pipeline's definition id (e.g. 'checker' -> 3155)."""
         return self._get("pipelines", key, "def")
 
     def pipeline(self, key) -> dict:

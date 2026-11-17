@@ -1683,7 +1683,7 @@ ITEM CONTRACTS
     Source: phases\readiness_verifiers.py:46-77; orchestrator\infra.py:80-153.
 
   ccd_confirmed / Scout auto / required, no degraded:
-    Input: stored CCD/release month, pipeline 3038 overrideCodeCompleteDate,
+    Input: stored CCD/release month, pipeline 3155 overrideCodeCompleteDate,
     clock and explicit owner decision when reconciliation is needed.
     Work: check-ccd returns unset, past, conflict, unreadable or match.
     Past/conflict require resolution; match may pass. A same-day CCD is

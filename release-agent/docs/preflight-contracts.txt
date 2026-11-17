@@ -138,7 +138,7 @@ successful cleanup and no re-probe after completed phase/repeated next.
 
 7. cron / read-only auto
 -------------------------
-INPUT CONFIG/EXTERNAL: Calendar Checker pipeline 3038, org/project, maximum
+INPUT CONFIG/EXTERNAL: Calendar Checker pipeline 3155, org/project, maximum
 staleness=2 days; latest schedule-reason build from valid history.
 INPUT CLOCK: trusted real UTC for provider observations; invocation clock for
 explicit mock run input. A simulated release date cannot age real evidence.

@@ -1728,16 +1728,17 @@ def test_step_knowledge_base_answers_step_questions():
 
 
 
-def test_step_knowledge_module_overlays_yaml():
+def test_step_knowledge_module_overlays_yaml(monkeypatch):
     """A step module's KNOWLEDGE overlays the yaml per-field (module wins)."""
     from orchestrator import knowledge as kb
     import steps.preflight.cg as cgmod
     saved = getattr(cgmod, "KNOWLEDGE", None)
+    monkeypatch.setattr(kb, "_load_file", lambda _path=None: {"preflight.cg": {"what": "yaml-what", "summary": "yaml-summary"}})
     cgmod.KNOWLEDGE = {"summary": "OVERRIDDEN"}
     try:
         k = kb.get_knowledge("preflight", "cg")
         assert k["summary"] == "OVERRIDDEN"        # module field wins
-        assert k.get("what")                        # yaml fields still present
+        assert k.get("what") == "yaml-what"         # yaml fields still present
     finally:
         if saved is None:
             delattr(cgmod, "KNOWLEDGE")

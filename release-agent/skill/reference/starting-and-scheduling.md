@@ -30,7 +30,7 @@ The **release label** always matches the **calendar month of the elected release
 3. **Initialize, sync any custom date override, and run ONLY the required Readiness Entry Gate checks in the SAME turn:**
    - Run `python -m orchestrator.cli init --release <id> --json` (adding `--ccd <YYYY-MM-DD>` when a custom date was elected; `init` resolves `owner_email` and `timezone` locally without calling M365/WorkIQ MCP, check `--help` when flags are uncertain, and use `set-owner` if `owner_email` is empty).
    - Guided foreground operation (`interactive`) is the default; no background worker is created unless `--unattended` was explicitly requested.
-   - If a custom date (other than the 2nd Wednesday of `<id>`) was elected, apply `set-ccd --release <id> --date <YYYY-MM-DD> --reason "Owner selected release date <YYYY-MM-DD> at release start"` (preview, then `--confirm` when pipeline 3038 is reachable).
+   - If a custom date (other than the 2nd Wednesday of `<id>`) was elected, apply `set-ccd --release <id> --date <YYYY-MM-DD> --reason "Owner selected release date <YYYY-MM-DD> at release start"` (preview, then `--confirm` when pipeline 3155 is reachable).
    - **Initialization is NOT a stopping point.** All readiness items and phase steps are mandatory. Immediately run `verify --release <id> --pending-only` and `checklist --release <id> --attest-prompt --json` per [readiness-gate.md](readiness-gate.md), execute **every** runnable probe in `pending_auto_checks` without halting on individual failures (recording `--status fail --detail "<specific tool/connector error>"` only on the failed check), fetch `checklist --release <id> --attest-prompt --handoff --json`, paste `display_markdown` verbatim as live Markdown, and prompt with the readiness attestation/repair card.
 4. **Continue automatic guided progression after readiness clears:**
    - Once readiness is signed, immediately run `next --release <id> --json` and execute all eligible tasks in `work_dispatch` whose `depends_on` lists are satisfied without asking the owner to say `"next"`.
@@ -40,8 +40,8 @@ The **release label** always matches the **calendar month of the elected release
 ## Code Complete Date (CCD) & pipeline conflicts
 
 Phases are anchored to the CCD (`CCD-7`, `CCD`, `CCD+1`). By default, CCD is the **2nd Wednesday** of `<release_id>`.
-`init` and `check-ccd` read ADO pipeline `3038` (`overrideCodeCompleteDate`) without silently adopting a differing date:
-- If pipeline `3038` has a different in-month date (`status: "conflict"`), present an `m_ask_user` card with **`Use pipeline date <override>`**, **`Keep release default <ccd>`**, and **`Use a different date`**.
+`init` and `check-ccd` read ADO pipeline `3155` (`overrideCodeCompleteDate`) without silently adopting a differing date:
+- If pipeline `3155` has a different in-month date (`status: "conflict"`), present an `m_ask_user` card with **`Use pipeline date <override>`**, **`Keep release default <ccd>`**, and **`Use a different date`**.
 - Changing the pipeline CCD is a checked external write: run `set-ccd --release <id> [--date <YYYY-MM-DD> | --default] --reason "<why>"` (preview), then with `--confirm`. Re-run `check-ccd` and record `ccd_confirmed`.
 
 ## Guided onboarding on request (`/release-agent check setup`)

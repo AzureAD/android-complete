@@ -19,6 +19,15 @@ FETCH_ALIASES = {FETCH_TOOL, "workiq-fetch", "workiq:fetch", "mcp__workiq__fetch
 _DISCOVERED = {}
 
 
+class WorkIqEulaRequiredError(ValueError):
+    """Raised when the WorkIQ CLI rejects a read because `workiq accept-eula` has not been recorded."""
+
+
+def _is_eula_prompt(text: str) -> bool:
+    low = (text or "").lower()
+    return "accept-eula" in low or "end user license" in low
+
+
 def _launcher_stamp(command, launcher):
     return tuple((str(path), Path(path).stat().st_mtime_ns, Path(path).stat().st_size)
                  for path in dict.fromkeys([str(launcher), *command]))
@@ -28,6 +37,11 @@ def _parse_structured_payload(stdout):
     text = stdout.strip()
     if not text:
         raise ValueError("WorkIQ fetch returned empty output; no structured result was produced")
+    if _is_eula_prompt(text):
+        raise WorkIqEulaRequiredError(
+            "WorkIQ CLI EULA is not accepted (~/.work-iq-cli/.workiq.json missing I-accept-EULA); "
+            "approve m_accept_workiq_eula in Scout or run 'workiq accept-eula'"
+        )
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -131,6 +145,12 @@ def route(available, cli=None, *, now=None):
         raise ValueError("Structured fetch discovery must be an object")
     if cli.get("status") in ("missing", "unsupported"):
         return None
+    if cli.get("status") == "available" and cli.get("kind") == "agency_mcp":
+        exe = cli.get("agency_exe")
+        if not isinstance(exe, str) or not os.path.isabs(exe) or not os.path.isfile(exe):
+            raise ValueError("Agency WorkIQ MCP route requires a real agency executable")
+        m365.validate_freshness(cli.get("observed_at"), now=now)
+        return cli
     command = cli.get("command")
     if (cli.get("status") != "available" or cli.get("kind") != "cli"
             or not isinstance(command, list) or not command
@@ -151,8 +171,46 @@ def request(paths, owner):
     return result
 
 
-def read(scout_root, owner, path, *, preferred=None, discovered=None):
-    """One exact read through the discovered CLI; shell metacharacters stay literal."""
+def discover_agency(scout_root, *, agency_exe=None):
+    """Discover Agency CLI (`agency.exe mcp workiq`) as the primary structured M365 reader."""
+    from . import agency_mcp
+
+    try:
+        exe = agency_mcp.resolve_agency_exe(agency_exe)
+    except agency_mcp.AgencyTransportUnavailableError as exc:
+        return {"status": "missing", "detail": str(exc)}
+    return {
+        "status": "available",
+        "kind": "agency_mcp",
+        "server": "workiq",
+        "agency_exe": os.path.abspath(exe),
+        "scout_root": os.path.abspath(scout_root),
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _read_via_agency(scout_root, owner, path, *, agency_exe=None):
+    """Primary M365 Graph read via persistent `agency.exe mcp workiq` stdio session."""
+    from . import agency_mcp
+
+    selected = discover_agency(scout_root, agency_exe=agency_exe)
+    if selected.get("status") != "available":
+        raise agency_mcp.AgencyTransportUnavailableError(selected["detail"])
+    value = agency_mcp.fetch_workiq_entity(path, owner, agency_exe=selected["agency_exe"])
+    envelope = {
+        "version": 1, "tool": FETCH_TOOL, "arguments": {"entityUrls": [path]},
+        "account": owner, "observed_at": datetime.now(timezone.utc).isoformat(),
+        "result": value, "structured_fetch": selected,
+    }
+    m365.validate_observation(envelope, tool=FETCH_TOOL, arguments=envelope["arguments"], owner=owner)
+    return envelope
+
+
+def read(scout_root, owner, path, *, preferred=None, discovered=None,
+         prefer_agency: bool = False, agency_exe=None):
+    """One exact read: tries Agency MCP (`agency mcp workiq`) first when `prefer_agency=True`
+    (falling back to the WorkIQ CLI only if the Agency binary/transport is unavailable, never
+    on 401/403 permission or owner-mismatch errors)."""
     if (not isinstance(owner, str) or owner != owner.strip() or owner.count("@") != 1
             or not all(owner.split("@"))
             or any(char.isspace() for char in owner)):
@@ -161,6 +219,22 @@ def read(scout_root, owner, path, *, preferred=None, discovered=None):
     if (not path.startswith("/") or path.startswith("//") or parsed.scheme or parsed.netloc
             or parsed.fragment or any(char in path for char in "\r\n")):
         raise ValueError("WorkIQ requires an exact Graph-relative entity URL")
+
+    if prefer_agency and preferred is None and (
+        discovered is None or (isinstance(discovered, dict) and discovered.get("kind") == "agency_mcp")
+    ):
+        from . import agency_mcp
+        explicit_agency = (
+            discovered.get("agency_exe")
+            if isinstance(discovered, dict) and discovered.get("kind") == "agency_mcp"
+            else agency_exe
+        )
+        try:
+            return _read_via_agency(scout_root, owner, path, agency_exe=explicit_agency)
+        except agency_mcp.AgencyTransportUnavailableError:
+            # Agency CLI not installed or `mcp workiq` failed to start -> fall back to WorkIQ CLI.
+            discovered = None
+
     if discovered is None:
         discovered = discover_cli(scout_root, preferred)
     else:

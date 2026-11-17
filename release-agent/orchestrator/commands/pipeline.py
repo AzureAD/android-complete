@@ -1,4 +1,4 @@
-"""Pipeline-write commands (real production changes to ADO pipeline 3038):
+"""Pipeline-write commands (real production changes to ADO pipeline 3155):
 set-ccd and skip-release. Both are gated (preview → --confirm) and audited.
 Also `check-ccd` (read-only) — reconcile the release CCD with the pipeline override
 for the entry gate."""

@@ -154,7 +154,7 @@ def oneauth_write_access(
 
 # ---- CCD pipeline variables (the source of record for Code Complete Date) ----
 #
-# These read/write the definition-level variables on pipeline 3038 via the az CLI.
+# These read/write the definition-level variables on pipeline 3155 via the az CLI.
 # `overrideCodeCompleteDate` and `skipRelease` are UI/definition variables, which
 # is exactly what `az pipelines variable` operates on.
 

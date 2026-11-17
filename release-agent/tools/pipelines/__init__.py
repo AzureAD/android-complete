@@ -6,7 +6,7 @@ build_verify steps receive read-only services. Approval recovery reads a frozen
 approval id, validates identity and build ownership, and never submits again. The
 release chain these read (all in identitydivision/Engineering):
 
-    3038 Code Complete Calendar Checker  → on the CCD, triggers →
+    3155 Code Complete Calendar Checker  → on the CCD, triggers →
     2828 Release Orchestrator            → self-tags AuthenticatorBranch=release-YYYY-MM-DD
                                            + RC<N>-ECS=<id> / RC<N>-Local=<id> (the two MRWP
                                              runs for RC iteration N; a re-trigger adds RC<N+1>-*)

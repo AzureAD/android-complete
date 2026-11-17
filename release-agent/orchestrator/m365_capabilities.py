@@ -207,52 +207,71 @@ def missing_tools(available, *, structured_fetch=None, now=None):
 def fetch_live_roster_bundle(owner: str, group_mail: str | None = None, *,
                              scout_root: str | None = None, workiq_path: str | None = None) -> dict:
     """Fetch the configured distribution group lookup and ALL member pages directly in Python
-    via `structured_fetch.read` (`shell=False`, avoiding PowerShell `$filter`/`$select` mangling)."""
+    via `structured_fetch.read` (Agency `mcp workiq` primary, WorkIQ CLI fallback)."""
     from . import infra
     from tools.distribution import ConnectorObservationRequired, load_config, roster_lookup_path, roster_observed
 
     resolved_root = infra.scout_profile_root(scout_root)
-    discovered = F.discover_cli(resolved_root, workiq_path)
-    if F.route({}, discovered) is None:
-        raise ValueError(discovered.get("detail") or "WorkIQ CLI launcher not found")
+    use_agency_first = workiq_path is None
+    discovered = None
+    if not use_agency_first:
+        discovered = F.discover_cli(resolved_root, workiq_path)
+        if F.route({}, discovered) is None:
+            raise ValueError(discovered.get("detail") or "WorkIQ CLI launcher not found")
     mail = group_mail or load_config()["roster_group"]
-    envelopes = [F.read(resolved_root, owner, roster_lookup_path(mail), discovered=discovered)]
+    first = F.read(
+        resolved_root, owner, roster_lookup_path(mail),
+        preferred=workiq_path, discovered=discovered, prefer_agency=use_agency_first,
+    )
+    discovered = first.get("structured_fetch")
+    envelopes = [first]
     while True:
         try:
             roster_observed(mail, {"observations": envelopes}, owner)
             return {"observations": envelopes}
         except ConnectorObservationRequired as exc:
             next_path = exc.arguments["entityUrls"][0]
-            envelopes.append(F.read(resolved_root, owner, next_path, discovered=discovered))
+            envelopes.append(
+                F.read(
+                    resolved_root, owner, next_path,
+                    preferred=workiq_path, discovered=discovered, prefer_agency=use_agency_first,
+                )
+            )
 
 
 def fetch_live_evidence(state, *, scout_root: str | None = None,
                         workiq_path: str | None = None) -> dict:
     """Execute all 4 M365 readiness read checks directly in Python via `structured_fetch.read`
-    (`shell=False`, full automatic pagination, zero LLM PowerShell URL quoting or temp files)."""
+    (Agency `mcp workiq` primary over one persistent stdio pipe, WorkIQ CLI fallback)."""
     from . import infra
-    from tools.distribution import ConnectorObservationRequired, roster_observed
+    from tools.distribution import roster_observed
 
     owner = getattr(state, "owner_email", None)
     if not owner:
         raise ValueError("Release owner email is unset; set-owner before verifying M365 capabilities")
     resolved_root = infra.scout_profile_root(scout_root)
-    discovered = F.discover_cli(resolved_root, workiq_path)
-    selected_route = F.route({}, discovered)
-    if selected_route is None:
-        raise ValueError(discovered.get("detail") or "WorkIQ CLI launcher not available")
+    use_agency_first = workiq_path is None
+    discovered = None
+    if not use_agency_first:
+        discovered = F.discover_cli(resolved_root, workiq_path)
+        if F.route({}, discovered) is None:
+            raise ValueError(discovered.get("detail") or "WorkIQ CLI launcher not available")
 
     target = targets()
 
-    # 1. Owner profile + calendar
+    # 1. Owner profile + calendar (first read locks in the active route for all remaining reads)
     profile_env = F.read(
-        resolved_root, owner, "/me?$select=id,displayName,mail,userPrincipalName", discovered=discovered)
+        resolved_root, owner, "/me?$select=id,displayName,mail,userPrincipalName",
+        preferred=workiq_path, discovered=discovered, prefer_agency=use_agency_first)
+    discovered = profile_env.get("structured_fetch")
+    selected_route = F.route({}, discovered)
     profile = profile_env["result"]
     if not m365.profile_matches(profile, owner):
         raise ValueError(f"M365 profile does not match release owner '{owner}'")
 
     cal_env = F.read(
-        resolved_root, owner, "/me/events?$select=id,subject,start,end&$top=1", discovered=discovered)
+        resolved_root, owner, "/me/events?$select=id,subject,start,end&$top=1",
+        preferred=workiq_path, discovered=discovered, prefer_agency=use_agency_first)
     cal = cal_env["result"]
     if not (isinstance(cal, list) or isinstance(cal, dict) and isinstance(cal.get("events", cal.get("value")), list)):
         raise ValueError("Calendar read returned no structured event collection")
@@ -266,7 +285,9 @@ def fetch_live_evidence(state, *, scout_root: str | None = None,
 
     # 3. Representative Teams chat + full member pagination
     cid = quote(target["representative_chat"], safe="")
-    chat_env = F.read(resolved_root, owner, f"/chats/{cid}?$select=id,chatType,topic", discovered=discovered)
+    chat_env = F.read(
+        resolved_root, owner, f"/chats/{cid}?$select=id,chatType,topic",
+        preferred=workiq_path, discovered=discovered, prefer_agency=use_agency_first)
     chat = chat_env["result"]
     if (not isinstance(chat, dict) or chat.get("id") != target["representative_chat"]
             or chat.get("chatType") not in ("meeting", "group")):
@@ -277,7 +298,9 @@ def fetch_live_evidence(state, *, scout_root: str | None = None,
         if next_path in seen_chat_pages or len(seen_chat_pages) >= 100:
             raise ValueError("Cyclic/excessive Teams chat member pagination")
         seen_chat_pages.add(next_path)
-        mem_env = F.read(resolved_root, owner, next_path, discovered=discovered)
+        mem_env = F.read(
+            resolved_root, owner, next_path,
+            preferred=workiq_path, discovered=discovered, prefer_agency=use_agency_first)
         mem_res = mem_env["result"]
         if not isinstance(mem_res, dict) or not isinstance(mem_res.get("value"), list):
             raise ValueError("Teams chat member probe returned malformed page")

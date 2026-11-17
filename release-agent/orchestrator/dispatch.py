@@ -173,9 +173,18 @@ def owner_prompt_payload(report: dict) -> dict | None:
     plan = report.get("work_dispatch") or {}
     if plan.get("pending_work") or not plan.get("may_return_to_user", True):
         return None
-    if plan.get("next_action") != DispatchAction.OWNER_OR_WAIT.value:
+    if plan.get("deferred_work"):
         return None
-    if plan.get("held_work") or plan.get("deferred_work"):
+    non_blocked_held = [
+        h for h in (plan.get("held_work") or [])
+        if h.get("status") != "blocked" or h.get("owned")
+    ]
+    if non_blocked_held:
+        return None
+    if plan.get("next_action") not in (
+        DispatchAction.OWNER_OR_WAIT.value,
+        DispatchAction.RESOLVE_PHASE_HOLD.value,
+    ):
         return None
 
     gate = report.get("gate")
@@ -185,13 +194,14 @@ def owner_prompt_payload(report: dict) -> dict | None:
             "kind": "gate_decision",
             "phase": gate.get("phase"),
             "step": gate.get("step"),
+            "resume_on_resolve": True,
             "question": (
                 f"Decide gate '{gate.get('step_name')}' for release {report.get('release_id')}."
             ),
             "answers": [
                 {
                     "title": "Approve gate",
-                    "description": "Continue release progression past this gate.",
+                    "description": "Approve this gate and continue automatic progression.",
                     "action": "approve",
                 },
                 {
@@ -217,6 +227,7 @@ def owner_prompt_payload(report: dict) -> dict | None:
             "kind": "blocked_step",
             "phase": action.get("phase"),
             "step": action.get("step"),
+            "resume_on_resolve": True,
             "question": (
                 f"How should Scout handle blocked step '{action.get('step_name')}' "
                 f"for release {report.get('release_id')}?"
@@ -224,22 +235,22 @@ def owner_prompt_payload(report: dict) -> dict | None:
             "answers": [
                 {
                     "title": "Fixed — retry",
-                    "description": "Recheck/reconcile the same attempt after a real fix.",
+                    "description": "Recheck/reconcile the same attempt after a real fix and continue automatically.",
                     "action": "retry",
                 },
                 {
                     "title": "New attempt / inputs",
-                    "description": "Start a new audited attempt, keeping prior results.",
+                    "description": "Start a new audited attempt (keeping prior results) and continue automatically.",
                     "action": "rerun",
                 },
                 {
                     "title": "Completed manually",
-                    "description": "Record owner-attested completion without claiming provider verification.",
+                    "description": "Record owner-attested completion and continue remaining steps automatically.",
                     "action": "complete-manually",
                 },
                 {
                     "title": "Override",
-                    "description": "Skip with an explicit owner reason.",
+                    "description": "Skip with an explicit owner reason and continue remaining steps automatically.",
                     "action": "override",
                 },
                 {
@@ -257,19 +268,25 @@ def owner_prompt_payload(report: dict) -> dict | None:
         "kind": "owner_action",
         "phase": action.get("phase"),
         "step": action.get("step"),
+        "resume_on_resolve": True,
         "question": (
             f"Did you complete '{action.get('step_name')}' for release {report.get('release_id')}?"
         ),
         "answers": [
             {
                 "title": "Completed",
-                "description": "Record completion of this task without starting other work.",
+                "description": "Record completion and continue remaining release steps automatically.",
                 "action": "done",
             },
             {
                 "title": "Not yet",
                 "description": "Keep this owner action on hold.",
                 "action": "hold",
+            },
+            {
+                "title": "Skip (waive)",
+                "description": "Waive this step with your reason and continue remaining steps automatically.",
+                "action": "skip",
             },
             {
                 "title": "Need help",

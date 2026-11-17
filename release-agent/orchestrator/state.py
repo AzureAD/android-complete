@@ -57,7 +57,7 @@ class ReleaseState:
     # so a headless automation running in a UTC process still uses the owner's clock.
     timezone: Optional[str] = None
     # Code Complete Date — the anchor the phases hang off of (orchestrator's truth,
-    # seeded from / written back to pipeline 3038). ccd is 'YYYY-MM-DD'.
+    # seeded from / written back to pipeline 3155). ccd is 'YYYY-MM-DD'.
     ccd: Optional[str] = None
     ccd_source: Optional[str] = None      # 'default' (2nd Wed) | 'override' | 'manual'
     ccd_conflict: Optional[str] = None    # a pipeline override date that DIFFERS from ccd (unresolved)

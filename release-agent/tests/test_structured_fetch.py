@@ -272,3 +272,59 @@ def test_record_routing_requires_verified_setup_and_contains_no_roster(launcher,
     assert cli.main(args) == 1
     capsys.readouterr()
     assert not (profile / "release-agent-routing.json").exists()
+
+
+def test_agency_mcp_is_primary_and_falls_back_to_cli_only_on_transport_unavailability(launcher, monkeypatch):
+    from orchestrator import agency_mcp
+
+    profile, _ = launcher
+    fake_agency = profile / "agency.exe"
+    fake_agency.write_bytes(b"agency binary")
+
+    # 1. Primary path: Agency MCP succeeds without spawning WorkIQ CLI subprocess.run
+    monkeypatch.setattr(F.subprocess, "run", lambda *a, **kw: pytest.fail("CLI fallback should not run when Agency succeeds"))
+    monkeypatch.setattr(agency_mcp, "resolve_agency_exe", lambda explicit=None: str(fake_agency))
+    monkeypatch.setattr(agency_mcp, "fetch_workiq_entity", lambda path, owner, **kw: {"value": [{"id": "g1"}]})
+    res = F.read(str(profile), "owner@example.test", "/groups", prefer_agency=True)
+    assert res["result"] == {"value": [{"id": "g1"}]}
+    assert res["structured_fetch"]["kind"] == "agency_mcp"
+
+    # 2. Transport unavailable (e.g. agency.exe missing) -> cleanly falls back to WorkIQ CLI
+    cli_calls = []
+    def cli_run(argv, **kw):
+        cli_calls.append(argv)
+        return process("fetch --urls") if "--help" in argv else process('{"value":[{"id":"cli"}]}')
+    monkeypatch.setattr(F.subprocess, "run", cli_run)
+    monkeypatch.setattr(
+        agency_mcp, "resolve_agency_exe",
+        lambda explicit=None: (_ for _ in ()).throw(agency_mcp.AgencyTransportUnavailableError("agency missing")),
+    )
+    fallback_res = F.read(str(profile), "owner@example.test", "/groups", prefer_agency=True)
+    assert fallback_res["result"] == {"value": [{"id": "cli"}]}
+    assert fallback_res["structured_fetch"]["kind"] == "cli"
+    assert cli_calls
+
+    # 3. Permission / owner mismatch ValueError -> surfaces directly WITHOUT falling back to CLI
+    monkeypatch.setattr(F.subprocess, "run", lambda *a, **kw: pytest.fail("Must not fall back on 403/account mismatch"))
+    monkeypatch.setattr(agency_mcp, "resolve_agency_exe", lambda explicit=None: str(fake_agency))
+    monkeypatch.setattr(
+        agency_mcp, "fetch_workiq_entity",
+        lambda path, owner, **kw: (_ for _ in ()).throw(ValueError("WorkIQ fetch failed (HTTP 403): AccessDenied")),
+    )
+    with pytest.raises(ValueError, match="403"):
+        F.read(str(profile), "owner@example.test", "/groups", prefer_agency=True)
+
+
+def test_cli_eula_banner_raises_explicit_eula_error(launcher, monkeypatch):
+    profile, _ = launcher
+    banner = (
+        "In order to use this tool you must accept the End User License Agreement (EULA)\n"
+        "To accept EULA, please execute the following command:\n    workiq accept-eula\n"
+    )
+    monkeypatch.setattr(
+        F.subprocess, "run",
+        lambda argv, **kw: process("fetch --urls") if "--help" in argv else process(banner, 0),
+    )
+    with pytest.raises(F.WorkIqEulaRequiredError, match="accept-eula"):
+        F.read(str(profile), "owner@example.test", "/groups")
+

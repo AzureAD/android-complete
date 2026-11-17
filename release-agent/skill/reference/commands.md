@@ -9,6 +9,7 @@ The agent handles those details from actual engine/tool responses.
 | Intent | Command |
 |---|---|
 | Discover paths/releases | `paths --json`; `list --json` |
+| Contextual command guide & `/release-agent` launcher | `commands [--release <id>] [--json]` |
 | Initialize interactively | `init --release <id> --json` |
 | Inspect local state | `status --release <id> [--details] [--json]` |
 | Execute one operation | `task --release <id> --phase <p> --step <s> [--param name=value]` |

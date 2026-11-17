@@ -15,13 +15,13 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 | **Engineering** | identitydivision | `identitydivision.visualstudio.com` = `dev.azure.com/identitydivision` | ADO **MCP** (bound here) or `az` |
 | **One** | msazure | `msazure.visualstudio.com` = `dev.azure.com/msazure` | **`az` only** — the ADO MCP can't reach it |
 
-> The ADO **MCP is bound to identitydivision/Engineering**. Calling it for project **One** fails with `TF200016: project does not exist`. Reads against **msazure/One** must use the **`az` CLI** (verified working as the signed-in user, no Conditional-Access 401): `az pipelines build show`, and `az devops invoke --area build --resource timeline|logs`. Engineering resources: pipeline 3038, build def 2828. One resources: pipeline 405133 (localization), build def 397224, CG repo 104410, the Auth App git repo.
+> The ADO **MCP is bound to identitydivision/Engineering**. Calling it for project **One** fails with `TF200016: project does not exist`. Reads against **msazure/One** must use the **`az` CLI** (verified working as the signed-in user, no Conditional-Access 401): `az pipelines build show`, and `az devops invoke --area build --resource timeline|logs`. Engineering resources: pipeline 3155, build def 2828. One resources: pipeline 405133 (localization), build def 397224, CG repo 104410, the Auth App git repo.
 
 ## Systems of record (read/write)
 
 | Ref | What | Used by | Access | Notes |
 |---|---|---|---|---|
-| ADO pipeline **3038** | "Code Complete Calendar Checker" — CCD source of record | CCD seed, `set-ccd`, `skip-release`, Phase-0 `cron` (verify scheduled) | az | org identitydivision / project Engineering. Real writes gated by --confirm. `cron` step verifies a recent `schedule`-reason run. |
+| ADO pipeline **3155** | "Code Complete Calendar Checker" — CCD source of record | CCD seed, `set-ccd`, `skip-release`, Phase-0 `cron` (verify scheduled) | az | org identitydivision / project Engineering. Real writes gated by --confirm. `cron` step verifies a recent `schedule`-reason run. |
 | ADO pipeline **405133** | Localization build (org msazure / project One) | Phase-1 `localization` | MCP (ADO) / az | triggered at noon on CCD with `isCreatePrSelected=true`; polled every 10 min (3h timeout → email engineer); its **OneLocBuild@3** task logs `Pull request created with ID '<n>'` — that PR (`…/pullrequest/<n>`) is posted to the Code reviews chat for review |
 | ADO build def **2828** | Auth Client Android build (org identitydivision / project Engineering) | readiness `build_access` | az | access check only |
 | ADO build def **397224** | Android Build Release (org msazure / project One) | readiness `build_access`, Phase-5 stage starters | az | Phase 5 locates the matching release-branch run (or future AndroidBuildBroker1ES resource-linked run) and starts `Release Sign Off`, `Upload What's New`, `Upload Alpha`, and owner-approved `100% Beta - Play Store`; Friday Beta starts additionally require manager approval; definition page: https://msazure.visualstudio.com/One/_build?definitionId=397224 |

@@ -29,7 +29,7 @@ INPUT STATE:
   release_id selects the work month. No previous Phase 2 evidence is needed.
   Eligibility still requires the entry gate, phase date and predecessor phases.
 INPUT CONFIG:
-  Engineering organization/project, checker definition 3038, trigger job name
+  Engineering organization/project, checker definition 3155, trigger job name
   and max_scan (25).
 INPUT PROVIDER:
   Month-filtered run list [{id, queueTime, ...}], newest first; exact per-run

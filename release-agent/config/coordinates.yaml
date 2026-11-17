@@ -44,7 +44,7 @@ sharepoint:
 
 # Pipeline definition ids, each tagged with the org it lives in.
 pipelines:
-  checker:      { org: engineering, def: 3038 }     # Code Complete Calendar Checker (fires the release on the CCD)
+  checker:      { org: engineering, def: 3155 }     # Code Complete Calendar Checker (fires the release on the CCD)
   orchestrator: { org: engineering, def: 2828 }     # Release Orchestrator (the spine)
   mrwp:         { org: engineering, def: 2519 }      # Monthly Release Work Pipeline (RC testing; ECS + Local)
   auth_build:   { org: one,         def: 475778 }    # AndroidBuildBroker1ES — RC auth-app build (ECS + Local flavors)

@@ -208,6 +208,13 @@ def readiness_table(chk: dict, release_id: str) -> str:
             f"Run `{item['command']}`."
             for item in startup["recoveries"] if item["slug"] not in queued_startup)
         lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
+    if not (chk.get("dispatch") or {}).get("continue_automatically"):
+        lines.extend([
+            "",
+            "---",
+            '💡 **Quick commands:** `"status"` (where am I) · `"continue"` (advance ready checks) '
+            '· `"explain <check>"` · `"help"` (all commands)',
+        ])
     return "\n".join(lines)
 
 
@@ -674,7 +681,123 @@ def status_view(r: dict) -> str:
     if (plan.get("pending_work") or plan.get("deferred_work")
             or plan.get("startup_automation") and not plan["startup_automation"]["complete"]):
         lines.extend(["", work_followup(plan)])
+    if not plan.get("continue_automatically"):
+        lines.extend(_quick_commands_footer(r))
     return "\n".join(lines)
+
+
+def _short_step_label(name: str | None, fallback: str = "<step>") -> str:
+    if not name:
+        return fallback
+    cleaned = re.sub(r"\s*\([^)]*\)", "", str(name)).strip()
+    cleaned = _cell(cleaned)
+    if len(cleaned) > 42:
+        cleaned = cleaned[:41].rstrip() + "…"
+    return cleaned or fallback
+
+
+def _example_step_name(r: dict, *, prefer_done: bool = False) -> str:
+    if not prefer_done:
+        focus = (r.get("action") or {}).get("step_name") or (r.get("gate") or {}).get("step_name")
+        if focus:
+            return _short_step_label(focus)
+    steps = r.get("current_steps") or []
+    if prefer_done:
+        for s in steps:
+            if s.get("state") == "done" and not s.get("gate"):
+                return _short_step_label(s.get("name"))
+    for s in steps:
+        if s.get("state") not in ("done", "skipped") and not s.get("gate"):
+            return _short_step_label(s.get("name"))
+    if steps:
+        return _short_step_label(steps[0].get("name"))
+    return "<step>"
+
+
+def _quick_commands_footer(r: dict) -> list[str]:
+    """Compact, state-aware 2-line command hint appended to human-facing status views."""
+    invariant_errors = any(
+        issue.get("severity") == "error" for issue in (r.get("invariant_violations") or [])
+    )
+    has_uncertain_exec = bool((r.get("action") or {}).get("execution"))
+    if (invariant_errors or has_uncertain_exec or r.get("halted")
+            or r.get("status") == "cancelled" or r.get("workflow_revision_problem")):
+        return [
+            "",
+            "---",
+            '💡 **Quick commands:** `"status"` (where am I) · `"task history"` · `"help"` (all commands)',
+        ]
+    if r.get("status") == "complete":
+        return [
+            "",
+            "---",
+            '💡 **Quick commands:** `"status"` · `"list releases"` · `"start a release"` · `"help"`',
+        ]
+    if r.get("scheduled"):
+        opens = (r["scheduled"] or {}).get("opens") or "the window"
+        return [
+            "",
+            "---",
+            f'💡 **Quick commands:** `"status"` (where am I) · `"continue"` *(once {opens} opens)* '
+            '· `"rerun <step>"` · `"help"`',
+        ]
+    phase = r.get("current_phase") or ""
+    extra = ""
+    if phase == "build_verify":
+        extra = ' · `"rc report"`'
+    elif phase == "bug_bash":
+        extra = ' · `"bugbash progress"`'
+    return [
+        "",
+        "---",
+        f'💡 **Quick commands:** `"status"` (where am I) · `"continue"` (advance ready steps){extra} '
+        '· `"explain <step>"` · `"rerun <step>"` · `"skip <step>"` · `"completed <step> manually"` · `"help"`',
+    ]
+
+
+def commands_card(r: dict | None = None) -> str:
+    """Deterministic Markdown command guide, filled with live active-release examples when available."""
+    if not r:
+        return "\n".join([
+            "### 🧭 Release Agent — Command Guide",
+            "",
+            "No active release is initialized yet. You can drive everything in plain English or via `/release-agent`:",
+            "",
+            "| Goal | What to type |",
+            "|---|---|",
+            '| **Start a release** | `"start a release"` (confirms clone folder + release date, then runs Readiness Gate) |',
+            '| **Open launcher menu** | `/release-agent` (interactive menu for status, start, setup, or help) |',
+            '| **Check setup** | `"check setup"` (verifies CLI tools, MCP connectors, and M365 access) |',
+            '| **List releases** | `"list releases"` (shows existing or past release runs on this machine) |',
+            '| **Where am I?** | `"status"` (renders the full phase & step checklist once a release starts) |',
+            '| **Advance** | `"continue"` (runs all eligible automatic steps until a human checkpoint) |',
+        ])
+
+    rid = r.get("release_id") or "<YYYY-MM>"
+    phase_name = r.get("current_phase_name") or ("Entry Gate" if not r.get("readiness_signed") else "Complete")
+    progress = f"{r.get('done', 0)}/{r.get('total', 0)} ({r.get('percent', 0)}%)"
+    ex = _example_step_name(r)
+    rerun_ex = _example_step_name(r, prefer_done=True)
+    phase = r.get("current_phase") or ""
+    inspect_extra = (
+        '`"rc report"` (Phase 2 pipeline chain) or '
+        if phase == "build_verify"
+        else ('`"bugbash progress"` or ' if phase == "bug_bash" else "")
+    )
+    return "\n".join([
+        f"### 🧭 Release Agent — Quick Guide (Release {rid} · {_cell(phase_name)} · {progress})",
+        "",
+        "| Goal | What to type |",
+        "|---|---|",
+        f'| **Where am I?** | `"status"` (full phase & step table) · {inspect_extra}`"/release-agent"` (interactive menu) |',
+        '| **Continue / advance** | `"continue"` (runs all ready automatic steps across phases until a human checkpoint) |',
+        f'| **Confirm or unblock** | `"{ex} is done"` · `"completed {ex} manually"` · `"skip {ex}"` |',
+        f'| **Re-run (or new inputs)** | `"rerun {rerun_ex}"` · `"rerun Broker test plan with name=..."` · `"task history {rerun_ex}"` |',
+        '| **Schedule / dates** | `"set CCD to YYYY-MM-DD"` (updates Code Complete Date and recalculates schedule) |',
+        f'| **Ask why / how** | `"explain {ex}"` (shows runbook knowledge, prerequisites, and parameters) |',
+        "",
+        "_Tip: When a phase pauses at a checkpoint card, picking an option (**Completed**, **Approve**, **Skip**, **Retry**) automatically resumes the next eligible steps — no need to type `\"continue\"` afterward._",
+    ])
 
 
 def _delta_phrase(days) -> str:

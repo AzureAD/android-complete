@@ -49,6 +49,7 @@ COMMAND_MODULES = (
     CommandModule("structured_read_cmd"),
     CommandModule("paths_cmd"),
     CommandModule("preview_cmd"),
+    CommandModule("help_cmd"),
 )
 
 APPROVAL_COMMANDS = frozenset(verb for item in COMMAND_MODULES for verb in item.approvals)

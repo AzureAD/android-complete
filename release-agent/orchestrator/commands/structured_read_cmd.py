@@ -30,7 +30,8 @@ def cmd_workiq_read(args):
                 raise ValueError("Route file must contain the actual verified CLI discovery descriptor")
         result = structured_fetch.read(
             infra.scout_profile_root(args.scout_root), args.account, args.entity_url,
-            preferred=args.workiq_path, discovered=discovered)
+            preferred=args.workiq_path, discovered=discovered,
+            prefer_agency=(not args.scout_root and not args.workiq_path and not args.route_file))
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(json.dumps({"error": str(exc), "permission_to_write": False}))
         return 1

@@ -465,3 +465,94 @@ def test_non_blocking_exhaustive_execution_isolates_tool_failures_and_reports_al
     assert "Missing CLI step" in markdown and "gh binary not found" in markdown
     assert "Teams notification" in markdown and "microsoft_teams" in markdown and "Session not found" in markdown
 
+
+def test_status_view_renders_contextual_quick_commands_footer_by_state(tmp_path):
+    from datetime import date
+    st = seed_test6(tmp_path)
+    orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2026, 12, 2))
+    # Mark pending scout steps done so queue is exhausted and handoff is active
+    for sid in ("notice", "flight_reminder", "lockdown"):
+        st.set_step("preflight", sid, StepState(status="done", note="ok"))
+    active_report = orch.status_report()
+    active_md = render.status_view(active_report)
+    assert "💡 **Quick commands:**" in active_md
+    assert '`"status"`' in active_md and '`"continue"`' in active_md and '`"help"`' in active_md
+    assert '`"explain <step>"`' in active_md and '`"rerun <step>"`' in active_md
+    assert '`"skip <step>"`' in active_md and '`"completed <step> manually"`' in active_md
+
+    # Phase 2 surfaces "rc report"
+    p2_report = deepcopy(active_report)
+    p2_report["current_phase"] = "build_verify"
+    assert '`"rc report"`' in render.status_view(p2_report)
+
+    # Scheduled phase wait surfaces window open date without suggesting CCD changes
+    sched_report = deepcopy(active_report)
+    sched_report["scheduled"] = {"phase": "ccd", "phase_name": "Code Complete Day", "opens": "2026-12-09", "opens_in_days": 7}
+    sched_md = render.status_view(sched_report)
+    assert "once 2026-12-09 opens" in sched_md and "set CCD to YYYY-MM-DD" not in sched_md
+
+    # Uncertain execution never suggests blind rerun/continue
+    uncertain_report = deepcopy(active_report)
+    uncertain_report["action"] = {
+        "phase": "preflight", "step": "notice", "step_name": "Send early release notice",
+        "execution": {"notification_id": "step:preflight.notice:once:1"},
+    }
+    uncertain_md = render.status_view(uncertain_report)
+    assert '`"task history"`' in uncertain_md
+    assert '`"rerun ' not in uncertain_md
+
+
+def test_commands_cli_renders_starter_and_live_active_release_guides(tmp_path, capsys):
+    # 1. No active release -> starter guide + launcher_no_release
+    assert cli.main(["--runs-root", str(tmp_path), "commands", "--json"]) == 0
+    empty_payload = json.loads(capsys.readouterr().out)
+    assert not empty_payload["has_active_release"]
+    assert "No active release is initialized yet" in empty_payload["guide_markdown"]
+    assert empty_payload["launcher_prompt"]["kind"] == "launcher_no_release"
+    assert [a["action"] for a in empty_payload["launcher_prompt"]["answers"]] == [
+        "start_release", "check_setup", "list_releases", "show_commands",
+    ]
+
+    # 2. Active release -> auto-resolves release, fills concrete step names, builds active launcher
+    st = seed_test6(tmp_path)
+    for sid in ("notice", "flight_reminder", "lockdown"):
+        st.set_step("preflight", sid, StepState(status="done", note="ok"))
+    C.save_state(st, str(tmp_path), st.release_id)
+
+    assert cli.main(["--runs-root", str(tmp_path), "commands", "--as-of", "2026-12-02", "--json"]) == 0
+    active_payload = json.loads(capsys.readouterr().out)
+    assert active_payload["has_active_release"]
+    assert active_payload["release_id"] == st.release_id
+    assert "Report critical CG alerts" in active_payload["guide_markdown"]
+    assert "Send early release notice" in active_payload["guide_markdown"]
+    assert active_payload["status_markdown"] and "## Release" in active_payload["status_markdown"]
+    assert active_payload["launcher_prompt"]["kind"] == "launcher_active_release"
+    assert [a["action"] for a in active_payload["launcher_prompt"]["answers"]] == [
+        "continue", "resolve_step", "rerun_step", "show_commands",
+    ]
+
+
+def test_checkpoint_owner_prompts_preserve_seamless_auto_resume(tmp_path):
+    from datetime import date
+    # 1. Blocked step surfaces blocked_step prompt with resume_on_resolve=True
+    st = seed_test6(tmp_path)
+    for sid in ("notice", "flight_reminder", "lockdown"):
+        st.set_step("preflight", sid, StepState(status="done", note="ok"))
+    orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2026, 12, 2))
+    blocked_report = decorate_handoff_contract(orch.status_report())
+    assert blocked_report["handoff_ready"]
+    bp = blocked_report["owner_prompt"]
+    assert bp["kind"] == "blocked_step" and bp["step"] == "cg" and bp["resume_on_resolve"] is True
+    assert [a["action"] for a in bp["answers"]] == [
+        "retry", "rerun", "complete-manually", "override", "hold",
+    ]
+
+    # 2. Human confirm step surfaces owner_action prompt with [done, hold, skip, help] & resume_on_resolve=True
+    st.set_step("preflight", "cg", StepState(status="done", note="cleared"))
+    human_report = decorate_handoff_contract(orch.status_report())
+    hp = human_report["owner_prompt"]
+    assert hp["kind"] == "owner_action" and hp["step"] == "vitals" and hp["resume_on_resolve"] is True
+    assert [a["action"] for a in hp["answers"]] == ["done", "hold", "skip", "help"]
+    assert "continue remaining release steps automatically" in hp["answers"][0]["description"]
+
+

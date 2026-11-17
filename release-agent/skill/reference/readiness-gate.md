@@ -13,7 +13,7 @@ No blanket write authority follows from readiness. Every owning write step needs
   - `build_access` (`required_tools: [az]`, Python verifier via `verify`) — Release build definitions `#2828` and `#397224` accessible.
   - `mcp_servers` (`required_tools: []`, Python verifier via `verify`) — ICM, Kusto/ADX, and Teams MCP servers registered in Scout config.
   - `m365_access` (`required_tools: [workiq]`, Python verifier via `verify`) — Profile/calendar, configured roster (all member pages), and Teams membership verified directly in Python via native WorkIQ CLI (`shell=False`, no PowerShell `$filter`/`$select` mangling).
-  - `ccd_confirmed` (`required_tools: [az]`, `check-ccd`) — Code Complete Date is valid and reconciled with pipeline `3038`.
+  - `ccd_confirmed` (`required_tools: [az]`, `check-ccd`) — Code Complete Date is valid and reconciled with pipeline `3155`.
   - `teams_notify` (`required_tools: [scout_teams_relay]`, `m_relay_status`) — Scout Teams relay & bot reachability checked (`opt_out: true` allows `degraded` email-only fallback).
   - `adx_access` (`required_tools: [kusto]`, Kusto `print 1`) — ADX release telemetry cluster queryable.
   - `oncall_now` (`required_tools: [icm]`, ICM `teamIds: [78848]`) — Release owner is not currently **primary** Android on-call.
@@ -23,7 +23,7 @@ No blanket write authority follows from readiness. Every owning write step needs
 ## Step-by-step entry gate execution (run immediately after `init`)
 
 1. **Run Python `[auto]` verifiers (`build_access`, `mcp_servers`, and `m365_access`):**
-   - Run `python -m orchestrator.cli verify --release <id> --pending-only`. Python executes all three verifiers directly (`shell=False`, with full automatic Graph pagination for `m365_access`). If any verifier fails, only that item records `fail` with its specific error while the others still run.
+   - On initial start, run `python -m orchestrator.cli verify --release <id> --pending-only` (`m365_access` uses Agency MCP `agency.exe mcp workiq` over a persistent stdio pipe as primary and falls back to the WorkIQ CLI only if Agency is not installed). **When retrying after an owner repair, run `python -m orchestrator.cli verify --release <id>` WITHOUT `--pending-only`** so previously failed items (`status == "fail"`) are actually re-evaluated! If any verifier fails, only that item records `fail` with its specific error while the others still run.
 2. **Exhaust ALL remaining `pending_auto_checks` from `checklist --release <id> --attest-prompt --json` (do NOT halt on failure):**
    - **`ccd_confirmed` (`az`):** Run `python -m orchestrator.cli check-ccd --release <id> --json`:
      - `match` → `record-check --release <id> --item ccd_confirmed --status pass --detail "CCD <ccd> reconciled with pipeline"` (note if `compressed: true`).

@@ -12,7 +12,7 @@ def test_check_ccd_classifies_pipeline_reconciliation():
     import tempfile as _tf, json as _json, io, contextlib, argparse
     from orchestrator.commands import pipeline as pcmd
     from orchestrator import cli_common as _C
-    src = {"org": "o", "project": "p", "pipeline_id": "3038",
+    src = {"org": "o", "project": "p", "pipeline_id": "3155",
            "override_variable": "CodeCompleteDate"}
     orig_src, orig_read = _C.ccd_source, pcmd.checks.read_pipeline_variable
 

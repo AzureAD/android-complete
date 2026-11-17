@@ -35,7 +35,7 @@ readiness.ccd_confirmed:
   what: 'Validates the CCD end-to-end, because every phase is CCD-relative and a wrong CCD misaligns the
     whole run. Two hard checks (either BLOCKS): the CCD must be FUTURE-DATED — a past CCD (e.g. a current-month
     release whose 2nd-Wednesday default already passed) can''t be code-completed — and it must AGREE with
-    pipeline 3038''s override. Plus one advisory: if the CCD leaves Phase 0 (CCD-7→CCD) with less than
+    pipeline 3155''s override. Plus one advisory: if the CCD leaves Phase 0 (CCD-7→CCD) with less than
     its normal 7-day window, Scout WARNS about the compressed prep window but lets you proceed.
 
     '
@@ -46,7 +46,7 @@ readiness.ccd_confirmed:
 
     '
   where:
-  - 'CCD override variable — Broker pipeline (Engineering #3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038'
+  - 'CCD override variable — Broker pipeline (Engineering #3155): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3155'
   how: 'Scout runs `check-ccd --json` and acts on the status: `past` → the CCD is before today; reschedule
     to a future date with `set-ccd --date <future> --confirm` (adopt a future pipeline override if one
     exists), re-check. `conflict` → pipeline override differs; pick which is right, `set-ccd`, re-check.
