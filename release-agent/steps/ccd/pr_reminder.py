@@ -2,9 +2,8 @@
 
 The morning-of Code Complete Day Teams message to the "Code reviews" chat, telling
 engineers: every PR required for this release must be MERGED today before the branch
-is cut automatically at 11:00 PM; if a required PR won't make it, request either a
-CCD delay or a post-CCD cherry-pick (both need Moumita's approval); and merge any
-PR carrying user-facing strings before the localization pipeline runs at noon.
+is cut automatically at 11:00 PM; and if a required PR won't make it, request either a
+CCD delay or a post-CCD cherry-pick (both need Moumita's approval).
 
 Posting to Teams needs the WorkIQ MCP the engine can't reach, so this is a `scout`
 step: `build()` resolves the message + target and returns a
@@ -31,15 +30,13 @@ AUTOMATION = 'ccd-morning'
 NOTIFICATION = True
 
 # Step config (co-located). Posts to the real "Code reviews" chat (redirect for
-# tests via send_to). The two deadlines below are single-sourced here and echoed by
-# the `localization` step. fire_at_local is read by the CCD-morning automation.
+# tests via send_to). fire_at_local is read by the CCD-morning automation.
 _CHAT = coords.team("code_reviews")
 CONFIG = {
     "live_chat_id": _CHAT["chat"],
     "live_chat_name": _CHAT["name"],
     "fire_at_local": "09:00",                # morning of CCD (automation-driven)
     "branch_cut_local": "11:00 PM",          # release branch auto-cuts at this time
-    "localization_local": "noon",            # localization pipeline triggers at this time
     "approver_name": "Moumita Ghosh",        # CCD-delay / cherry-pick approver
     "approver_email": "moghosh@microsoft.com",
 }
@@ -55,10 +52,8 @@ MOCKABLE = {
 
 
 def _html(ctx: dict, cfg: dict) -> str:
-    """Teams-friendly HTML: today's PR-merge deadline, the escalation path, and the
-    localization cutoff."""
+    """Teams-friendly HTML: the CCD PR-merge deadline and escalation path."""
     cut = T.esc(cfg.get("branch_cut_local", "11:00 PM"))
-    loc = T.esc(cfg.get("localization_local", "noon"))
     approver = T.esc(cfg.get("approver_name", "the release manager"))
     approver_email = cfg.get("approver_email", "")
     approver_ref = (f'{approver} (<a href="mailto:{approver_email}">{T.esc(approver_email)}</a>)'
@@ -77,10 +72,6 @@ def _html(ctx: dict, cfg: dict) -> str:
         <li><b>Request a post-CCD cherry-pick</b> (merge to <code>working</code> now,
             cherry-pick into the release branch after the cut).</li>
       </ul></li>
-  <li><b>Localization runs at {loc}.</b> The localization pipeline is triggered at
-      <b>{loc} on {T.esc(ctx['ccd_date'])}</b> — if your PR adds or changes <b>user-facing strings</b>,
-      <b>merge it before {loc}</b> so those strings are picked up for translation.
-      Strings merged after {loc} are <b>not guaranteed</b> to be localized this release.</li>
 </ol>
 <p>Thanks,<br>{T.esc(ctx['owner'])}</p>"""
 
@@ -108,23 +99,26 @@ def build(context: StepContext):
         outbound=True,
     )
 
-KNOWLEDGE = {'summary': "Teams reminder to the 'Code reviews' chat: merge required PRs before the 11 PM "
-            'branch cut.',
- 'what': 'The morning-of-CCD Teams message telling engineers every required PR must be merged '
-         'today before the release branch is cut automatically at 11:00 PM; if a required PR '
-         "won't make it, request a CCD delay or a post-CCD cherry-pick; and merge any PR with "
-         'user-facing strings before the localization pipeline runs at noon. Every deadline is '
-         'explicitly dated to CCD so delayed delivery does not silently move the branch-cut or '
-         'localization cutoff to the delivery day.\n',
- 'who': 'Scout posts it automatically (a scout step) on CCD morning. CCD-delay and cherry-pick '
-        'requests must be approved by Moumita Ghosh (moghosh@microsoft.com).\n',
- 'where': ["Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / "
-           'EXTERNAL-REFERENCES.md).'],
- 'how': 'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`). '
-        "To test, redirect with the send_to mock knob ('me' = your own chat).\n",
- 'faqs': [{'q': 'Who approves a CCD delay or cherry-pick?',
-           'a': 'Moumita Ghosh (moghosh@microsoft.com) — both a Code Complete delay and a '
-                'post-CCD cherry-pick require her approval.'},
-          {'q': 'Why merge string PRs before noon?',
-           'a': 'The localization pipeline is triggered at noon; strings merged after it '
-                "aren't guaranteed to be localized this release."}]}
+KNOWLEDGE = {
+    'summary': "Teams reminder to the 'Code reviews' chat: merge required PRs before the 11 PM branch cut.",
+    'what': (
+        'The morning-of-CCD Teams message telling engineers every required PR must be merged '
+        'before the release branch is cut automatically at 11:00 PM on CCD, and if a required '
+        "PR won't make the cut, to request a CCD delay or a post-CCD cherry-pick.\n"
+    ),
+    'who': (
+        'Scout posts it automatically on CCD morning. CCD-delay and cherry-pick requests must '
+        'be approved by Moumita Ghosh (moghosh@microsoft.com).\n'
+    ),
+    'where': ["Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / EXTERNAL-REFERENCES.md)."],
+    'how': (
+        'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`). '
+        "To test, redirect with the send_to mock knob ('me' = your own chat).\n"
+    ),
+    'faqs': [
+        {
+            'q': 'Who approves a CCD delay or cherry-pick?',
+            'a': 'Moumita Ghosh (moghosh@microsoft.com) — both a Code Complete delay and a post-CCD cherry-pick require her approval.',
+        },
+    ],
+}

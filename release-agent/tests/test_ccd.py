@@ -415,7 +415,7 @@ def test_ccd_final_reminder_build_is_ccd_day_email():
 
 def test_ccd_pr_reminder_build_targets_code_reviews_with_deadlines():
     """pr_reminder posts to the fixed 'Code reviews' chat and names the 11 PM branch
-    cut, Moumita's approval, and the noon localization cutoff."""
+    cut and Moumita's approval without the localization noon point."""
     from steps.ccd import pr_reminder
     out = _invoke(pr_reminder.build, _ccd_state())
     assert out.kind == "needs_skill" and out.tool == "workiq_send_chat_message"
@@ -424,7 +424,7 @@ def test_ccd_pr_reminder_build_targets_code_reviews_with_deadlines():
     body = out.payload["content"]
     assert "11:00 PM" in body                       # branch cut deadline
     assert "moghosh@microsoft.com" in body and "Moumita" in body  # approver
-    assert "noon" in body                           # localization cutoff
+    assert "Localization runs" not in body and "noon" not in body.lower()
 
 
 
