@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from orchestrator.outcomes import Blocked
 from orchestrator.step_context import StepContext
 from steps.rollout_start import release_stage
-from steps.lib.mockctx import MISSING
 from tools import pipelines as P
 
 ID = "beta_play_store"
@@ -17,6 +16,8 @@ AUTOMATION_LABEL = "beta-play-store"
 REQUIRES_OWNER_APPROVAL = True
 
 MOCKABLE = release_stage.MOCKABLE
+stage_started = release_stage.stage_started
+stage_failed = release_stage.stage_failed
 
 # Product policy: the authenticated release owner attests that this named manager
 # approved the Friday exception. There is intentionally no separate manager login
@@ -32,23 +33,13 @@ PARAMETERS = {"build": BuildParameters}
 
 
 def resolve_target(context: StepContext):
-    pinned = release_stage.completed_stage_build_id(context, "upload_alpha")
-    if pinned is None and context.input("run", MISSING) is MISSING:
-        return (
-            False,
-            None,
-            "completed Upload Alpha evidence has no pipeline-397224 build identity",
-        )
-    return release_stage.resolve_target(
-        context, stage_name=STAGE_NAME, pinned_build_id=pinned)
-
-
-def stage_started(info: dict) -> bool:
-    return release_stage.stage_started(info)
-
-
-def stage_failed(info: dict) -> bool:
-    return release_stage.stage_failed(info)
+    return release_stage.resolve_pinned_target(
+        context,
+        stage_name=STAGE_NAME,
+        previous_step_id="upload_alpha",
+        previous_label="Upload Alpha",
+        require_pin_in_resolve=True,
+    )
 
 
 def manager_approval(
@@ -75,18 +66,16 @@ def build(context: StepContext[BuildParameters]):
             context, context.parameters.manager_approved_by)
     except ValueError as exc:
         return Blocked(f"{ID}: {exc}")
-    pinned = release_stage.completed_stage_build_id(context, "upload_alpha")
-    if pinned is None and context.input("run", MISSING) is MISSING:
-        return Blocked(
-            f"{ID}: completed Upload Alpha evidence has no pipeline-397224 build identity.")
     command_args = (
         f' --manager-approved-by "{approver}"' if approver else "")
-    return release_stage.build_stage_action(
+    return release_stage.build_pinned_stage_action(
         context,
         step_id=ID,
         write_command=WRITE_COMMAND,
         stage_name=STAGE_NAME,
         label=AUTOMATION_LABEL,
+        previous_step_id="upload_alpha",
+        previous_label="Upload Alpha",
         auto_approve=False,
         command_args=command_args,
         review_context={
@@ -94,5 +83,4 @@ def build(context: StepContext[BuildParameters]):
             "start_date": context.clock.now().date().isoformat(),
             "manager_approved_by": approver,
         },
-        pinned_build_id=pinned,
     )

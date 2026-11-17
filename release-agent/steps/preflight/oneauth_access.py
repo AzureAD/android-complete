@@ -19,7 +19,7 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
 from steps.lib.mockctx import MISSING

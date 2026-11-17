@@ -38,11 +38,13 @@ preflight.cg:
 #   when Scout asks — those are human confirmations with no side-effects.
 # ============================================================================
 # # -- entry gate: force the real ADO/config/MCP checks to pass --
-# readiness.build_access: { outcome: pass }
-# readiness.mcp_servers:  { outcome: pass }
-# readiness.silent_perms: { outcome: pass }
-# readiness.adx_access:   { outcome: pass }
-# readiness.oncall_now:   { outcome: pass }
+# readiness.build_access:  { outcome: pass }
+# readiness.mcp_servers:   { outcome: pass }
+# readiness.m365_access:   { outcome: pass }
+# readiness.ccd_confirmed: { outcome: pass }
+# readiness.teams_notify:  { outcome: pass }
+# readiness.adx_access:    { outcome: pass }
+# readiness.oncall_now:    { outcome: pass }
 # # -- Phase 0: no real sends / writes / network --
 # preflight.notice:          { outcome: done }     # or { send_to: ["you@microsoft.com"] } to really receive it
 # preflight.flight_reminder: { outcome: done }     # or { send_to: me } to really get it in your chat
@@ -73,22 +75,27 @@ preflight.cg:
 # ccd.localization:    { outcome: done }                         # scout (pipeline trigger)
 
 # ---- Phase 2 · build_verify ----
-# build_verify.stages_ok:  { outcome: done }   # agent
-# build_verify.retain:     { outcome: done }   # agent
-# build_verify.health:     { outcome: done }   # agent
-# build_verify.ui_auto:    { outcome: done }   # agent
-# build_verify.payload:    { outcome: done }   # agent
-# build_verify.mrwp_rc:    { outcome: done }   # agent
-# build_verify.rc_report:  { outcome: done }   # scout (emails RC report + applies the 90% UI gate)
-# build_verify.telemetry_verify: { outcome: done }   # scout — or { version: "6.2608.5658" } to query a real version
+# build_verify.checker_fired:        { outcome: done }   # agent
+# build_verify.orchestrator_health:  { outcome: done }   # agent
+# build_verify.mrwp_ecs:             { outcome: done }   # agent
+# build_verify.mrwp_local:           { outcome: done }   # agent
+# build_verify.auth_ecs:             { outcome: done }   # agent
+# build_verify.telemetry_verify:     { outcome: done }   # scout — or { version: "6.2608.5658" } to query a real version
+# build_verify.rc_report_notify:     { outcome: done }   # scout (posts RC summary + links to Scout bot)
+# build_verify.rc_report_gate:       🚦 gate — NOT mockable
 
 # ---- Phase 3 · bug_bash ----
-# bug_bash.clone_plans_broker: { outcome: done }   # agent (copy Broker master plan)
-# bug_bash.clone_plans_auth:   { outcome: done }   # agent (create Authenticator query-suite)
-# bug_bash.coordinate:   { outcome: done }   # agent
-# bug_bash.ui_failures:  { outcome: done }   # reminder (human)
-# bug_bash.signoffs:     { outcome: done }   # agent
-# bug_bash.bash_done:    🚦 gate — NOT mockable
+# bug_bash.clone_plans_broker:  { outcome: done }   # agent (copy Broker master plan)
+# bug_bash.clone_plans_auth:    { outcome: done }   # agent (create Authenticator query-suite)
+# bug_bash.ui_test_status:      { outcome: done }   # agent (fill automated UI verdicts)
+# bug_bash.distribute_tests:    { outcome: done }   # scout (assign manual test points)
+# bug_bash.send_invite:         { outcome: done }   # scout (create Bug Bash meeting invite)
+# bug_bash.activate_chat:       { outcome: done }   # scout (bind & prime Bug Bash meeting chat)
+# bug_bash.notify_native_auth:  { outcome: done }   # scout (notify Native Auth RE)
+# bug_bash.bugbash_updates:     { outcome: done }   # scout (post Bug Bash progress update)
+# bug_bash.ui_failures:         { outcome: done }   # reminder (human)
+# bug_bash.native_auth_signoff: { outcome: done }   # attest (human)
+# bug_bash.bash_done:           🚦 gate — NOT mockable
 
 # ---- Phase 4 · finalize ----
 # finalize.remove_rc_tags_gate:  🚦 gate — NOT mockable

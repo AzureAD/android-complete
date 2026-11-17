@@ -339,5 +339,5 @@ def test_changed_parameters_change_the_exact_notification_review_hash(tmp_path):
         phase="phase", step="check", release="r", param=[f"message={message}"]
     ), orch.state, orch) for message in ("first", "different")]
     assert outputs[0]["notifications"][0]["hash"] != outputs[1]["notifications"][0]["hash"]
-    assert all(not output["permission_to_send"] for output in outputs)
+    assert all("permission_to_send" not in output for output in outputs)
     assert orch.state.notification_deliveries == {}

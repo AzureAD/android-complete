@@ -182,8 +182,8 @@ def test_step_action_owner_force_rerun_unblocks_reserved_step(run, capsys):
 
 def test_broker_plan_rerun_accepts_a_new_name_and_preserves_old_binding(run, capsys, monkeypatch):
     state = ReleaseState.load(str(run[1]))
-    _active_step(state, "bug_bash", "clone_plans_broker")
     state.owner_email = "owner@example.test"
+    _active_step(state, "bug_bash", "clone_plans_broker")
     state.set_step("bug_bash", "clone_plans_broker", StepState(
         status="done", note="First plan created", data={"plan_id": 100, "plan_name": "First plan"}))
     state.resources["broker_test_plan"] = {"plan_id": 100, "identity": {"name": "First plan"}}

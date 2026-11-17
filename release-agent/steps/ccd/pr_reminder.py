@@ -14,7 +14,7 @@ for the fixed chat id.
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from orchestrator import schedule

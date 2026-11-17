@@ -7,7 +7,6 @@ from copy import deepcopy
 from .tests_results import (
     MRWP_COUNT_BASIS, TEST_CATEGORIES, _RESULT_OUTCOMES, _positive_test_id,
     _suite_base_name, reconcile_retries, classify_test_run, TEST_CATEGORY_BASIS,
-    TEST_CATEGORY_LEGACY_VIEW_BASIS,
 )
 from tools.coordinates import coords
 
@@ -22,15 +21,8 @@ def _counts_match(record, expected):
         type(record.get(k)) is int and record[k] == v for k, v in expected.items())
 
 
-def _snapshot_category(name, summary):
-    basis = summary.get("category_basis")
-    legacy = basis == TEST_CATEGORY_LEGACY_VIEW_BASIS or (
-        basis is None and "stress" not in summary["categories"])
-    category = classify_test_run(name, legacy=legacy)
-    # A derived legacy view splits only historical UI, never Unit/Instrumented.
-    if basis == TEST_CATEGORY_LEGACY_VIEW_BASIS and category == "ui":
-        return classify_test_run(name)
-    return category
+def _snapshot_category(name, _summary):
+    return classify_test_run(name)
 
 
 def validate_snapshot_tests(snapshot, *, allow_empty=False, include_all=False):
@@ -66,8 +58,7 @@ def validate_snapshot_tests(snapshot, *, allow_empty=False, include_all=False):
     recorded_categories = summary.get("categories")
     require(isinstance(recorded_categories, dict), "missing category coverage")
     explicit_stress = "stress" in recorded_categories or summary.get("category_basis") is not None
-    require(summary.get("category_basis") in (
-        None, TEST_CATEGORY_BASIS, TEST_CATEGORY_LEGACY_VIEW_BASIS),
+    require(summary.get("category_basis") in (None, TEST_CATEGORY_BASIS),
             "unsupported category classification basis")
     expected_categories = TEST_CATEGORIES if explicit_stress else TEST_CATEGORIES[:-1]
     require(set(recorded_categories) == set(expected_categories), "missing/unknown category coverage")
@@ -156,9 +147,7 @@ def report_snapshot(snapshot):
     validate_snapshot_tests(snapshot, allow_empty=True, include_all=True)
     view = deepcopy(snapshot)
     summary = view["tests"]
-    legacy = summary.get("category_basis") == TEST_CATEGORY_LEGACY_VIEW_BASIS or (
-        summary.get("category_basis") is None and "stress" not in summary["categories"])
-    summary["category_basis"] = TEST_CATEGORY_LEGACY_VIEW_BASIS if legacy else TEST_CATEGORY_BASIS
+    summary["category_basis"] = TEST_CATEGORY_BASIS
     counts = {cat: {"total": 0, "passed": 0, "failed": 0, "na": 0, "recovered": []}
               for cat in TEST_CATEGORIES}
     for suite in summary["suites"]:

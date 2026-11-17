@@ -8,7 +8,7 @@ confirmation the skill clears it with `done --step vitals`.
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsHuman
 

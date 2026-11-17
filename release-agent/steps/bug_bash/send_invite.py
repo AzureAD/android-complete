@@ -81,10 +81,7 @@ def source_matches(context, *steps, pipelines=False):
         sources.extend((prefix + ["data", key], record.data[key])
                        for key in fields[step] if key in record.data)
         if step == "clone_plans_auth":
-            for path in (("monthly", "plan_id"), ("monthly", "suite_id"),
-                         ("monthly_amendment", "status"),
-                         ("monthly_amendment", "monthly", "plan_id"),
-                         ("monthly_amendment", "monthly", "suite_id")):
+            for path in (("monthly", "plan_id"), ("monthly", "suite_id")):
                 value = record.data
                 for key in path:
                     if not isinstance(value, dict) or key not in value:

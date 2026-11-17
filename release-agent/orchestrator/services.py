@@ -105,7 +105,6 @@ class EffectServices:
     create_auth_query_suite: Callable[..., tuple] | None = None
     create_auth_suite: Callable[..., tuple] | None = None
     ensure_auth_monthly: Callable[..., tuple] | None = None
-    amend_auth_monthly: Callable[..., tuple] | None = None
     fill_auth_monthly: Callable[..., tuple] | None = None
     fill_auth_ui_results: Callable[..., tuple] | None = None
     fill_ui_automation_results: Callable[..., tuple] | None = None

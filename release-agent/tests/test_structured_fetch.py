@@ -135,10 +135,27 @@ def test_discovery_preserves_scout_wrapper_and_never_uses_cmd_shell(launcher, mo
     result = F.read(str(profile), "owner@example.test", url)
     assert result["result"] == {"value": []}
     assert result["arguments"] == {"entityUrls": [url]}
-    assert calls[-1][0] == [*(str(part) for part in parts), "fetch", "--urls", url,
+    assert calls[-1][0] == [*(str(part) for part in parts[1:]), "fetch", "--urls", url,
                            "--account", "owner@example.test"]
     assert all(options["shell"] is False for _, options in calls)
-    assert result["structured_fetch"]["command"] == [str(part) for part in parts]
+    assert result["structured_fetch"]["command"] == [str(part) for part in parts[1:]]
+
+
+def test_transient_empty_stdout_retries_and_recovers(launcher, monkeypatch):
+    profile, _ = launcher
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    attempts = []
+
+    def run(argv, **kwargs):
+        if "--help" in argv:
+            return process("fetch --urls")
+        attempts.append(argv)
+        return process("", 0) if len(attempts) == 1 else process('{"value":[]}', 0)
+
+    monkeypatch.setattr(F.subprocess, "run", run)
+    result = F.read(str(profile), "owner@example.test", "/groups")
+    assert len(attempts) == 2
+    assert result["result"] == {"value": []}
 
 
 def test_unknown_wrapper_is_not_bypassed_with_an_embedded_binary(launcher):

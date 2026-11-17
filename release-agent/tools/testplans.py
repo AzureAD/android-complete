@@ -168,23 +168,6 @@ def get_suite(plan_id, suite_id, timeout=60, *, org=ORG, project=PROJECT):
     )
 
 
-def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
-    """Find a DIRECT child suite of `parent_suite_id` named `name` (case-insensitive).
-    Returns (ok, suite_id_or_None, detail). Pages through ALL of the plan's suites
-    (following the ADO continuation-token header). A duplicate guard for the create."""
-    want = (name or "").strip().lower()
-    url = f"{ORG}/{PROJECT}/_apis/testplan/Plans/{plan_id}/suites?{_API}"
-    ok, suites, detail = P._ado_rest_get_all(url, timeout)
-    if not ok:
-        return (False, None, detail)
-    for s in suites:
-        if (s.get("name") or "").strip().lower() == want:
-            parent = s.get("parentSuite") or {}
-            if str(parent.get("id")) == str(parent_suite_id):
-                return (True, s.get("id"), "")
-    return (True, None, "")
-
-
 def _normalized_query(value):
     import re
     # Normalize layout only; whitespace inside quoted WIQL literals is significant.

@@ -5,7 +5,7 @@ verified current-RC mapping. Every create owns durable intent and acknowledgemen
 no shared cases or configuration pins change. Historical single-dynamic-suite
 records and frozen executions retain their original recovery path without migration.
 
-Legacy mock knobs (mocks.local.yaml / tests):
+Mock knobs (mocks.local.yaml / tests):
   suite_id  : pretend the suite already exists (this id) — verifies + reports done.
   create_id : the id the create should "return" (skip the live create).
   existing  : id of an already-present same-named suite the name-scan should "find".
@@ -114,10 +114,10 @@ def _dispatch(context, *, allow_create):
         return auth_categories.build(context, frozen)
     if (set(frozen) != {"release", "org", "project", "plan_id", "parent_suite_id", "name", "query"}
             or not isinstance(frozen.get("query"), str) or not frozen["query"].strip()):
-        return Blocked("clone_plans_auth: unknown/malformed legacy execution")
+        return Blocked("clone_plans_auth: unknown/malformed single-suite execution")
     try:
         if A.is_partition(context.recovery().step("bug_bash", ID).data):
-            return Blocked("clone_plans_auth: category data cannot use a legacy execution")
+            return Blocked("clone_plans_auth: category data cannot use a single-suite execution")
     except ValueError as exc:
         return Blocked(f"clone_plans_auth: {exc}")
     return _build(context, allow_create=allow_create, frozen=frozen)

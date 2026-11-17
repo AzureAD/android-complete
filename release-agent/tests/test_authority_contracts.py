@@ -287,7 +287,8 @@ def test_rc_poll_uses_shared_eligibility_for_unfamiliar_step_ids(
     source = _auto(build)
     cfg = {"phases": [{"id": "build_verify", "name": "RC", "steps": [
         {"id": "prerequisite", "name": "Review", "kind": "human_action"},
-        {"id": "check", "name": "Additional RC verifier", "kind": "auto", "effect_mode": "read_only"},
+        {"id": "check", "name": "Additional RC verifier", "kind": "auto", "effect_mode": "read_only",
+         "depends_on": ["prerequisite"]},
     ]}]}
     orch = _orch(tmp_path, lambda _phase, sid: source if sid == "check" else None, cfg)
     since = (orch.now_local - timedelta(hours=hours)).isoformat()

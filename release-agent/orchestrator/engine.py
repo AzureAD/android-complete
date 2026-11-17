@@ -23,8 +23,7 @@ from .state import ReleaseState, _now
 from .context_boundary import EvidenceSession, evidence_view, release_view
 from .step_context import Clock, EffectContext, StepContext, freeze, thaw
 from .handler_contracts import HookRole
-from .evidence import RetryDecision
-from .outcomes import AutoOutcome, Done, Blocked, InProgress, NeedsHuman, NeedsSkill, require_auto_outcome
+from .outcomes import AutoOutcome, Done, Blocked, NeedsHuman, NeedsSkill, require_auto_outcome
 from .invariants import validate_snapshot
 from . import effects
 from .effects import EffectMode, EffectRecovery
@@ -372,30 +371,6 @@ class Orchestrator(StatusViewMixin):
             pass
         return None
 
-    # ---- time anchoring (CCD-relative phase windows) ----
-    def _ccd(self) -> Optional[date]:
-        return schedule.parse_date(self.state.ccd)
-
-    def _phase_anchor_date(self, phase: dict) -> Optional[date]:
-        """The date a phase opens, or None if it has no anchor / CCD is unknown."""
-        definition = self._workflow_definition().phase(phase["id"])
-        return self._projection().phase_anchor_date(definition) if definition else None
-
-    def _phase_due(self, phase: dict) -> bool:
-        """A phase is due once the clock reaches its anchor. No anchor ⇒ always due."""
-        definition = self._workflow_definition().phase(phase["id"])
-        return bool(definition and self._projection().phase_due(definition))
-
-    def _step_time_ready(self, phase: dict, step: dict) -> bool:
-        """A step that declares a `fire_at_local` (e.g. the 09:00 CCD comms) is NOT
-        runnable by the engine's automatic paths until that wall-clock time arrives, in
-        the owner's timezone, on its fire day. This stops the every-hour worker from
-        draining a timed step the instant its phase goes due — the step is left for its
-        dedicated cron-pinned automation. Direct step-action enforces the same time
-        boundary. Non-timed steps are always ready."""
-        definition = self._workflow_definition().step(phase["id"], step["id"])
-        return bool(definition and self._projection().step_time_ready(definition))
-
     @staticmethod
     def _is_reminder(step: dict) -> bool:
         """A human, non-gate step is a reminder: the engine can't do it, so it
@@ -406,10 +381,6 @@ class Orchestrator(StatusViewMixin):
         )
 
     # ---- state-machine traversal ----
-    def _activated_conditionals(self) -> set:
-        # A conditional phase (e.g. hotfix) is activated by an explicit note flag.
-        return self._projection().activated_conditionals()
-
     @revision_checked
     def activate_conditional(self, phase_id: str) -> NextAction:
         return self._next_from_transition(
@@ -448,18 +419,6 @@ class Orchestrator(StatusViewMixin):
         (a gate needs a real human decision)."""
         return ((step.get("kind") != StepKind.APPROVAL_GATE.value)
                 and mocks_mod.outcome_for(self.mocks, pid, step["id"]) is not None)
-
-
-    def _prerequisites_met(self, phase: dict, step: dict) -> bool:
-        """Parallel phases use explicit dependencies; sequential phases also require predecessors."""
-        workflow = self._workflow_definition()
-        phase_def = workflow.phase(phase["id"])
-        step_def = workflow.step(phase["id"], step["id"])
-        return bool(
-            phase_def
-            and step_def
-            and self._projection().prerequisites_met(phase_def, step_def)
-        )
 
     @revision_checked
     def step_once(self, attempted: set[str] | None = None) -> NextAction:
@@ -1034,12 +993,6 @@ class Orchestrator(StatusViewMixin):
         return outcome if result.changed else Blocked(result.message)
 
     @revision_checked
-    def reserve_execution(self, phase_id: str, step_id: str, executor: str) -> TransitionResult:
-        from .revision import assert_current
-        assert_current(self)
-        return self._transition_kernel().reserve(phase_id, step_id, executor)
-
-    @revision_checked
     def annotate_step(self, phase_id: str, step_id: str, *, data: dict | None = None,
                       links: list | None = None, note: str | None = None,
                       by: str | None = None) -> TransitionResult:
@@ -1067,45 +1020,6 @@ class Orchestrator(StatusViewMixin):
     @revision_checked
     def reactivate(self, reason: str) -> TransitionResult:
         return self._transition_kernel().reactivate(reason)
-
-    @revision_checked
-    def retry_effect(self, phase_id: str, step_id: str, execution_id: str, reason: str,
-                     *, confirm_absent: bool = False) -> TransitionResult:
-        kernel = self._transition_kernel()
-        if confirm_absent is not True:
-            return kernel._reject("Review the provider first, then pass --confirm-absent.")
-        generation = kernel._prepare_effect_recovery(phase_id, step_id, execution_id, reason, retry=True)
-        if isinstance(generation, TransitionResult):
-            return generation
-        effect = self.handler(phase_id, step_id).effect
-        if effect is None or effect.authorize_retry is None:
-            return kernel._reject("Configured effect retry handler is unavailable.")
-        permit = self.authorize_outcome(TransitionIntent.RECOVER_EVIDENCE, phase_id, step_id,
-                                        execution_id=execution_id)
-        verified = effect.authorize_retry(self.context(
-            phase_id, step_id, permit=permit, role=HookRole.RETRY, parameters={"reason": reason}))
-        if not isinstance(verified, RetryDecision):
-            raise TypeError("Effect retry verification must return RetryDecision.")
-        if not verified.allowed:
-            return kernel._reject(verified.detail)
-        if rejected := kernel.validate_outcome_permit(permit):
-            return rejected
-        if verified.updates:
-            self._evidence_sessions[permit].apply(verified.updates, checkpoint=True)
-        return kernel._apply_effect_recovery(
-            phase_id, step_id, execution_id, reason, generation, retry=True)
-
-    @revision_checked
-    def supersede_effect(self, phase_id: str, step_id: str, execution_id: str, reason: str,
-                         *, confirm_idempotent: bool = False) -> TransitionResult:
-        kernel = self._transition_kernel()
-        if confirm_idempotent is not True:
-            return kernel._reject("Confirm that the desired-state write is idempotent before superseding.")
-        generation = kernel._prepare_effect_recovery(phase_id, step_id, execution_id, reason, retry=False)
-        if isinstance(generation, TransitionResult):
-            return generation
-        return kernel._apply_effect_recovery(
-            phase_id, step_id, execution_id, reason, generation, retry=False)
 
     @revision_checked
     def claim_notification_step(self, notification_id: str, approved_hash: str, executor: str) -> TransitionResult:
@@ -1348,15 +1262,10 @@ class Orchestrator(StatusViewMixin):
         """Clear an emergency halt. Reason optional."""
         return self._next_from_transition(self._transition_kernel().resume(reason))
 
-    # ---- gates ----
-    def _gate_approved(self, phase: str, step: str) -> bool:
-        definition = self._workflow_definition().step(phase, step)
-        return bool(
-            definition
-            and definition.kind == StepKind.APPROVAL_GATE
-            and self._projection().gate_approved(definition)
-        )
+    def owner_task_problem(self, definition) -> Optional[str]:
+        return self._projection().owner_task_problem(definition)
 
+    # ---- gates ----
     @revision_checked
     def approve_gate(self, comment: str = "") -> NextAction:
         """Record approval for the current holding gate and continue."""
@@ -1369,9 +1278,3 @@ class Orchestrator(StatusViewMixin):
         return self._next_from_transition(
             self._transition_kernel().deny_gate(comment)
         )
-
-    # `_phase_included` is a shared helper (used by both the state machine and the status
-    # views mixin). The status view-model builders live in orchestrator/status_views.py.
-    def _phase_included(self, phase: dict) -> bool:
-        definition = self._workflow_definition().phase(phase["id"])
-        return bool(definition and self._projection().phase_included(definition))

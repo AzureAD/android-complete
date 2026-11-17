@@ -27,7 +27,7 @@ as individual users instead.
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
@@ -134,17 +134,6 @@ def _load_groups(context):
             cleaned.append({"name": name, "email": email})
         if cleaned:
             out.append((group, cleaned))
-    return out
-
-
-def _load_members(context):
-    """Flattened, de-duplicated [{name,email}] across all groups (registry order)."""
-    seen, out = set(), []
-    for _group, members in _load_groups(context):
-        for m in members:
-            if m["email"].lower() not in seen:
-                seen.add(m["email"].lower())
-                out.append(m)
     return out
 
 

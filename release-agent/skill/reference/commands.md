@@ -18,7 +18,8 @@ The agent handles those details from actual engine/tool responses.
 | Inspect prior attempts | `task-history --release <id> --phase <p> --step <s> [--details]` |
 | Discover valid task inputs | `step-info --phase <p> --step <s> --json` |
 | Record a fact/manual-only completion | `record-fact --release <id> --phase <p> --step <s> --note "<owner confirmation>" --json` |
-| Continue fresh work | `next --release <id> --json` |
+| Continue fresh work (+ auto-deliver `requires_approval: false` notices) | `next --release <id> --deliver --json` |
+| Deliver one notification step in Python | `deliver-step --release <id> --phase <p> --step <s> [--approved] --json` |
 | Explicit retry/reconciliation after repair | `task ... --retry` or `next --release <id> --retry`; use the owning result protocol for writes |
 | Inspect unsupported version metadata | `inspect-state --release <id>` |
 | Required readiness | `checklist --release <id> --attest-prompt --json` |
@@ -76,25 +77,6 @@ including consumers invalidated by a rerun.
 
 ## Owner-selected results
 
-### RC report
-
-`publish-rc-report --release <id> --adopt-file <temporary.json>
---confirmed-by <owner> --adoption-reason "<owner statement>"`
-
-The agent supplies:
-
-```text
-release, rc, sha256, size, item_url,
-resolve: exact workiq_resolve_m365_link observation,
-download: exact workiq_download_file observation,
-metadata: exact structured item observation if resolution lacks metadata
-```
-
-The selected HTML must be in the configured report folder and cover the current
-release/RC explicitly. The command verifies actual provider bytes, not equality
-with the original automatic report. Applicability is owner-attested. A different
-filename/content is supported. Adoption uploads nothing and approves no quality gate.
-
 ### Existing Bug Bash invitation
 
 `adopt-bugbash-invite --release <id> --result-file <temporary.json>
@@ -105,9 +87,9 @@ observations. The event request uses the engine's exact selection fields.
 Organizer, typed complete attendees, times, and Teams URL are verified.
 No engine send receipt is invented; chat binding consumes the recorded event.
 
-If either original operation is still owned, explicitly confirm that the previous
+If the original operation is still owned, explicitly confirm that the previous
 writer stopped and pass `--prior-writer-stopped`. Unknown original outcomes remain
-in history. Never use adoption as permission to resend/reupload.
+in history. Never use adoption as permission to resend.
 
 ## Checked writes and continuation
 
@@ -134,11 +116,10 @@ not approve another gate or certify uncertain provider effects as applied.
 invalidates declared business consumers and retains gate history; it is not routine
 partial-write recovery. Never force-clear an active effect or approval.
 
-## Notifications (2-Step Silent Contract)
+## Notifications (Direct Python Delivery)
 
-1. Run `step-action --release <id> --phase <p> --step <s>` to obtain `tool`, `mcp_arguments`, `requires_approval`, and `complete_command`.
-2. **When `requires_approval: false`:** This is NOT an owner approval step — invoking `/release-agent` already explicitly confirms sending configured `requires_approval: false` notifications. **Do NOT call `m_ask_user`, do NOT paste the payload for approval, and do NOT pause** — call the MCP tool (`workiq_send_email`, `workiq_send_chat_message`, `m_send_teams_message`, `microsoft_teams-*`) directly with `mcp_arguments`. (Only preview + call `m_ask_user` when `requires_approval: true` in `config/phases.yaml`.)
-3. Record completion in one command: `record-step --release <id> --phase <p> --step <s> --status pass --detail "Sent via <tool>"`.
+1. **When `requires_approval: false`:** Run `deliver-step --release <id> --phase <p> --step <s> --json` (or `next --release <id> --deliver --json` to drain all automated checks and `requires_approval: false` notifications in one call). Python delivers directly via Agency MCP (`mail` / `teams` / `calendar`), honors `mocks.local.yaml` redirects, and records exact delivery receipts + step completion without calling interactive `workiq_send_*` tools or `m_ask_user`!
+2. **When `requires_approval: true`:** Run `step-action --release <id> --phase <p> --step <s>`, preview `mcp_arguments` alongside the fresh `status --details` table, obtain owner confirmation via `m_ask_user`, and execute `deliver-step --release <id> --phase <p> --step <s> --approved --json`.
 
 ## Human gates and external approval
 

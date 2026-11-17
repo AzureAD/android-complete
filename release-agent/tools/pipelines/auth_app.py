@@ -957,7 +957,7 @@ def merged_release_prs(release_branch, timeout=90):
         if windowed:
             u += (f"&searchCriteria.queryTimeRangeType=closed"
                   f"&searchCriteria.minTime={min_time}&searchCriteria.maxTime={max_time}")
-        ok2, d2, det2 = _pp._ado_rest_get(u, timeout)
+        ok2, d2, _ = _pp._ado_rest_get(u, timeout)
         return ((d2 or {}).get("value") or []) if ok2 else []
 
     rows = _completed("working", windowed=True) + _completed(rel, windowed=False)

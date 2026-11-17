@@ -98,7 +98,7 @@ def test_startup_driver_loss_preserves_owning_delivery_acknowledgement(orch, tmp
     with C.state_lock(str(tmp_path), orch.state.release_id):
         state, runtime = C.load_orch(
             str(tmp_path), orch.state.release_id, C.DEFAULT_CONFIG, orch.now_local)
-        assert runtime.scheduling().suspension == "automation"
+        assert runtime.scheduling().suspension is None
         assert D.result(runtime, item["id"], claim["execution_id"], "sent", "actual synthetic provider receipt")
         assert not D.claim(runtime, item["id"], item["hash"], "another-owner")["permission_to_send"]
         C.save_state(state, str(tmp_path), state.release_id)

@@ -88,6 +88,11 @@ def _classify_external_fix(low: str, *, step_id: str = "", tool: Optional[str] =
             f"Check the Android on-call schedule ({ONCALL_URL}) and verify the `icm` MCP "
             "server is connected in Scout Settings → MCP Servers.",
         )
+    if tool == "agency_mcp" or "agency mcp" in low or "agency cli" in low:
+        return (
+            "Agency CLI MCP (`agency.exe mcp mail/teams/calendar`)",
+            "Verify `%APPDATA%\\agency\\CurrentVersion\\agency.exe --version` works and Entra WAM SSO is signed in, then retry.",
+        )
     if tool == "microsoft_teams" or "microsoft_teams" in low or "session not found" in low:
         return (
             "Microsoft Teams MCP Connector",

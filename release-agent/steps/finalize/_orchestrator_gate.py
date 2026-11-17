@@ -1,4 +1,4 @@
-"""Prepare and reconcile exact Release Orchestrator gate identities.
+"""Shared Phase-4 Release Orchestrator gate and payload-version helpers.
 
 Preparation may discover a pending gate, but freezes its entire provider target
 before core authorizes the one writer invocation. Recovery only reads that target:
@@ -6,16 +6,72 @@ neither a newer release run nor a completed stage can prove this approval succee
 In directly injected unit contexts, approval_state accepts the same exact-id/status/
 owner payload as the read port, including None for missing evidence; it never enables
 a write. Production rejects nonempty gate mocks for every approval lifecycle hook.
-The legacy submit='skip' marker also blocks preparation; offline tests inject ports.
 """
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 
 from orchestrator.approvals import ApprovalRequest
 from orchestrator.outcomes import Blocked
 from steps.lib.mockctx import MISSING
 from tools import pipelines as P
+
+GATE_CONFIG = {
+    "org": P.ENGINEERING_ORG,
+    "project": P.ENGINEERING_PROJECT,
+    "pipeline_ref": ("https://identitydivision.visualstudio.com/Engineering/_git/"
+                     "AuthClientAndroidPipelines?path=/production/monthly-release/"
+                     "release-orchestrator.yml"),
+}
+
+GATE_MOCKABLE = {
+    "approval": {"kind": "input", "desc": "Inject pending-approval info {approval_id,build_id,stage,build_url} or None."},
+    "stage_state": {"kind": "input", "desc": "Inject the target stage state {state,result} or None (skip timeline read)."},
+    "approval_state": {"kind": "input", "desc": "Exact approval {id,status,pipeline.owner._links.web.href} or None for read-only reconciliation."},
+    "submit": {"kind": "input", "desc": "'skip' is rejected for approval lifecycle; offline tests inject fake provider ports."},
+}
+
+
+@dataclass(frozen=True)
+class ApprovalParameters:
+    comment: str = ""
+
+
+GATE_PARAMETERS = {"prepare_approval": ApprovalParameters}
+
+
+def pending_approval(context, config: Mapping = GATE_CONFIG):
+    injected = context.input("approval", MISSING)
+    if injected is not MISSING:
+        return True, injected, ""
+    return context.services.pipelines.find_orchestrator_pending_approval(
+        config["org"], config["project"], context.release.release_id,
+    )
+
+
+def stage_state(context, stage: str, config: Mapping = GATE_CONFIG):
+    injected = context.input("stage_state", MISSING)
+    if injected is not MISSING:
+        return True, injected, ""
+    return context.services.pipelines.orchestrator_stage_state(
+        config["org"], config["project"], context.release.release_id, stage,
+    )
+
+
+def gate_links(info=None, config: Mapping = GATE_CONFIG) -> list[dict]:
+    links = [{"name": "Release Orchestrator YAML", "url": config["pipeline_ref"]}]
+    if info and info.get("build_url"):
+        links.insert(0, {"name": f"Orchestrator build {info['build_id']}", "url": info["build_url"]})
+    return links
+
+
+def payload_versions(context) -> dict:
+    """Resolve release payload versions (`versions` mock override, else `context.release.versions`)."""
+    injected = context.input("versions", MISSING)
+    if injected is not MISSING and injected:
+        return dict(injected)
+    return dict(getattr(context.release, "versions", {}) or {})
 
 
 def prepare_expected_approval(

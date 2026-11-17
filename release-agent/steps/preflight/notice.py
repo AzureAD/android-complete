@@ -10,7 +10,7 @@ instructions required.
 from __future__ import annotations
 from dataclasses import dataclass
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from orchestrator import schedule

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 # The release runs on the OWNER's wall clock, not the host's. On a UTC host, a bare
@@ -25,6 +25,25 @@ from typing import Optional, Tuple
 # computed in this zone unless a caller overrides it. Needs the `tzdata` package on
 # Windows (no system IANA db); falls back to host-local if the zone can't be loaded.
 DEFAULT_TZ = "America/Los_Angeles"
+
+
+def utc_now_iso() -> str:
+    """Current UTC instant as an ISO-8601 string."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def parse_iso_utc(value, *, default_tz=timezone.utc) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp into a datetime (defaulting naive values to `default_tz`), or None."""
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo or default_tz is None else parsed.replace(tzinfo=default_tz)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_tz(name: Optional[str] = None):

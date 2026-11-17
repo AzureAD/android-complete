@@ -43,15 +43,12 @@ def production(monkeypatch, rc, frozen=None):
     return ado, st, result, assignments, checkpoints
 
 
-@pytest.mark.parametrize("legacy_evidence", [False, True])
-def test_fresh_default_source_and_clone_keep_stress_separate_through_fill_and_report(
-        monkeypatch, legacy_evidence):
+def test_fresh_default_source_and_clone_keep_stress_separate_through_fill_and_report(monkeypatch):
     from orchestrator.state import ReleaseState, StepState
     from steps.bug_bash import clone_plans_broker as clone, ui_results, ui_test_status
     from steps.build_verify import rc_report as report, _rc_report_rendering as rendering
     from tests._context import context, invoke
     from tests._ui_results import auth_fill, checkpoint_memory
-    from tests.test_stress_reporting import legacy_snapshot
     from tools import distribution as D
 
     stress = "Stress Tests - RC MSAL with RC Broker (API 32)"
@@ -59,9 +56,6 @@ def test_fresh_default_source_and_clone_keep_stress_separate_through_fill_and_re
         {PROD: [("test_100_UI", "Failed")], stress: [("stress_pass", "Passed")]},
         {PROD: [("test_200_UI", "Passed")],
          stress: [("stress_failure", "Failed"), ("stress_failure", "Failed")]})
-    if legacy_evidence:
-        for flight in ("ecs", "local"):
-            rc[flight] = legacy_snapshot(rc[flight])
     original = deepcopy(rc)
     ado = ADO(monkeypatch)
     monkeypatch.setattr(T, "_suite_full", lambda *a: (
@@ -305,17 +299,13 @@ def test_v4_retains_uncertain_intents_and_exact_receipt_recovery(monkeypatch, fa
         assert not any(method == "POST" and url in posted_memberships for url, method, _ in ado.writes[before:])
 
 
-def test_v4_export_is_exact_and_does_not_write_providers():
+def test_v4_preview_is_exact_and_does_not_write_providers():
     frozen = source(evidence())
-    manifest = F.approval_manifest(frozen, "2000-01-isolated", "TEST ONLY - failures")
-    assert manifest["provider_writes_executed"] is False
-    assert len(manifest["case_payloads"]) == manifest["preview"]["new_cases"]
-    assert len(manifest["outcome_writes"]) == manifest["preview"]["failure_points"]
-    assert all(p["outcome"] == "Failed" for p in manifest["outcome_writes"])
-    assert all("System.AssignedTo" not in p["path"] for c in manifest["case_payloads"] for p in c["payload"])
-    assert manifest["frozen_source"] == frozen
-    assert all(p["source_build_url"].endswith(str(p["source_build_id"])) for p in manifest["outcome_writes"])
-    assert len(manifest["suite_payloads"]) == len(manifest["preview"]["suites"])
+    preview = F.preview(frozen)
+    assert preview["schema_version"] == F.VERSION
+    assert preview["layout"] == F.LAYOUT
+    assert preview["failure_points"] >= preview["new_cases"]
+    assert preview["tracker_basis"] == "failures_only_not_execution_coverage"
 
 
 @pytest.mark.parametrize("rc", [None, {}, {"rc": 2}, {"rc": True}])
@@ -361,40 +351,6 @@ def test_uncertain_outcomes_never_borrow_unacknowledged_ownership(monkeypatch, a
         assert len(summary["applied_points"]) == len(resource["scenario_bindings"])
 
 
-def test_isolated_v4_cli_export_creation_and_replay_are_separate_from_source(monkeypatch, tmp_path):
-    from argparse import Namespace
-    from orchestrator.commands import broker_scenario_plan as command
-    from orchestrator.state import ReleaseState
-    ado = ADO(monkeypatch)
-    frozen = source(evidence())
-    st = ReleaseState(release_id="2000-01", owner_email="owner@example.test")
-    st.pipeline_runs = {"rcs": [evidence()]}
-    snapshot_path = tmp_path / "protected" / "release-state.json"
-    st.save(str(snapshot_path))
-    original = snapshot_path.read_bytes()
-    monkeypatch.setattr(B, "prepare_source", lambda **kw: (True, frozen, ""))
-    export = tmp_path / "approval.json"
-    args = Namespace(snapshot=str(snapshot_path), isolated_root=str(tmp_path / "isolated"),
-                     name="TEST ONLY - failure triage", execute=False, approval_manifest=str(export),
-                     confirm_source_sha256=None, recover_create=None, resource_id=None, reason=None)
-    result = command.run(args)
-    approved = json.loads(export.read_text(encoding="utf-8"))
-    assert approved == F.approval_manifest(frozen, result["preview"]["instance"], args.name)
-    assert not ado.writes and not (tmp_path / "isolated").exists()
-    args.execute = True
-    with pytest.raises(ValueError, match="read-only"):
-        command.run(args)
-    assert not ado.writes
-    args.approval_manifest = None
-    args.confirm_source_sha256 = result["preview"]["source_sha256"]
-    applied = command.run(args)
-    assert applied["fill_status"] == "complete"
-    assert applied["applied_points"] == approved["preview"]["failure_points"]
-    writes = len(ado.writes)
-    assert command.run(args)["plan_id"] == applied["plan_id"]
-    assert len(ado.writes) == writes and snapshot_path.read_bytes() == original
-
-
 def test_collected_rc2_failure_only_production_path(monkeypatch, capsys):
     path = os.environ.get("RELEASE_AGENT_MRWP_STATE")
     if not path:
@@ -431,29 +387,11 @@ def test_collected_rc2_failure_only_production_path(monkeypatch, capsys):
     assert ok and len(progress_rows) == 9, detail
     assert all(len(f["categories"]) == 2 for f in record["automation"]["flights"].values())
     assert Path(path).read_bytes() == raw
-    name = "TEST ONLY - MRWP failure triage by flight RC2"
-    instance = collected["release_id"] + "-scenario-" + S.digest(name)[:16]
-    manifest = F.approval_manifest(frozen, instance, name)
-    legacy = os.environ.get("RELEASE_AGENT_V3_RESOURCE")
-    if legacy:
-        from steps.bug_bash.ui_results import applied_record
-        previous = Path(legacy).read_bytes()
-        assert hashlib.sha256(previous).hexdigest() == "7ef133d93e194b67c9e9204b8d8bd61bc0901980df719f1e08678fb6ad74dc5f"
-        old = json.loads(previous)
-        B._validate_source(old["source"])
-        assert S.digest(old["source"]) == "bd5c3a7a80e301ab8cfa72075622bc3e605496d15aed2f90a1a4b21654cee116"
-        old_result = applied_record(old["fill"], [r["case_id"] for r in old["scenario_bindings"]],
-                                    "broker", {"plan_id": old["plan_id"], "suite_id": old["ui_suite_id"]})
-        assert old_result["mapping_version"] == 3 and len(old_result["applied_points"]) == 224
-        assert Path(legacy).read_bytes() == previous
-    output = os.environ.get("RELEASE_AGENT_APPROVAL_MANIFEST")
-    if output:
-        with Path(output).open("x", encoding="utf-8") as stream:
-            json.dump(manifest, stream, indent=2, sort_keys=True)
+    preview = F.preview(frozen)
     with capsys.disabled():
         print("\nRC2 FAILURE-ONLY OFFLINE PROOF " + json.dumps({
-            **{k: v for k, v in manifest["preview"].items() if k != "warnings"},
-            "warnings": len(manifest["preview"]["warnings"]),
-            "instance": instance, "applied_points": 9, "protected_state_unchanged": True,
+            **{k: v for k, v in preview.items() if k != "warnings"},
+            "warnings": len(preview["warnings"]),
+            "applied_points": 9, "protected_state_unchanged": True,
             "modeled_provider_writes": len(ado.writes),
             "owned_case_ids_are_fake": True}, sort_keys=True))

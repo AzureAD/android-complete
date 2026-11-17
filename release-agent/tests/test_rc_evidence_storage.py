@@ -258,9 +258,10 @@ def test_incomplete_legacy_observation_without_valid_rc_migrates_losslessly(tmp_
     assert hydrated.steps == state.steps
     assert hydrated.pipeline_runs["rcs"][0]["ecs"]["complete"] is False
     assert hydrated.pipeline_runs["rcs"][0]["auth"]["test"]["complete"] is False
+    from steps.build_verify import rc_report_notify
     assert not P.project_mrwp_ui_results(hydrated.pipeline_runs["rcs"][0])[0]
     assert not P.project_auth_ui_results(hydrated.pipeline_runs["rcs"][0])[0]
-    assert rc_report.build(context(hydrated, now=NOW)).kind == "blocked"
+    assert rc_report_notify.build(context(hydrated, now=NOW)).kind == "blocked"
 
 
 def test_real_capture_handlers_save_and_reload_each_lane(tmp_path):

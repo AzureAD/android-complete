@@ -204,23 +204,32 @@ def test_checkpoint_failure_stops_auth_post_and_restores_previous_evidence(tmp_p
             writes.append(step)
             assert saved[-1]["creation"]["status"] == "creating"
             return True, 45, ""
-        return EffectServices(create_auth_query_suite=create)
+        return EffectServices(
+            create_auth_query_suite=create,
+            create_auth_suite=create,
+            ensure_auth_monthly=create,
+        )
     orch = engine(tmp_path, "bug_bash", "clone_plans_auth", services=services, writers=factory)
+    orch.state.set_step("bug_bash", "clone_plans_auth", StepState(data={"creation": {"status": "retry_authorized"}}))
     def checkpoint():
         data = orch.state.get_step("bug_bash", "clone_plans_auth").data
-        if data.get("creation"):
+        if data.get("creation") and data["creation"].get("status") == "creating":
             raise OSError("disk unavailable")
         saved.append(deepcopy(data))
     orch.state._checkpoint = checkpoint
     with pytest.raises(OSError, match="disk unavailable"):
         orch.step_once()
     assert writes == []
-    assert orch.state.get_step("bug_bash", "clone_plans_auth").data == {}
+    assert orch.state.get_step("bug_bash", "clone_plans_auth").data == {"creation": {"status": "retry_authorized"}}
     assert orch.state.get_step("bug_bash", "clone_plans_auth").execution["id"]
     orch.state._checkpoint = lambda: saved.append(deepcopy(
         orch.state.get_step("bug_bash", "clone_plans_auth").data))
     assert orch.step_once().kind == "ran"
-    assert writes == [WriteCapabilities((WriteOperation.CREATE_AUTH_QUERY_SUITE,))]
+    assert writes == [WriteCapabilities((
+        WriteOperation.CREATE_AUTH_QUERY_SUITE,
+        WriteOperation.CREATE_AUTH_SUITE,
+        WriteOperation.ENSURE_AUTH_MONTHLY,
+    ))]
     assert orch.state.get_step("bug_bash", "clone_plans_auth").data["suite_id"] == 45
 
 
@@ -269,7 +278,11 @@ def test_suspension_allows_owned_receipts_but_not_new_provider_calls(tmp_path):
         def create(*args):
             validate()
             called.append(args)
-        return EffectServices(create_auth_query_suite=create)
+        return EffectServices(
+            create_auth_query_suite=create,
+            create_auth_suite=create,
+            ensure_auth_monthly=create,
+        )
     orch = engine(tmp_path, "bug_bash", "clone_plans_auth", writers=factory)
     saved = []
     orch.state._checkpoint = lambda: saved.append(deepcopy(orch.state.steps))

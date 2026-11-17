@@ -8,7 +8,7 @@ block — they're triaged in a later phase. All logic is shared in `_mrwp.verify
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from steps.build_verify._mrwp import verify_mrwp
 

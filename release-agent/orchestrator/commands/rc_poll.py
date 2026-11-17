@@ -22,7 +22,7 @@ from __future__ import annotations
 import json as _json
 from datetime import datetime, timezone
 
-from orchestrator import cli_common as C, delivery as D
+from orchestrator import cli_common as C, delivery as D, schedule
 
 # The poll cadence + courtesy-nudge threshold. A re-triggered RC that runs longer than
 # NUDGE_AFTER_HOURS gets ONE heads-up to the owner (it is not a failure — Scout keeps
@@ -30,19 +30,11 @@ from orchestrator import cli_common as C, delivery as D
 POLL_INTERVAL_MIN = 30
 NUDGE_AFTER_HOURS = 6
 
-def _parse_iso(s):
-    try:
-        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
-
 
 def _elapsed_hours(since_iso, now):
-    since = _parse_iso(since_iso)
+    since = schedule.parse_iso_utc(since_iso)
     if not since:
         return 0.0
-    if since.tzinfo is None:
-        since = since.replace(tzinfo=timezone.utc)
     return max(0.0, (now - since).total_seconds() / 3600.0)
 
 
@@ -67,7 +59,7 @@ def _nudge_payload(st, label, hrs: int) -> dict:
 
 
 def cmd_poll_rc(args):
-    now = _parse_iso(args.now) if getattr(args, "now", None) else datetime.now(timezone.utc)
+    now = schedule.parse_iso_utc(args.now, default_tz=None) if getattr(args, "now", None) else datetime.now(timezone.utc)
     if now is None:
         print(_json.dumps({"error": f"bad --now: {args.now!r}"}))
         return 1

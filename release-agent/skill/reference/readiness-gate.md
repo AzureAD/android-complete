@@ -2,7 +2,7 @@
 
 > **User asks ABOUT a gate item** ("what does `build_access` check?", "why do I need a YubiKey?", "how do I get Play Console access?", "what if I'm on-call?"): run `gate-info --item <id>` and answer from `config/knowledge.yaml` — never guess.
 
-Every item in `config/readiness.yaml` is **mandatory** (optional `required: false` items are deprecated and forbidden). Each item is a standalone execution unit declaring `depends_on` (`[]` = runs immediately) and `required_tools`.
+Every item in `config/readiness.yaml` is **mandatory**. Each item is a standalone execution unit declaring `depends_on` (`[]` = runs immediately) and `required_tools`.
 Use `checklist --release <id> --attest-prompt --json` to inspect the queue. **If any `[auto]` check fails because a required tool or connector is missing or misconfigured, fail ONLY that specific check with its explicit reason and continue executing every remaining runnable `[auto]` check.** Never halt early on a single check failure!
 
 No blanket write authority follows from readiness. Every owning write step needs its own exact preview, required review, host consent, durable attempt, and receipt. Do not send test messages, create probe invitations, upload test files, broaden permissions, or switch accounts to manufacture a readiness pass.
@@ -35,7 +35,7 @@ No blanket write authority follows from readiness. Every owning write step needs
    - Run `python -m orchestrator.cli checklist --release <id> --attest-prompt --handoff --json`.
    - `ready:false` while `continue_automatically:true` (exit code `2`) means runnable `[auto]` checks still remain — finish them first without retrying `failed_auto_checks`.
    - Once all runnable `[auto]` checks have finished, **paste `display_markdown` verbatim as live Markdown** before prompting so the user sees every check's result (`PASS` / `FAIL`) and specific failure reason.
-   - If any `[auto]` check failed due to a missing/broken tool, present an `m_ask_user` card alongside the outstanding attestations allowing the owner to **Fix & retry failed check(s)**, **Complete manually (`complete-readiness-manually`)**, **Skip/waive failed check (`skip-readiness --reason ...`)**, and **Confirm human `[attest]` items (`sign --item ...`)**. Once all items are satisfied, immediately continue automatic guided progression (`next --release <id> --json`)!
+   - If any `[auto]` check failed due to a missing/broken tool, present an `m_ask_user` card alongside the outstanding attestations allowing the owner to **Fix & retry failed check(s)**, **Complete manually (`complete-readiness-manually`)**, **Skip/waive failed check (`skip-readiness --reason ...`)**, and **Confirm human `[attest]` items (`sign --item ...`)**. Once all items are satisfied, immediately run `python -m orchestrator.cli next --release <id> --deliver --json` **ONCE** (never in a loop — it drains all Phase 0 Python checks AND delivers `requires_approval: false` preflight notifications directly in Python via Agency MCP), then execute any remaining `work_dispatch.pending_work` items (such as `preflight.lockdown`)!
 
 ## Structured connector reads
 

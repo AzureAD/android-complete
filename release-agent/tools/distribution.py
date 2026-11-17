@@ -539,7 +539,7 @@ def _tags_of(case_ids, timeout=90):
 
 
 def auth_bugbash_cases(timeout=90, *, target=None):
-    """Read actual category work (legacy: curated query); ownership belongs to live points."""
+    """Read category work (or curated query when target is omitted); ownership belongs to live points."""
     if target is not None:
         from tools import auth_partition as A
         try:
@@ -756,7 +756,7 @@ def validate_release_targets(release_id, ccd, binding, *, org=ORG, project=PROJE
                     raise ValueError("Monthly investigations leaked into a curated dynamic category")
     else:
         if set(auth) != {"plan_id", "suite_id"}:
-            raise ValueError("Malformed legacy Authenticator target")
+            raise ValueError("Malformed single-suite Authenticator target")
         ok, _, detail = T.validate_auth_query_suite(
             auth["suite_id"], auth_name, T.auth_bugbash_query(), timeout,
             org=org, project=project, plan_id=auth["plan_id"], parent_suite_id=T.AUTH_ROOT_SUITE)

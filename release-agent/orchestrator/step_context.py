@@ -21,7 +21,7 @@ class FrozenDict(dict):
 
     __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = __ior__ = _deny
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, _memo):
         return self
 
 
@@ -31,7 +31,7 @@ class FrozenList(list):
 
     __setitem__ = __delitem__ = append = clear = extend = insert = pop = remove = reverse = sort = __iadd__ = __imul__ = _deny
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, _memo):
         return self
 
 

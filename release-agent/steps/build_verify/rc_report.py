@@ -1,35 +1,20 @@
-"""Compose the Phase-2 report from captured evidence, without live discovery.
+"""Compose the Phase-2 RC report model from captured evidence, without live discovery.
 
-Publication and notification preserve exact source/content lineage. Quality verdicts
-are recommendations: the separate HUMAN rc_report_gate decides approve/deny after
-delivery and the independent telemetry prerequisite. The legacy email builder remains
-available for diagnostic callers, not as a replacement for that gate.
+Notification preserves exact source/content lineage. Quality verdicts are
+recommendations: the separate HUMAN rc_report_gate decides approve/deny after
+notification and the independent telemetry prerequisite.
 """
 from __future__ import annotations
 
 from hashlib import sha256
 
-from orchestrator.step_context import StepContext, thaw
-
 from orchestrator.delivery import fingerprint
-from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.build_verify import auth_ecs as A, _rc_report_rendering as R
 from steps.build_verify._common import build_url, latest_rc, valid_id, valid_counts
 from steps.lib.context import release_ctx
 from tools import pipelines as P
 from tools.coordinates import coords
 from tools.pipelines.test_evidence import require, validate_snapshot_tests, result_links
-
-ID = "rc_report"
-KIND = "scout"
-NOTIFICATION = True
-
-MOCKABLE = {
-    "send_to": {
-        "kind": "payload", "sets": "to", "as": "list", "tag_subject": True,
-        "desc": "Send the RC report for real, but only to these address(es) (owner → you).",
-    },
-}
 
 # The Phase-2 recommendation threshold; it never replaces the human approval gate.
 RC_UI_PASS_THRESHOLD = coords.gate("rc_ui_pass_pct")
@@ -478,57 +463,6 @@ def rc_email(context):
     return (R.rc_email_subject(model, gate, auth),
             R.rc_email_html(model, ctx, gate, auth, next_action),
             R.rc_email_plain(model, ctx, gate, auth, next_action), model)
-
-
-def build(context: StepContext):
-    """Legacy diagnostic email; the configured flow uses publish, notify, HUMAN gate."""
-    to = context.release.owner_email
-    if not to:
-        return Blocked(
-            "rc_report: no release owner email on record — set it with "
-            "`set-owner --email <you@microsoft.com>` so the RC report can be sent.")
-    try:
-        subject, html, plain, model = rc_email(context)
-    except Exception as e:                       # pragma: no cover - defensive
-        return Blocked(f"rc_report: could not build the RC report ({e}).")
-
-    gate = rc_ui_gate(model)
-    auth = auth_report_gate(model)
-    v = gate["verdict"]
-    if v == "clean":
-        summary = (f"Email the RC verification report to the release owner ({to}) — "
-                   f"MRWP UI gate CLEAN (100%)")
-    elif v == "warn":
-        summary = (f"Email the RC verification report to the release owner ({to}) — "
-                   f"MRWP UI gate PASS with warning ({gate['pass_pct']}%); proceed + investigate "
-                   f"failing UI tests in parallel")
-    else:
-        summary = (f"Email the RC verification report to the release owner ({to}) — "
-                   f"MRWP UI gate FAIL ({gate['pass_pct']}% < {int(RC_UI_PASS_THRESHOLD)}%); "
-                   f"will hold for investigation")
-    if auth["present"]:
-        summary += (f" · Auth ECS {'PASS' if auth['verdict'] == 'clean' else 'HOLD'}")
-    note = gate["detail"] + (f"\n\n{auth['detail']}" if auth["present"] else "")
-    return NeedsSkill(
-        tool="workiq_send_email",
-        payload={
-            "to": [to],
-            "subject": subject,
-            "body": html,
-            "isHtml": True,
-            "_plain_body": plain,
-        },
-        record_as=ID,
-        summary=summary,
-        note=note,
-        outbound=True,
-        notification={
-            "checkpoint": "rc:" + ":".join(str(link["url"]) for link in rc_run_links(model)),
-            "state_matches": report_source_matches(context),
-            "completion": {"status": "attention" if gate["blocking"] or auth["blocking"] else "pass",
-                           "note": note, "links": rc_run_links(model)},
-        },
-    )
 
 
 def automation_prompt(release: str, spec: dict) -> str:

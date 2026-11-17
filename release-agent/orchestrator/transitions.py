@@ -10,7 +10,7 @@ import uuid
 from typing import Callable, Optional
 
 from orchestrator.projection import StateProjection
-from orchestrator.effects import EffectMode, EffectRecovery
+from orchestrator.effects import EffectMode
 from orchestrator.invariants import validate_snapshot, validate_step
 from orchestrator.outcomes import AutoOutcome, Blocked, Done, InProgress, require_auto_outcome, valid_links
 from orchestrator.state import GateDecision, ReleaseState, StepState
@@ -1532,121 +1532,6 @@ class TransitionKernel:
             }
             changed = True
         return TransitionResult("annotated", "Confirmed notification evidence recorded.", changed=changed)
-
-    def _prepare_effect_recovery(self, phase_id, step_id, execution_id, reason, *, retry):
-        if rejected := self._invalid(phase_id, step_id):
-            return rejected
-        definition = self.workflow.step(phase_id, step_id)
-        if not definition or definition.kind != StepKind.AUTO or (
-            (definition.effect_mode != EffectMode.TRANSACTIONAL or not definition.effect_retry) if retry
-            else (definition.effect_mode != EffectMode.IDEMPOTENT or definition.effect_recovery != EffectRecovery.MATCH_CURRENT)
-        ):
-            return self._reject("Step does not support this effect recovery policy.", phase_id, step_id)
-        record = self.state.get_step(phase_id, step_id)
-        if record.status != "blocked" or not isinstance(execution_id, str) or not execution_id or (record.execution or {}).get("id") != execution_id:
-            return self._reject("Recovery requires the exact blocked execution.", phase_id, step_id)
-        if not isinstance(reason, str) or not reason.strip():
-            return self._reject("Effect recovery requires owner-reviewed evidence.", phase_id, step_id)
-        return self._generation(record)
-
-    def _apply_effect_recovery(self, phase_id, step_id, execution_id, reason, generation, *, retry):
-        current = self._prepare_effect_recovery(phase_id, step_id, execution_id, reason, retry=retry)
-        if isinstance(current, TransitionResult):
-            return current
-        if current != generation or self.projection_factory().workflow is not self.workflow:
-            return self._reject("Effect execution/generation changed during recovery.", phase_id, step_id)
-        return (self._authorize_effect_retry if retry else self._supersede_effect)(
-            phase_id, step_id, execution_id, reason)
-
-    def _supersede_effect(
-        self, phase_id: str, step_id: str, execution_id: str, reason: str
-    ) -> TransitionResult:
-        """Replace an idempotent desired-state operation with newly prepared input."""
-        definition = self.workflow.step(phase_id, step_id)
-        record = self.state.get_step(phase_id, step_id)
-        execution = record.execution or {}
-        if (
-            not definition
-            or definition.effect_mode != EffectMode.IDEMPOTENT
-            or definition.effect_recovery != EffectRecovery.MATCH_CURRENT
-        ):
-            return self._reject(
-                f"{phase_id}/{step_id} does not support idempotent supersede.",
-                phase_id,
-                step_id,
-            )
-        if (
-            record.status != "blocked"
-            or execution.get("id") != execution_id
-            or execution.get("effect_mode") != EffectMode.IDEMPOTENT.value
-        ):
-            return self._reject(
-                "Supersede requires the exact blocked idempotent execution.",
-                phase_id,
-                step_id,
-            )
-        if not reason or not reason.strip():
-            return self._reject(
-                "Idempotent supersede requires owner-reviewed evidence.",
-                phase_id,
-                step_id,
-            )
-        record.status = "pending"
-        record.execution = None
-        record.note = f"Idempotent operation superseded: {reason.strip()}"
-        record.by = "human"
-        self.state.set_step(phase_id, step_id, record)
-        return self._accept(
-            "ran",
-            f"Superseded idempotent effect {phase_id}/{step_id}.",
-            phase_id,
-            step_id,
-        )
-
-    def _authorize_effect_retry(
-        self, phase_id: str, step_id: str, execution_id: str, reason: str
-    ) -> TransitionResult:
-        """Clear an effect owner only after its handler verified no effect exists."""
-        definition = self.workflow.step(phase_id, step_id)
-        record = self.state.get_step(phase_id, step_id)
-        execution = record.execution or {}
-        if (
-            not definition
-            or definition.effect_mode != EffectMode.TRANSACTIONAL
-            or not definition.effect_retry
-        ):
-            return self._reject(
-                f"{phase_id}/{step_id} does not support verified effect retry.",
-                phase_id,
-                step_id,
-            )
-        if (
-            record.status != "blocked"
-            or execution.get("id") != execution_id
-            or execution.get("effect_mode") != EffectMode.TRANSACTIONAL.value
-        ):
-            return self._reject(
-                "Effect retry requires the exact blocked transactional execution.",
-                phase_id,
-                step_id,
-            )
-        if not reason or not reason.strip():
-            return self._reject(
-                "Verified effect retry requires owner-reviewed evidence.",
-                phase_id,
-                step_id,
-            )
-        record.status = "pending"
-        record.execution = None
-        record.note = f"Verified absent; retry authorized: {reason.strip()}"
-        record.by = "human"
-        self.state.set_step(phase_id, step_id, record)
-        return self._accept(
-            "ran",
-            f"Verified retry authorized for {phase_id}/{step_id}.",
-            phase_id,
-            step_id,
-        )
 
     def hold_effect(
         self, phase_id: str, step_id: str, reason: str

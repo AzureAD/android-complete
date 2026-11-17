@@ -113,7 +113,7 @@ def _rc_folder(rc):
     if (not isinstance(rc, bool) and isinstance(rc, (str, int))
             and re.fullmatch(r"[0-9]+", str(rc)) and int(rc) > 0):
         return f"rc{int(rc)}"
-    # Preserve incomplete legacy observations without inventing an authoritative RC.
+    # Preserve incomplete observations without inventing an authoritative RC number.
     return "unresolved"
 
 
@@ -247,7 +247,7 @@ def externalize(runs, release_id, directory):
 
 
 def hydrate(runs, release_id, directory):
-    """Read/verify referenced snapshots; legacy inline snapshots remain valid until saved."""
+    """Read/verify referenced snapshots; in-memory inline snapshots remain valid until saved."""
     return _transform(runs, lambda snapshot, rc, lane:
                       _hydrate(snapshot, release_id, rc, lane, directory)
                       if "evidence_ref" in snapshot else snapshot)

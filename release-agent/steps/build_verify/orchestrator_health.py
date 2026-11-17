@@ -13,7 +13,7 @@ reported explicitly without claiming that it is still awaiting approval.
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator import schedule

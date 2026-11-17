@@ -7,7 +7,7 @@ alerts — the owner must fix them and RERUN, or skip to override. Deterministic
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
 from tools.coordinates import coords

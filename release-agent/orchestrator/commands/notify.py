@@ -3,9 +3,7 @@ from __future__ import annotations
 import json as _json
 import os
 
-from orchestrator.state import ReleaseState
-from orchestrator.engine import Orchestrator
-from orchestrator import render, schedule, delivery as D
+from orchestrator import render, delivery as D
 from orchestrator import notifications as notif
 from orchestrator import cli_common as C
 from tools import checks
@@ -179,20 +177,6 @@ def cmd_tick(args):
     return 0
 
 
-def cmd_record_core_alert(args):
-    """Acknowledge a Core Team alert only after WorkIQ confirms the send."""
-    st, orch = C.load_orch(args.runs_root, args.release, args.config)
-    valid = {f"preflight:{st.ccd}:pre_ccd", f"preflight:{st.ccd}:ccd"} if st.ccd else set()
-    if args.checkpoint not in valid:
-        print("Checkpoint does not match this release's CCD.")
-        return 1
-    if args.checkpoint in st.escalation_checkpoints:
-        print("Core Team alert already recorded; no changes.")
-        return 0
-    print("Use notification claim/result; a checkpoint alone cannot prove delivery.")
-    return 1
-
-
 def register(sub):
     so = sub.add_parser("set-owner", help="Set/change the release owner (who reminders are emailed to)")
     so.add_argument("--release", required=True)
@@ -213,9 +197,3 @@ def register(sub):
     tk.add_argument("--force", action="store_true", help="Never bypasses acknowledgement or lifecycle guards")
     tk.add_argument("--json", action="store_true", help="Emit {message,subject,owner_email,owner_name,release} for the mailer")
     tk.set_defaults(func=cmd_tick)
-
-    ra = sub.add_parser("record-core-alert",
-                        help="Record a Core Team deadline alert after successful delivery")
-    ra.add_argument("--release", required=True)
-    ra.add_argument("--checkpoint", required=True)
-    ra.set_defaults(func=cmd_record_core_alert)

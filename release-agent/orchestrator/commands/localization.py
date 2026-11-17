@@ -11,8 +11,6 @@ These commands are the thin CLI seam the skill/poller calls:
   * check-localization — one poll: given the run or PR state, apply `decide()` and
     either wait, request a notification, or finish. Prints the decision JSON so the
     poller can claim and acknowledge each notification through the shared delivery protocol.
-  * record-localization-post — legacy readback of an already acknowledged Code reviews
-    post; a PR identifier alone never proves delivery.
 """
 from __future__ import annotations
 import json as _json
@@ -22,14 +20,11 @@ from datetime import datetime, timedelta, timezone
 from orchestrator import cli_common as C, delivery as D, revision, write_review as W
 from orchestrator import mocks as mocks_mod
 from orchestrator.outcomes import Blocked, Done, InProgress
+from orchestrator.schedule import utc_now_iso as _now_iso
 from orchestrator.transitions import TransitionIntent
 from steps.lib.context import SELF_CHAT_ID
 from steps.ccd import localization as L
 from tools import localization as provider
-
-
-def _now_iso():
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _launch_config():
@@ -400,35 +395,8 @@ def cmd_check_localization(args):
                 st, f"{checkpoint}:owner", scope, "m_send_teams_message",
                 {"message": _owner_scout_message(st, decision, d)}, {}))
         decision["notifications"] = [D.offer(orch, item) for item in items]
-        decision["permission_to_send"] = False
         C.save_state(st, args.runs_root, args.release)
     print(_json.dumps(decision))
-    return 0
-
-
-def cmd_record_localization_post(args):
-    """Record a localization Code reviews post only after delivery succeeds."""
-    st = C.load_state(args.runs_root, args.release)
-    step = st.get_step("ccd", "localization")
-    stored_pr_id = str(step.data.get("pr_id") or "")
-    if not stored_pr_id:
-        print(_json.dumps({"error": "localization PR has not been discovered"}))
-        return 1
-    if stored_pr_id != str(args.pr_id):
-        print(_json.dumps({
-            "error": f"PR mismatch: step has {stored_pr_id}, acknowledgement has {args.pr_id}"
-        }))
-        return 1
-
-    key = "pr_announced_at" if args.kind == "initial" else "merge_deadline_alert_at"
-    already = step.data.get(key)
-    if not already:
-        print(_json.dumps({"error": "Use notification claim/result; a PR ID alone does not prove delivery"}))
-        return 1
-    print(_json.dumps({
-        "recorded": not bool(already), "kind": args.kind, "pr_id": stored_pr_id,
-        "at": already or step.data[key],
-    }))
     return 0
 
 
@@ -484,11 +452,3 @@ def register(sub):
     cl.add_argument("--now", default=None, help="Override 'now' (ISO-8601) for elapsed/timeout math")
     cl.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     cl.set_defaults(func=cmd_check_localization)
-
-    rp = sub.add_parser(
-        "record-localization-post",
-        help="Record a successful localization Code reviews post")
-    rp.add_argument("--release", required=True)
-    rp.add_argument("--kind", required=True, choices=("initial", "deadline"))
-    rp.add_argument("--pr-id", required=True, dest="pr_id")
-    rp.set_defaults(func=cmd_record_localization_post)

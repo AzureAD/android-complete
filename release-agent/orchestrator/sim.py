@@ -282,11 +282,11 @@ def _fast_forward(orch: Orchestrator, config: dict, target_phase: str, mode: str
             if definition and definition.write_command:
                 problems.append(
                     f"external write pending: {definition.key} requires "
-                    f"reserve-step then {definition.write_command}"
+                    f"checked {definition.write_command}"
                 )
                 return _stop(
                     "external",
-                    f"{definition.key} requires a reserved external write.",
+                    f"{definition.key} requires a checked external write ({definition.write_command}).",
                     forwarded,
                     approved,
                     problems,

@@ -23,7 +23,12 @@ WRITERS = tuple(step for step in WORKFLOW.step_by_key.values() if step.write_com
 
 
 @pytest.fixture(params=WRITERS, ids=lambda step: step.write_command)
-def writer(request, tmp_path):
+def writer(request, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from orchestrator import schedule
+
+    fixed_now = datetime(2026, 11, 16, 18, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(schedule, "now_local", lambda tz=None: fixed_now)
     definition = request.param
     raw = thaw(definition.raw)
     raw.pop("depends_on", None)

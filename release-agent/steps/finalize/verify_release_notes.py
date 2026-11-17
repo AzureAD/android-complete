@@ -23,7 +23,7 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked, InProgress
 from steps.lib.mockctx import MISSING
@@ -49,11 +49,7 @@ MOCKABLE = {
 }
 
 
-def _versions(context):
-    v = context.input("versions", MISSING)
-    if v is not MISSING and v:
-        return dict(v)
-    return dict(getattr(context.release, "versions", {}) or {})
+from steps.finalize._orchestrator_gate import payload_versions as _versions
 
 
 def _gh_repo(key):

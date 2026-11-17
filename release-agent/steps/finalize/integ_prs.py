@@ -29,7 +29,7 @@ Mock knobs (mocks.local.yaml / tests):
 from __future__ import annotations
 from collections.abc import Mapping
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import InProgress, NeedsSkill, Blocked
 from steps.lib.mockctx import MISSING

@@ -55,7 +55,7 @@ _TOOL_RE = re.compile(r"""\btool\s*=\s*f?["']([^"'{]+)""")
 def test_command_verb_classifies_engine_vs_mcp():
     """The contract helper separates engine commands (lowercase-hyphen) from MCP tools."""
     assert command_verb("create-payload-wiki --release 2026-08 --dry-run") == "create-payload-wiki"
-    assert command_verb("record-rc-report") == "record-rc-report"
+    assert command_verb("rc-report") == "rc-report"
     assert command_verb("check-lockdown") == "check-lockdown"
     # MCP / skill tools → None (underscore or Service-Prefix / CamelCase)
     assert command_verb("workiq_send_email") is None

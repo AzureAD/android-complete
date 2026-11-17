@@ -272,12 +272,13 @@ def test_external_reservation_is_a_hold_not_a_runnable_or_pending_action(tmp_pat
     record.status = status
     orch.state.set_step("phase", "reserved", record)
     selection = _parity(orch)
-    assert selection.focus_hold.reason == "reservation"
+    assert selection.focus_hold.reason == ("blocked" if status == "blocked" else "reservation")
     assert not selection.runnable and not selection.action_holds
     assert not _eligible(orch, TransitionIntent.PREPARE, "reserved").allowed
     assert not _eligible(orch, TransitionIntent.RESERVE, "reserved").allowed
     action = orch.step_once()
-    assert action.kind == "waiting" and action.step == selection.focus_hold.step_id
+    assert action.kind == ("reminder" if status == "blocked" else "waiting")
+    assert action.step == selection.focus_hold.step_id
     assert not calls and orch.state.get_step("phase", "reserved") == record
 
 

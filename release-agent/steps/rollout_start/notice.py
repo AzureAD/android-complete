@@ -8,7 +8,6 @@ dates.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
 from html import escape as _html_escape
 import re
 

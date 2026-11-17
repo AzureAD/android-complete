@@ -18,7 +18,7 @@ version, both from state.versions):
 The `edit_*` functions are PURE (text in -> text out); they raise ValueError when their anchor
 isn't found so a silent no-op bump can't happen. The REST helpers return typed tuples.
 The checked command pins commit reads, explicit repository coordinates, exact file edits
-and PR content. Conflicts or missing local objects are held; the legacy merge helper is not used.
+and PR content. Conflicts or missing local objects are held for owner review.
 """
 from __future__ import annotations
 
@@ -242,41 +242,7 @@ def ahead_behind(base: str, target: str, timeout=60, *, repository=None, ref_typ
     return (True, {"ahead": d.get("aheadCount"), "behind": d.get("behindCount")}, "")
 
 
-def push_edits(branch: str, old_object_id: str, path_to_content: dict, comment: str, timeout=90,
-               *, repository=None):
-    """(ok, commitId, detail) — push ONE commit editing multiple files onto `branch`. WRITE."""
-    changes = [{"changeType": "edit", "item": {"path": path},
-                "newContent": {"content": content, "contentType": "rawtext"}}
-               for path, content in path_to_content.items()]
-    body = {"refUpdates": [{"name": f"refs/heads/{branch}", "oldObjectId": old_object_id}],
-            "commits": [{"comment": comment, "changes": changes}]}
-    ok, res, d = P._ado_rest_send(f"{_base(repository)}/pushes?api-version=7.1", "POST", body, timeout)
-    if not ok:
-        return (False, None, d)
-    commit = (((res or {}).get("commits") or [{}])[0]).get("commitId")
-    return (True, commit, "")
-
-
-def verify_edit_commit(repository, old_tip, new_tip, edits, comment, timeout=60):
-    """Read back the returned output; never accept an unreviewed merge or extra file change."""
-    from tools.git_review import object_id
-    object_id(old_tip)
-    object_id(new_tip)
-    base = _base(repository)
-    ok, data, detail = P._ado_rest_get(f"{base}/commits/{new_tip}?api-version=7.1", timeout)
-    if (not ok or not isinstance(data, dict) or data.get("parents") != [old_tip]
-            or str(data.get("comment", "")).rstrip("\n") != comment.rstrip("\n")):
-        raise ValueError("OneAuth push ancestry/comment is uncertain: " + str(detail))
-    ok, data, detail = P._ado_rest_get(
-        f"{base}/commits/{new_tip}/changes?$top={len(edits) + 1}&api-version=7.1", timeout)
-    changes = (data or {}).get("changes", []) if ok else []
-    if (len(changes) != len(edits)
-            or {c.get("item", {}).get("path") for c in changes} != set(edits)
-            or any(c.get("changeType") != "edit" for c in changes)):
-        raise ValueError("OneAuth push changed unreviewed files or could not be verified: " + str(detail))
-
-
-# ------------------------------ pull requests / server-side merge ------------------------------
+# ------------------------------ pull requests ------------------------------
 def find_open_pr(source: str, target: str, timeout=60, *, repository=None):
     """(ok, pr|None, detail) — an ACTIVE PR source->target, {id, url, title} or None."""
     url = _base(repository) + "/pullrequests?" + urlencode({
@@ -307,69 +273,3 @@ def create_pr(source: str, target: str, title: str, description: str, timeout=90
     pid = (res or {}).get("pullRequestId")
     return (True, {"id": pid, "mergeStatus": (res or {}).get("mergeStatus"),
                    "url": _pr_url(repository, pid)}, "")
-
-
-def get_pr(pr_id, timeout=60):
-    return P._ado_rest_get(f"{_BASE}/pullrequests/{pr_id}?api-version=7.1", timeout)
-
-
-def _patch_pr(pr_id, body, timeout=90):
-    return P._ado_rest_send(f"{_BASE}/pullrequests/{pr_id}?api-version=7.1", "PATCH", body, timeout)
-
-
-def abandon_pr(pr_id, timeout=60):
-    return _patch_pr(pr_id, {"status": "abandoned"}, timeout)
-
-
-def merge_dev_into_ingestion(dry_run: bool = True, timeout=120):
-    """Server-side MERGE of `dev` into `android/common-ingestion` (B1): if the ingestion branch
-    is behind dev, open a transient `dev -> android/common-ingestion` PR and COMPLETE it so ADO
-    performs the merge. Returns (ok, info, detail) where info is
-      {behind, merged: bool, conflict: bool, pr_id, would: <dry-run note>}.
-    Conflicts are surfaced (conflict=True, ok=False) — NEVER forced. No-op when already current."""
-    import time
-    okab, ab, d = ahead_behind(TARGET_BRANCH, INGEST_BRANCH, timeout)
-    if not okab:
-        return (False, None, f"could not compute ahead/behind ({d})")
-    behind = ab.get("behind") or 0
-    if behind == 0:
-        return (True, {"behind": 0, "merged": False, "conflict": False, "pr_id": None}, "")
-    if dry_run:
-        return (True, {"behind": behind, "merged": False, "conflict": False, "pr_id": None,
-                       "would": f"merge dev into {INGEST_BRANCH} ({behind} commits behind) via a "
-                                f"transient PR"}, "")
-
-    title = f"Merge dev into {INGEST_BRANCH} (AndroidCommon ingestion)"
-    okc, pr, dc = create_pr(TARGET_BRANCH, INGEST_BRANCH, title,
-                            "Automated: bring android/common-ingestion up to date with dev before "
-                            "the AndroidCommon version bump.", timeout)
-    if not okc:
-        return (False, None, f"could not open the dev->{INGEST_BRANCH} merge PR ({dc})")
-    pid = pr["id"]
-    # wait for ADO to compute mergeStatus (queued -> succeeded | conflicts)
-    status, src_commit = None, None
-    for _ in range(12):
-        okg, full, dg = get_pr(pid, timeout)
-        if okg:
-            status = full.get("mergeStatus")
-            src_commit = (full.get("lastMergeSourceCommit") or {}).get("commitId")
-            if status and status != "queued":
-                break
-        time.sleep(2)
-    if status == "conflicts":
-        abandon_pr(pid, timeout)
-        return (False, {"behind": behind, "merged": False, "conflict": True, "pr_id": pid},
-                f"merging dev into {INGEST_BRANCH} has CONFLICTS — a human must resolve them "
-                f"(PR {pid} abandoned). Resolve, then re-run.")
-    if status != "succeeded":
-        return (False, {"behind": behind, "merged": False, "conflict": False, "pr_id": pid},
-                f"merge PR {pid} not mergeable (status: {status}).")
-    okp, _res, dp = _patch_pr(pid, {"status": "completed",
-                                    "lastMergeSourceCommit": {"commitId": src_commit},
-                                    "completionOptions": {"mergeStrategy": "noFastForward",
-                                                          "deleteSourceBranch": False}}, timeout)
-    if not okp:
-        return (False, {"behind": behind, "merged": False, "conflict": False, "pr_id": pid},
-                f"could not complete the merge PR {pid} ({dp}) — check branch policies on "
-                f"{INGEST_BRANCH}.")
-    return (True, {"behind": behind, "merged": True, "conflict": False, "pr_id": pid}, "")

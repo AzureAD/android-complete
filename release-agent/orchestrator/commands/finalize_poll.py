@@ -2,24 +2,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
-from orchestrator import cli_common as C, delivery as D
+from orchestrator import cli_common as C, delivery as D, schedule
 
 PHASE = "finalize"
 STEP = "orchestrator_finalization"
 
 
-def _parse_iso(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
-        return None
-
-
 def _elapsed_hours(started_at, now):
-    started = _parse_iso(started_at)
+    started = schedule.parse_iso_utc(started_at)
     return max(0.0, (now - started).total_seconds() / 3600) if started else 0.0
 
 

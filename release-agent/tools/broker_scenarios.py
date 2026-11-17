@@ -51,7 +51,8 @@ def project(rc, *, tracked=(), version=VERSION, classification_policy=None):
             for suite, test in tests:
                 cat = categories[suite]
                 if cat == "stress":
-                    cat = P.classify_test_run(suite, legacy=True)
+                    low = suite.lower()
+                    cat = "unit" if "unittest" in low else "instrumented" if "instrumentedtest" in low else "ui"
                 variant, routing = route_suite(suite)
                 device = cat == "ui" and variant is not None
                 category = ("Instrumented Tests" if cat == "instrumented" else
@@ -386,8 +387,6 @@ def build(dest_name, source, description, record, checkpoint, timeout=120):
     pid = record.get("plan_id")
     try:
         require(callable(checkpoint), "Durable creation checkpoint required")
-        require(not record.get("classification_amendment"),
-                "Completed classification-amended plans must be validated, never rebuilt")
         rows = representations(source["scenario_projection"], source["ui_cases"])
         payload = {"name": dest_name, "areaPath": T.BROKER_AREA_PATH, "iteration": T.BROKER_ITERATION,
                    "description": description + "\n" + (F.MARKER if v4 else MARKER)}
@@ -486,15 +485,11 @@ def build(dest_name, source, description, record, checkpoint, timeout=120):
         return False, pid, str(exc)
 
 
-def validate_target(pid, root, children, source, resource, timeout=120, *,
-                    membership_repair=None, classification_recovery=False):
+def validate_target(pid, root, children, source, resource, timeout=120):
     """Read every destination identity before binding or filling; no guessed adoption."""
     from tools.broker_plans import positive_id
     from tools import broker_failure_triage as F
     v4 = source.get("schema_version") == F.VERSION
-    if v4:
-        resource = F.checked_record(resource, recovery=classification_recovery)
-    require(not v4 or membership_repair is None, "Legacy matrix repair cannot amend failure-only resources")
     require(isinstance(resource, dict) and resource.get("source") == source
             and resource.get("plan_id") == pid and isinstance(resource.get("operations"), dict),
             "Scenario plan requires original release resource receipts")
@@ -558,12 +553,7 @@ def validate_target(pid, root, children, source, resource, timeout=120, *,
             payload["queryString"] = source["native_query"]
         else:
             payload["defaultConfigurations"] = [{"id": c} for c in configs]
-        creation_key = key
-        amendment = resource.get("classification_amendment")
-        if v4 and amendment and key == amendment["intent"]["new_role"]:
-            creation_key = amendment["intent"]["old_role"]
-            payload["name"] = "UI Automation"
-        receipt = resource["operations"].get("suite:" + creation_key, {})
+        receipt = resource["operations"].get("suite:" + key, {})
         require(receipt.get("status") == "created" and receipt.get("id") == suites[key]
                 and receipt.get("sha256") == digest(payload), "Suite creation receipt changed")
     pairs = {sid: set() for role, sid in suites.items() if role != "native"}
@@ -620,97 +610,10 @@ def validate_target(pid, root, children, source, resource, timeout=120, *,
         receipt = resource["operations"].get("membership:" + str(sid), {})
         body = _membership_body(wanted)
         if wanted:
-            require(receipt.get("sha256") == digest(body)
-                    and receipt.get("status") in (("applying", "applied")
-                                                  if membership_repair is not None else ("applied",)),
+            require(receipt.get("sha256") == digest(body) and receipt.get("status") == "applied",
                     f"Scenario membership receipt changed for suite {sid}")
-        repair_key = "assignment-repair:" + str(sid)
-        previous = resource["operations"].get(repair_key)
-        if membership_repair is not None:
-            _require_unpublished_points(points, sid)
-            if previous:
-                require(previous.get("sha256") == digest(body)
-                        and previous.get("status") in ("applying", "applied"),
-                        f"Suite {sid} assignment-repair receipt changed")
-                require(actual == wanted, f"Uncertain/applied assignment repair for suite {sid}; readback only, never re-PATCH")
-            if actual != wanted:
-                expanded = {(cid, cfg) for cid, _ in wanted for cfg in suite_configs[sid]}
-                require(wanted <= actual and actual == expanded,
-                        f"Suite {sid} is not a proven complete default-configuration expansion")
-            if actual != wanted or (previous and previous["status"] == "applying"):
-                membership_repair.append({
-                    "suite_id": sid, "payload": body, "sha256": digest(body),
-                    "before": sorted(points, key=lambda p: int(p["id"])),
-                    "remove_pairs": [list(pair) for pair in sorted(actual - wanted)],
-                    "recovery_only": bool(previous)})
-        else:
-            if previous:
-                require(previous.get("sha256") == digest(body) and previous.get("status") == "applied",
-                        f"Suite {sid} assignment repair is unsettled; explicit readback recovery required")
-            require(len(points) == len(actual) and actual == wanted,
-                    f"Scenario case/config membership changed for suite {sid}")
-
-
-def _require_unpublished_points(points, sid):
-    for point in points:
-        require(isinstance(point.get("outcome"), str) and point["outcome"].casefold() == "unspecified"
-                and point.get("state") in (None, "Ready", "NotReady")
-                and not point.get("comment") and not point.get("lastResultDetails"),
-                f"Suite {sid} has human/completed/unknown point results; repair prohibited")
-        for key in ("lastResult", "lastTestRun"):
-            result = point.get(key)
-            require(result is None or (isinstance(result, dict) and result.get("id") in (None, 0, "0")),
-                    f"Suite {sid} has result/run evidence; repair prohibited")
-
-
-def preview_membership_repair(record, timeout=120):
-    from tools import broker_plans as B
-    require(record.get("status") == "created" and "fill" not in record and "fill_status" not in record,
-            "Assignment repair requires an unpublished created resource without any fill receipt")
-    source = record.get("source")
-    B._validate_source(source)
-    require(source.get("schema_version") == VERSION, "Assignment repair requires frozen source-v3")
-    repairs = []
-    ok, info, detail = B.validate_plan(record.get("plan_id"), record.get("identity"), source,
-                                     timeout, resource=record, membership_repair=repairs)
-    require(ok, detail)
-    require(B._COMPLETE not in (info.get("description") or "").splitlines(),
-            "Published/completed plans cannot receive assignment repair")
-    plan = {"kind": "isolated-suite-assignment-repair-v1", "plan_id": record["plan_id"],
-            "source_sha256": digest(source), "operations": repairs,
-            "scope": "Remove only proven unrun default-expansion points; no creates or outcomes"}
-    return {**plan, "repair_sha256": digest(plan)}
-
-
-def repair_membership(record, confirmation, checkpoint, timeout=120):
-    require(callable(checkpoint), "Durable assignment-repair checkpoint required")
-    plan = preview_membership_repair(record, timeout)
-    require(confirmation == plan["repair_sha256"], "Assignment repair requires exact reviewed --confirm-repair-sha256")
-    pid = record["plan_id"]
-    for operation in plan["operations"]:
-        sid = operation["suite_id"]
-        key = "assignment-repair:" + str(sid)
-        points = _suite_points(pid, sid, timeout)
-        require(sorted(points, key=lambda p: int(p["id"])) == operation["before"],
-                f"Suite {sid} changed after repair preview; no assignment write")
-        if not operation["recovery_only"]:
-            record["operations"][key] = {"status": "applying", "sha256": operation["sha256"],
-                                         "approval_sha256": confirmation}
-            checkpoint()
-            ok, _, detail = P._ado_rest_send(
-                f"{T.ORG}/{T.PROJECT}/_apis/testplan/Plans/{pid}/Suites/{sid}/TestCase"
-                "?api-version=7.1-preview.3", "PATCH", deepcopy(operation["payload"]), timeout)
-            require(ok, f"Uncertain assignment repair for suite {sid}: {detail}; readback recovery only")
-        points = _suite_points(pid, sid, timeout)
-        _require_unpublished_points(points, sid)
-        wanted = {(row["workItem"]["id"], cfg["configurationId"])
-                  for row in operation["payload"] for cfg in row["pointAssignments"]}
-        require(_point_pairs(points) == wanted,
-                f"Assignment repair readback differs for suite {sid}; never re-PATCH")
-        record["operations"][key]["status"] = "applied"
-        checkpoint()
-    return {"plan_id": pid, "repaired_suites": [op["suite_id"] for op in plan["operations"]],
-            "workflow_adoption": False, "outcome_writes": False, "creates": False}
+        require(len(points) == len(actual) and actual == wanted,
+                f"Scenario case/config membership changed for suite {sid}")
 
 
 def bind_projection(resource, projection):

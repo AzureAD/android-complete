@@ -61,8 +61,8 @@ request.approval_id)` requires matching id, build owner and approved status. Nev
 rediscover a newer run, infer success from stage completion, or write during reconcile.
 Core owns persistence/receipts; handlers never mutate lifecycle state.
 Production rejects nonempty gate-local mocks during preview/submission/reconciliation.
-Keep useful BUILD mock inputs documented, but use directly injected fake provider
-ports and `ApprovalContext` for offline lifecycle tests; legacy `submit: skip` is not success.
+Keep useful BUILD mock inputs documented, and use directly injected fake provider
+ports and `ApprovalContext` for offline lifecycle tests.
 
 ## Execution model
 - Is the phase `execution: parallel` or sequential? (Parallel → process ALL holds per pass; see phases/preflight.md.)

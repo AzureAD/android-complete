@@ -150,8 +150,8 @@ class WorkflowDefinition:
                 )
                 if "required" in raw_step:
                     raise WorkflowConfigError(
-                        f"Step {phase_id}.{step_id} uses deprecated field 'required'; "
-                        "optional steps are removed and all defined steps are mandatory."
+                        f"Step {phase_id}.{step_id} sets unsupported field 'required'; "
+                        "all defined workflow steps are mandatory."
                     )
                 _reject_unknown_keys(
                     raw_step,
@@ -534,7 +534,7 @@ def _validate_compatibility_metadata(
     owner: str,
     source: Optional[str],
 ) -> None:
-    """Reject legacy metadata that contradicts the explicit kind."""
+    """Ensure optional step metadata fields align with the explicit kind."""
     key = f"{phase_id}.{step_id}"
     if "owner" in raw_step and raw_step["owner"] != owner:
         raise WorkflowConfigError(

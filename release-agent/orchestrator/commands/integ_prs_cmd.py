@@ -9,21 +9,18 @@ from steps.lib import mockctx
 from steps.finalize import integ_prs as S
 
 
-def _step_mocks(orch):
-    return (getattr(orch, "mocks", {}) or {}).get("finalize.integ_prs", {}) or {}
-
-
 def cmd_create_integration_prs(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     progress = None
+    mocks = W.step_mocks(orch, "finalize", S.ID)
 
     def planner():
-        with mockctx.active(_step_mocks(orch)):
+        with mockctx.active(mocks):
             return integration_plan(orch.context("finalize", S.ID), args, progress=progress)
 
     authorization = None
     try:
-        with mockctx.active(_step_mocks(orch)):
+        with mockctx.active(mocks):
             progress = (W.VerifiedProgress(orch, "finalize", S.ID, None, None)
                         if getattr(args, "manual_completion", None) is not None else
                         integration_progress(orch, orch.context("finalize", S.ID), args))
@@ -51,10 +48,8 @@ def cmd_create_integration_prs(args):
                                execution_id=authorization.execution_id)
         C.save_state(orch.state, args.runs_root, args.release)
         return 2
-    orch.record_scout_step("finalize", S.ID, "pass", summary,
-                           execution_id=authorization.execution_id)
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release, f"[integ_prs] {summary}", kind="step", log_text=summary)
+    W.record_step_write(orch, args, "finalize", S.ID, "pass", summary,
+                        execution_id=authorization.execution_id)
     print(summary)
     return 0
 

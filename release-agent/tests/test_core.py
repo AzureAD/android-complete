@@ -1757,7 +1757,7 @@ def test_step_modules_and_config_stay_in_sync():
         workflow = WorkflowDefinition.compile(yaml.safe_load(stream))
     discovered = steps.discover()
     assert discovered, "no step modules discovered — auto-discovery broke"
-    assert set(discovered) - {"build_verify.rc_report"} <= set(workflow.step_by_key), "orphan default step module"
+    assert set(discovered) <= set(workflow.step_by_key), "orphan default step module"
     catalog = HandlerCatalog.compile(workflow, steps.get_step)
     assert set(catalog.handler_by_key) == set(workflow.step_by_key)
 
@@ -1981,14 +1981,3 @@ def test_oneauth_apply_edits_returns_only_changed_paths():
 
 
 
-def test_oneauth_merge_conflict_surfaces_not_forced(monkeypatch):
-    """merge_dev_into_ingestion returns conflict (ok=False) and abandons the transient PR —
-    never forces the merge."""
-    from tools import oneauth as OA
-    monkeypatch.setattr(OA, "ahead_behind", lambda b, t, timeout=120: (True, {"ahead": 5, "behind": 3}, ""))
-    monkeypatch.setattr(OA, "create_pr", lambda s, t, ti, d, timeout=90: (True, {"id": 7, "mergeStatus": "queued", "url": "u"}, ""))
-    monkeypatch.setattr(OA, "get_pr", lambda pid, timeout=60: (True, {"mergeStatus": "conflicts", "lastMergeSourceCommit": {"commitId": "x"}}, ""))
-    abandoned = {"n": 0}
-    monkeypatch.setattr(OA, "abandon_pr", lambda pid, timeout=60: (abandoned.__setitem__("n", abandoned["n"] + 1), (True, ""))[1])
-    ok, info, detail = OA.merge_dev_into_ingestion(dry_run=False)
-    assert ok is False and info["conflict"] is True and abandoned["n"] == 1 and "CONFLICT" in detail

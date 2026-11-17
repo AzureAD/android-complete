@@ -35,17 +35,6 @@ def _u(build_id):
     return K.build_url(build_id) if build_id else ""
 
 
-def cmd_record_rc_report(args):
-    """Reject legacy send acknowledgements; completed work stays an idempotent no-op."""
-    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    completed = orch.completed_step_outcome("build_verify", "rc_report")
-    if completed is not None:
-        print(_json.dumps({"status": "unchanged", "note": completed.note}))
-        return 0
-    print(_json.dumps({"error": "Use notification claim/result; the approved report snapshot carries its gate verdict"}))
-    return 1
-
-
 def _format(m) -> str:
     L = [f"## RC Pipeline Status — Release {m['release']}", "", rendering.COUNT_NOTE, ""]
 
@@ -142,11 +131,3 @@ def register(sub):
     rp.add_argument("--release", required=True)
     rp.add_argument("--json", action="store_true", help="Emit the raw report model")
     rp.set_defaults(func=cmd_rc_report)
-
-    rr = sub.add_parser(
-        "record-rc-report",
-        help="Record the rc_report step after emailing: apply the 90%% UI gate "
-             "(pass|attention/block) + stash the evaluated run links")
-    rr.add_argument("--release", required=True)
-    rr.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
-    rr.set_defaults(func=cmd_record_rc_report)

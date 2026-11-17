@@ -139,10 +139,6 @@ def production_effects(capabilities: WriteCapabilities, *, validate, committer, 
 
         return M.fill(thaw(record), thaw(projection), thaw(previous), persist)
 
-    def amend_monthly(source, parent, record, checkpoint):
-        from tools import auth_monthly as M
-        return M.ensure(source, parent, record, checkpoint)
-
     if WriteOperation.ENSURE_BROKER_PLAN in capabilities.operations and committer is None:
         raise ValueError("Broker adapter requires a durable evidence committer")
     if set(capabilities.operations).intersection({WriteOperation.ENSURE_AUTH_MONTHLY, WriteOperation.FILL_AUTH_MONTHLY}) and committer is None:
@@ -154,7 +150,6 @@ def production_effects(capabilities: WriteCapabilities, *, validate, committer, 
         WriteOperation.CREATE_AUTH_QUERY_SUITE: testplans.create_auth_query_suite,
         WriteOperation.CREATE_AUTH_SUITE: testplans.create_auth_suite,
         WriteOperation.ENSURE_AUTH_MONTHLY: ensure_monthly,
-        WriteOperation.AMEND_AUTH_MONTHLY: amend_monthly,
         WriteOperation.FILL_AUTH_MONTHLY: fill_monthly,
         WriteOperation.FILL_AUTH_UI_RESULTS: testplans.fill_auth_ui_results,
         WriteOperation.FILL_UI_AUTOMATION_RESULTS: fill_ui,

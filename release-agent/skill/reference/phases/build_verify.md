@@ -25,7 +25,7 @@ The query does not authorize an ad-hoc notification or quality decision.
 
 ## RC summary notification (`rc_report_notify`)
 
-Once `auth_ecs` finishes, run `step-action --release <id> --phase build_verify --step rc_report_notify`, send `mcp_arguments` via `m_send_teams_message`, and complete with `record-step --release <id> --phase build_verify --step rc_report_notify --status pass --detail "Sent RC summary"` (2-step contract — no SharePoint upload step required).
+Once `auth_ecs` finishes, run `deliver-step --release <id> --phase build_verify --step rc_report_notify --json` (or `next --release <id> --deliver --json`) so Python delivers the RC summary directly via Agency MCP and records completion with no SharePoint upload or confirmation prompt.
 
 ## Quality remains a human gate
 

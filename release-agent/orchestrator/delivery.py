@@ -12,9 +12,9 @@ import hashlib
 import json
 import uuid
 
-from orchestrator.outcomes import NeedsSkill, valid_links
+from orchestrator.outcomes import valid_links
 from orchestrator.delivery_retention import (
-    is_progress_receipt, receipt_descriptor, is_routine_progress, prune_progress,
+    is_progress_receipt, receipt_descriptor, is_routine_progress, prune_progress as prune_progress,
 )
 
 
@@ -111,7 +111,7 @@ def scope_reason(orch, scope, *, acknowledgement=False):
                       and st.owner_task_active(scope["phase"], scope["step"]))
     if owner_task:
         definition = orch.workflow.step(scope["phase"], scope["step"])
-        if problem := orch._projection().owner_task_problem(definition):
+        if problem := orch.owner_task_problem(definition):
             return problem
     if projected_status == "complete" and not owner_task:
         return "release complete"
@@ -247,7 +247,7 @@ def validate_record_state(state, record):
             or not valid_links(completion.get("links", []))
             or not isinstance(completion.get("stamp", []), list)
             or any(not isinstance(k, str) for k in completion.get("stamp", []))
-            or completion.get("release_field") not in (None, "last_notified_date", "last_status_email_date")
+            or completion.get("release_field") not in (None, "last_status_email_date")
             or "checkpoint" in completion and not isinstance(completion["checkpoint"], str)
             or completion.get("release_field") and not isinstance(completion.get("date"), str)):
         raise ValueError("Malformed notification completion evidence; owner recovery required")
@@ -339,7 +339,7 @@ def claim(orch, notification_id, approved_hash, executor):
     assert_current(orch)
     record = orch.state.notification_deliveries.get(notification_id)
     if not record or (not is_progress_receipt(record) and (not record.get("descriptor") or "attempts" not in record)):
-        raise ValueError("Missing/incomplete preparation; owner recovery required for legacy records")
+        raise ValueError("Missing/incomplete preparation; owner recovery required")
     item = validate_record(orch, record)
     if item["id"] != notification_id:
         raise ValueError("Notification ledger identity mismatch; owner recovery required")
@@ -383,7 +383,7 @@ def result(orch, notification_id, execution_id, outcome, evidence, receipt=None,
             raise ValueError("Only the owning execution can acknowledge this delivery")
         return False
     if not record or not record.get("attempts"):
-        raise ValueError("No delivery claim; legacy acknowledgement is not evidence")
+        raise ValueError("No delivery claim; unverified acknowledgement is not evidence")
     item = validate_record(orch, record)
     if item["id"] != notification_id:
         raise ValueError("Notification ledger identity mismatch; owner recovery required")

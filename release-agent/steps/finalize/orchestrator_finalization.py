@@ -1,7 +1,7 @@
 """Monitor final orchestration and capture the final MRWP identity."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from orchestrator.outcomes import Blocked, Done, InProgress
 from orchestrator.authority import OwnStepData, PipelineScope, PipelineSlot
@@ -65,19 +65,12 @@ def _stage_status(context):
     return status.get("status", "wait"), detail, status
 
 
-def _parse_iso(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
-        return None
-
-
 def _poll_due(context):
+    from orchestrator import schedule
     record = context.evidence.step("finalize", ID)
     if record.status != "in_flight":
         return True
-    last = _parse_iso(record.data.get("last_polled_at"))
+    last = schedule.parse_iso_utc(record.data.get("last_polled_at"))
     return last is None or context.clock.utc() >= last + timedelta(minutes=POLL_INTERVAL_MIN)
 
 

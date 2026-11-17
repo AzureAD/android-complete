@@ -46,7 +46,7 @@ ui_test_status (completed automation classification), activate_chat (meeting cha
 Blocks if the chat hasn't been activated or the completed fill is missing/stale.
 Missing member evidence requests a read-only Teams ListChatMembers call before preparing
 any notification. members_file must contain its fresh owner-bound M365 observation envelope
-(or the native workiq_get_chat envelope for this exact meeting), never bare legacy JSON.
+(or the native workiq_get_chat envelope for this exact meeting), never bare JSON.
 If assigned UPNs differ from member emails, fetch the exact directory users through
 the discovered MCP or verified native WorkIQ CLI; bind GUIDs to actual members.
 
@@ -62,7 +62,6 @@ from dataclasses import dataclass
 
 from orchestrator.step_context import StepContext, thaw
 
-import json
 import re
 
 from orchestrator import schedule
@@ -97,11 +96,6 @@ def _broker_plan(context):
 
 def _auth_suite(context):
     return (context.evidence.step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
-
-
-def _auto_failed_ids(context):
-    """Applied automation failures, independent of whether owner reassignment succeeded."""
-    return completed_result(context)["auth"]["failed_case_ids"]
 
 
 def gather(context):
@@ -278,7 +272,7 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"microsoft_teams-ListChatMembers (or workiq_get_chat with chatId). Save the actual "
         f"complete response in a version:1 observation envelope with the exact tool/arguments, "
         f"account equal to the release owner, and an offset observed_at timestamp; rerun "
-        f"with --members-file <path> within 15 minutes. Bare legacy member JSON is not fresh evidence. "
+        f"with --members-file <path> within 15 minutes. Bare member JSON is not fresh evidence. "
         f"If an assigned UPN differs from the member email (or email is missing), execute the exact "
         f"directory requests through the verified structured fetch route and append their fresh "
         f"envelopes as directory_observations. Discover the current user's MCP/native CLI; "

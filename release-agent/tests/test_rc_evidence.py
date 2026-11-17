@@ -163,15 +163,12 @@ def test_report_auth_percentages_two_decimals_without_rounding_gate(ready):
     (("auth", "test", "run_id"), None), (("auth", "test", "suites"), None),
 ])
 def test_builder_and_recorder_refuse_missing_evidence(ready, tmp_path, path, value):
+    from steps.build_verify import rc_report_notify
     container = ready.pipeline_runs if path[0] in ("checker", "orchestrator") else ready.pipeline_runs["rcs"][-1]
     for key in path[:-1]:
         container = container[key]
     container[path[-1]] = value
-    assert _invoke(rc_report.build, ready).kind == "blocked"
-    args = args_for(tmp_path, ready)
-    before = stored_vars(C.load_state(str(tmp_path), ready.release_id))
-    assert RR.cmd_record_rc_report(args) == 1
-    assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
+    assert _invoke(rc_report_notify.build, ready).kind == "blocked"
 
 
 def test_missing_provider_and_zero_ui_never_gate_clean():
@@ -186,18 +183,20 @@ def test_missing_provider_and_zero_ui_never_gate_clean():
 
 
 def test_reconciled_counts_hold_at_84_5_and_missing_auth_still_prevents_report(ready, tmp_path):
+    from steps.build_verify import rc_report_notify
     _seed_rc_pipeline(ready, {"passed": 168, "total": 204, "failed": 36},
                       {"passed": 137, "total": 157, "failed": 20})
     current = ready.pipeline_runs["rcs"][-1]
     assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["pass_pct"] == 84.5
-    assert _invoke(rc_report.build, ready).kind == "needs_skill"
+    assert _invoke(rc_report_notify.build, ready).kind == "needs_skill"
     assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["blocking"]
     current.pop("auth")
-    assert _invoke(rc_report.build, ready).kind == "blocked"
+    assert _invoke(rc_report_notify.build, ready).kind == "blocked"
 
 
 @pytest.mark.parametrize("failure", ["build", "suite", "absent-suite", "empty-suite"])
 def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, failure):
+    from steps.build_verify import rc_report_notify
     auth = ready.pipeline_runs["rcs"][-1]["auth"]
     suite = auth["test"]["suites"][AUTH_UI_SUITES[0]]
     if failure == "build":
@@ -214,11 +213,9 @@ def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, fa
     model = rc_report.rc_report_model(_context(ready))
     assert rc_report.report_readiness(model)["ready"]
     assert rc_report.auth_report_gate(model)["blocking"]
-    out = _invoke(rc_report.build, ready)
-    assert out.kind == "needs_skill" and "HOLD" in out.payload["subject"]
-    assert out.notification["completion"]["status"] in ("pass", "attention")
-    assert "RC verified" not in out.payload["body"]
-    assert "No automatic advance" in out.payload["_plain_body"]
+    out = _invoke(rc_report_notify.build, ready)
+    assert out.kind == "needs_skill" and "Authenticator ECS: hold" in out.payload["message"]
+    assert "RC verified" not in out.payload["message"]
 
 
 def test_gate_uses_unrounded_counts(ready):
@@ -242,37 +239,25 @@ def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, c
     assert cli.main(base + ["step-action", "--release", ready.release_id,
                             "--phase", "build_verify", "--step", "rc_report_notify"]) == 0
     assert json.loads(capsys.readouterr().out)["kind"] == "blocked"
-    assert cli.main(base + ["record-rc-report", "--release", ready.release_id]) == 1
-    assert "notification claim/result" in json.loads(capsys.readouterr().out)["error"]
     assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
 
 
 def test_skipping_prerequisite_does_not_fabricate_evidence(ready, tmp_path):
+    from steps.build_verify import rc_report_notify
     ready.set_step("build_verify", "auth_ecs", StepState(status="skipped", by="human"))
     ready.pipeline_runs["rcs"][-1].pop("auth")
     orch = Orchestrator(CONFIG, ready, mocks={})
     assert orch.step_action_guard("build_verify", "rc_report_notify") is None
-    assert _invoke(rc_report.build, ready).kind == "blocked"
-    assert RR.cmd_record_rc_report(args_for(tmp_path, ready)) == 1
-
-
-@pytest.mark.parametrize("status", ["done", "skipped"])
-def test_recorder_preserves_terminal_records(ready, tmp_path, status):
-    ready.set_step("build_verify", "rc_report_gate", StepState(
-        status=status, by="human", note="Owner reviewed", data={"review": "retained"}))
-    ready.pipeline_runs = {}
-    args = args_for(tmp_path, ready)
-    before = stored_vars(C.load_state(str(tmp_path), ready.release_id))
-    assert RR.cmd_record_rc_report(args) == 1
-    assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
+    assert _invoke(rc_report_notify.build, ready).kind == "blocked"
 
 
 def test_new_partial_rc_cannot_reuse_previous_complete_rc(ready):
+    from steps.build_verify import rc_report_notify
     old = copy.deepcopy(K.latest_rc(_context(ready)))
     _pipeline(K.stash_mrwp, ready, "ECS", {**old["ecs"], "run_id": "99999"}, rc=2)
     assert rc_report.rc_report_model(_context(ready))["rc"] == 2
     assert not rc_report.report_readiness(rc_report.rc_report_model(_context(ready)))["ready"]
-    assert _invoke(rc_report.build, ready).kind == "blocked"
+    assert _invoke(rc_report_notify.build, ready).kind == "blocked"
 
 
 def test_auth_inflight_test_is_not_captured():
@@ -317,7 +302,6 @@ def test_mrwp_failure_fetch_error_persists_and_prevents_complete_report(
                  rendering.rc_email_plain(model, {}, gate, auth, "")):
         assert "result page offline" in text and "unavailable" in text
         assert "pipeline aborted" not in text.lower()
-    assert RR.cmd_record_rc_report(args) == 1
     from tests._mrwp_evidence import snapshot, PROD
     # Build captured evidence before replacing the acquisition function under test.
     from tools.pipelines.tests_results import get_test_summary

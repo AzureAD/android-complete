@@ -190,8 +190,7 @@ def oneauth(git_oneauth, monkeypatch):
     def blocked(*args, **kwargs):
         pytest.fail("Network/token/server-side merge or unreviewed REST push is forbidden")
 
-    for name in ("_token", "push_edits", "merge_dev_into_ingestion"):
-        monkeypatch.setattr(OA, name, blocked)
+    monkeypatch.setattr(OA, "_token", blocked)
     return state
 
 
@@ -812,39 +811,6 @@ def test_provider_urls_and_push_parent_are_explicit(monkeypatch):
 
     monkeypatch.setattr(pipelines, "_ado_rest_send", send)
     monkeypatch.setattr(OA, "_BASE", "https://example.test/unreviewed")
-    assert OA.push_edits("ingest", "a" * 40, {"/path": "exact"}, "reviewed", repository=target)[0]
     assert OA.create_pr("ingest", "dev", "title", "body", repository=target)[0]
     assert all(url.startswith("https://example.test/approved/A%20B/_apis/git/repositories/R/")
                for url, _, _ in calls)
-    assert calls[0][2]["refUpdates"] == [{"name": "refs/heads/ingest", "oldObjectId": "a" * 40}]
-    assert calls[0][2]["commits"][0]["changes"][0]["newContent"]["content"] == "exact"
-
-
-@pytest.mark.parametrize("problem", ["merge", "extra-file", "wrong-comment", "unreadable", "none"])
-def test_oneauth_returned_commit_must_match_reviewed_semantics(monkeypatch, problem):
-    from tools import pipelines as pipelines
-    target = {"org": "https://example.test/approved", "project": "P", "repository": "R"}
-    old, new = "a" * 40, "c" * 40
-    calls = []
-
-    def get(url, timeout):
-        calls.append(url)
-        if problem == "unreadable":
-            return False, None, "unknown"
-        if "/changes?" in url:
-            changes = [{"changeType": "edit", "item": {"path": "/path"}}]
-            if problem == "extra-file":
-                changes.append({"changeType": "edit", "item": {"path": "/extra"}})
-            return True, {"changes": changes}, ""
-        return True, {"parents": [old, "b" * 40] if problem == "merge" else [old],
-                      "comment": "other" if problem == "wrong-comment" else "reviewed"}, ""
-
-    monkeypatch.setattr(pipelines, "_ado_rest_get", get)
-    if problem == "none":
-        OA.verify_edit_commit(target, old, new, {"/path": "exact"}, "reviewed")
-        assert len(calls) == 2
-    else:
-        with pytest.raises(ValueError):
-            OA.verify_edit_commit(target, old, new, {"/path": "exact"}, "reviewed")
-    assert all(url.startswith("https://example.test/approved/P/_apis/git/repositories/R/")
-               for url in calls)

@@ -47,6 +47,78 @@ def stage_failed(info: dict) -> bool:
     return P.signoff_stage_failed(info)
 
 
+def resolve_pinned_target(
+    context: StepContext,
+    *,
+    stage_name: str,
+    previous_step_id: str | None = None,
+    previous_label: str | None = None,
+    require_pin_in_resolve: bool = False,
+):
+    pinned = completed_stage_build_id(context, previous_step_id) if previous_step_id else None
+    if require_pin_in_resolve and pinned is None and context.input("run", MISSING) is MISSING:
+        return False, None, f"completed {previous_label} evidence has no pipeline-397224 build identity"
+    return resolve_target(context, stage_name=stage_name, pinned_build_id=pinned)
+
+
+def build_pinned_stage_action(
+    context: StepContext,
+    *,
+    step_id: str,
+    write_command: str,
+    stage_name: str,
+    label: str,
+    previous_step_id: str | None = None,
+    previous_label: str | None = None,
+    auto_approve: bool = True,
+    command_args: str = "",
+    review_context: dict | None = None,
+):
+    pinned = completed_stage_build_id(context, previous_step_id) if previous_step_id else None
+    if previous_step_id and pinned is None and context.input("run", MISSING) is MISSING:
+        return Blocked(
+            f"{step_id}: completed {previous_label} evidence has no pipeline-397224 build identity.")
+    return build_stage_action(
+        context,
+        step_id=step_id,
+        write_command=write_command,
+        stage_name=stage_name,
+        label=label,
+        auto_approve=auto_approve,
+        command_args=command_args,
+        review_context=review_context,
+        pinned_build_id=pinned,
+    )
+
+
+def make_chained_stage_step(
+    *,
+    step_id: str,
+    write_command: str,
+    stage_name: str,
+    label: str,
+    previous_step_id: str,
+    previous_label: str,
+):
+    """Bind `(resolve_target, build)` for an automated stage launcher pinned to a prior stage's build."""
+    def _resolve(context: StepContext):
+        return resolve_pinned_target(
+            context, stage_name=stage_name, previous_step_id=previous_step_id)
+
+    def _build(context: StepContext):
+        return build_pinned_stage_action(
+            context,
+            step_id=step_id,
+            write_command=write_command,
+            stage_name=stage_name,
+            label=label,
+            previous_step_id=previous_step_id,
+            previous_label=previous_label,
+        )
+
+    return _resolve, _build
+
+
 def build_stage_action(
     context: StepContext,
     *,

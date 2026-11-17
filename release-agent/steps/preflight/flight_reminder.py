@@ -12,7 +12,7 @@ EXTERNAL-REFERENCES.md for the fixed links.
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked

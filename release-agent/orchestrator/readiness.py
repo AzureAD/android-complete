@@ -1,10 +1,9 @@
 """Release readiness entry gate (logic only — no presentation).
 
-All defined readiness items are mandatory (optional `required: false` items are
-deprecated and forbidden). Each item declares `depends_on` (empty list = runs
+Every defined readiness item is mandatory and declares `depends_on` (`[]` = runs
 immediately) and `required_tools`. If a check fails due to a missing or
-misconfigured tool/connector, ONLY that specific check fails with its explicit
-reason while all other runnable checks continue executing to completion.
+misconfigured tool/connector, only that check fails with its explicit reason
+while all other runnable checks continue executing to completion.
 """
 from __future__ import annotations
 
@@ -25,8 +24,8 @@ def _validate_readiness_config(config: dict | None) -> None:
         iid = item["id"]
         if "required" in item:
             raise ValueError(
-                f"Readiness item '{iid}' uses deprecated field 'required'; "
-                "optional items are removed and all defined items are mandatory."
+                f"Readiness item '{iid}' sets unsupported field 'required'; "
+                "all defined readiness items are mandatory."
             )
         if iid in by_id:
             raise ValueError(f"Duplicate readiness item id: {iid}")

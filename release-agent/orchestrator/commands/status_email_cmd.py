@@ -108,12 +108,6 @@ def cmd_status_email(args):
     return 0
 
 
-def cmd_record_status_email(args):
-    """Reject legacy date-only acknowledgements without channel delivery evidence."""
-    print(_json.dumps({"error": "Use notification claim/result; date-only acknowledgement is unsafe"}))
-    return 1
-
-
 def register(sub):
     se = sub.add_parser("status-email",
                         help="Compose the partner-facing daily release status email (JSON payload; "
@@ -125,10 +119,3 @@ def register(sub):
     se.add_argument("--send-to", default=None,
                     help="Redirect recipients to these address(es) (comma-separated) for a test run")
     se.set_defaults(func=cmd_status_email)
-
-    rs = sub.add_parser("record-status-email",
-                        help="Retired acknowledgement; use notification claim/result")
-    rs.add_argument("--release", required=True)
-    rs.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
-    rs.add_argument("--final", action="store_true", help="This was the closing (end of Phase 4) email")
-    rs.set_defaults(func=cmd_record_status_email)

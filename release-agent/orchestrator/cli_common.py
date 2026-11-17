@@ -18,8 +18,6 @@ from contextvars import ContextVar
 
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
-from orchestrator.outcomes import Blocked
-from orchestrator.transitions import TransitionIntent
 from orchestrator import discovery, render, schedule
 from orchestrator.eventlog import EventLog
 from tools import checks
@@ -33,29 +31,6 @@ SCHEDULE_CONFIG = os.path.join(ROOT, "config", "schedule.yaml")
 REQUIREMENTS_CONFIG = os.path.join(ROOT, "config", "requirements.yaml")
 # runs live OUTSIDE release-agent/, in android-complete/.release-runs (gitignored)
 DEFAULT_RUNS_ROOT = os.path.join(os.path.dirname(ROOT), ".release-runs")
-
-
-def external_write_guard(
-    orch: Orchestrator, phase_id: str, step_id: str, execution_id: str
-):
-    """Return None when a configured external step may perform writes."""
-    errors = [
-        violation
-        for violation in orch.invariant_violations()
-        if violation.severity == "error"
-    ]
-    if errors:
-        return Blocked(
-            "Invalid release state: "
-            + "; ".join(violation.message for violation in errors)
-        )
-    try:
-        orch.authorize_outcome(
-            TransitionIntent.WRITE, phase_id, step_id, execution_id=execution_id,
-        )
-    except ValueError as exc:
-        return Blocked(str(exc))
-    return None
 
 # ---- inter-process state lock ----
 _LOCK_TIMEOUT = 30.0    # max seconds to wait for another CLI process to release

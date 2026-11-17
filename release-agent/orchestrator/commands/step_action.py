@@ -210,21 +210,34 @@ def prepare_step(args, st, orch):
             out["reservable"] = False
             if out["notifications"]:
                 n0 = out["notifications"][0]
-                out["execution_protocol"] = {
-                    "contract": "two_step",
-                    "preauthorized_by_user": not definition.requires_approval,
-                    "step_1_send": (
-                        f"Preview `mcp_arguments` in chat and ask the user via `m_ask_user` before calling `{n0['tool']}`."
-                        if definition.requires_approval
-                        else (
-                            f"SILENT SEND (`requires_approval: false`): Launching `/release-agent` ALREADY counts as "
-                            f"explicit user confirmation for this configured release notification. Do NOT call "
-                            f"`m_ask_user`, do NOT paste the payload asking 'Send now?', and do NOT pause — invoke "
-                            f"`{n0['tool']}` directly with `mcp_arguments` right now."
-                        )
-                    ),
-                    "step_2_record": out["complete_command"],
-                }
+                if not definition.requires_approval:
+                    out["execute_command"] = (
+                        f"deliver-step --release {args.release} --phase {args.phase} "
+                        f"--step {args.step} --json"
+                    )
+                out["execution_protocol"] = (
+                    {
+                        "contract": "two_step",
+                        "preauthorized_by_user": False,
+                        "step_1_send": (
+                            f"Preview `mcp_arguments` in chat and ask the user via `m_ask_user` before calling "
+                            f"`deliver-step --release {args.release} --phase {args.phase} --step {args.step} --approved --json` "
+                            f"(or `{n0['tool']}` + `record-step`)."
+                        ),
+                        "step_2_record": out["complete_command"],
+                    }
+                    if definition.requires_approval
+                    else {
+                        "contract": "python_direct_delivery",
+                        "preauthorized_by_user": True,
+                        "execute_command": out["execute_command"],
+                        "step_1_send": (
+                            f"PYTHON AUTO-DELIVERY (`requires_approval: false`): Run `{out['execute_command']}` "
+                            f"in PowerShell right now. Python delivers and records this notification automatically "
+                            f"via Agency MCP — NEVER call `{n0['tool']}` or `m_ask_user`!"
+                        ),
+                    }
+                )
             if getattr(args, "reserve", False):
                 raise ValueError("Use notification prepare/claim with the approved hash, not step-action --reserve")
         elif out.get("outbound"):
@@ -353,46 +366,9 @@ def cmd_task(args):
         "phase": args.phase, "step": args.step,
         "attempt_id": (state.task_attempts.get(definition.key) or {}).get("id"),
         "links": state.get_step(args.phase, args.step).links,
-        "permission_to_execute": False, "permission_to_send": False,
         **C.guided_followup(orch),
     }))
     return 1 if status == "failed" else 0
-
-
-def cmd_reserve_step(args):
-    try:
-        st, orch = C.load_orch(args.runs_root, args.release, args.config)
-        definition = orch.handler(args.phase, args.step).definition
-        if definition.write_command:
-            if definition.write_command in AUTO_APPROVED_WRITE_COMMANDS:
-                raise ValueError(
-                    f"Use {definition.write_command} --execute --auto-approve --executor <automation-id>; "
-                    "reserve-step cannot authorize provider writes.")
-            raise ValueError(
-                f"Use {definition.write_command} --execute --review-hash <hash> --approved-by <reviewer> "
-                "with the reviewed command parameters; reserve-step cannot authorize provider writes.")
-        args.param = []
-        args.reserve = True
-        out = prepare_step(args, st, orch)
-        if not out.get("permission_to_execute"):
-            print(_json.dumps({
-                "kind": "blocked",
-                "reason": "Step did not produce a reservable outbound action.",
-            }))
-            return 1
-        C.save_state(st, args.runs_root, args.release)
-        print(_json.dumps({
-            "kind": "reserved",
-            "release": args.release,
-            "phase": args.phase,
-            "step": args.step,
-            "execution_id": orch.step_execution(args.phase, args.step)["id"],
-            "permission_to_execute": True,
-        }))
-        return 0
-    except ValueError as exc:
-        print(_json.dumps({"error": str(exc)}))
-        return 1
 
 
 def _classify(step: dict) -> str:
@@ -628,16 +604,6 @@ def register(sub):
     sp.add_argument("--confirmed-by")
     sp.add_argument("--prior-writer-stopped", action="store_true")
     sp.set_defaults(func=cmd_step_action)
-
-    reserve = sub.add_parser(
-        "reserve-step",
-        help="Reserve an eligible external step before any non-idempotent write",
-    )
-    reserve.add_argument("--release", required=True)
-    reserve.add_argument("--phase", required=True)
-    reserve.add_argument("--step", required=True)
-    reserve.add_argument("--executor", required=True)
-    reserve.set_defaults(func=cmd_reserve_step)
 
     ms = sub.add_parser(
         "mock-spec",

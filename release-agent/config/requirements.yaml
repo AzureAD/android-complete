@@ -335,5 +335,4 @@ m365_connectors:
   calendar_mail_files: "Scout structured workiq_* tools"
   teams: "Agency Microsoft Teams MCP"
   directory: "Required logical workiq.fetch via actual MCP tool OR discovered native WorkIQ CLI/workiq-read; exact configured mail-group lookup and all members pages, never people search or WorkIQ Ask"
-  report_creation: "Native SharePoint createSmallTextFile upload with exact metadata/readback verification"
-  readiness: "Fresh profile/calendar, exact roster/all pages, Teams and report site/library reads; m365-capabilities then record-check --item m365_access --evidence-file <observations.json>; saved profile routing is recipe only"
+  readiness: "Verified automatically by run-checks via native WorkIQ CLI profile/calendar/roster probes"

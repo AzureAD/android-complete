@@ -435,7 +435,7 @@ def mention_read_request(chat_id, owner):
 
 def _mention_members(chat_id, observation, owner):
     if not isinstance(observation, dict):
-        raise ValueError("Member observation requires an owner-bound M365 envelope; raw legacy JSON is not fresh evidence")
+        raise ValueError("Member observation requires an owner-bound M365 envelope; bare JSON is not fresh evidence")
     tool = observation.get("tool")
     if tool not in {"workiq_get_chat", "microsoft_teams-ListChatMembers"}:
         raise ValueError("Member observation must use workiq_get_chat or microsoft_teams-ListChatMembers")

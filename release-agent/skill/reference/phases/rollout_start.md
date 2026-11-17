@@ -18,11 +18,11 @@ app version, build number and built commit used by tag, payload and rollout noti
 
 ## `notice` — initial Authenticator rollout email
 
-`rollout_start.notice` is a real Scout notification, not a dummy. It sends to
-`MAuthenticatorRel@microsoft.com` and CCs `windevxeng@microsoft.com` (Intune AOSP).
-Use the shared notification prepare/claim/result protocol; previewing is not permission
-to send. The `send_to` test mock redirects all delivery to the supplied address and
-clears the production CC.
+`rollout_start.notice` sends to `MAuthenticatorRel@microsoft.com` and CCs
+`windevxeng@microsoft.com` (Intune AOSP). When `requires_approval: false`, deliver it
+directly in Python via `deliver-step --release <id> --phase rollout_start --step notice --json`
+(or `next --release <id> --deliver --json`). The `send_to` test mock redirects all delivery
+to the supplied address and clears the production CC.
 
 The model is deterministic and source-only:
 

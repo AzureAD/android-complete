@@ -36,7 +36,7 @@ poller via the NeedsSkill/decision payloads this module returns.
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 import re
 from dataclasses import dataclass
@@ -123,21 +123,13 @@ MOCKABLE = {
 
 # ----------------------------- pure helpers (testable) -----------------------------
 
-def _parse_iso(s: str):
-    if not isinstance(s, str) or not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 def elapsed_minutes(started_iso: str, now) -> "int | None":
-    start = _parse_iso(started_iso)
+    if not isinstance(started_iso, str) or not started_iso:
+        return None
+    from orchestrator import schedule
+    start = schedule.parse_iso_utc(started_iso)
     if start is None:
         return None
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     return int((now - start).total_seconds() // 60)
@@ -152,13 +144,6 @@ def poll_status(is_complete: bool, started_iso: str, now,
     if mins is not None and mins >= timeout_hours * 60:
         return "timeout"
     return "wait"
-
-
-def extract_pr_id(logs: str, pattern: str = None) -> "str | None":
-    """Pull the OneLoc PR id out of the OneLocBuild@3 task log, or None if there is
-    no 'Pull request created with ID ...' line (absence is NOT no-change evidence)."""
-    m = re.search(pattern or CONFIG["pr_id_pattern"], logs or "")
-    return m.group(1) if m else None
 
 
 def extract_pr(logs: str, cfg: dict = None) -> tuple:
@@ -640,7 +625,7 @@ def automation_prompt(release: str, spec: dict) -> str:
             f"is not saved proof of success.\n"
             f"4. `timeout`, `announce_pr`, `announce_none`, and `warn_unmerged` stage notifications. "
             f"Use notification prepare --release {release} --source pending and the shared "
-            f"claim/result protocol; never send raw decision.email/chat or call legacy post recorders. "
+            f"claim/result protocol; never send raw decision.email/chat directly. "
             f"`wait`/`wait_for_merge`/`omit_unmerged`/`merged`/`complete_none`/`not_started`/"
             f"`already_final`/`stopped` → nothing to send. `failed` is a blocked owner-review "
             f"task with the run link, never no strings. Missing outcome evidence also escalates "

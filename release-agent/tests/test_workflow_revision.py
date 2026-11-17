@@ -135,7 +135,6 @@ def test_unsupported_execution_contract_is_rejected_without_migration(tmp_path, 
         lambda: ReleaseState.load(str(path)),
         lambda: revision_id(state.workflow_revision),
         lambda: assert_current(orch),
-        lambda: revision.monthly_amendment_runtime(orch),
         lambda: adoption_preview(orch),
         lambda: adopt(orch, digest("review"), by="owner", reason="No migration"),
     )

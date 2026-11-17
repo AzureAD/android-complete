@@ -25,7 +25,7 @@ def _config(kind="auto"):
             "id": "phase", "name": "Phase", "anchor": "CCD",
             "steps": [
                 step,
-                {"id": "gate", "name": "Approval", "kind": "approval_gate"},
+                {"id": "gate", "name": "Approval", "kind": "approval_gate", "depends_on": ["check"]},
             ],
         }],
     }
@@ -259,7 +259,7 @@ def test_external_canonical_result_uses_matching_invocation_permission(tmp_path,
     orch = _orch(tmp_path, lambda _p, s: module if s == "check" else None, config)
     execution_id = None
     if reserved:
-        assert orch.reserve_execution("phase", "check", "worker").changed
+        assert orch._transition_kernel().reserve("phase", "check", "worker").changed
         execution_id = orch.step_execution("phase", "check")["id"]
     record = orch.state.get_step("phase", "check")
     if route != "prepare":

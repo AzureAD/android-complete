@@ -315,7 +315,6 @@ def test_only_applied_failures_enter_progress_or_assignments(monkeypatch):
     assert result["auth"]["failed_case_ids"] == result["broker"]["failed_case_ids"] == []
     assert {f["title"] for f in result["investigations"]["auth"]} == {"test_200_fail", "monthly_failure"}
     assert "test_500_unmatched" in st.get_step("bug_bash", "ui_failures").note
-    assert BU._auto_failed_ids(_context(st)) == []
 
 
 def test_assignment_failure_is_nonblocking_and_not_claimed_as_success(monkeypatch):

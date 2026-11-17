@@ -203,27 +203,20 @@ def test_refresh_preflights_before_typed_evidence_and_preserves_rejected_permit(
     assert orch.state.versions["broker"] == "2"
 
 
-@pytest.mark.parametrize("operation", ["observe", "reserve"])
 @pytest.mark.parametrize("policy", ["status", "always", "never"])
-def test_known_always_invalidation_is_denied_before_invocation(tmp_path, operation, policy, monkeypatch):
+def test_known_always_invalidation_is_denied_before_invocation(tmp_path, policy, monkeypatch):
     from orchestrator.commands import step_action
 
     orch, control = _orch(tmp_path, source_kind="external", policy=policy)
     monkeypatch.setattr(step_action.mocks_mod, "load_mocks", lambda: {})
     before, permits = deepcopy(orch.state), _permits(orch)
-    if operation == "reserve":
-        result = orch.reserve_execution("p", "source", "worker")
-        assert result.changed is (policy != "always")
-        if policy == "always":
-            assert "Cannot invalidate active engine-owned" in result.message
+    args = SimpleNamespace(phase="p", step="source", release="r", param=[], execution_id=None)
+    if policy == "always":
+        with pytest.raises(ValueError, match="Cannot invalidate active engine-owned"):
+            step_action.prepare_step(args, orch.state, orch)
     else:
-        args = SimpleNamespace(phase="p", step="source", release="r", param=[], execution_id=None)
-        if policy == "always":
-            with pytest.raises(ValueError, match="Cannot invalidate active engine-owned"):
-                step_action.prepare_step(args, orch.state, orch)
-        else:
-            assert step_action.prepare_step(args, orch.state, orch)["kind"] == "done"
-            assert control["calls"] == ["build"]
+        assert step_action.prepare_step(args, orch.state, orch)["kind"] == "done"
+        assert control["calls"] == ["build"]
     if policy == "always":
         assert orch.state == before and _permits(orch) == permits and not control["calls"]
 

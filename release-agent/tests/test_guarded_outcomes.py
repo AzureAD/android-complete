@@ -276,7 +276,7 @@ def test_owned_notification_requires_receipt_and_defers_completion_during_halt(c
     state.notification_deliveries["notice"] = _bound_notice(state, "p", "external")
     _suspend(state, settings, "halt")
     before = deepcopy(state)
-    assert not kernel.settle_execution("p", "external", execution_id, Done()).changed
+    assert not kernel.authorize_outcome(I.PREPARE, "p", "external").changed
     assert state == before
     kernel.resume()
     assert kernel.settle_execution("p", "external", execution_id, Done()).changed
@@ -326,7 +326,7 @@ def test_notification_invocation_permit_cannot_bypass_receipt_or_resume(context)
     state.notification_deliveries["notice"] = _bound_notice(state, "p", "external")
     _suspend(state, settings, "halt")
     before = deepcopy(state)
-    assert not kernel.apply_outcome(permit, Done("suspended")).changed
+    assert not kernel.authorize_outcome(I.PREPARE, "p", "external").changed
     assert state == before
     kernel.resume()
     assert kernel.apply_outcome(permit, Done("acknowledged")).changed

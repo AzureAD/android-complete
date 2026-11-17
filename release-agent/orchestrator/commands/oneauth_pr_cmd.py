@@ -10,29 +10,18 @@ from steps.finalize import oneauth_common_pr as S
 from tools import oneauth as OA
 
 
-def _step_mocks(orch):
-    return (getattr(orch, "mocks", {}) or {}).get("finalize.oneauth_common_pr", {}) or {}
-
-
-def _record(orch, args, authorization, status, summary):
-    orch.record_scout_step("finalize", S.ID, status, summary,
-                           execution_id=authorization.execution_id)
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release, f"[oneauth_common_pr] {summary}", kind="step",
-           log_text=summary)
-
-
 def cmd_create_oneauth_common_pr(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     progress = None
+    mocks = W.step_mocks(orch, "finalize", S.ID)
 
     def planner():
-        with mockctx.active(_step_mocks(orch)):
+        with mockctx.active(mocks):
             return oneauth_plan(orch.context("finalize", S.ID), args, progress=progress)
 
     authorization = None
     try:
-        with mockctx.active(_step_mocks(orch)):
+        with mockctx.active(mocks):
             progress = (W.VerifiedProgress(orch, "finalize", S.ID, None, None)
                         if getattr(args, "manual_completion", None) is not None else
                         oneauth_progress(orch, orch.context("finalize", S.ID), args))
@@ -56,9 +45,11 @@ def cmd_create_oneauth_common_pr(args):
                           "recovery": W.recovery_guidance()}))
         if authorization is None:
             return 1
-        _record(orch, args, authorization, "attention", summary)
+        W.record_step_write(orch, args, "finalize", S.ID, "attention", summary,
+                            execution_id=authorization.execution_id)
         return 2
-    _record(orch, args, authorization, "pass", summary)
+    W.record_step_write(orch, args, "finalize", S.ID, "pass", summary,
+                        execution_id=authorization.execution_id)
     print(summary)
     return 0
 

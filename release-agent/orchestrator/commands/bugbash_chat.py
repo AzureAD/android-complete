@@ -129,7 +129,7 @@ def cmd_record_bugbash_chat(args):
 
 
 def cmd_record_nativeauth_notify(args):
-    """Legacy terminal replay only; a bare engineer is not delivery evidence."""
+    """Idempotent terminal check; sending requires notification prepare/claim/result with a verified engineer."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     completed = orch.completed_step_outcome("bug_bash", "notify_native_auth")
     if completed and notify_native_auth.notified_engineer(

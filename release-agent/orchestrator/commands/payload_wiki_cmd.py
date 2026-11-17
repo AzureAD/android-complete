@@ -19,26 +19,9 @@ from tools import checks
 PHASE = "rollout_start"
 
 
-def _step_mocks(orch):
-    return (getattr(orch, "mocks", {}) or {}).get(f"{PHASE}.wiki_payload", {}) or {}
-
-
-def _record(orch, args, status, summary, url=None):
-    orch.record_scout_step(
-        PHASE, "wiki_payload", status, summary,
-        execution_id=args.execution_id)
-    if url:
-        orch.annotate_step(
-            PHASE, "wiki_payload",
-            links=[{"name": "Release payload page", "url": url}],
-            by="scout")
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release, f"[wiki_payload] {summary}", kind="step", log_text=summary)
-
-
 def plan_payload_wiki(orch):
     ok, plan, detail = S.compose_payload(
-        orch.context(PHASE, S.ID, inputs=_step_mocks(orch)))
+        orch.context(PHASE, S.ID, inputs=W.step_mocks(orch, PHASE, S.ID)))
     if not ok:
         raise ValueError(f"Could not compose the payload page: {detail}")
     org, project, wiki = S.CONFIG["org"], S.CONFIG["project"], S.CONFIG["wiki"]
@@ -94,13 +77,16 @@ def cmd_create_payload_wiki(args):
             raise ValueError(f"Payload readback differs or is unavailable: {detail}")
         authorization.validate()
     except Exception as exc:
-        _record(orch, args, "attention",
-                f"wiki_payload: write result uncertain — {exc}; inspect the page before owner resolution.")
+        W.record_step_write(
+            orch, args, PHASE, "wiki_payload", "attention",
+            f"wiki_payload: write result uncertain — {exc}; inspect the page before owner resolution.")
         print(json.dumps({"error": str(exc)}))
         return 2
     info = authorization.plan.parameters
     summary = f"wiki_payload: verified '{info['page_name']}' — App Version {info['version']}."
-    _record(orch, args, "pass", summary, url=info["url"])
+    W.record_step_write(
+        orch, args, PHASE, "wiki_payload", "pass", summary,
+        link={"name": "Release payload page", "url": info["url"]})
     print(summary)
     return 0
 

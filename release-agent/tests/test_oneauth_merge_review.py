@@ -38,8 +38,7 @@ def offline_git(monkeypatch, tmp_path):
         pytest.fail("Network/token/server-side merge or unreviewed REST push is forbidden")
 
     monkeypatch.setattr(subprocess, "run", guarded)
-    for name in ("_token", "push_edits", "merge_dev_into_ingestion"):
-        monkeypatch.setattr(OA, name, blocked)
+    monkeypatch.setattr(OA, "_token", blocked)
 
 
 def git(root, *args):

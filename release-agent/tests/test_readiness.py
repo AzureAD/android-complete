@@ -10,18 +10,18 @@ from tests._harness import *  # noqa: F401,F403
 
 # ---- readiness entry gate ----
 
-def test_optional_required_field_is_deprecated_and_rejected():
+def test_optional_required_field_is_rejected():
     from orchestrator.readiness import ReadinessGate
     from orchestrator.workflow import WorkflowConfigError, WorkflowDefinition
 
     state = ReleaseState(release_id="r")
-    with pytest.raises(ValueError, match="deprecated field 'required'"):
+    with pytest.raises(ValueError, match="unsupported field 'required'"):
         ReadinessGate({"items": [
             {"id": "capability", "text": "Optional connection", "verify": "auto",
              "source": "scout", "required": False},
         ]}, state)
 
-    with pytest.raises(WorkflowConfigError, match="deprecated field 'required'"):
+    with pytest.raises(WorkflowConfigError, match="unsupported field 'required'"):
         WorkflowDefinition.compile({
             "phases": [{
                 "id": "p", "name": "Phase", "execution": "parallel",

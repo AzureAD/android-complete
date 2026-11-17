@@ -696,84 +696,6 @@ build_verify.telemetry_verify:
     - q: "What if telemetry is sparse right after the build?"
       a: "The bar is just non-zero. As soon as the owner or any tester installs the build, rows appear. Zero rows means telemetry isn't flowing at all — worth surfacing before the bash closes."
 
-build_verify.rc_report:
-  summary: "Consolidate the RC data, email the report, and decide: auto-advance vs hold for attestation."
-  what: >
-    Once the verification steps have CAPTURED the chain data (checker fired, orchestrator
-    healthy/parked, both MRWP runs' stage completion + tests, and the Authenticator ECS build +
-    Firebase suites), this step CONSOLIDATES it into the Phase-2 RC report and emails it to the
-    release owner (on CCD+1). It is the terminal Phase-2 step and the single decision point — the
-    verification steps only gather data; this step decides. After claimed delivery, `notification result` applies
-    TWO independent gates: (1) the three-tier MRWP UI+Stress gate on the combined historical coverage
-    across both MRWP runs (100% clean, >=90% warn/proceed, <90% hold); and (2) the Authenticator ECS
-    gate (both Firebase suites >= 90%, and the auth build succeeded). The release AUTO-ADVANCES only
-    when BOTH gates clear; if EITHER holds, the step blocks and WAITS for human attestation. There is
-    no separate approval gate. Scout-assisted (source: scout): the engine composes it; the skill sends
-    via WorkIQ.
-    The notification binds hashes of the exact checker/orchestrator, current RC verification
-    snapshots and versions. A same-RC rerun or changed results invalidate stale send permission.
-    If sources change during delivery, its receipt is retained but stale gate completion is
-    suppressed; owner recovery is required, never a fabricated pass or automatic resend.
-    All MRWP categories count distinct exact titles within each normalized suite and
-    current-RC build/provider. Any Passed attempt wins across reruns, in any order;
-    prior failures do not count against the gate. The denominator is passed + failed,
-    excluding NA-only titles. Parameterizations and suite/API/device distinctions stay
-    separate. Full unresolved-failure and recovered-success lists preserve source evidence.
-    The separate Authenticator Firebase gate retains its existing count/build policy.
-    rc_report prepares source-only execution counts, failures, recoveries and result links.
-    UI Automation and Stress Tests have separate rows and failure labels; their combined
-    UI+Stress coverage retains the existing gate denominator and thresholds. Fresh captures
-    freeze the Stress classification policy; old captures are normalized only in report
-    copies, never rewritten. The HTML heading is Broker UI and Stress results. Failure titles and source-result
-    links live in their product/suite cards; the separate Source evidence / release-owner
-    investigation panel is omitted to avoid duplication. Source facts remain available
-    to the plaintext/CLI report and gate logic.
-    The Authenticator ECS HTML card lists every unresolved failing title and its source
-    result links grouped by Firebase suite directly beneath the suite rates, like the
-    Broker cards. Monthly failures retain their report-only/no-case-map label. Distinct
-    failing-title counts do not replace the source-execution counts used by the Auth gate;
-    recovered titles are not shown as unresolved failures.
-    Renderers consume those prepared facts and public provider summaries; they never map
-    target plans, acquire results or reconcile retries. Phase 2 does not select target configs.
-  who: >
-    Scout composes the email; the skill sends it via workiq_send_email to the release owner
-    (state.owner_email). Redirect for testing with the step's `send_to` payload knob.
-  where:
-    - "Release Orchestrator run (versions + parked gate): via the run link in the email + the step's Details"
-    - "MRWP ECS / Local runs (Test tab): via the run links in the email + the step's Details"
-    - "Authenticator ECS build + UI-test run: via the run links in the email's 'Authenticator ECS' section"
-  how: >
-    If it blocks with 'no release owner email', set it with `set-owner --email <you@microsoft.com>`
-    and rerun. No email is prepared until current-RC snapshots are complete, both MRWP runs
-    have valid non-zero UI counts, and all preceding steps (including telemetry) are done
-    or explicitly skipped. Missing evidence is not a clean gate, even after a prerequisite
-    skip. Evaluated failures are emailed once prerequisites settle. Before delivery,
-    use the common `notification prepare` (source step), claim/result protocol. It binds
-    the exact report and gate verdict before sending, then completes only after confirmed delivery.
-    When BOTH gates clear
-    (MRWP UI >=90% AND auth ECS >=90%) the release auto-advances into
-    bug bash. If either holds, the owner investigates and rules on it (patch a real bug + re-trigger
-    RC, or proceed as an automation flake): fix + re-run then `next`, or `skip --reason` to override.
-  faqs:
-    - q: "Who gets the email?"
-      a: "The release owner on record (owner_email). It's a personal review copy, not the broad DL — the owner reviews the RC failures; the 90% UI gate then decides go/no-go automatically."
-    - q: "Does the sim send this email?"
-      a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
-    - q: "Does the report cover the Authenticator ECS leg too?"
-      a: "Yes. The dedicated Authenticator ECS section shows the Firebase suite rates plus every unresolved failing title and source-result link, grouped by suite. Monthly is explicitly report-only for plan mapping, not exempt from its gate. auth_ecs captures evidence; rc_report decides both gates; the renderer only presents prepared facts. Authenticator results do not feed the MRWP UI percentage."
-    - q: "Do the MRWP counts represent unique tests?"
-      a: "Yes, within each normalized suite and current-RC build/provider: count an exact title once, with any Passed attempt winning even before a later failure. Never merge parameterized titles, other API/device suites, ECS/Local providers or historical RC builds. The denominator is passed + failed. NA-only titles (NotExecuted, NotApplicable, None/null, Inconclusive, Warning) are excluded; real non-NA results without a pass count as one failure. The UI threshold remains 90%."
-    - q: "How are repeated failures and successful retries displayed?"
-      a: "A title with two Failed attempts and one Passed is SUCCESS, counted once as passed, never in unresolved failures. Historical attempts remain informational audit evidence. All unresolved failing titles and all recovered successes are shown in HTML, plain text and CLI without a show-more cutoff, with provider/suite context. Repeated attempts do not inflate either numerator or denominator."
-    - q: "Where are the failure details sourced and stored?"
-      a: "One tools-level read of all ADO Test Runs/Results pages per MRWP build, including clean reruns, drives both summary and detail. pipeline_runs.rcs[].ecs/local.tests contains count_basis=distinct_tests_pass_any, build_id, categories, suites and failed_suites; suites include run_ids, result_entries and test_results with exact titles, verdicts, outcome_counts and every attempt's run/result IDs. Unreadable/missing/invalid pages are unavailable evidence, not aggregate fallback. Stale execution-count snapshots require a fresh verification read; never relabel or migrate old raw totals."
-    - q: "How should a requested report preview be presented?"
-      a: "Use the existing RC report HTML renderer for local review, not a handwritten substitute. Label previews and incomplete results as provisional. Previewing never authorizes delivery, extra copies or completion; report sends require the shared notification protocol and final-report readiness guard."
-    - q: "Are the retry results deterministic?"
-      a: "For identical evidence, changing API run/result order does not change counts, verdicts, evidence ordering or rendered failure order. Positive numeric run/result IDs are canonicalized before duplicate detection; invalid, missing or duplicated IDs reject the read. IDs are scoped per collection, so the same result ID in different runs is valid. Suites, attempts, outcome counts and equal-failure display ties have stable ordering."
-    - q: "What does the report recommend?"
-      a: "A prominent Recommendation combines both gates: WAIT for incomplete evidence; STOP / HOLD if either gate blocks; CONTINUE WITH WARNINGS if MRWP passes with warnings and Authenticator clears; PROCEED when both gates are clean. These are recommendations, not actions that stop ADO pipelines. Authenticator percentages display two decimals, but gate decisions use the unrounded ratio."
-
 build_verify.rc_report_notify:
   summary: "Send the RC verification summary and pipeline links to the release owner through the Scout bot."
   what: >
@@ -872,14 +794,10 @@ bug_bash.clone_plans_auth:
     adds a STATIC Monthly UI Failure Triage sibling only for distinct unresolved failures
     after exact-title retries, with no empty folder or initial passing/NA/recovered cases.
     Cases use ReleaseMonthlyInvestigation (never ReleaseBugBash), exact source provenance,
-    and durable create/membership receipts. Historical/frozen/completed layouts never
-    migrate by replay. The separate checked amend-auth-monthly command may attach only
-    the Monthly leaf/cases/membership to an intact completed v1 parent, after exact
-    source/base/runtime/config/payload review and independent locked claim. It never
-    reopens the clone, changes its layout/pin or adopts/advances the workflow.
-    Partial/cancelled amendments hold P3S3; only completed sealed amendments resolve
-    the Monthly target. P3S3/downstream still require completed current fill/live points.
-    This step stops after creating and validating the hierarchy; no outcomes or Testers.
+    and durable create/membership receipts. Completed layouts are not mutated in-place;
+    switching layouts requires an explicit fresh rerun. P3S3/downstream require completed
+    current fill/live points. This step stops after creating and validating the hierarchy;
+    no outcomes or Testers.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-suite create API)."
   how: >
     Freeze layout auth-manual-automated-v1, RC/APK/test-build identities, sorted mapped
@@ -1047,9 +965,8 @@ bug_bash.ui_test_status:
     Old LTW outcomes at 294/344 are NEVER auto-cleared: equal outcomes are not ownership;
     cleanup needs provenance receipts, match-before-write and later exact approval.
     For Authenticator, E2E carries canonical case ids; Monthly intentionally has no canonical map.
-    Historical/v1 coverage stays report-only unless a checked amend-auth-monthly amendment completes.
-    Fresh Monthly-v2 layouts and complete sealed amendments separately own failure investigations;
-    P3S3 alone fills their bound points, attempts failed-point
+    Layout v1 keeps Monthly coverage report-only; Monthly-v2 layouts own distinct unresolved
+    failure investigations. P3S3 alone fills their bound points, attempts failed-point
     Current Tester assignment, preserves manual resolutions/history, and publishes the complete source-bound
     receipt required by distribution/progress/invitations. Include ALL failures in the owner reminder/report.
     Before ANY external mutation, both MRWP snapshots must be complete,
@@ -1079,7 +996,7 @@ bug_bash.ui_test_status:
     - q: "A test failed for one config but passed for another — what gets written?"
       a: "Per full combination AND flight. Never treat RC MSAL + RC Broker as RC MSAL + PROD Broker. Distinct API/device/parameterized tests stay separate as evidence and use Failed-wins only at their explicitly mapped case/config point."
     - q: "Should Monthly UI Tests get test-plan cases?"
-      a: "Never fabricate canonical Monthly mappings. Historical/v1 coverage stays report-only unless the separate reviewed amend-auth-monthly command completes an independently owned existing-parent amendment. Fresh auth-manual-automated-monthly-v2 clones also support distinct unresolved-failure investigations only, never initial pass/NA/recovered cases or an empty folder. P3S3 owns fills; preserve manual resolutions/history. No clone replay, workflow adoption or pin change. The source-execution gate stays independent of Broker."
+      a: "Never fabricate canonical Monthly mappings. Layout v1 keeps Monthly coverage report-only; auth-manual-automated-monthly-v2 clones add distinct unresolved-failure investigations only, never initial pass/NA/recovered cases or an empty folder. P3S3 owns fills and preserves manual resolutions/history. The source-execution gate stays independent of Broker."
     - q: "What happens to a Firebase E2E test that FAILED?"
       a: "A matching point is written Failed and its Current Tester is set to the release owner for triage. New category layouts block before either product is written if any frozen mapped case is missing; historical layouts retain their existing diagnostics. Passed automated cases are marked Passed; both passed and failed automated case IDs are excluded from the manual split. Assignment errors remain visible and do not imply owner changes."
     - q: "Do assignments change Assigned To or Current Tester?"
@@ -1760,8 +1677,7 @@ finalize.final_status_email:
     only then does the step complete and close the channel. Always run
     `automation cleanup --release <id> --json`; delete the
     returned daily status automation with `m_delete_automation`, and deregister only after
-    deletion succeeds. RC milestones use rc_report_publish, rc_report_notify and rc_report_gate,
-    never the removed rc_report step. To test, configure isolated recipients or set the
+    deletion succeeds. RC milestones use rc_report_notify and rc_report_gate. To test, configure isolated recipients or set the
     `send_to` mock to your own address.
   faqs:
     - q: "Won't this double-send with the daily automation?"

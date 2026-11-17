@@ -4,18 +4,15 @@ import json
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict, fields
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Callable, ClassVar, Optional
 
 from orchestrator.effects import execution_input_is_valid
 from orchestrator import evidence_store
+from orchestrator.schedule import utc_now_iso as _now
 
 
 SCHEMA_VERSION = 5
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass
@@ -75,7 +72,6 @@ class ReleaseState:
     # persisted detail
     steps: dict = field(default_factory=dict)         # "phase.step" -> StepState (as dict)
     gate_decisions: list = field(default_factory=list)
-    last_notified_date: Optional[str] = None          # YYYY-MM-DD of the last daily digest sent
     last_status_email_date: Optional[str] = None       # YYYY-MM-DD of the last partner status email sent
     escalation_checkpoints: dict = field(default_factory=dict)  # successfully sent alert key -> {sent_at, target}
     notification_deliveries: dict = field(default_factory=dict)  # id -> immutable descriptor, status, attempts, completion

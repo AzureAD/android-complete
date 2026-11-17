@@ -11,7 +11,7 @@ from tests.test_m365_capabilities import evidence
 
 
 RID = "2026-11"
-SCOUT_IDS = {"ccd_confirmed", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
+SCOUT_IDS = {"ccd_confirmed", "teams_notify", "adx_access", "oncall_now"}
 
 
 def call(capsys, root, *args):
@@ -127,7 +127,7 @@ def test_persisted_host_dispatch_exhausts_every_probe_before_handoff(
                         "--detail", "offline probe result; explicit date decision needed" if actual == "needs_input"
                         else "offline probe result", *kwargs)
         assert code == 0
-    assert set(executed) == SCOUT_IDS and len(executed) == 5
+    assert set(executed) == SCOUT_IDS and len(executed) == 4
     assert payload["may_return_to_user"] and not payload["continue_automatically"]
     assert payload["progression_policy"] == "automatic_until_input_or_wait"
     assert payload["display_before_prompt"]
@@ -140,7 +140,7 @@ def test_persisted_host_dispatch_exhausts_every_probe_before_handoff(
     saved = C.load_state(str(tmp_path), RID)
     assert not saved.steps and not saved.gate_decisions and not saved.notification_deliveries
     assert not C.load_orch(str(tmp_path), RID, CONFIG)[1].gate.signed
-    assert len([line for line in payload["display_markdown"].splitlines() if line.startswith("|")]) == 14
+    assert len([line for line in payload["display_markdown"].splitlines() if line.startswith("|")]) == 13
     if outcome == "pass":
         assert set(payload["confirm_items"]) == {
             "play_console_access", "oncall_window", "saw_ame", "yubikey"}
@@ -153,19 +153,19 @@ def test_input_hold_requires_evidence_and_never_satisfies_or_retries(tmp_path, m
     path = tmp_path / RID / "release-state.json"
     before = path.read_bytes()
     code, out = call(capsys, tmp_path, "record-check", "--release", RID,
-                    "--item", "silent_perms", "--status", "needs_input")
+                    "--item", "ccd_confirmed", "--status", "needs_input")
     assert code == 1 and "specific missing input or consent" in out
     assert path.read_bytes() == before
     code, _ = call(capsys, tmp_path, "record-check", "--release", RID,
-                   "--item", "silent_perms", "--status", "needs_input",
-                   "--detail", "Need consent to enable unattended approvals")
+                   "--item", "ccd_confirmed", "--status", "needs_input",
+                   "--detail", "Need owner selection between default CCD and pipeline override")
     assert code == 0
     st, orch = C.load_orch(str(tmp_path), RID, CONFIG)
     chk = orch.gate.checklist()
-    assert not next(item for item in chk["items"] if item["id"] == "silent_perms")["satisfied"]
-    assert "silent_perms" in chk["dispatch"]["input_required_auto_checks"]
+    assert not next(item for item in chk["items"] if item["id"] == "ccd_confirmed")["satisfied"]
+    assert "ccd_confirmed" in chk["dispatch"]["input_required_auto_checks"]
     assert chk["dispatch"]["continue_automatically"] and not chk["dispatch"]["may_return_to_user"]
-    assert "silent_perms" not in {item["id"] for item in chk["dispatch"]["pending_auto_checks"]}
+    assert "ccd_confirmed" not in {item["id"] for item in chk["dispatch"]["pending_auto_checks"]}
     assert "Input needed" in render.readiness_table(chk, RID)
     assert not orch.gate.signed
 

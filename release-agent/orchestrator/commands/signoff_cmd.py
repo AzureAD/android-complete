@@ -43,18 +43,9 @@ class VerifiedStageFailure(ValueError):
     pass
 
 
-def _step_mocks(orch, step):
-    return (getattr(orch, "mocks", {}) or {}).get(f"{PHASE}.{step.ID}", {}) or {}
-
-
 def _record(orch, args, step, status, summary, *, url=None):
-    orch.record_scout_step(
-        PHASE, step.ID, status, summary,
-        execution_id=getattr(args, "execution_id", None))
-    if url:
-        orch.annotate_step(PHASE, step.ID, links=[{"name": f"{step.STAGE_NAME} run", "url": url}], by="scout")
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release, f"[{step.ID}] {summary}", kind="step", log_text=summary)
+    link = {"name": f"{step.STAGE_NAME} run", "url": url} if url else None
+    W.record_step_write(orch, args, PHASE, step.ID, status, summary, link=link)
 
 
 def _plan_stage_start(
@@ -71,7 +62,7 @@ def _plan_stage_start(
         if getattr(step, "REQUIRES_OWNER_APPROVAL", False)
         else None
     )
-    ok, info, detail = step.resolve_target(orch.context(PHASE, step.ID, inputs=_step_mocks(orch, step)))
+    ok, info, detail = step.resolve_target(orch.context(PHASE, step.ID, inputs=W.step_mocks(orch, PHASE, step.ID)))
     if not ok:
         raise ValueError(f"Could not inspect pipeline 397224: {detail}")
     if not info:
@@ -126,10 +117,6 @@ def _plan_stage_start(
             preconditions,
         ),),
     )
-
-
-def plan_signoff_start(orch):
-    return _plan_stage_start(orch, signoff_start)
 
 
 def _apply(operation, step):
@@ -274,10 +261,6 @@ def _cmd_start_stage(args, step):
     _record(orch, args, step, "pass", summary, url=current.get("url"))
     print(summary)
     return 0
-
-
-def cmd_start_release_signoff(args):
-    return _cmd_start_stage(args, signoff_start)
 
 
 def register(sub):

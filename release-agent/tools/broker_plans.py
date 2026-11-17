@@ -150,15 +150,11 @@ def _snapshot(timeout, rc=None):
 
 
 def validate_plan(
-    pid, expected, source=None, timeout=120, *, runtime_identity=None, resource=None,
-    membership_repair=None, metadata_repair=False, classification_recovery=False
+    pid, expected, source=None, timeout=120, *, runtime_identity=None, resource=None
 ):
     """Read-only identity/flat-suite/config/point verification; never overwrite results."""
     if not _runtime_matches(runtime_identity or expected):
         return False, None, "Broker provider coordinates changed; restore configuration before recovery"
-    repair = (resource or {}).get("operations", {}).get("metadata-repair")
-    if repair and repair.get("status") != "applied" and not metadata_repair:
-        return False, None, "Plan metadata repair is unsettled; explicit readback recovery required"
     pid = positive_id(pid)
     if source is not None:
         _validate_source(source)
@@ -207,13 +203,11 @@ def validate_plan(
         if marker not in (info.get("description") or "").splitlines():
             return False, None, "Historical plans cannot be adopted into the scenario source contract"
         try:
-            S.validate_target(pid, root, children, source, resource, timeout,
-                              membership_repair=membership_repair,
-                              classification_recovery=classification_recovery)
+            S.validate_target(pid, root, children, source, resource, timeout)
         except ValueError as exc:
             return False, None, str(exc)
         if source["schema_version"] == F.VERSION:
-            info["automation"] = F.automation_contract(F.checked_record(resource, recovery=classification_recovery))
+            info["automation"] = F.automation_contract(resource)
         else:
             info["ui_suite_id"] = resource["suites"]["ui"]
         return True, info, ""
@@ -294,9 +288,6 @@ def ensure_plan(release_id, name, record, checkpoint, *, stored_id=MISSING_ID,
         return False, None, "Broker provider coordinates changed; restore configuration before recovery"
     if record and record.get("identity") != expected:
         return False, None, "Saved resource identity changed; owner recovery required"
-    metadata_repair = record.get("operations", {}).get("metadata-repair")
-    if metadata_repair and metadata_repair.get("status") != "applied":
-        return False, record.get("plan_id"), "Plan metadata repair is unsettled; explicit readback recovery required"
     if record and record.get("status") not in ("creating", "created", "ready", "retry_authorized"):
         return False, None, "Invalid resource lifecycle state; owner recovery required"
     if "source" in record or record.get("status") in ("creating", "created", "retry_authorized"):
@@ -424,102 +415,6 @@ def ensure_plan(release_id, name, record, checkpoint, *, stored_id=MISSING_ID,
                                "source": "release-owner", "at": record["verified_at"]}
     checkpoint()
     return True, pid, ""
-
-
-def preview_metadata_repair(record, timeout=120):
-    """Restore only the frozen subarea after the isolated completion-PATCH regression."""
-    from tools import broker_scenarios as S
-    S.require(record.get("status") in ("created", "ready")
-              and "fill" not in record and "fill_status" not in record,
-              "Metadata restoration requires an unfilled created/ready resource")
-    expected = record.get("identity")
-    S.require(_runtime_matches(expected) and expected["name"].startswith("TEST ONLY - "),
-              "Metadata restoration requires the exact configured isolated identity")
-    source = record.get("source")
-    _validate_source(source)
-    S.require(source.get("schema_version") == S.VERSION, "Metadata restoration requires frozen source-v3")
-    pid = positive_id(record.get("plan_id"))
-    created = record.get("operations", {}).get("plan", {})
-    frozen = created.get("payload")
-    S.require(isinstance(frozen, dict) and created.get("status") == "created"
-              and positive_id(created.get("id")) == pid and created.get("sha256") == S.digest(frozen),
-              "Frozen plan-create receipt missing/changed")
-    S.require(all(frozen.get(key) == expected[field] for key, field in
-                  (("name", "name"), ("areaPath", "area"), ("iteration", "iteration")))
-              and record.get("area_path", expected["area"]) == expected["area"]
-              and expected["area"].startswith(T.PROJECT + "\\")
-              and expected["marker"] in (frozen.get("description") or "").splitlines()
-              and S.MARKER in (frozen.get("description") or "").splitlines(),
-              "Frozen plan metadata intent differs from the configured isolated identity")
-    ok, info, detail = T.get_plan(pid, timeout)
-    S.require(ok, detail)
-    previous = record["operations"].get("metadata-repair")
-    S.require(info.get("areaPath") in ((T.PROJECT, expected["area"]) if previous else (T.PROJECT,)),
-              "Only the observed project-root reset can be restored")
-    ok, info, detail = validate_plan(
-        pid, dict(expected, area=info["areaPath"]), source, timeout,
-        runtime_identity=expected, resource=record, metadata_repair=True)
-    S.require(ok, detail)
-    S.require(expected["marker"] in (info.get("description") or "").splitlines()
-              and _COMPLETE in (info.get("description") or "").splitlines(),
-              "Metadata restoration requires the exact owned completion-marker regression")
-    points = {}
-    for sid in sorted({info["rootSuiteId"], *record["suites"].values()}):
-        observed = S._suite_points(pid, sid, timeout)
-        S._require_unpublished_points(observed, sid)
-        points[str(sid)] = sorted(observed, key=lambda p: int(p["id"]))
-    payload = {key: deepcopy(info[key]) for key in T._PLAN_UPDATE_FIELDS if key in info}
-    payload["areaPath"] = frozen["areaPath"]
-    if previous:
-        S.require(previous.get("status") in ("applying", "applied")
-                  and previous.get("payload") == payload and previous.get("sha256") == S.digest(payload),
-                  "Metadata restoration receipt changed; never re-PATCH")
-        S.require(info["areaPath"] == expected["area"],
-                  "Uncertain metadata restoration has not read back exactly; never re-PATCH")
-    plan = {"kind": "isolated-frozen-metadata-restoration-v1", "plan_id": pid,
-            "source_sha256": S.digest(source), "payload": payload,
-            "before": info, "points": points, "recovery_only": bool(previous),
-            "scope": "Restore original frozen plan subarea only; no creates, membership or outcomes"}
-    return {**plan, "repair_sha256": S.digest(plan)}
-
-
-def repair_metadata(record, confirmation, checkpoint, timeout=120):
-    from tools import broker_scenarios as S
-    S.require(callable(checkpoint), "Durable metadata-restoration checkpoint required")
-    plan = preview_metadata_repair(record, timeout)
-    S.require(confirmation == plan["repair_sha256"],
-              "Metadata restoration requires the exact reviewed --confirm-repair-sha256")
-    pid, payload = plan["plan_id"], plan["payload"]
-    if not plan["recovery_only"]:
-        record["operations"]["metadata-repair"] = {
-            "status": "applying", "payload": deepcopy(payload), "sha256": S.digest(payload),
-            "approval_sha256": confirmation}
-        checkpoint()
-        # Recheck after the durable reservation; an uncertain attempt is readback-only.
-        ok, current, detail = T.get_plan(pid, timeout)
-        S.require(ok and all(current.get(key) == plan["before"].get(key)
-                            for key in (*T._PLAN_UPDATE_FIELDS, "id", "rootSuiteId")),
-                  f"Plan {pid} changed after metadata preview: {detail}; no write")
-        for sid, before in plan["points"].items():
-            S.require(sorted(S._suite_points(pid, int(sid), timeout), key=lambda p: int(p["id"])) == before,
-                      f"Suite {sid} changed after metadata preview; no write")
-        ok, _, detail = P._ado_rest_send(T._plan_url(pid), "PATCH", deepcopy(payload), timeout)
-        S.require(ok, f"Uncertain metadata restoration for plan {pid}: {detail}; readback recovery only")
-    ok, info, detail = validate_plan(pid, record["identity"], record["source"], timeout,
-                                    resource=record, metadata_repair=True)
-    S.require(ok, f"Metadata restoration readback failed: {detail}; never re-PATCH")
-    S.require(info["rootSuiteId"] == plan["before"]["rootSuiteId"]
-              and all(info.get(key) == value for key, value in payload.items()),
-              "Metadata restoration readback differs; never re-PATCH")
-    for sid, before in plan["points"].items():
-        observed = S._suite_points(pid, int(sid), timeout)
-        S._require_unpublished_points(observed, sid)
-        S.require(sorted(observed, key=lambda p: int(p["id"])) == before,
-                  "Point evidence changed during metadata restoration")
-    record["operations"]["metadata-repair"]["status"] = "applied"
-    checkpoint()
-    return {"plan_id": pid, "restored_area": payload["areaPath"], "workflow_adoption": False,
-            "outcome_writes": False, "creates": False}
 
 
 def confirm_not_created(

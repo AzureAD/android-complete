@@ -262,25 +262,6 @@ def test_init_stores_calendar_month_and_supports_custom_dates(monkeypatch):
         assert R.cmd_init(ns_past) == 1
 
 
-def test_set_target_month_command_overrides_and_resets():
-    """set-target-month sets an explicit display month and resets to the calendar month default."""
-    import tempfile, argparse
-    from orchestrator.commands import release as R
-    from orchestrator import cli_common as _C
-    with tempfile.TemporaryDirectory() as tmp:
-        st0 = ReleaseState(release_id="2026-08", ccd="2026-08-12", target_month="2026-08")
-        _C.save_state(st0, tmp, "2026-08")
-        # explicit override
-        R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month="2026-11"))
-        assert _C.load_state(tmp, "2026-08").target_month == "2026-11"
-        # reset to default (no --month) -> 2026-08 (calendar month of release date)
-        R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month=None))
-        assert _C.load_state(tmp, "2026-08").target_month == "2026-08"
-        # bad input is rejected, state unchanged
-        rc = R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month="2026/13"))
-        assert rc == 1 and _C.load_state(tmp, "2026-08").target_month == "2026-08"
-
-
 def test_preview_releases_offers_current_or_next_second_wednesday():
     from datetime import date
     from orchestrator import schedule as S

@@ -21,11 +21,8 @@ from __future__ import annotations
 import json
 import os
 import getpass
-from datetime import datetime, timezone
 
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from orchestrator.schedule import utc_now_iso as _now
 
 
 def _actor() -> str:

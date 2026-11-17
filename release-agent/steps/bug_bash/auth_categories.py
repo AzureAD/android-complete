@@ -38,12 +38,10 @@ def validate(frozen, context):
 
 def prepare(context, identity, *, layout=A.LAYOUT):
     data = context.evidence.step("bug_bash", STEP_ID).data or {}
-    if "monthly_amendment" in data:
-        return Blocked("Independent Monthly amendment exists; never reopen or replay the original clone")
     if layout not in (A.LAYOUT, A.MONTHLY_LAYOUT):
         return Blocked("Unknown Authenticator layout")
     if data and data.get("layout") != layout:
-        return Blocked("Existing Authenticator layout cannot be amended by replay; use a new reviewed v2 setup")
+        return Blocked("Existing Authenticator layout cannot be changed in-place; rerun with a fresh attempt")
     ok, projection, detail = P.project_auth_ui_results(latest_rc(context))
     if not ok:
         return Blocked("clone_plans_auth: " + detail)
@@ -72,11 +70,9 @@ def _options(frozen, suite_type, parent):
 
 
 def _record(frozen, data):
-    if "monthly_amendment" in data:
-        raise ValueError("Independent Monthly amendment exists; original clone replay/retry is forbidden")
     if data:
         if not A.is_partition(data):
-            raise ValueError("Legacy Authenticator suites cannot migrate to categories")
+            raise ValueError("Single-suite Authenticator records cannot convert to categories in-place")
         if (any(data.get(key) != frozen[key] for key in
                 ("layout", "classification", "queries", "plan_id"))
                 or data.get("suite_name") != frozen["name"] or "creations" not in data):

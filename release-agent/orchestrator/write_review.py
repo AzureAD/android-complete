@@ -592,3 +592,35 @@ class VerifiedProgress:
         self.prepare()
         self.value["finished"] = True
         self._save()
+
+
+def step_mocks(orch, phase: str, step: str) -> dict:
+    """Active mock entry for `<phase>.<step>`, or empty dict."""
+    return (getattr(orch, "mocks", {}) or {}).get(f"{phase}.{step}", {}) or {}
+
+
+def record_step_write(
+    orch,
+    args,
+    phase: str,
+    step: str,
+    status: str,
+    summary: str,
+    *,
+    execution_id: str | None = None,
+    link: dict | None = None,
+) -> None:
+    """Record a checked external write outcome, optional evidence link, and state/event log."""
+    from orchestrator import cli_common as C
+
+    orch.record_scout_step(
+        phase,
+        step,
+        status,
+        summary,
+        execution_id=execution_id if execution_id is not None else getattr(args, "execution_id", None),
+    )
+    if link:
+        orch.annotate_step(phase, step, links=[link], by="scout")
+    C.save_state(orch.state, args.runs_root, args.release)
+    C.emit(args.runs_root, args.release, f"[{step}] {summary}", kind="step", log_text=summary)

@@ -8,7 +8,7 @@ logic is shared in `_mrwp.verify_mrwp`.
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from steps.build_verify._mrwp import verify_mrwp
 

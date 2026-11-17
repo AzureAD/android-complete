@@ -18,31 +18,13 @@ STRESS = "Stress Tests - RC MSAL with RC Broker (API 32)"
 TITLE = "test_concurrentAcquireTokenSilent_withBroker"
 
 
-def legacy_snapshot(value):
-    value = deepcopy(value)
-    summary = value["tests"]
-    summary.pop("category_basis")
-    categories = {cat: {"total": 0, "passed": 0, "failed": 0, "na": 0, "recovered": []}
-                  for cat in ("unit", "instrumented", "ui")}
-    for suite in summary["suites"]:
-        cat = suite["category"] = P.classify_test_run(suite["name"], legacy=True)
-        for key in ("total", "passed", "failed", "na"):
-            categories[cat][key] += suite[key]
-        categories[cat]["recovered"].extend(
-            {"suite": suite["name"], "title": test["title"]}
-            for test in suite["test_results"] if test["recovered"])
-    summary["categories"] = categories
-    return value
-
-
-def model(*, legacy=False, ui_passes=2, stress_outcome="Failed"):
+def model(*, ui_passes=2, stress_outcome="Failed"):
     runs = {}
     for flight, build in (("ECS", 201), ("Local", 202)):
         rows = {PROD: [(f"test_{100+i}_UI", "Passed") for i in range(ui_passes)],
                 STRESS: [(TITLE, stress_outcome), (TITLE, stress_outcome),
                          ("stress_na", "NotApplicable")]}
-        value = snapshot(build, rows)
-        runs[flight] = legacy_snapshot(value) if legacy else value
+        runs[flight] = snapshot(build, rows)
     result = P.assemble_rc_model("2026-10", {"fired": True, "run_id": "1", "when": "2026-10-17"},
                                  {"found": True, "healthy": True, "run_id": "2"},
                                  runs, rc=2, auth=auth_snapshot(rc=2))
@@ -65,14 +47,11 @@ def test_classification_does_not_guess_from_titles_or_unrelated_names(name, cate
     assert P.classify_test_run(name) == category
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_validation_and_normalization_preserve_retry_identity_counts_and_source(legacy):
+def test_validation_and_normalization_preserve_retry_identity_counts_and_source():
     raw = snapshot(201, {PROD: [("test_stress_is_only_a_title", "Passed")],
                          STRESS: [(TITLE, "Failed"), (TITLE, "Failed"),
                                   ("recovered", "Failed"), ("recovered", "Passed"),
                                   ("explicit_na", "NotExecuted")]})
-    if legacy:
-        raw = legacy_snapshot(raw)
     before = deepcopy(raw)
     assert len(validate_snapshot_tests(raw)[1]) == 4
     view = report_snapshot(raw)
@@ -91,30 +70,7 @@ def test_validation_and_normalization_preserve_retry_identity_counts_and_source(
     assert len(next(t for t in failure["test_results"] if t["title"] == TITLE)["attempts"]) == 2
 
 
-@pytest.mark.parametrize("suffix,category", [
-    ("common_UnitTests", "unit"), ("common_InstrumentedTests", "instrumented"),
-])
-def test_legacy_stress_prefix_preserves_historical_non_ui_precedence_and_gate(suffix, category):
-    name = "Stress Tests - " + suffix
-    assert P.classify_test_run(name) == "stress"
-    assert P.classify_test_run(name, legacy=True) == category
-    captured = snapshot(201, {PROD: [("test_100_UI", "Passed")], name: [("failed", "Failed")]})
-    raw = legacy_snapshot(captured)
-    assert raw["tests"]["categories"][category]["failed"] == 1
-    before = deepcopy(raw)
-    assert len(validate_snapshot_tests(raw, include_all=True)[1]) == 2
-    assert len(validate_snapshot_tests(raw)[1]) == 1
-    view = report_snapshot(raw)
-    assert view == report_snapshot(view) and raw == before
-    validate_snapshot_tests(view, include_all=True)
-    assert view["failed_suites"][0]["category"] == category
-    assert view["tests"]["categories"]["stress"]["total"] == 0
-    assert P.ui_stress_counts(view["tests"]) == P.ui_stress_counts(raw["tests"])
-    assert P.ui_stress_counts(captured["tests"])["failed"] == 1
-
-
-@pytest.mark.parametrize("tamper", ["missing", "counts", "suite", "basis", "legacy_suite",
-                                  "outer_failure"])
+@pytest.mark.parametrize("tamper", ["missing", "counts", "suite", "basis", "outer_failure"])
 def test_missing_or_corrupt_stress_is_unavailable_not_success(tamper):
     raw = snapshot(201, {PROD: [("test_100_UI", "Passed")], STRESS: [(TITLE, "Failed")]})
     if tamper == "missing":
@@ -125,11 +81,8 @@ def test_missing_or_corrupt_stress_is_unavailable_not_success(tamper):
         raw["tests"]["suites"][-1]["category"] = "ui"
     elif tamper == "basis":
         raw["tests"]["category_basis"] = "guessed"
-    elif tamper == "outer_failure":
-        del raw["failed_suites"]
     else:
-        raw = legacy_snapshot(raw)
-        raw["tests"]["suites"][0]["category"] = "instrumented"
+        del raw["failed_suites"]
     with pytest.raises(ValueError):
         validate_snapshot_tests(raw)
     m = P.assemble_rc_model("2026-10", {}, {}, {"ECS": raw}, rc=2)
@@ -138,9 +91,8 @@ def test_missing_or_corrupt_stress_is_unavailable_not_success(tamper):
     assert "Invalid source category evidence" in " ".join(m["problems"])
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_every_report_surface_separates_stress_but_preserves_gate_and_auth(legacy):
-    m = model(legacy=legacy)
+def test_every_report_surface_separates_stress_but_preserves_gate_and_auth():
+    m = model()
     gate, auth = R.rc_ui_gate(m), R.auth_report_gate(m)
     assert gate["coverage"] == "UI+Stress"
     assert (gate["ui_total"], gate["ui_passed"], gate["ui_failed"]) == (6, 4, 2)
@@ -213,15 +165,12 @@ def test_na_only_stress_stays_visible_without_changing_the_gate():
         assert "Stress Tests" in text and "0 evaluated · 2 NA · rate unavailable" in text
 
 
-@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("corrupt", [None, "missing_failures", "lost_failure"])
-def test_release_report_lightweight_only_omits_outer_failure_presentation(monkeypatch, legacy, corrupt):
+def test_release_report_lightweight_only_omits_outer_failure_presentation(monkeypatch, corrupt):
     summaries = {}
     for build in (201, 202):
         captured = snapshot(build, {PROD: [("test_100_UI", "Passed")],
                                     STRESS: [(TITLE, "Failed"), (TITLE, "Failed")]})
-        if legacy:
-            captured = legacy_snapshot(captured)
         summaries[build] = captured["tests"]
         if corrupt == "missing_failures":
             del summaries[build]["failed_suites"]

@@ -87,7 +87,6 @@ def test_malformed_snapshot_diagnostics_and_mutations_are_safe(tmp_path, raw):
     report = orch.status_report()
     assert report["status"] == "blocked" and report["invariant_violations"]
     assert "State integrity requires owner review" in render.status_view(report)
-    assert not orch.reserve_execution("p", "job", "worker").changed
     assert not orch.annotate_step("p", "job", data={"new": True}).changed
     assert not orch.reopen("p", "job", "reviewed").changed
     assert orch.step_once().kind == "blocked"
@@ -102,105 +101,13 @@ def test_malformed_or_misclassified_gates_do_not_crash_status_or_mutate(tmp_path
     orch.state.gate_decisions = decisions
     before = deepcopy(orch.state)
     assert orch.status_report()["status"] == "blocked"
-    assert not orch.reserve_execution("p", "job", "worker").changed
     assert orch.approve_gate().kind == "idle"
-    assert orch.state == before
-
-
-@pytest.mark.parametrize("field,value", [
-    ("id", ""), ("owner", "outsider"), ("started_at", "invalid"),
-    ("effect_mode", None), ("effect_recovery", "match_current"),
-    ("operation_key", "wrong"), ("effect_input", []), ("refresh", "true"),
-])
-def test_invalid_effect_metadata_rejects_retry_before_provider_read(tmp_path, field, value):
-    orch, control = _public(tmp_path, mode="transactional")
-    record = orch.state.get_step("p", "job")
-    record.execution[field] = value
-    orch.state.set_step("p", "job", record)
-    before = deepcopy(orch.state)
-    result = orch.retry_effect("p", "job", "owned", "reviewed", confirm_absent=True)
-    assert not result.changed and result.message
-    assert not control["calls"]
-    assert orch.state == before
-    assert orch.status_report()["invariant_violations"]
-
-
-@pytest.mark.parametrize("change", ["id", "invalidated_at", "status"])
-def test_retry_verification_cannot_clear_a_changed_generation(tmp_path, change):
-    orch, control = _public(tmp_path, mode="transactional")
-
-    def verify(context):
-        state = orch.state
-        with pytest.raises(TypeError):
-            context.evidence.step("p", "job").execution["effect_input"]["target"] = "detached"
-        record = state.get_step("p", "job")
-        assert record.execution["effect_input"]["target"] == "resource"
-        if change == "id":
-            record.execution["id"] = "new-owner"
-        elif change == "invalidated_at":
-            record.invalidated_at = "2099-09-12T00:00:00Z"
-        else:
-            record.status = "in_flight"
-        state.set_step("p", "job", record)
-        return RetryDecision(True, "old resource absent")
-
-    control["verify"] = verify
-    result = orch.retry_effect("p", "job", "owned", "reviewed", confirm_absent=True)
-    assert not result.changed
-    assert orch.state.get_step("p", "job").execution
-
-
-@pytest.mark.parametrize("result", [False, ("yes", "bad"), (True, None), (True,), None])
-def test_malformed_verification_preserves_owner_and_propagates(tmp_path, result):
-    orch, control = _public(tmp_path, mode="transactional")
-    control["verify"] = lambda *_: result
-    before = deepcopy(orch.state)
-    with pytest.raises(TypeError, match="authorize_retry: invalid return"):
-        orch.retry_effect("p", "job", "owned", "reviewed", confirm_absent=True)
-    assert orch.state == before
-
-
-def test_provider_retry_errors_propagate_and_unrelated_corruption_does_not_block_recovery(tmp_path):
-    orch, control = _public(tmp_path, mode="transactional")
-
-    def fail(*_):
-        raise RuntimeError("provider unavailable")
-
-    control["verify"] = fail
-    before = deepcopy(orch.state)
-    with pytest.raises(RuntimeError, match="provider unavailable"):
-        orch.retry_effect("p", "job", "owned", "reviewed", confirm_absent=True)
-    assert orch.state == before
-    control["verify"] = lambda _: RetryDecision(False, "could still exist")
-    assert not orch.retry_effect("p", "job", "owned", "reviewed", confirm_absent=True).changed
-    assert orch.state == before
-    control["verify"] = lambda _: RetryDecision(True, "absent")
-    orch.state.gate_decisions = [None]
-    assert orch.retry_effect("p", "job", "owned", "reviewed", confirm_absent=True).changed
-    assert orch.status_report()["status"] == "blocked"
-
-
-@pytest.mark.parametrize("mode", ["transactional", "idempotent"])
-def test_recovery_is_exact_and_can_release_owned_work_during_suspension(tmp_path, mode):
-    orch, control = _public(tmp_path, mode=mode)
-    orch.halt("incident")
-    operation = orch.retry_effect if mode == "transactional" else orch.supersede_effect
-    confirmation = {"confirm_absent": True} if mode == "transactional" else {"confirm_idempotent": True}
-    before = deepcopy(orch.state)
-    assert not operation("p", "job", "wrong", "reviewed", **confirmation).changed
-    assert not operation("p", "job", "owned", "reviewed").changed
-    assert orch.state == before and not control["calls"]
-    assert operation("p", "job", "owned", "reviewed", **confirmation).changed
-    assert orch.state.get_step("p", "job").execution is None
-    assert orch.scheduling().suspension and not orch.scheduling().runnable
-    before = deepcopy(orch.state)
-    assert not operation("p", "job", "owned", "duplicate", **confirmation).changed
     assert orch.state == before
 
 
 def test_annotation_is_detached_and_cannot_rewrite_ownership(tmp_path):
     orch, _ = _public(tmp_path)
-    assert orch.reserve_execution("p", "job", "worker").changed
+    assert orch._transition_kernel().reserve("p", "job", "worker").changed
     owner = orch.step_execution("p", "job")
     data, links = {"nested": []}, [{"name": "evidence", "url": "https://example.invalid"}]
     assert orch.annotate_step("p", "job", data=data, links=links, note="receipt").changed
@@ -271,15 +178,14 @@ def test_rejected_notification_claim_is_atomic(tmp_path, mutation):
     assert orch.state == before
 
 
-@pytest.mark.parametrize("kind", ["claim", "retry"])
 def test_failed_persistence_never_emits_send_permission_or_durably_clears_an_owner(
-        tmp_path, monkeypatch, capsys, kind):
+        tmp_path, monkeypatch, capsys):
     import json
     from orchestrator import cli_common as C
-    from orchestrator.commands import delivery_cmd, effect
+    from orchestrator.commands import delivery_cmd
 
-    orch, _ = _public(tmp_path, mode="transactional" if kind == "retry" else None)
-    item = _notice(orch) if kind == "claim" else None
+    orch, _ = _public(tmp_path)
+    item = _notice(orch)
     path = tmp_path / "release-state.json"
     orch.state.save(str(path))
     disk_before = path.read_bytes()
@@ -290,19 +196,12 @@ def test_failed_persistence_never_emits_send_permission_or_durably_clears_an_own
 
     monkeypatch.setattr(C, "save_state", fail_save)
     args = SimpleNamespace(runs_root=str(tmp_path), release="r", config="unused", as_of=None)
-    if kind == "claim":
-        args.operation, args.id, args.hash, args.executor = "claim", item["id"], item["hash"], "worker"
-        assert delivery_cmd.cmd_notification(args) == 1
-        assert json.loads(capsys.readouterr().out)["permission_to_send"] is False
-    else:
-        args.phase, args.step, args.execution_id = "p", "job", "owned"
-        args.reason, args.confirm_absent = "verified absence", True
-        with pytest.raises(OSError, match="disk unavailable"):
-            effect.cmd_retry_effect(args)
-        assert not capsys.readouterr().out
+    args.operation, args.id, args.hash, args.executor = "claim", item["id"], item["hash"], "worker"
+    assert delivery_cmd.cmd_notification(args) == 1
+    assert json.loads(capsys.readouterr().out)["permission_to_send"] is False
     assert path.read_bytes() == disk_before
     persisted = ReleaseState.load(str(path))
-    assert (persisted.get_step("p", "job").execution or {}).get("id") == ("owned" if kind == "retry" else None)
+    assert (persisted.get_step("p", "job").execution or {}).get("id") is None
 
 
 def test_notification_completion_cannot_name_a_lifecycle_field(tmp_path):
@@ -337,15 +236,6 @@ def test_last_step_notification_can_finalize_its_confirmed_checkpoint(tmp_path):
     assert orch.state == before
 
 
-def test_duplicate_execution_identity_cannot_be_recovered(tmp_path):
-    orch, control = _public(tmp_path, mode="transactional")
-    orch.state.steps["removed.old_job"] = deepcopy(orch.state.steps["p.job"])
-    before = deepcopy(orch.state)
-    assert not orch.retry_effect("p", "job", "owned", "reviewed", confirm_absent=True).changed
-    assert not control["calls"] and orch.state == before
-    assert any(v.code == "duplicate_execution" for v in orch.invariant_violations())
-
-
 @pytest.mark.parametrize("operation", ["claim", "release", "evidence"])
 def test_public_notification_operations_reject_a_malformed_ledger(tmp_path, operation):
     orch, _ = _public(tmp_path)
@@ -376,14 +266,14 @@ def test_notification_evidence_rejects_corruption_without_finalizing_or_crashing
 
 
 @pytest.mark.parametrize("field,value", [
-    ("last_notified_date", []), ("escalation_checkpoints", []),
+    ("last_status_email_date", []), ("escalation_checkpoints", []),
 ])
 def test_notification_evidence_validates_all_destinations_before_writing(tmp_path, field, value):
     orch, _ = _public(tmp_path)
     item = D.descriptor(
         orch.state, "evidence", {"kind": "release"}, "workiq_send_email",
         {"to": ["owner@example.com"], "body": "notice"},
-        {"release_field": "last_notified_date", "date": "2026-09-12", "checkpoint": "notice"})
+        {"release_field": "last_status_email_date", "date": "2026-09-12", "checkpoint": "notice"})
     D.offer(orch, item)
     claim = D.claim(orch, item["id"], item["hash"], "worker")
     D.result(orch, item["id"], claim["execution_id"], "sent", "provider receipt")

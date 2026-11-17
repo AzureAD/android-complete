@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from html import escape
 import re
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked, Done

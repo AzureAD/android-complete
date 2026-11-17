@@ -6,7 +6,7 @@ unreleased "vNext" section, and drafts the OneAuth comms. Read-only. Determinist
 """
 from __future__ import annotations
 
-from orchestrator.step_context import StepContext, thaw
+from orchestrator.step_context import StepContext
 import re
 
 from orchestrator.outcomes import Done, Blocked

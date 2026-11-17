@@ -38,7 +38,8 @@ def test_rc_report_notify_builds_directly_without_sharepoint_publish(ready):
     assert out["ready_to_execute"] is True
     assert "MRWP ECS:" in out["mcp_arguments"]["message"]
     assert "MRWP Local:" in out["mcp_arguments"]["message"]
-    assert out["execution_protocol"]["contract"] == "two_step"
+    assert out["execution_protocol"]["contract"] == "python_direct_delivery"
+    assert "deliver-step" in out["execute_command"]
     assert "record-step" in out["complete_command"]
 
 

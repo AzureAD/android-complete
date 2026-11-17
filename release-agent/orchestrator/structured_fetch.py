@@ -69,7 +69,9 @@ def _command(path):
                 "node-runner.exe", "node.exe", "workiq-wrapper.cjs", "workiq.exe"]
             or any(not Path(part).is_absolute() or not Path(part).is_file() for part in parts)):
         raise ValueError("Unsupported or missing Scout WorkIQ wrapper components; do not bypass the wrapper")
-    return parts
+    # Invoke node.exe + workiq-wrapper.cjs + workiq.exe directly with CREATE_NO_WINDOW;
+    # node-runner.exe uses an unjoined background stdout pump thread that drops output.
+    return parts[1:]
 
 
 def discover_cli(scout_root, preferred=None):
@@ -97,7 +99,8 @@ def discover_cli(scout_root, preferred=None):
         result = subprocess.run(
             [*command, "fetch", "--help"], capture_output=True, text=True,
             encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=30,
-            env={**os.environ, "NODE_OPTIONS": ""}, shell=False)
+            env={**os.environ, "NODE_OPTIONS": ""}, shell=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return {"status": "unsupported", "detail": str(exc)}
     if result.returncode or "--urls" not in result.stdout:
@@ -173,18 +176,38 @@ def read(scout_root, owner, path, *, preferred=None, discovered=None):
     selected = route({}, discovered)
     if selected is None:
         raise ValueError(discovered["detail"])
-    result = subprocess.run(
-        [*selected["command"], "fetch", "--urls", path, "--account", owner],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        stdin=subprocess.DEVNULL, timeout=120, env={**os.environ, "NODE_OPTIONS": ""}, shell=False)
-    if result.returncode:
-        diagnostics = sorted(set(re.findall(
-            r"\b(?:AccessDenied|Authorization_RequestDenied|Forbidden|Unauthorized|"
-            r"AuthenticationRequired|AADSTS\d+|401|403)\b", result.stdout + "\n" + result.stderr)))
-        reported = f"; reported: {', '.join(diagnostics)}" if diagnostics else ""
-        raise ValueError(
-            f"WorkIQ fetch failed (exit {result.returncode}{reported}); inspect the tool's authentication/access "
-            "diagnostic. No account, transport or resource fallback was attempted.")
+    import time
+
+    auth_pat = re.compile(
+        r"\b(?:AccessDenied|Authorization_RequestDenied|Forbidden|Unauthorized|"
+        r"AuthenticationRequired|AADSTS\d+|401|403)\b"
+    )
+    result = None
+    for attempt in range(3):
+        result = subprocess.run(
+            [*selected["command"], "fetch", "--urls", path, "--account", owner],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=120, env={**os.environ, "NODE_OPTIONS": ""},
+            shell=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if result.returncode:
+            diagnostics = sorted(set(auth_pat.findall(result.stdout + "\n" + result.stderr)))
+            reported = f"; reported: {', '.join(diagnostics)}" if diagnostics else ""
+            raise ValueError(
+                f"WorkIQ fetch failed (exit {result.returncode}{reported}); inspect the tool's authentication/access "
+                "diagnostic. No account, transport or resource fallback was attempted.")
+        if result.stdout.strip():
+            break
+        err_text = (result.stderr or "").strip()
+        if auth_pat.search(err_text):
+            diagnostics = sorted(set(auth_pat.findall(err_text)))
+            raise ValueError(
+                f"WorkIQ fetch denied ({', '.join(diagnostics)}): {err_text[:240]}"
+            )
+        if attempt < 2:
+            time.sleep(0.5)
+    assert result is not None
+    if not result.stdout.strip() and (result.stderr or "").strip():
+        raise ValueError(f"WorkIQ fetch returned empty stdout (stderr: {result.stderr.strip()[:240]})")
     value = _parse_structured_payload(result.stdout)
     envelope = {
         "version": 1, "tool": FETCH_TOOL, "arguments": {"entityUrls": [path]},

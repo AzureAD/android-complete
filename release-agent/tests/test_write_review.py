@@ -88,7 +88,7 @@ def test_absent_stale_or_mismatched_approval_is_mutation_free(reviewed, field, v
 
 def test_generic_reservation_cannot_bypass_review(reviewed):
     _, orch, _, _ = reviewed
-    result = orch.reserve_execution("rollout_start", "wiki_payload", "session")
+    result = orch._transition_kernel().reserve("rollout_start", "wiki_payload", "session")
     assert not result.changed and "--review-hash" in result.message
     assert not orch.step_execution("rollout_start", "wiki_payload")
 

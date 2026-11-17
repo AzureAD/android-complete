@@ -213,18 +213,20 @@ def test_distribution_identity_resolution_requires_exact_unique_account(monkeypa
 @pytest.fixture
 def wiki_inputs(monkeypatch):
     existing = {"content": "owner's existing page", "etag": '"etag-7"', "exists": True}
+    mock_data = {"version": {"version": "6.0.0", "build_url": "https://example.test/build/1"}, "prs": []}
     monkeypatch.setattr(wiki.checks, "wiki_page_exists", lambda *a: existing["exists"])
     monkeypatch.setattr(wiki.checks, "get_wiki_page",
                         lambda *a, **kw: (True, existing["content"], existing["etag"], ""))
-    monkeypatch.setattr(wiki, "_step_mocks", lambda orch: {
-        "version": {"version": "6.0.0", "build_url": "https://example.test/build/1"}, "prs": []})
+    orig = W.step_mocks
+    monkeypatch.setattr(W, "step_mocks", lambda orch, phase, step: (
+        dict(mock_data) if (phase, step) == ("rollout_start", "wiki_payload") else orig(orch, phase, step)))
     return existing
 
 
 def test_wiki_plan_binds_content_target_and_etag(wiki_inputs, monkeypatch):
     orch = make_orch("rollout_start", "wiki_payload")
     # StepContext inputs come from the orchestrator, not an ambient write payload.
-    orch.mocks = {"rollout_start.wiki_payload": wiki._step_mocks(orch)}
+    orch.mocks = {"rollout_start.wiki_payload": W.step_mocks(orch, "rollout_start", "wiki_payload")}
     plan = wiki.plan_payload_wiki(orch)
     operation = plan.operations[0]
     assert operation.preconditions == {"exists": True, "content": "owner's existing page", "etag": '"etag-7"'}
@@ -240,7 +242,7 @@ def test_wiki_plan_binds_content_target_and_etag(wiki_inputs, monkeypatch):
 @pytest.mark.parametrize("etag,exists", [("", True), ('""', True), ("*", True), ('"x"', None)])
 def test_wiki_unknown_existence_and_unconditional_update_reject(wiki_inputs, etag, exists):
     orch = make_orch("rollout_start", "wiki_payload")
-    orch.mocks = {"rollout_start.wiki_payload": wiki._step_mocks(orch)}
+    orch.mocks = {"rollout_start.wiki_payload": W.step_mocks(orch, "rollout_start", "wiki_payload")}
     wiki_inputs.update(etag=etag, exists=exists)
     with pytest.raises(ValueError):
         wiki.plan_payload_wiki(orch)
@@ -270,7 +272,7 @@ def test_wiki_executor_never_rereads_etag_for_write(wiki_inputs, monkeypatch, ex
     monkeypatch.setattr(W, "authorize", authorize)
     monkeypatch.setattr(wiki.checks, "update_wiki_page", write)
     monkeypatch.setattr(wiki.checks, "create_wiki_page", write)
-    monkeypatch.setattr(wiki, "_record", lambda *a, **kw: recorded.append((a, kw)))
+    monkeypatch.setattr(W, "record_step_write", lambda *a, **kw: recorded.append((a, kw)))
     assert wiki.cmd_create_payload_wiki(args) == 0
     assert len(calls) == 1 and len(validations) == 2
     assert calls[0]["wiki"] == plan.operations[0].target["wiki"]
@@ -278,7 +280,7 @@ def test_wiki_executor_never_rereads_etag_for_write(wiki_inputs, monkeypatch, ex
         assert calls[0]["etag"] == '"etag-7"'
     else:
         assert calls[0]["require_absent"] is True
-    assert recorded[0][0][2] == "pass"
+    assert recorded[0][0][4] == "pass"
 
 
 def test_wiki_stale_etag_zero_writes(wiki_inputs, memory, monkeypatch):
@@ -342,7 +344,7 @@ def _signoff_info(**extra):
 def test_signoff_plan_binds_build_stage_and_state(monkeypatch):
     orch = make_orch("rollout_start", "signoff_start")
     monkeypatch.setattr(signoff.S, "resolve_target", lambda ctx: (True, _signoff_info(), ""))
-    plan = signoff.plan_signoff_start(orch)
+    plan = signoff._plan_stage_start(orch, signoff.signoff_start)
     operation = plan.operations[0]
     assert operation.kind == "run_build_stage"
     assert operation.target["definition_id"] == signoff.P.AUTH_SIGNOFF_DEF
@@ -353,7 +355,7 @@ def test_signoff_plan_binds_build_stage_and_state(monkeypatch):
     monkeypatch.setattr(signoff.S, "resolve_target", lambda ctx: (
         True, _signoff_info(stage_state="skipped", stage_result="skipped"), ""))
     assert W.review_hash(orch, "rollout_start", "signoff_start",
-                         signoff.plan_signoff_start(orch)) != digest
+                         signoff._plan_stage_start(orch, signoff.signoff_start)) != digest
 
 
 @pytest.mark.parametrize("step,stage,command,approver", [
@@ -676,7 +678,7 @@ def test_signoff_auto_approve_starts_stage_once(memory, monkeypatch):
         "--executor",
         "release-signoff-automation",
     )
-    assert signoff.cmd_start_release_signoff(args) == 0
+    assert signoff._cmd_start_stage(args, signoff.signoff_start) == 0
     step = orch.state.get_step("rollout_start", signoff.S.ID)
     assert step.status == "done"
     assert step.data["last_write_review"]["approved_by"] == "release-signoff-automation"

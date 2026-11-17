@@ -51,13 +51,6 @@ _GITC = ["git", "-c", "core.commitGraph=false"]
 
 
 # --------------------------------------------------------------------------- git
-def git_fetch(dir_name: str, timeout=180):
-    """Fetch origin (prune) so ls-remote/rev-list reflect the remote. (ok, detail)."""
-    rc, _o, e = _run(["git", "fetch", "--prune", "origin"], cwd=str(repo_dir(dir_name)),
-                     timeout=timeout)
-    return (rc == 0, e.strip() or "fetched")
-
-
 def remote_branch_exists(dir_name: str, branch: str, timeout=60):
     """(ok, exists, detail) — is `branch` present on origin?"""
     rc, out, e = _run(["git", "ls-remote", "--heads", "origin", branch],
@@ -515,21 +508,3 @@ def create_pbi(org, project, title, area=None, iteration=None, timeout=90):
         return (True, wid, url, "")
     except json.JSONDecodeError:
         return (False, None, None, f"unparseable az output: {out!r}")
-
-
-# ------------------------------------------------------- RI editing (the careful part)
-def prepare_ri_branch(dir_name, ri, target, dry_run=True, timeout=240):
-    """Compatibility read-only preview. Writes require the checked command's captured plan."""
-    from tools import git_review as G
-    if not dry_run:
-        return False, {}, "Use create-integration-prs --execute --auto-approve --executor integration-pr-automation"
-    try:
-        root = G.clean_repository(repo_dir(dir_name))
-        remote = G.remote_url(root)
-        plan = G.plan_ri(root, G.remote_tip(root, remote, ri),
-                         G.remote_tip(root, remote, target), target)
-        return True, {"behind": plan["behind"], "gradle_reverted": plan["gradle_reverted"],
-                      "human_conflicts": [], "pushed": False, "action": "read-only exact preview",
-                      "plan": plan}, ""
-    except ValueError as exc:
-        return False, {}, str(exc)

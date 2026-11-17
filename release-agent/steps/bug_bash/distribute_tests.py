@@ -110,10 +110,6 @@ def _fill_input(context):
     return result["auth"]["automated_case_ids"], {"id": result["id"], "binding": result["binding"]}
 
 
-def _auth_automated_ids(context):
-    return set(_fill_input(context)[0])
-
-
 def _roster(context, cfg, roster_file=None):
     roster = context.input("roster", MISSING) if not roster_file else MISSING
     observation = None

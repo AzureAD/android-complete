@@ -198,7 +198,7 @@ def cmd_status(args):
     rep = decorate_handoff_contract(rep)
     code = 2 if getattr(args, "handoff", False) and not rep["work_dispatch"]["may_return_to_user"] else 0
     if getattr(args, "json", False):
-        print(_json.dumps(rep, indent=2))
+        print(_json.dumps(rep))
         return code
     display = render.status_view(rep) if getattr(args, "details", False) else render.status_brief(rep)
     print(display)
@@ -206,14 +206,36 @@ def cmd_status(args):
 
 
 def cmd_next(args):
-    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    actions = orch.run_until_gate(pending_only=getattr(args, "pending_only", True))
+    as_of = C.parse_as_of(args)
+    st, orch = C.load_orch(args.runs_root, args.release, args.config, as_of)
+    pending_only = getattr(args, "pending_only", True)
+    actions = orch.run_until_gate(pending_only=pending_only)
     C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
     C.log_actions(C.elog(args.runs_root, args.release), actions, state=st)
+    delivered = []
+    if getattr(args, "deliver", False) and as_of is None:
+        from orchestrator.commands.deliver_cmd import drain_auto_notifications
+
+        while True:
+            batch = drain_auto_notifications(args.runs_root, args.release, args.config)
+            delivered.extend(batch)
+            st, orch = C.load_orch(args.runs_root, args.release, args.config)
+            if not any(item.get("status") == "done" for item in batch):
+                break
+            more = orch.run_until_gate(pending_only=pending_only)
+            if more:
+                actions.extend(more)
+                C.save_state(st, args.runs_root, args.release)
+                C.log_actions(C.elog(args.runs_root, args.release), more, state=st)
+            else:
+                break
     if getattr(args, "json", False):
         # Advance, then emit the same report as `status --json` (carries scout_pending) so a
         # caller can advance + read the pending scout steps in ONE call.
-        print(_json.dumps(decorate_handoff_contract(orch.status_report()), indent=2))
+        report = decorate_handoff_contract(orch.status_report())
+        if delivered:
+            report["delivered_notifications"] = delivered
+        print(_json.dumps(report))
         return 0
     C.emit(args.runs_root, args.release, C.advance_block(actions, orch), kind="advance",
            log_text=C.advance_log_summary(actions))
@@ -438,29 +460,6 @@ def cmd_activate(args):
     return 0
 
 
-def cmd_set_target_month(args):
-    """Set the display month the release is labeled for ('YYYY-MM'). Display-only — it does
-    NOT touch release_id, the CCD, branches, or scheduling. With no --month, resets to the
-    calendar month of the elected release date."""
-    st = C.load_state(args.runs_root, args.release)
-    if args.month:
-        import re as _re
-        if not _re.match(r"^\d{4}-\d{2}$", str(args.month).strip()):
-            print(f"Bad --month '{args.month}' (expected YYYY-MM).")
-            return 1
-        mm = int(str(args.month).split("-")[1])
-        if not (1 <= mm <= 12):
-            print(f"Bad --month '{args.month}' (month must be 01-12).")
-            return 1
-        st.target_month = str(args.month).strip()
-    else:
-        st.target_month = schedule.default_target_month(args.release, st.ccd)
-    C.save_state(st, args.runs_root, args.release)
-    print(f"Release {args.release} is the {schedule.target_month_label(st)} release "
-          f"(target_month={st.target_month}).")
-    return 0
-
-
 def register(sub):
     inspect = sub.add_parser("inspect-state", help="Inspect state/version metadata without loading or advancing it")
     inspect.add_argument("--release", required=True)
@@ -511,6 +510,8 @@ def register(sub):
                    help="Drain fresh work without automatically retrying failed, owned or in-flight steps")
     n.add_argument("--retry", action="store_false", dest="pending_only",
                    help="Explicitly retry failed reads and reconcile in-flight operations once")
+    n.add_argument("--deliver", action="store_true",
+                   help="Also deliver all eligible requires_approval=false notifications in Python via Agency MCP")
     n.set_defaults(pending_only=True)
     n.set_defaults(func=cmd_next)
 
@@ -597,13 +598,6 @@ def register(sub):
     ac.add_argument("--release", required=True)
     ac.add_argument("--phase", required=True)
     ac.set_defaults(func=cmd_activate)
-
-    tm = sub.add_parser("set-target-month",
-                        help="Set the display month the release is labeled for (YYYY-MM; "
-                             "display-only). Omit --month to reset to the release date's calendar month.")
-    tm.add_argument("--release", required=True)
-    tm.add_argument("--month", default=None, help="Ship month as YYYY-MM (e.g. 2026-09)")
-    tm.set_defaults(func=cmd_set_target_month)
 
     mode = sub.add_parser("set-mode", help="Explicitly select interactive or unattended execution")
     mode.add_argument("--release", required=True)

@@ -63,6 +63,11 @@ def phase_plan(orch, selection, readiness):
             continue
         handler = orch.handler(step.phase_id, sid)
         is_notification = bool(handler.notification)
+        auto_deliver_cmd = (
+            f"deliver-step --release {release} --phase {step.phase_id} --step {sid} --json"
+            if is_notification and not step.requires_approval
+            else f"step-action --release {release} --phase {step.phase_id} --step {sid}"
+        )
         pending.append({
             "key": step.key, "phase": step.phase_id, "step": sid,
             "name": step.name, "kind": "scout",
@@ -70,7 +75,7 @@ def phase_plan(orch, selection, readiness):
             "outbound_notification": is_notification,
             "depends_on": list(step.depends_on),
             "required_tools": list(step.required_tools),
-            "command": f"step-action --release {release} --phase {step.phase_id} --step {sid}",
+            "command": auto_deliver_cmd,
             "fail_command": f"fail-step --release {release} --phase {step.phase_id} --step {sid} --reason <specific-failure-reason>",
             "write_command": step.write_command,
             "continuation": continuation,
@@ -78,11 +83,14 @@ def phase_plan(orch, selection, readiness):
                 "This step requires explicit human approval (`requires_approval: true`): exhaust all "
                 "other runnable steps that do not require approval first, preview the exact payload/plan, "
                 "then hold ONLY this step with `--hold-step` and prompt the owner to approve before executing."
-                if step.requires_approval else
-                "SILENT AUTOMATED TASK (`requires_approval: false`): The user's `/release-agent` command ALREADY "
-                "explicitly authorizes this configured step. Execute silently in 2 steps (`step-action` -> "
-                "call `tool` with `mcp_arguments` / `gather_protocol` / `execute_command` -> `record-step --status pass`). "
-                "Do NOT call `m_ask_user`, do NOT preview outbound emails/chats for approval, and do NOT pause!"
+                if step.requires_approval else (
+                    "PYTHON AUTO-DELIVERY (`requires_approval: false`): Run `command` (`deliver-step ... --json`) "
+                    "or `next --release " + release + " --deliver --json` directly in PowerShell. Python sends "
+                    "silently via Agency MCP and records completion — NEVER call `workiq_send_*` or `m_ask_user`!"
+                    if is_notification else
+                    "SILENT AUTOMATED TASK (`requires_approval: false`): Execute silently (`step-action` -> "
+                    "gather/execute -> followup/record command). Do NOT call `m_ask_user` and do NOT pause!"
+                )
             ),
         })
     # Order: engine steps -> non-send Scout gather/write steps (e.g. lockdown) -> outbound notifications -> requires_approval:true
