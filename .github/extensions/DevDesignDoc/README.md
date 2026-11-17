@@ -299,6 +299,23 @@ work items and does not publish the future pre-mortem Markdown file. Before auth
 artifact status is `Pending implementation completion and PBI dispatch`; its
 future URL is not a design/planning/backlog prerequisite.
 
+The brief seeds **Healthy operation and failure detection** with feature-specific
+customer-visible success and known measurement inputs; the dependent PBI must
+generate that section after implementation. It requires happy-path and failure
+scenario IDs mapped to actual Kusto draft text/query IDs, expected output columns/
+units, healthy baselines (or explicitly unconfirmed targets) and owned actions.
+Cover eligibility/exposure, attempts/completions and completion rates, cancellation
+versus time-window-matured abandonment, latency and telemetry coverage, with explicit
+units, denominators, cohorts, version/flag dimensions, windows, retries/deduplication,
+sampling and ingestion delay. No errors/API success alone does not prove customer
+success; missing signals, zero denominators and low samples are insufficient evidence.
+Use existing permitted signals without new disabled-path telemetry. Each scenario
+maps deviations to customer impact, safeguards and response owners/cadence, with
+investigation, stop-expansion and rollback triggers. Retain justified per-measure
+non-runtime N/A and observable alternative verification/ownership, never a blanket
+exemption. Reference the canonical design telemetry contract, but inline the
+scenario/query/response mapping rather than linking to an unspecified dashboard.
+
 The dedicated PBI depends on **all feature implementation PBIs** across repositories.
 Dispatch waits for their acceptance criteria, merged changes where applicable and
 required implementation validation evidence. Then the agent writes the full
@@ -312,7 +329,8 @@ implementation PBIs exist, justify that case and verify the approved non-runtime
 deliverables are complete first. Human-review-only follow-ups are not agent work;
 the agent-authoring scope may use `copilot-agent-ready` when ready for approved dispatch.
 
-The fixed independent-review rubric requires `preMortemAndReleaseGates`.
+The fixed independent-review rubric requires `preMortemAndReleaseGates` and
+`healthyOperationAndFailureDetection`.
 Structural validation rejects absent/blank sections or missing rubric coverage;
 the reviewer evaluates substantive brief/handoff completeness, source accuracy and gate
 separation. Placeholders, invented verified telemetry, omitted applicable rollback
@@ -327,6 +345,8 @@ expected, not a reason to activate production or reject document authorship.
 Before relying on monitoring for rollout, the telemetry owner validates contracts,
 mappings, outcomes, cohorts and denominators against an approved enabled E2E
 test cohort and attaches evidence. Broad production enablement is not required.
+This validation covers controlled happy-path/failure, missing/late-terminal and
+zero/low-sample cases, not just success-event arrival.
 The release owner separately approves prerequisites and rollback readiness.
 Document review, PBI completion and `GO to Planning` are not query validation,
 activation permission or rollout approval. These deferred gates do not waive
@@ -346,7 +366,7 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v11` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v12` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
@@ -357,10 +377,10 @@ not recheck a mutable branch or re-read edited local snapshots; do not alter sna
 in place. Start a fresh run with new pins if the source/evidence changes; change the key version when workflow semantics,
 schemas, prompts, or rubric change. Steps have no intentional external side effects,
 so replay does not publish duplicate artifacts.
-The combined accessibility/default-off/post-implementation handoff does not reuse
+The healthy-operation handoff does not reuse
 prior v5 outputs, accessibility-only v6, pre-mortem-only v7, design-time
-full-pre-mortem/default-off v8, pre-accessibility post-implementation v9 or unpaired
-v10 outputs. Human-review snapshots likewise cannot reuse legacy unpaired artifacts.
+full-pre-mortem/default-off v8, pre-accessibility post-implementation v9, or earlier
+v10/v11 prompt outputs. Human-review snapshots likewise cannot reuse legacy unpaired artifacts.
 
 ## Checks
 
@@ -380,7 +400,8 @@ fixed rubric/per-change coverage, bounded fixes, recommendation semantics, and
 source/evidence-bound checkpoint identity. Pre-mortem regressions cover missing/
 blank briefs, runtime/non-runtime post-implementation handoff, omitted/failed review
 criteria, repair/re-review, owned pre-flight gaps without production activation,
-and stale v5/v6/v7/v8/v9 checkpoint isolation. Default-off regressions cover missing/
+happy-path scenario/query handoff, mandatory healthy-operation review and repair,
+and stale v5-v11 checkpoint isolation. Default-off regressions cover missing/
 non-false contracts, invalid mappings/source ownership, non-runtime declarations,
 shared/multiple flags, schema/prompt handoff, mandatory independent criteria and
 repair/re-review. Synthetic executable completion fixtures

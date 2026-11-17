@@ -431,7 +431,7 @@ test("stale, legacy or unverified prior-review pairing stops before claiming a r
     assert.equal(ctx.calls.length, 1);
 });
 
-test("v10 unpaired journal artifacts are never reused and v11 replays the exact pair without paid calls", async () => {
+test("v10 unpaired journal artifacts are never reused and v12 replays the exact pair without paid calls", async () => {
     const legacy = design();
     delete legacy.humanReviewBrief;
     const ctx = context([evidence(), design(), review()]);
@@ -671,6 +671,8 @@ test("runtime and non-runtime designs hand off a brief for post-implementation p
         d.sections.preMortemAndOperationalReadiness = `# Pre-mortem authoring brief
 Inputs: R1 / T1 / E1 and approved requirements-v3; compatibility risk affects supported callers.
 Known monitoring contract: proposed attemptId/outcome/featureVersion; mappings require telemetry-owner follow-up.
+Healthy operation and failure detection: success is a compatible response usable by the caller, not just API success.
+After dispatch generate happy-path/failure scenario IDs linked to KQL query IDs with outputs/units and healthy baselines.
 Later author must cover eligible/executed/baseline cohorts, failed/total attempts, sampling and no-traffic gaps.
 Rollback input: ${flagged ? "default-off flag F1" : "prior-release recovery"}; cover active attempts/partial state.
 Pre-mortem child PBI: Pending feature planning; reuse a suitable existing child if verified.
@@ -700,12 +702,83 @@ This is an authoring brief, not a pre-mortem draft or human acceptance/rollout a
         assert.doesNotMatch(task, /Generate a self-contained Markdown "Pre-mortem and operational readiness" document/);
         assert.match(task, /active\/in-flight attempts/);
         assert.match(task, /Pending feature planning/);
+        assert.match(ctx.calls[0].prompt.split("\nDATA:\n")[0], /customer-visible successful outcomes/);
+        for (const contract of [
+            /"Healthy operation and failure detection"/,
+            /happy-path AND failure\/degradation scenarios/,
+            /actual Kusto \(KQL\) draft text, not just query titles or prose/,
+            /query IDs mapped to\s+every scenario\/measure/,
+            /expected output columns\/units/,
+            /eligible\/exposed\/executing\/baseline cohorts/,
+            /cancellation versus abandonment/,
+            /time-window-matured abandonment/,
+            /latency and telemetry\s+coverage/,
+            /zero\s+denominators and low samples as insufficient evidence/,
+            /never introduce\s+disabled-path telemetry/,
+            /investigation triggers, stop-expansion criteria and rollback/,
+            /justify each inapplicable metric\/query/,
+            /controlled happy-path and failure cases plus missing\/late-terminal and zero\/low-sample cases/,
+        ]) assert.match(task, contract);
         const reviewerTask = ctx.calls[2].prompt.split("\nDATA:\n")[0];
         assert.match(reviewerTask, /preMortemAndReleaseGates/);
         assert.match(reviewerTask, /not completion or acceptance of the pre-mortem/);
         assert.match(reviewerTask, /reverse dependencies/);
         assert.match(reviewerTask, /named human review before release/);
+        assert.match(reviewerTask, /For healthyOperationAndFailureDetection/);
+        assert.match(reviewerTask, /actual KQL draft text\/query IDs/);
+        assert.match(reviewerTask, /Reject omitted happy-path coverage or blanket N\/A/);
+        assert.match(reviewerTask, /controlled happy-path\/failure, missing\/late-terminal and zero\/low-sample query checks/);
     }
+});
+
+test("healthy-operation review omission or failure cannot bypass the gate", async () => {
+    const missing = review();
+    missing.criteria = missing.criteria.filter((criterion) => criterion.id !== "healthyOperationAndFailureDetection");
+    assert.equal(validateReview(missing, design(), evidence()), false);
+    const malformed = await runDesignFeature(context([evidence(), design(), missing]));
+    assert.equal(malformed.recommendation, "NO-GO");
+    assert.equal(malformed.reviewReady, false);
+
+    const failed = review();
+    failed.criteria.find((criterion) => criterion.id === "healthyOperationAndFailureDetection").pass = false;
+    const ctx = context([evidence(), design(), failed, design(), failed, design(), failed]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "NO-GO");
+    assert.equal(packet.fixIterations, 2);
+    assert.equal(ctx.calls.length, 7);
+});
+
+test("missing happy-path scenario/query handoff requires repair and fresh independent review", async () => {
+    const d = design();
+    d.sections.preMortemAndOperationalReadiness =
+        "Authoring brief plans error queries only; API success is assumed healthy.";
+    const failed = review(d);
+    failed.criteria.find((criterion) => criterion.id === "healthyOperationAndFailureDetection").pass = false;
+    failed.findings.push({
+        id: "HEALTH1", rubricId: "healthyOperationAndFailureDetection", severity: "major",
+        location: "sections.preMortemAndOperationalReadiness",
+        evidence: "Happy-path customer completion, denominators and scenario/query mappings are missing.",
+        requiredChange: "Plan the healthy-operation section with customer success and post-dispatch scenario-mapped KQL.",
+    });
+    const corrected = design();
+    corrected.sections.preMortemAndOperationalReadiness =
+        "Healthy operation and failure detection: customer success means the caller can use the compatible result. " +
+        "After implementation completion and PBI dispatch, generate happy-path/failure scenario IDs and actual KQL/query IDs " +
+        "for eligibility/exposure, attempts/completions, cancellation/abandonment, latency and missing telemetry; " +
+        "define cohorts/denominators/windows, outputs/units, low-sample gaps and owned investigation/stop/rollback triggers. " +
+        "Telemetry owner validates drafts with approved enabled-E2E evidence before rollout reliance; no production activation.";
+    const ctx = context([evidence(), d, failed, corrected, review(corrected)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(packet.reviews.length, 2);
+    assert.equal(packet.humanApproval, "pending");
+    assert.equal(ctx.calls[3].options.label, "Design revision");
+    assert.match(ctx.calls[3].prompt.split("\nDATA:\n")[0], /actual Kusto \(KQL\) draft text/);
+    assert.equal(ctx.calls[4].options.label, "Independent design reviewer");
+    const data = JSON.parse(ctx.calls[4].prompt.split("\nDATA:\n")[1]);
+    assert.equal(data.designDigest, digest(corrected));
+    assert.equal(data.design.sections.preMortemAndOperationalReadiness, corrected.sections.preMortemAndOperationalReadiness);
 });
 
 test("review omission or failure of the pre-mortem criterion cannot bypass its gate", async () => {
@@ -775,7 +848,7 @@ test("owned future mapping gaps and absent production data do not require activa
     assert.match(ctx.calls[2].prompt.split("\nDATA:\n")[0], /not rollout approval/);
 });
 
-test("combined accessibility and post-implementation handoff does not reuse v5-v9 outputs", async () => {
+test("healthy-operation handoff does not reuse v5-v11 outputs", async () => {
     const legacyDesign = design();
     delete legacyDesign.sections.accessibility;
     delete legacyDesign.sections.preMortemAndOperationalReadiness;
@@ -788,11 +861,12 @@ test("combined accessibility and post-implementation handoff does not reuse v5-v
     legacyReview.criteria = legacyReview.criteria.filter((criterion) => criterion.id !== "preMortemAndReleaseGates");
     const ctx = context([evidence(), design(), review()]);
     const journal = new Map();
-    for (const version of ["v5", "v6", "v7", "v8", "v9"]) {
+    for (const version of ["v5", "v6", "v7", "v8", "v9", "v10", "v11"]) {
         const prefix = `design-feature-${version}-${digest(ctx.args)}`;
-        const oldDesign = ["v8", "v9"].includes(version) ? design() : legacyDesign;
-        delete oldDesign.sections.accessibility;
-        const oldReview = ["v8", "v9"].includes(version) ? review(oldDesign) : legacyReview;
+        const oldDesign = ["v8", "v9", "v10", "v11"].includes(version) ? design() : legacyDesign;
+        if (!["v10", "v11"].includes(version)) delete oldDesign.sections.accessibility;
+        const oldReview = ["v8", "v9", "v10", "v11"].includes(version) ? review(oldDesign) : legacyReview;
+        oldReview.criteria = oldReview.criteria.filter((criterion) => criterion.id !== "healthyOperationAndFailureDetection");
         journal.set(`${prefix}-evidence`, evidence());
         journal.set(`${prefix}-${digest(evidence())}-design`, oldDesign);
         journal.set(`${prefix}-${digest(evidence())}-independent-review-0-${digest(oldDesign)}-${digest([])}`, oldReview);
@@ -805,7 +879,7 @@ test("combined accessibility and post-implementation handoff does not reuse v5-v
     const packet = await runDesignFeature(ctx);
     assert.equal(packet.recommendation, "GO to Planning");
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v11-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v12-")));
     assert.ok(packet.design.sections.preMortemAndOperationalReadiness);
     assert.ok(packet.design.sections.accessibility);
 });
@@ -963,7 +1037,7 @@ test("changed accessibility schema and rubric never replay pre-accessibility v5 
     };
     assert.equal((await runDesignFeature(ctx)).recommendation, "GO to Planning");
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v11-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v12-")));
 });
 
 test("ordinary agent failures explicitly fail closed at each stage", async () => {
@@ -1490,7 +1564,7 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v11-/);
+    assert.match(initial.keys[0], /^design-feature-v12-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
     changed.args.sourceManifest[0].revision = newerSourceRevision;

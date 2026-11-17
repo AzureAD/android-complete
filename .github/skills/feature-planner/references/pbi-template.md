@@ -169,6 +169,33 @@ Dependencies and Additional Context headings, replacing code/build criteria with
   mismatches. State blast radius, affected customers/cohorts, and severity assumptions.
 - **Prevention, detection and response**: Map each scenario to safeguards, detection
   signals, response actions, responsible owners and evidence/validation needs.
+- **Healthy operation and failure detection**: Retain this exact section in the
+  post-implementation pre-mortem; seed its customer-success definitions and known
+  measurement inputs in the design-time brief. Generate feature-specific happy-path
+  and failure/degradation scenarios with stable IDs linked to requirements and the
+  exact design telemetry contract. Define success as observable customer completion,
+  not merely API success or absence of errors. Cover eligible/exposed users, attempts,
+  completions/completion rate, cancellation versus abandonment, latency and silent/
+  missing telemetry. For each measure define user/device/journey/attempt units,
+  numerators/denominators, eligible/exposed/executing/baseline cohorts, version/flag
+  dimensions, observation/completion windows, retry/deduplication/sampling rules and
+  ingestion delay. Use existing permitted signals, never new disabled-path telemetry;
+  unavailable eligibility/exposure counts remain explicit owned coverage gaps.
+  Generate actual Kusto (KQL) draft text with query IDs covering every applicable
+  scenario/measure, expected output columns/units, healthy baseline or explicitly
+  unconfirmed target, and interpretation/action. Shared queries may cover multiple
+  scenarios if mappings are explicit; query titles alone are insufficient. Distinguish
+  time-window-matured abandonment from cancellation, in-flight work and ingestion
+  loss; treat zero denominators/low samples as insufficient evidence, not 100% success
+  or automatic health/failure. Connect deviations to failure/customer impact,
+  prevention and response; identify monitoring/response owners, cadence/window and
+  investigation, stop-expansion and rollback triggers. Unknown targets/owners need
+  explicit resolution actions, not invented approval. Inline the scenario/query/
+  response mapping, referencing the canonical telemetry contract rather than copying
+  a whole dashboard specification. For non-runtime work, justify each inapplicable
+  metric/query and provide observable alternative verification/ownership; do not
+  omit the section or fabricate telemetry. Generate the scenarios and queries only
+  after implementation completion and PBI dispatch, not at design time.
 - **Monitoring and KQL drafts**: Include actual draft query text for the proposed
   signals, telemetry event/span and property contracts, table/property mappings,
   units, outcome definitions, eligibility/execution/baseline cohorts, time windows,
@@ -195,6 +222,8 @@ disabled and does not block this documentation PBI.
 **Separate rollout gate**: Before relying on monitoring for rollout, the telemetry/
 query validation owner must validate contracts, mappings, outcomes, cohorts and
 denominators against an **approved enabled E2E test cohort** and attach evidence.
+Exercise controlled happy-path/failure, missing/late-terminal and zero/low-sample
+cases to verify query outputs and detection semantics, not just success-event arrival.
 Broad production enablement is not required for validation. The release owner must
 resolve release-blocking gaps and approve release prerequisites and rollback readiness.
 Completing the authoring/review PBI is **not rollout approval**, query validation, or

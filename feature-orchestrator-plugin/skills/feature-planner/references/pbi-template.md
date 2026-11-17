@@ -153,6 +153,29 @@ Replace application-code/build acceptance criteria with document-review criteria
 - Describe failure scenarios and customer impact, affected cohorts/blast radius,
   and applicable regressions, cancellation, retry, partial state and upgrade risks.
 - Map each scenario to prevention, detection, response and accountable owners.
+- Retain **Healthy operation and failure detection** in the post-implementation
+  pre-mortem; seed customer-success definitions/known measurement inputs in the
+  design brief. Generate requirement/design-telemetry-contract-linked happy-path
+  and failure/degradation scenarios with stable IDs and customer-visible completion,
+  not just API success/no errors. Cover eligible/exposed users, attempts, completions/
+  completion rate, cancellation versus abandonment, latency and missing telemetry.
+  Define user/device/journey/attempt units, numerators/denominators, eligible/exposed/
+  executing/baseline cohorts, version/flag dimensions, observation/completion windows,
+  retry/deduplication/sampling and ingestion delay. Use existing permitted signals,
+  never new disabled-path telemetry; unavailable eligibility/exposure counts are owned
+  gaps. Include actual Kusto (KQL) draft text with query IDs mapped to every applicable
+  scenario/measure, expected columns/units, healthy baseline or unconfirmed target,
+  and interpretation/action; shared queries are fine with explicit mappings, query
+  titles alone are not. Separate time-window-matured abandonment from cancellation,
+  in-flight work and ingestion loss; zero denominators/low samples mean insufficient
+  evidence, not 100% success or automatic health/failure. Map deviations to customer
+  impact, safeguards and response, with monitoring/response owners, cadence/window,
+  investigation, stop-expansion and rollback triggers. Assign resolution actions for
+  unknown targets/owners, not invented approval. Inline scenario/query/response mappings
+  and reference the canonical contract rather than copying a dashboard specification.
+  For non-runtime work justify each inapplicable metric/query and provide observable
+  alternative verification/ownership; never omit the section or fabricate telemetry.
+  Generate scenarios and queries only after implementation completion and PBI dispatch.
 - Include monitoring signals and actual KQL draft text; document telemetry
   event/span/property contracts, table/property mappings, units/outcomes, eligibility,
   execution and baseline cohorts, time windows, numerators/denominators,
@@ -175,7 +198,9 @@ while disabled and must not block document authorship/review.
 Before relying on monitoring for rollout, the telemetry/query-validation owner
 must validate contracts, mappings, outcomes, cohorts and denominators using an
 **approved enabled E2E test cohort** and attach evidence; broad production
-enablement is not required. The release owner separately resolves release-blocking
+enablement is not required. Exercise controlled happy-path/failure, missing/late-terminal
+and zero/low-sample cases to verify query outputs/detection, not just success-event
+arrival. The release owner separately resolves release-blocking
 gaps and approves release prerequisites and rollback readiness. Completing this
 PBI is **not rollout approval**, query validation or activation permission.
 Do not make documentation completion depend on production activation.

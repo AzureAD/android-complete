@@ -94,6 +94,14 @@ monitoring signals and later KQL drafts with contracts, cohorts, denominators an
 coverage gaps; monitoring owner/cadence/stop criteria; rollback including active attempts; validation and
 release prerequisites with owners.
 
+Seed **Healthy operation and failure detection** with feature-specific customer
+completion and known measurement inputs. Inline the linked contract's requirement
+for post-implementation happy-path/failure scenarios and actual scenario-mapped Kusto
+drafts: eligibility/exposure, attempts/completions, cancellation/abandonment, latency,
+denominators/cohorts, missing telemetry and owned investigation/stop/rollback actions.
+API success or absence of errors alone does not establish customer success; preserve coverage gaps
+and per-measure non-runtime applicability with alternative verification.
+
 Include a **Pre-mortem child PBI** field: use `Pending feature planning` before
 backlog creation, or the existing AB# ID and durable URL when available. Feature
 planning must include a dedicated child PBI to author/review the artifact, reusing
