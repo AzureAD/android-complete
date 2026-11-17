@@ -38,6 +38,10 @@ from tools.coordinates import coords
 
 ID = "integ_prs"
 KIND = "scout"
+NAME = 'Auto-create integration PRs'
+REQUIRED_TOOLS = ('gh', 'az')
+REQUIRES_APPROVAL = False
+POLLABLE = True
 WRITE_COMMAND = "create-integration-prs"
 
 # The authenticator repo lives in msazure/One; its coordinates come from coordinates.yaml.
@@ -322,3 +326,48 @@ def render_preview(p) -> str:
     if not p["ready"]:
         lines.append(f"\nNOT READY — missing: {', '.join(p['missing'])}")
     return "\n".join(lines)
+
+KNOWLEDGE = {'summary': 'Auto-open the 8 release integration/freeze PRs across the 4 repos (2 per repo).',
+ 'what': 'Once `orchestrator_finalization` succeeds, this step opens 2 PRs per repo for '
+         'common, msal, broker, and authenticator — (A) FREEZE working/release/<v> -> '
+         "release/<v>, and (B) INTEGRATION release-integration/<v> -> dev (or 'working' for "
+         'authenticator). For the integration PRs it also brings the RI branch up to date with '
+         'the target and REVERTS build.gradle so the target stays dynamic (only version + '
+         'changelog transfer); if a non-build.gradle conflict remains it HOLDS that PR for a '
+         'human.\n',
+ 'trigger': 'Runs only after `orchestrator_finalization` verifies that the Release '
+            'Orchestrator reached the GitHub release-notes gate and captured the final build '
+            'outputs. It independently confirms every required source and target branch exists '
+            'before offering the checked write preview.\n',
+ 'who': 'Scout does the work (an agent step). The release owner reviews the preview and '
+        'triggers the write. One shared PBI is created and referenced (AB#<id>) in every PR '
+        'body.\n',
+ 'where': ['common: github.com/AzureAD/microsoft-authentication-library-common-for-android',
+           'msal: github.com/AzureAD/microsoft-authentication-library-for-android',
+           'broker: msft.ghe.com/security/ad-accounts-for-android',
+           'authenticator: msazure/One AD-MFA-phonefactor-phoneApp-android (target = working)'],
+ 'how': 'Preview first: `create-integration-prs --release <id>` prints the full plan (per '
+        'repo: branch existence, existing-vs-new PR, and the RI edit analysis — commits '
+        'behind, build.gradle files to revert, remaining human conflicts) and writes NOTHING. '
+        'When it looks right, run `create-integration-prs --release <id> --execute` to create '
+        'the PBI, edit the RI branches, and open the PRs. Idempotent: an existing open PR '
+        'head->base is reused (labels ensured), never duplicated. Labels: skip-coverage-check '
+        'on all github/GHE PRs; common also gets Skip-Consumers-Check. Test safely with the '
+        "step's `versions`/`branches`/`repos`/`pbi` mocks.\n",
+ 'consequences': '--execute is a WRITE: it creates a real PBI, PUSHES commits to the '
+                 'release-integration branches (fast-forward only, never force), and opens '
+                 'real PRs on github.com, GitHub Enterprise, and Azure DevOps. RI editing runs '
+                 'in an isolated git worktree so your local checkouts are untouched, and a PR '
+                 'is never opened when unresolved non-build.gradle conflicts remain.\n',
+ 'faqs': [{'q': 'Why does it revert build.gradle?',
+           'a': 'The RI branch is cut from the working-release branch, so it carries the '
+                "release's PINNED build.gradle. dev/working must stay DYNAMIC, so the step "
+                "restores the target's build.gradle and transfers only the version bump + "
+                'changelog.'},
+          {'q': 'What if there are real conflicts?',
+           'a': 'build.gradle conflicts are auto-resolved to the target. Any other conflict '
+                "HOLDS that one PR (it isn't opened) and is surfaced so a person can resolve "
+                'it, then rerun.'},
+          {'q': 'Will it duplicate a PR I already opened?',
+           'a': 'No. It looks for an open PR with the same head->base first and reuses it '
+                '(just ensuring labels).'}]}

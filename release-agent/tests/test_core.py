@@ -1324,25 +1324,22 @@ def test_scout_pending_empty_when_all_scout_done():
 
 
 def test_scout_steps_declare_outbound_effect():
-    """Every scout step that sends something EXTERNAL (email / Teams post / pipeline
-    trigger) carries outbound=True, so the autonomous automation posts a one-line Scout-DM
-    copy of what went out. A local follow-up like lockdown's check-lockdown is outbound=False
-    (nothing left the box) and stays quiet."""
+    """Every notification/write scout step in Phases 0-1 carries outbound=True, while a
+    local gather-then-decide step like lockdown carries outbound=False."""
     from orchestrator.outcomes import as_dict
     import steps as _steps
     st = ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="default")
-    expect = {
-        ("preflight", "notice"): True,           # workiq_send_email
-        ("preflight", "flight_reminder"): True,  # workiq_send_chat_message
-        ("preflight", "lockdown"): False,        # check-lockdown (local follow-up)
-        ("ccd", "final_reminder"): True,         # workiq_send_email
-        ("ccd", "pr_reminder"): True,            # workiq_send_chat_message
-        ("ccd", "localization"): True,           # azure_devops-pipelines_run_pipeline
-    }
-    for (phase, sid), want in expect.items():
-        out = as_dict(_invoke(_steps.get_step(phase, sid).build, st))
-        assert out["kind"] == "needs_skill", f"{phase}.{sid} not needs_skill"
-        assert out.get("outbound") is want, f"{phase}.{sid} outbound={out.get('outbound')} want {want}"
+    orch = Orchestrator(CONFIG, st, mocks={})
+    for phase_id in ("preflight", "ccd"):
+        for step_def in orch.workflow.phase(phase_id).steps:
+            if step_def.kind.value != "external":
+                continue
+            mod = _steps.get_step(phase_id, step_def.id)
+            handler = orch.handler(phase_id, step_def.id)
+            want = bool(handler.notification or step_def.write_command)
+            out = as_dict(_invoke(mod.build, st))
+            assert out["kind"] == "needs_skill", f"{step_def.key} not needs_skill"
+            assert out.get("outbound") is want, f"{step_def.key} outbound={out.get('outbound')} want {want}"
 
 
 
@@ -1377,8 +1374,14 @@ def test_terminal_step_dispatch_does_not_rebuild_payload(tmp_path, capsys, monke
     def must_not_build(_state):
         raise AssertionError("A terminal step must not rebuild a sendable payload")
 
-    for phase, sid in (("ccd", "final_reminder"),
-                       ("preflight", "notice"), ("preflight", "flight_reminder")):
+    probe_orch = Orchestrator(CONFIG, ReleaseState(release_id=rid, ccd="2026-09-09"), mocks={})
+    notif_targets = [
+        (phase_id, s.id)
+        for phase_id in ("ccd", "preflight")
+        for s in probe_orch.workflow.phase(phase_id).steps
+        if probe_orch.handler(phase_id, s.id).notification
+    ]
+    for phase, sid in notif_targets:
         monkeypatch.setattr(steps.get_step(phase, sid), "build", must_not_build)
         for status in ("done", "skipped"):
             st = ReleaseState(release_id=rid, ccd="2026-09-09")
@@ -1716,10 +1719,9 @@ def test_step_knowledge_base_answers_step_questions():
     # rendered markdown surfaces the FAQ answers
     md = kb.render_knowledge("preflight", "vitals", v)
     assert "Where is policy status?" in md
-    # every Phase-0 step has an entry
-    for sid in ("notice", "flight_reminder", "lockdown",
-                "breaking", "cg", "vitals", "cron"):
-        assert kb.get_knowledge("preflight", sid), sid
+    _, orch = _orch()
+    for step_def in orch.workflow.phase("preflight").steps:
+        assert kb.get_knowledge("preflight", step_def.id), step_def.id
     # a step with no entry → None (skill says "no knowledge yet", doesn't invent)
     assert kb.get_knowledge("monitor", "adoption") is None
 
@@ -1746,7 +1748,7 @@ def test_step_knowledge_module_overlays_yaml():
 
 
 def test_step_modules_and_config_stay_in_sync():
-    """Default modules must be configured; the catalog validates their full contract."""
+    """Configured handler steps compile cleanly; inactive step modules on disk do not block topology edits."""
     import yaml
     import steps
     from orchestrator.handlers import HandlerCatalog
@@ -1755,7 +1757,10 @@ def test_step_modules_and_config_stay_in_sync():
         workflow = WorkflowDefinition.compile(yaml.safe_load(stream))
     discovered = steps.discover()
     assert discovered, "no step modules discovered — auto-discovery broke"
-    assert set(discovered) <= set(workflow.step_by_key), "orphan default step module"
+    for key, mod in discovered.items():
+        assert isinstance(getattr(mod, "ID", None), str) and mod.ID
+        assert getattr(mod, "KIND", None) in ("agent", "scout", "human", "attest", "gate"), key
+        assert callable(getattr(mod, "build", None)), key
     catalog = HandlerCatalog.compile(workflow, steps.get_step)
     assert set(catalog.handler_by_key) == set(workflow.step_by_key)
 

@@ -24,6 +24,10 @@ from tools.coordinates import coords
 
 ID = "pr_reminder"
 KIND = "scout"
+NAME = 'Remind Code Reviews chat of the CCD PR-merge deadline'
+REQUIRED_TOOLS = ('workiq',)
+REQUIRES_APPROVAL = False
+AUTOMATION = 'ccd-morning'
 NOTIFICATION = True
 
 # Step config (co-located). Posts to the real "Code reviews" chat (redirect for
@@ -103,3 +107,24 @@ def build(context: StepContext):
         note=f"posted to {target_note}",
         outbound=True,
     )
+
+KNOWLEDGE = {'summary': "Teams reminder to the 'Code reviews' chat: merge required PRs before the 11 PM "
+            'branch cut.',
+ 'what': 'The morning-of-CCD Teams message telling engineers every required PR must be merged '
+         'today before the release branch is cut automatically at 11:00 PM; if a required PR '
+         "won't make it, request a CCD delay or a post-CCD cherry-pick; and merge any PR with "
+         'user-facing strings before the localization pipeline runs at noon. Every deadline is '
+         'explicitly dated to CCD so delayed delivery does not silently move the branch-cut or '
+         'localization cutoff to the delivery day.\n',
+ 'who': 'Scout posts it automatically (a scout step) on CCD morning. CCD-delay and cherry-pick '
+        'requests must be approved by Moumita Ghosh (moghosh@microsoft.com).\n',
+ 'where': ["Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / "
+           'EXTERNAL-REFERENCES.md).'],
+ 'how': 'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`). '
+        "To test, redirect with the send_to mock knob ('me' = your own chat).\n",
+ 'faqs': [{'q': 'Who approves a CCD delay or cherry-pick?',
+           'a': 'Moumita Ghosh (moghosh@microsoft.com) — both a Code Complete delay and a '
+                'post-CCD cherry-pick require her approval.'},
+          {'q': 'Why merge string PRs before noon?',
+           'a': 'The localization pipeline is triggered at noon; strings merged after it '
+                "aren't guaranteed to be localized this release."}]}

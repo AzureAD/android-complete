@@ -75,6 +75,11 @@ from orchestrator.authority import OwnStepData
 EVIDENCE = (OwnStepData(),)
 ID = "distribute_tests"
 KIND = "scout"
+NAME = 'Distribute bug-bash tests across the team'
+REQUIRED_TOOLS = ('az', 'workiq')
+REQUIRES_APPROVAL = True
+REPEATABLE = True
+WRITE_PRECONDITION = 'command'
 WRITE_COMMAND = "distribute-tests"
 
 
@@ -496,3 +501,120 @@ def build(context: StepContext[BuildParameters]):
     oof = list(context.parameters.oof) if context.parameters.oof is not None else None
     oce = context.parameters.oce
     return inspect_distribution(context, oof=oof, oce=oce, roster_file=context.parameters.roster_file)[0]
+
+KNOWLEDGE = {'summary': 'Validate live Current Tester distribution and apply only reviewed point '
+            'corrections.',
+ 'what': "Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree) "
+         '+ Authenticator (actual Manual Tests category points for new layouts; the curated '
+         'ReleaseBugBash query for historical layouts) — and checks that live ADO assignments '
+         'are eligible and evenly balanced, with matching plan testers. Proposes corrections '
+         'only for mismatches, preserving current assignments where possible. It never '
+         'silently redistributes or replays a saved assignment map. The Authenticator set '
+         "EXCLUDES cases already automated by this release's auth ECS UI-test run — read from "
+         "ui_test_status's completed result through its public accessor, NOT from the "
+         "cross-platform 'Automated' tag. Cases with a configured triage tag (Blocked) remain "
+         'explicit owner-triage work, not silently discarded or treated as runnable. Applied '
+         'automated failures also belong to owner triage. The remaining manual cases are '
+         'evenly distributed; triage is not counted in the manual workload. Eligible = the '
+         "roster DL 'androididentity@microsoft.com' MINUS the always-excluded people (jialh, "
+         'moghosh, veenasoman), the release owner, the current on-call engineer (OCE), and '
+         'anybody the owner says is OOF for this Bug Bash. Ownership and corrections use this '
+         "release's plan/suite test-point Current Tester. Shared test-case Assigned To "
+         '(System.AssignedTo), other copies and historical releases are not changed. Manual '
+         'Broker points and failed investigation points remain independent even when they '
+         'reference the same shared case. Monthly investigations are never balanced as manual '
+         'work, including after their points are resolved.\n',
+ 'who': 'The release owner supplies availability (never calendar/presence/automatic OOF '
+        'lookup). Scout asks "Is anyone OOF for this Bug Bash?" before the first preview; '
+        'without an explicit answer the agent blocks and exposes only eligible names/verified '
+        'UPNs. The release owner, resolved primary OCE, Jia Le He, Moumita Ghosh and Veena '
+        'Soman are removed BEFORE availability choices are shown. An unresolved OCE blocks '
+        'without exposing candidates; Scout must resolve it, not ask the user to exclude it as '
+        'OOF. After that, Scout validates live ADO during `next` (an agent step), holding on '
+        'mismatches and completing only when ADO is correct. Applying reviewed corrections is '
+        'a separate, explicit action that changes only Testers in the two release suites. '
+        'Outcomes, completed results and shared tags are not changed by assignment '
+        'alignment.\n',
+ 'how': 'First resolve the current primary OCE using the ICM team configured in '
+        'readiness.yaml, then run `distribute-tests --release <id> --oce <verified-upn> '
+        '--json` to expose filtered candidates. For missing roster evidence, use the '
+        'discovered structured fetch route (actual MCP OR native CLI/workiq-read) for '
+        "/groups?$filter=mail eq '<configured-email>'&$select=id,displayName,mail&$top=100, "
+        'then '
+        '/groups/<returned-id>/members?$select=id,displayName,userPrincipalName,mail&$top=100 '
+        'and every returned page. The configured group is androididentity@microsoft.com, not '
+        'the historical androidauth example. Supply the complete fresh owner-bound canonical '
+        'workiq.fetch observation bundle with --roster-file; no raw roster or guessed '
+        'identities are accepted. Missing/denied evidence holds, never restore the removed '
+        'remote registration or try another identity/transport after denial. No Azure CLI '
+        'Graph or people-search substitution. Never guess the on-call UPN or silently omit '
+        'that exclusion. Ask the owner with m_ask_user: "Is anyone OOF for this Bug Bash?" '
+        'with "Nobody is OOF" or "Exclude people"; stop and wait. For "Exclude people", show '
+        'the candidate list and ask for actual names or verified UPNs (free-text), then stop '
+        'and wait again. Resolve exact names uniquely against the roster; ambiguous/unknown '
+        "input needs clarification, never a guess. Record ONLY the owner's answer: "
+        '`distribute-tests --release <id> --no-oof` or `distribute-tests --release <id> --oof '
+        '<upn> [--oof <upn> ...] [--oce <upn>]`. The command stores canonical UPNs, who '
+        'confirmed, source, time and release scope in step.data.oof. No availability dates are '
+        'inferred. Later reads reuse the confirmation; either choice flag explicitly replaces '
+        'it. `distribute-tests --release <id> --validate --json` reads ADO and reports current '
+        'eligibility, balance, triage and tester mismatches without writing assignments. The '
+        'default command also provides transient proposed corrections. Show the exact '
+        'corrections and obtain approval, then use `distribute-tests --release <id> --apply '
+        '--review-hash <approved-preview-hash>`. Repeat the same OOF/OCE selections and roster '
+        'file with --apply --approved-by <reviewer>. The command rereads live inputs and '
+        'checks the digest before writing; it never loads a saved assignment plan. The digest '
+        'is recorded as authorization, not a reusable assignment map. Match-before-write '
+        'point/Tester/source checks protect concurrent release changes. Only mismatches are '
+        'corrected, then live ADO is read again. Outcomes/tags are preserved. Partial failures '
+        'remain visible; review the live remaining corrections instead of replaying or rolling '
+        'back. If ADO is already valid, no redistribution is needed, including after an '
+        'interrupted local completion. Only availability decisions and workflow status are '
+        'retained internally; legacy data.plan is ignored and removed on step execution. '
+        'Progress reads live ADO. New Broker source-v4 flight/category suites (including '
+        'separate Stress Tests and UI Automation) use exact completed-fill failure-point '
+        'identities. New Authenticator layouts use the actual Manual Tests child for manual '
+        'work, exclude all mapped Automated Tests cases, and keep Monthly UI Failure Triage '
+        'separate. A resolved Monthly point retains its Current Tester and never enters the '
+        'manual allocation. Where a Broker case occurs in both workloads, B:<id> is manual '
+        'work and B:<id>:triage is the independent failure workload; review/apply bind their '
+        'exact plan/suite/point/configuration identities. An already-reviewed Monthly outcome '
+        'is rechecked immediately before its Current Tester update to preserve new '
+        'resolutions.\n',
+ 'links': [{'name': 'Broker test-plans doc',
+            'url': 'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans'},
+           {'name': 'How to make a test suite for bug bash (IDWiki 33580)',
+            'url': 'https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-'}],
+ 'faqs': [{'q': 'What happens when someone changes assignments directly in ADO?',
+           'a': 'ADO is authoritative. Validate current release-point Testers against '
+                'eligibility, balance and triage. Valid manual changes remain untouched. '
+                'Mismatches need exact approval, never an internal assignment replay. Keep the '
+                'authorization digest, not an assignment map.'},
+          {'q': "How is 'even' decided when counts don't divide evenly?",
+           'a': 'target = total ÷ eligible; the remainder people (those with the most default '
+                'tests) get one extra, so heavy-default folks keep their preference.'},
+          {'q': 'Does applying it change the master plan?',
+           'a': 'No. Corrections change only Current Tester on the reviewed release '
+                'plan/suite/test points, not shared test-case Assigned To (System.AssignedTo), '
+                'other copies, outcomes or historical assignments.'},
+          {'q': 'What if one Broker case is both manual work and an automated failure?',
+           'a': 'The workload scopes remain independent. Keep its manual points in '
+                'eligible-tester balancing and only its acknowledged failure points in owner '
+                'triage. A triage correction must not change Current Tester on the manual copy '
+                'or an untracked configuration.'},
+          {'q': 'Who is excluded?',
+           'a': 'Always: jialh (Jia Le He), moghosh (Moumita Ghosh), veenasoman (Veena Soman). '
+                'The release owner and resolved primary OCE are also removed before showing '
+                'availability choices. Missing OCE means no candidate list until Scout '
+                'resolves it. Owner-confirmed OOF removes additional eligible people per '
+                'release; Shahzaib is not a permanent exclusion. Nobody is OOF must be '
+                'explicitly confirmed too.'},
+          {'q': 'How do we know which Authenticator cases are automated vs manual?',
+           'a': "From ui_test_status's completed result API: its recorded automated case IDs "
+                'are excluded, without reading raw Phase-2 evidence, reprojecting or '
+                'refetching. Missing/partial/stale receipts block, never yield an empty set. '
+                'Preview/apply recheck the receipt ID plus release/RC, ECS/Local builds, Auth '
+                'APK/test builds and both plan/suite identities. A new fill invalidates the '
+                'preview even with identical source IDs. Refresh the owning clone/verification '
+                'steps and rerun ui_test_status when needed; historical state is not '
+                'migrated.'}]}

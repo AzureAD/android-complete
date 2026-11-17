@@ -10,6 +10,8 @@ from tools.pipelines import auth_build_url
 
 ID = "identify_auth_build"
 KIND = "agent"
+NAME = 'Identify final Authenticator build'
+REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 EVIDENCE = (PipelineScope(PipelineSlot.FINAL_AUTH),)
 
@@ -78,3 +80,19 @@ def build(context: StepContext):
         links=[{"name": "Final Authenticator build", "url": url}],
         updates=(PipelineEvidence(runs),),
     )
+
+KNOWLEDGE = {'summary': 'Capture the final Authenticator build/version from pipeline 475778 on the release '
+            'branch.',
+ 'what': 'Finds the latest completed successful AndroidBuildBroker1ES run (pipeline 475778) on '
+         '`state.versions.authenticator` (`release/YYYY/MM/DD`) and records its build id, '
+         'numeric app version, build number and built commit into '
+         '`state.pipeline_runs.final_auth`.\n',
+ 'who': 'Scout runs it automatically at the start of Phase 5. If no build is found, the step '
+        'blocks for release-owner investigation; the release digest contacts the owner by '
+        'email and Scout.\n',
+ 'where': ['pipeline: msazure/One AndroidBuildBroker1ES definition 475778',
+           "branch: state.versions.authenticator ('release/YYYY/MM/DD')"],
+ 'how': "Runs automatically. It never uses the Release Orchestrator's old AuthenticatorBuild "
+        'tags. It reads the latest run on the release branch, parses the numeric app version '
+        "from the run's build number, and stores it for tag_authenticator, wiki_payload and "
+        'rollout_start.notice.\n'}

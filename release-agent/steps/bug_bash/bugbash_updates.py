@@ -78,6 +78,11 @@ from steps.bug_bash.ui_results import completed_result
 
 ID = "bugbash_updates"
 KIND = "scout"
+NAME = 'Post bug-bash progress updates (first post + periodic poller)'
+REQUIRED_TOOLS = ('az', 'workiq')
+REQUIRES_APPROVAL = False
+REPEATABLE = True
+AUTOMATION = 'bug-bash-update-poller'
 NOTIFICATION = True
 
 BROKER_SUITE_NAME = "Manual Tests (Android Broker)"
@@ -280,3 +285,130 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"Never invent member identities or omit mentions to bypass a resolution failure.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
         f"--text \"bugbash-poller: <decision>\"`.")
+
+KNOWLEDGE = {'summary': 'Post the first bug-bash progress update to the meeting chat and start the 3h '
+            'update poller.',
+ 'what': 'Reaching this step posts an initial progress update to the Bug Bash meeting chat and '
+         'provisions the on-demand `bug-bash-update-poller` automation. Each update is grouped '
+         "by each test's release-point Tester (read live from BOTH the Broker 'Manual Tests "
+         "(Android Broker)' subtree, Broker UI failure-triage points, and the Authenticator "
+         'bug-bash suite). The code-generated header includes Broker test plan, Authenticator '
+         'suite, MRWP · ECS run, MRWP · Local run, Auth pipeline and Get test accounts (portal '
+         'URL from config/coordinates.yaml links.test_accounts). Source IDs come from the '
+         'latest recorded RC: ecs.run_id, local.run_id and auth.test.run_id. Auth pipeline '
+         'opens the UI-test run in msazure/One, not the upstream APK build; MRWP links use '
+         'identitydivision/Engineering. No pipeline discovery/refetch is needed; '
+         'missing/invalid run IDs require refreshing the owning verification step. Initial, '
+         'periodic and final reports share these links. Counts cover manual/triage work, not '
+         'every Authenticator suite case. The completed ui_test_status result supplies the '
+         'same automated-case classification used by distribution. Automation-only Auth cases '
+         'are excluded from both done and total, even if their shared ADO assignee is a manual '
+         'tester. Applied automated failures remain visible as triage; genuine manual '
+         'Passed/N/A cases still count as done. The filter is classification-based, never '
+         '"remove all passes" or a shared Automated tag. A test counts as done only when it '
+         'PASSED (or is N/A); not-run, failed, and blocked all count as remaining. Always list '
+         'ALL workload cases under each person, not just those remaining: unresolved work '
+         'first, then Passed/N/A rows. The leading icon is the only row outcome indicator '
+         '(checkmark Passed, dash N/A, cross Failed, stop sign Blocked, square Not run), with '
+         'a single report legend and no redundant trailing status text. Every row has a '
+         'Broker/Authenticator label from its source plan (both labels if the same case is '
+         'present in both); never infer product from titles. Broker and Authenticator cases '
+         "actually written Failed in ui_test_status's completed result retain a short "
+         "'Automation triage' context note. Resolved triage rows remain visible with their "
+         'current outcome icon, not an open-failure label. Broker triage reads the completed '
+         "fill's originally failed points from its exact UI suite, checking "
+         'point/case/configuration identity. Count distinct cases, not configuration points; '
+         'all originally failing configurations must resolve to Passed/N/A. Successful '
+         'automation and untouched configurations outside that triage set are not included. '
+         'Missing or changed tracked points block rather than disappear from totals. No raw '
+         'Phase-2 capture schema, new projection or source-only/unapplied failure enters this '
+         "set. Missing/partial/stale results surface an error requiring the owning fill's "
+         'refresh. Owners with any remaining test are @mentioned; owners who finished appear '
+         "by name with an 'all completed' line AND their complete case list (no mention). The "
+         'final poller wrap-up includes the same full completed-case report instead of just a '
+         "summary. The progress step resolves owners against the verified meeting's members, "
+         'using directory lookup for UPN/SMTP differences. Pending owners require a real Entra '
+         'user GUID and display name; membership-record IDs and UPN strings are not mention '
+         'user IDs. Unknown/nonmember owners or lookup failures block preparation instead of '
+         'silently sending plain email addresses. Both initial and periodic paths send '
+         'matching HTML at-tags and canonical mentions metadata unchanged through notification '
+         'claim. Scout supplies a fresh account/argument-bound Teams ListChatMembers or native '
+         'workiq_get_chat observation envelope for the exact chat; raw legacy member JSON is '
+         'not proof. Optional directory_observations link actual assigned UPNs to member GUIDs '
+         'when SMTP differs: use the discovered structured fetch route for the exact '
+         '/users/<verified-UPN> lookup requested by the command, not people search/Ask. Bind '
+         'the returned immutable GUID to the exact meeting member GUID; never infer membership '
+         'from an address or use a membership-record ID. Missing input prints exact read '
+         'requests and never authorizes delivery. First-post notification prepare uses --param '
+         'members_file=<path>, and the periodic command uses --members-file <path>. The chat '
+         'identity is validated; never synthesize user IDs or use an unrelated chat. It is '
+         'fire-and-continue — the step completes after the first post so the phase proceeds; '
+         'the poller runs in the background.\n',
+ 'who': 'Scout resolves it during `next` (a scout step). It gathers progress, then uses '
+        'notification prepare/claim/result for the first update. The claimed payload already '
+        'contains the resolved mentions; never rebuild it. Provision the poller only after '
+        'delivery and completion are acknowledged.\n',
+ 'how': 'After the first post, provision the on-demand poller from its single source: '
+        '`automation plan --release <id> --on-demand bug-bash-update-poller --json`. Create '
+        'exactly that returned automation, then register every `registration` field including '
+        '`cleanup_when`. Each tick runs `post-bugbash-update --release <id>` and acts on the '
+        'decision (off_hours → nothing; post/complete → use the shared notification '
+        'claim/result protocol for the staged snapshot). Run cleanup in a finally block even '
+        'on silence/errors; delete first, deregister after success. Only acknowledged final '
+        "delivery sets poll_complete. Blocks if the meeting chat isn't activated (run "
+        'activate_chat). Ordinary periodic updates keep only the latest unclaimed preview; '
+        'expired unsent snapshots are removed. After confirmed delivery and settled completion '
+        'they become small unsendable receipts, retained until 24 hours beyond expiry. Source '
+        'pending omits those receipts; an explicit notification --id can inspect one while '
+        'retained. Real-clock retention never deletes claimed/uncertain or sent-unfinalized '
+        'work, the first/final posts, invitation receipts or referenced records. No old send '
+        'is replayed because its expired record is absent.\n',
+ 'faqs': [{'q': 'When do the updates run?',
+           'a': 'Every 3 hours, configured by bug-bash-update-poller.every in '
+                'config/automations.yaml. Ticks post only during 09:00–18:00 '
+                'America/Los_Angeles on weekdays excluding US federal holidays. Outside that '
+                'window they send nothing; posting resumes at the next scheduled tick inside '
+                'the working window, not necessarily exactly at 09:00.'},
+          {'q': 'When is the first progress message sent?',
+           'a': 'When the engine reaches bug_bash.bugbash_updates with its prerequisites '
+                'ready, it prepares the first post for the normal approval/delivery flow. It '
+                'does not wait for a polling interval and is not scheduled relative to the '
+                'meeting start. After confirmed first delivery/completion, Scout creates the '
+                'recurring poller. Only recurring ticks use the working-hours gate. If all '
+                'work is already complete, the initial step sends nothing and starts no '
+                'poller.'},
+          {'q': 'Why does a periodic update still retain a small delivery receipt?',
+           'a': 'It prevents a retry or restarted worker from repeating a confirmed send '
+                'without retaining the full report. Acknowledged message IDs (or provider '
+                'evidence), destination, execution identity and the approved hash remain '
+                'temporarily. Teams contains the delivered report; ADO remains authoritative '
+                'for test progress. Uncertain sends retain full evidence and still require '
+                'recovery.'},
+          {'q': 'When do the updates stop?',
+           'a': 'After every test completes, the final wrap-up must be claimed and '
+                'successfully acknowledged before poll_complete is recorded. Known failed '
+                'sends retry while the phase remains open. Owner sign-off/phase completion '
+                'stops stale sends. Cleanup deletes first, then deregisters.'},
+          {'q': 'Why are resolved tests still listed?',
+           'a': 'The list should show the full denominator: 1/7 done means seven visible '
+                'cases, one checked as passed. Passed and N/A have distinct icons explained '
+                'once in the legend; rows do not repeat status text. Finished owners retain '
+                'all their rows without being mentioned. Every case is labeled Broker or '
+                'Authenticator from the source plan.'},
+          {'q': "Why group by the release point's Tester instead of AssignedTo?",
+           'a': "The release plan/suite point owns this release's manual/triage work. Shared "
+                'test-case System.AssignedTo can belong to another release or template and is '
+                'never the ownership fallback.'},
+          {'q': "Why doesn't progress count every test assigned to someone in the full ADO "
+                'suite?',
+           'a': 'The suite also contains automated results whose shared case owner may be a '
+                "manual tester. Those automation-only cases are not that person's Bug Bash "
+                'workload: exclude them from both completed and total counts. Real manual '
+                'completions still count; applied automation failures remain explicit '
+                'owner-triage work.'},
+          {'q': "Why are some of the owner's tests marked 'Automation triage'?",
+           'a': 'Those are Broker or Authenticator points recorded as actually written Failed '
+                'by ui_test_status. Current ownership comes from the live release-point '
+                'Tester, not an assumed successful reassignment. They remain outstanding until '
+                'resolved. Broker cases with multiple originally failing configurations count '
+                'once and require every tracked failure to resolve.'}]}

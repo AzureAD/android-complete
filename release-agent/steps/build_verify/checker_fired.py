@@ -22,6 +22,8 @@ from orchestrator.authority import PipelineScope, PipelineSlot
 EVIDENCE = (PipelineScope(PipelineSlot.CHECKER),)
 ID = "checker_fired"
 KIND = "agent"
+NAME = 'Verify Code Complete Checker fired the release'
+REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 
 CONFIG = {
@@ -111,3 +113,18 @@ def _verdict(context, run, result, job):
     return Done(
         f"Code Complete Checker fired the release — run {bid} ({when}), '{job}' succeeded.",
         links=links, updates=(K.stash_checker(context, bid, when),))
+
+KNOWLEDGE = {'summary': 'Confirm the Code Complete Calendar Checker fired the release on the CCD.',
+ 'what': "The checker (def 3038) runs daily; its 'Trigger Monthly Release' job is SKIPPED on "
+         'ordinary days and only runs (succeeds) on the actual Code Complete Day, when it '
+         "launches the Release Orchestrator. This step scans the month's checker runs for the "
+         "one whose 'Trigger Monthly Release' job succeeded.\n",
+ 'where': ['Code Complete Calendar Checker (def 3038): '
+           'https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038'],
+ 'how': 'If it blocks: before Code Complete Day this is EXPECTED (nothing has triggered yet). '
+        "After the CCD, a missing/failed 'Trigger Monthly Release' means the release wasn't "
+        "kicked off — check the checker's latest run and its schedule, fix, and rerun the "
+        'step.\n',
+ 'faqs': [{'q': "It's blocked but the CCD hasn't arrived — is that a problem?",
+           'a': "No. The trigger job only runs on Code Complete Day; before then there's "
+                'nothing to confirm. It clears once the checker fires the release.'}]}

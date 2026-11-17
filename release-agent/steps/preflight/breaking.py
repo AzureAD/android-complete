@@ -15,6 +15,8 @@ from steps.lib.mockctx import MISSING
 
 ID = "breaking"
 KIND = "agent"
+NAME = 'Detect BREAKING-OneAuth + draft comms'
+REQUIRED_TOOLS = ('gh',)
 EFFECT_MODE = "read_only"
 
 # Step config (co-located). common-for-android records breaking changes as [MAJOR]
@@ -105,3 +107,15 @@ def build(context: StepContext):
     return Done(
         f"Detected {len(entries)} breaking ({tag}) change(s) in '{section}':\n{listing}\n\n"
         f"--- DRAFT COMMS (send to OneAuth) ---\n{draft}")
+
+KNOWLEDGE = {'summary': 'Detect BREAKING-OneAuth changes in the common-for-android changelog and draft '
+            'comms.',
+ 'what': "Scans the unreleased 'vNext' section of the common-for-android changelog for [MAJOR] "
+         '(breaking) entries — the changes shipping in this release that OneAuth consumers '
+         'must handle — and drafts the notification comms. Read-only.\n',
+ 'where': ["Source: the common-for-android changelog.txt (dev branch), 'vNext' section."],
+ 'how': 'Review any detected [MAJOR] entries and send the drafted comms to the OneAuth team. A '
+        'valid vNext section with no breaking entries needs no comms; missing, empty or '
+        'unreadable changelog evidence holds instead of proving no changes.',
+ 'links': [{'name': 'common-for-android changelog',
+            'url': 'https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-common-for-android/dev/changelog.txt'}]}

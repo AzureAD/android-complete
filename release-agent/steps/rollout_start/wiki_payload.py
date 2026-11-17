@@ -35,6 +35,9 @@ from tools.coordinates import coords
 
 ID = "wiki_payload"
 KIND = "scout"
+NAME = 'Create/update the release payload wiki page'
+REQUIRED_TOOLS = ('az',)
+REQUIRES_APPROVAL = False
 WRITE_COMMAND = "create-payload-wiki"
 
 # The payload page lives in a DIFFERENT project (IdentityWiki) from the release chain — only the
@@ -230,3 +233,45 @@ def build(context: StepContext):
         note=f"{verb} payload page '{plan['page_name']}' ({plan['pr_count']} PRs)",
         outbound=True,
     )
+
+KNOWLEDGE = {'summary': 'Create/update the monthly release payload wiki page (preview-first).',
+ 'what': "Fills the release PAYLOAD wiki subpage under IdentityWiki / 'Monthly Releases "
+         "Payloads History'. Auto-fills the deterministic parts — the '#App Version' line (the "
+         'Authenticator version + its pipeline-475778 build link), the merged-PR list for this '
+         'release (derived from the auth working branch + release-branch bumps), and the SDK '
+         'versions (Broker/Common/MSAL) — and leaves the hand-curated sections (release-notes '
+         'email title, sign-offs, expected feature-flag rollouts) as clearly-marked '
+         'placeholders. This now runs in Phase 5 after tag_authenticator and before the '
+         'rollout-start notice, so the notice can link to the completed payload page. It '
+         "REPLACES the old Phase-0 'wiki' step (no more empty placeholder page created "
+         'early).\n',
+ 'who': 'Scout composes and writes it as scheduled release automation. The checked command '
+        'still recomputes the exact page content, checkpoints the current plan hash, and uses '
+        'an ETag-guarded write; the release owner edits the placeholder sections afterward if '
+        'needed.\n',
+ 'where': ["wiki: IdentityWiki / IdentityWiki.wiki, parent 'Monthly Releases Payloads History'",
+           "page: '<Ship Month> <Year> Release' (the release's display name, e.g. 'September "
+           "2026 Release')",
+           'version + PR list: state.pipeline_runs.final_auth + tools.merged_release_prs'],
+ 'how': 'Runs via step-action → returns a checked follow-up; run `create-payload-wiki '
+        '--release <id> --execute --auto-approve --executor payload-wiki-automation` to '
+        'recompute and checkpoint the full composed markdown + target page (create vs update), '
+        'then write. Create-or-update: an existing page is updated ETag-guarded; otherwise '
+        "it's created. Test with the `version` / `prs` / `page_name` inject mocks or `fail`.\n",
+ 'consequences': 'A real WRITE to the IdentityWiki payload page (create or content overwrite). '
+                 'The email title, sign-offs and feature-flag sections are placeholders the '
+                 'owner completes by hand.\n',
+ 'faqs': [{'q': 'Why did this move from Phase 0 to Phase 5?',
+           'a': 'The old Phase-0 step only created an empty placeholder page and relied on a '
+                'later manual fill. Doing it once at rollout start — when the version, commit, '
+                'tag and SDK versions are all final — is simpler, avoids the empty-note step, '
+                'and gives the rollout notice a real payload-page link.'},
+          {'q': 'Is the whole page auto-filled?',
+           'a': 'No. App Version + build link, the merged-PR list, and the SDK versions are '
+                'derived; the release-notes email title, sign-offs, and expected feature-flag '
+                'rollouts are hand-curated placeholders for the owner to fill or adjust after '
+                'creation.'},
+          {'q': 'Why does the App Version link a different pipeline than older payload pages?',
+           'a': 'The auth build source changed — the version now comes from the final '
+                'Authenticator build found by rollout_start.identify_auth_build in pipeline '
+                '475778. Older payload pages may link a different pipeline.'}]}

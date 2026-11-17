@@ -19,6 +19,8 @@ from steps.finalize._orchestrator_gate import (
 WRITES = (WriteOperation.SUBMIT_PIPELINE_APPROVAL,)
 ID = "publish_notes_gate"
 KIND = "gate"
+NAME = "Approve 'Publish GitHub Release Notes' gate"
+REQUIRED_TOOLS = ('az',)
 APPROVAL_COMMAND = "approve-orchestrator-gate"
 STAGE = "Publish GitHub Release Notes"
 CONFIG = dict(GATE_CONFIG)
@@ -94,3 +96,38 @@ def submit_approval(context: StepContext) -> tuple[bool, str]:
 def reconcile_approval(context: StepContext) -> tuple[bool, str]:
     """Read the frozen approval; retain the hold without matching approved evidence."""
     return reconcile_expected_approval(context, expected_stage=STAGE)
+
+KNOWLEDGE = {'summary': "1-click approve the orchestrator's SECOND gate — 'Publish GitHub Release Notes'.",
+ 'what': 'After the integration PRs merge, the Release Orchestrator (def 2828) parks at a '
+         "SECOND manual approval — the 'Publish GitHub Release Notes' stage. This step is the "
+         "human's 1-click approval of that gate: on approval Scout submits the real ADO "
+         'pipeline approval, which publishes the GitHub release notes for MSAL and Common. It '
+         "is the sibling of remove_rc_tags_gate (the first gate, 'Remove RC Tags') and runs "
+         'later in the phase.\n',
+ 'who': 'The release owner decides (approve / deny). Scout runs the discovery and, on '
+        'approval, submits the ADO approval automatically. STAGE-SPECIFIC: it only ever '
+        "approves the 'Publish GitHub Release Notes' stage — if the orchestrator is parked at "
+        "any other stage the submit is refused, so it can't approve the wrong gate.\n",
+ 'how': 'Preview `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`. '
+        "Show the exact notes-stage approval/build/comment and review hash, obtain the human's "
+        'approval, then repeat with the same comment, --review-hash and --approved-by. Deny '
+        'with `deny` to HOLD. Pending or unknown evidence remains a hold. Recover an owned '
+        'attempt by its --execution-id; never resubmit an attempted approval or replace it '
+        "with a newer run's stage completion.\n",
+ 'consequences': 'Approving publishes the GitHub release notes for MSAL and Common (the '
+                 "orchestrator's final publish stage). Make sure the integration PRs are "
+                 'merged first.\n',
+ 'links': [{'name': 'Release Orchestrator pipeline YAML',
+            'url': 'https://identitydivision.visualstudio.com/Engineering/_git/AuthClientAndroidPipelines?path=/production/monthly-release/release-orchestrator.yml'}],
+ 'faqs': [{'q': 'How is this different from remove_rc_tags_gate?',
+           'a': "remove_rc_tags_gate approves the FIRST gate ('Remove RC Tags', which "
+                'publishes to Maven Central + creates the integration branches). '
+                "publish_notes_gate approves the SECOND gate ('Publish GitHub Release Notes'), "
+                'which parks only after the integration PRs merge.'},
+          {'q': 'What if I approve before the orchestrator reaches the notes gate?',
+           'a': "Safe — the gate verifies the 'Publish GitHub Release Notes' stage is the "
+                'parked one before submitting the ADO approval. If a different stage is parked '
+                '(or none), it refuses to submit and stays holding.'},
+          {'q': 'Nothing is parked — is that an error?',
+           'a': "No. If the notes stage already completed, the step reports there's nothing to "
+                "approve. If it hasn't parked yet, approve once it's waiting."}]}

@@ -50,6 +50,12 @@ from tools.coordinates import coords
 
 ID = "localization"
 KIND = "scout"
+NAME = 'Trigger localization pipeline (PR)'
+REQUIRED_TOOLS = ('az', 'microsoft_teams')
+REQUIRES_APPROVAL = False
+REPEATABLE = True
+POLLABLE = True
+AUTOMATIONS = ('ccd-noon', 'ccd-localization-poller')
 WRITE_COMMAND = "launch-localization"
 
 # Coordinates (org/project/pipeline id, repo urls, the Code-reviews chat) come from

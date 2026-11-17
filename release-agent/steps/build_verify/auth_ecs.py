@@ -28,6 +28,8 @@ from orchestrator.authority import PipelineScope, PipelineSlot
 EVIDENCE = (PipelineScope(PipelineSlot.AUTH),)
 ID = "auth_ecs"
 KIND = "agent"
+NAME = 'Verify Authenticator ECS build + UI tests'
+REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 
 # Mock knobs (mocks.local.yaml): consumed inside verify_auth_ecs via mock_input.
@@ -268,3 +270,58 @@ def verify_auth_ecs(context):
 
 def build(context: StepContext):
     return verify_auth_ecs(context)
+
+KNOWLEDGE = {'summary': 'Capture the Authenticator ECS app build + its post-build UI-test data for the RC '
+            'report.',
+ 'what': 'The Authenticator RC app build and its device UI tests live in a DIFFERENT org — '
+         'msazure/One — and are NOT part of the Engineering release-verification chain. The '
+         'orchestrator only cuts the auth working-branch; the RC app build (def 475778, '
+         'AndroidBuildBroker1ES) self-triggers off that branch cut, and its post-build UI '
+         "tests (def 444678) self-trigger off the build's completion. This step is a "
+         'DATA-AVAILABILITY check (exactly like the mrwp_ecs/mrwp_local steps): it discovers '
+         "the current-RC ECS build on 'working-<release-branch>' (the build whose "
+         "adAccountsVersion is '...-rc-RC<N>-ecs', highest N), follows the deterministic "
+         'build->test resource link to its UI-test run, completely pages Test Runs and Results '
+         'and CAPTURES both Firebase suites into rcs[rc].auth.test.evidence (versioned '
+         'RC/APK/test-build attribution, exact titles, attempt outcomes and run/result IDs), '
+         'with neutral source validation, not plan projections. It does NOT apply the 90% gate '
+         '— a sub-90% result is DATA, not a block here. The rc_report step consolidates MRWP + '
+         'auth and makes the go/hold decision.\n',
+ 'where': ['Authenticator RC build (def 475778): '
+           'https://msazure.visualstudio.com/One/_build?definitionId=475778',
+           'Authenticator Post-Build UI Tests (def 444678): '
+           'https://msazure.visualstudio.com/One/_build?definitionId=444678'],
+ 'how': 'It HOLDS (Scout polls every 30 min) while the build is in-flight or its UI-test run '
+        "hasn't appeared yet (data not ready). It BLOCKS when there is NO ECS build or "
+        'detailed evidence is malformed, incomplete or attributed to another RC/APK/test '
+        'build. Refresh is required for historical aggregate-only snapshots; never silently '
+        'migrate them. A refreshed discovery invalidates the old capture even while new '
+        'results are pending. A completed build — even a failed one, or one whose Firebase '
+        'suites are below 90% — is captured and the step is DONE; the RC report then decides. '
+        'The build is read cross-org via az/REST (no ADO MCP); the build->test link is the '
+        "test run's resources.pipeline.authenticatorBuild id. 'Firebase Test Lab - Monthly UI "
+        "Tests' intentionally has NO test-plan case map. This is valid report-only canonical "
+        'coverage, not permission for Phase-2 case creation or forced mappings. Every '
+        'unresolved failure is retained by exact name and source link for release-owner '
+        'investigation. The existing independent aggregate Firebase gates remain unchanged.\n',
+ 'faqs': [{'q': "Why doesn't this step block when a Firebase suite is below 90%?",
+           'a': 'Because it is a data-availability check, not a gate — same as the MRWP verify '
+                "steps, where failing tests don't block (they're data). It captures the suite "
+                'results + an informational verdict into state; the rc_report step '
+                'consolidates MRWP + auth and makes the single go/hold decision. This keeps '
+                'one decision point.'},
+          {'q': 'Is the Authenticator gate merged into the MRWP UI gate?',
+           'a': 'No. They stay SEPARATE evaluations (different app, different org, its own '
+                '>=90%-both-suites bar) and render in their own report section. rc_report '
+                'applies both independently; either one holding makes the release wait for '
+                'human attestation.'},
+          {'q': 'How is the ECS build identified without the orchestrator tagging it?',
+           'a': "The build already carries adAccountsVersion '0.0.…-rc-RC<N>-ecs' (RC "
+                "iteration + ECS flavor) and runs on 'working-<release-branch>', so Scout "
+                'finds it by branch + that version (highest RC N, newest id) — no orchestrator '
+                'involvement. The UI-test run is then matched deterministically by its '
+                'authenticatorBuild pipeline-resource id.'},
+          {'q': "The auth build passed but there's no UI-test result — is that a block?",
+           'a': 'No. The UI test auto-triggers off build completion, so a missing result just '
+                "means it hasn't run yet — Scout holds and polls, then applies the gate once "
+                'it completes.'}]}

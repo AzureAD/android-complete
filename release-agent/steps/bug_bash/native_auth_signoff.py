@@ -22,6 +22,8 @@ from steps.bug_bash.notify_native_auth import notified_engineer
 
 ID = "native_auth_signoff"
 KIND = "attest"
+NAME = 'Native Auth team sign-off (attest)'
+REQUIRED_TOOLS = ()
 EVIDENCE = (OwnStepData(),)
 
 
@@ -75,3 +77,22 @@ def build(context: StepContext):
             "leave it holding."),
         attest=True, updates=(StepData(data),),
     )
+
+KNOWLEDGE = {'summary': "The release owner attests they received the Native Auth team's sign-off.",
+ 'what': 'A pure human attestation (owner: human, attest). No message is sent and no new data '
+         'is captured — the release owner confirms they received the bug-bash sign-off from '
+         "the Native Auth team. The engineer's name is reused from notify_native_auth (where "
+         'they were notified), so the prompt names who to expect the sign-off from; nothing is '
+         're-collected here.\n',
+ 'who': 'The release owner attests. Scout takes no action — there is nothing to run.',
+ 'how': 'The step holds with a confirmation prompt naming the Native Auth RE from '
+        'notify_native_auth. The owner does NOT touch the engine — once the sign-off has come '
+        'in, they tell Scout and Scout clears the step (`done --step native_auth_signoff`). If '
+        "it hasn't arrived yet, leave it holding.\n",
+ 'faqs': [{'q': 'What is this confirming?',
+           'a': "That the release owner received the Native Auth team's sign-off — the "
+                'confirmation the RE (named in notify_native_auth) was asked to send back.'},
+          {'q': "Why isn't Scout doing this one?",
+           'a': "There's no outbound action or new data to capture — it's an attestation the "
+                "release owner makes, like the preflight vitals check. Scout can't receive the "
+                "sign-off on the owner's behalf."}]}

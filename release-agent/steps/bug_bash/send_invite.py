@@ -49,6 +49,10 @@ from tools.pipelines.auth_app import auth_build_url
 
 ID = "send_invite"
 KIND = "scout"
+NAME = 'Schedule Bug Bash + send Teams invite'
+REQUIRED_TOOLS = ('workiq',)
+REQUIRES_APPROVAL = False
+MANUAL_RESULT = True
 NOTIFICATION = True
 
 # The real invite recipients (the Azure Identity Android SDK / Android Identity team DL +
@@ -346,3 +350,54 @@ def build(context: StepContext):
                       "completion": {"data": {
                           "gate_preconditions": gate_preconditions(context, sources)}}},
     )
+
+KNOWLEDGE = {'summary': 'Schedule the combined Bug Bash and send the Teams meeting invite.',
+ 'what': "Composes the Bug Bash Teams meeting from the release's real artifacts and sends the "
+         "invite. Subject '<Month Year> Release Bug Bash'; ~2h; body has the Broker section "
+         '(test plan + ECS/Local MRWP runs + the local-flights JSON from variable group 40) '
+         "and the Auth App section (test suite + real ECS build pipeline from the latest RC's "
+         'auth.build.run_id, using the msazure/One URL helper). Rendered from '
+         'templates/bug-bash-invite.html (edit the file to restyle).\n',
+ 'who': 'Scout composes it automatically during `next` (a scout step → workiq_create_event). '
+        'Recipients are the Android Identity DL + the Dublin CIAM alias; redirect for a test '
+        'with the send_to knob (keeps the send real, points it at you).\n',
+ 'how': 'When: reached after 3pm or on a weekend → next business morning at 09:00; before 3pm '
+        'on a weekday → later the same day, never before 09:00 America/Los_Angeles. Weekends '
+        'roll to Monday. The body and approval summary include the IANA timezone and UTC '
+        'offset at the meeting date; start/end and timeZone must be passed unchanged. Other '
+        'attendees see that same instant converted to their own timezone. Links come from the '
+        'clone steps (Broker plan, Auth suite) and Phase 2 (ECS/Local MRWP runs and the '
+        'Authenticator ECS build); flags are fetched live from variable group 40. Blocks if '
+        "the plans haven't been cloned or the Auth ECS build ID is absent/invalid or belongs "
+        'to a different RC. Refresh auth_ecs, rather than sending a TBD or substituting the '
+        'post-build UI-test run. Delivery uses notification prepare (source step), claim, then '
+        'notification result. Scheduling, the 3pm cutoff and weekend decisions use Los Angeles '
+        "time regardless of the owner's or runner's timezone; daylight saving time is handled "
+        'by the IANA zone. Send permission expires at the meeting start. An unclaimed '
+        'invitation can be re-prepared with a new approved hash; any ever-claimed invitation '
+        'stays frozen and requires owner recovery if expired. Preserve the actual '
+        'workiq_create_event response (including its event id) as the notification result '
+        '--receipt-file. Chat activation consumes this durable receipt; a bare "sent" note '
+        'cannot identify which meeting was created.\n',
+ 'links': [{'name': 'Local flags — variable group 40',
+            'url': 'https://identitydivision.visualstudio.com/Engineering/_library?view=VariableGroupView&variableGroupId=40&path=release'}],
+ 'faqs': [{'q': 'When is it scheduled?',
+           'a': 'All rules use America/Los_Angeles: after 3pm or on a weekend → next business '
+                'morning (9am); before 3pm on a weekday → two hours later rounded to a half '
+                'hour, but never before 9am Los Angeles time. The timezone and meeting-date '
+                'UTC offset are explicit. Attendees elsewhere see the equivalent local time. '
+                'Weekends roll to Monday.'},
+          {'q': 'Why might an old invite show an overnight time?',
+           'a': "Older code used the runner's naive local clock but labelled the payload with "
+                "the owner's timezone, and the same-day rule had no morning floor. Current "
+                'code converts to Los Angeles time first and never schedules before 9am there, '
+                'independent of owner timezone. Check actual calendar times separately from '
+                'stale body text; correcting an existing invitation requires its organizer and '
+                'a reviewed update, not rerunning create.'},
+          {'q': 'Who gets invited?',
+           'a': 'The Azure Identity Android SDK / Android Identity team '
+                '(androididentity@microsoft.com) and idnadevexciamdublin@microsoft.com. For a '
+                'test, the send_to knob redirects it to you.'},
+          {'q': 'Where does the template live?',
+           'a': 'templates/bug-bash-invite.html — edit it to restyle; the step always renders '
+                'from that file.'}]}

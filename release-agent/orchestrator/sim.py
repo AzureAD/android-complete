@@ -47,6 +47,7 @@ import yaml
 from orchestrator import schedule
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
+from orchestrator.workflow import normalize_workflow_config
 from orchestrator import cli_common as C
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -340,7 +341,7 @@ def run_scenario(name_or_dict, runs_root: str = None, config_path: str = None,
     runs_root = runs_root or DEFAULT_SEED_RUNS
 
     with open(config_path, "r", encoding="utf-8") as fh:
-        config = yaml.safe_load(fh)
+        config = normalize_workflow_config(yaml.safe_load(fh))
 
     release_id = sc.get("release_id")
     if not release_id:

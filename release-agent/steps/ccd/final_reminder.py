@@ -22,6 +22,10 @@ from steps.lib.context import release_ctx, resolve_recipients
 
 ID = "final_reminder"
 KIND = "scout"
+NAME = 'CCD final code-complete reminder (email)'
+REQUIRED_TOOLS = ('workiq',)
+REQUIRES_APPROVAL = False
+AUTOMATION = 'ccd-morning'
 NOTIFICATION = True
 
 
@@ -138,3 +142,19 @@ def build(context: StepContext[BuildParameters]):
         note=f"sent to {', '.join(recipients) if recipients else '(no recipients)'}",
         outbound=True,
     )
+
+KNOWLEDGE = {'summary': 'Email the Android DL that code complete is TODAY (morning of CCD).',
+ 'what': "The CCD-day final code-complete reminder email — the 'update' variant of the same "
+         'notice template Phase 0 sends a week earlier at CCD-7. Tells everyone code complete '
+         'is today and that any check-ins after it need the hotfix cherry-pick process + EM '
+         'approval. Catch-up sends show the actual CCD instead of incorrectly calling a past '
+         'date Today; the initial variant uses the date too.\n',
+ 'who': 'Scout sends it automatically (a scout step) on the morning of CCD, driven by the '
+        'per-release CCD-morning automation. The release owner owns the content/recipients.\n',
+ 'how': 'Uses notification prepare (source step, phase ccd, step final_reminder), then claim → '
+        'the exact returned email payload → notification result. To test, redirect with the '
+        'send_to mock knob (keeps the send real, points it at you). Sent ~09:00 local on '
+        'CCD.\n',
+ 'faqs': [{'q': 'How is this different from the Phase 0 notice?',
+           'a': "Same template, different variant/timing: Phase 0 'notice' sends the 'initial' "
+                "variant at CCD-7; this sends the 'update' variant ('Today') on CCD morning."}]}

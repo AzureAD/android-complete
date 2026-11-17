@@ -13,6 +13,9 @@ from tools import pipelines as P
 
 ID = "orchestrator_finalization"
 KIND = "agent"
+NAME = "Monitor Release Orchestrator to 'Publish GitHub Release Notes'"
+REQUIRED_TOOLS = ('az',)
+AUTOMATION = 'finalize-orchestrator-poller'
 EFFECT_MODE = "read_only"
 EVIDENCE = (OwnStepData(), PipelineScope(PipelineSlot.FINAL))
 
@@ -127,3 +130,23 @@ def automation_prompt(release: str, spec: dict) -> str:
         "  • blocked → surface the pipeline failure to the owner and retain the evidence.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
         f"--text \"finalize-orchestrator-poller: <decision>\"`.")
+
+KNOWLEDGE = {'summary': 'Monitor final orchestration until the Publish GitHub Release Notes gate.',
+ 'what': "After 'Remove RC Tags', this read-only step follows the Release Orchestrator through "
+         'final MRWP generation and release-integration branch creation until it parks at '
+         "'Publish GitHub Release Notes'. It resolves Final1 from the orchestrator tags and "
+         'verifies the returned build ID and configured MRWP pipeline definition before '
+         'accepting final success. Authenticator build/version capture happens later in '
+         'rollout_start.identify_auth_build.\n',
+ 'trigger': 'Runs after `remove_rc_tags_gate`. The dedicated Release Orchestrator poller '
+            'checks every 2 hours and binds to the stable YAML stage identifier '
+            "`PublishGitHubReleaseNotes`, whose display name is 'Publish GitHub Release "
+            "Notes'.\n",
+ 'who': 'The release-agent performs the read-only Azure Pipelines checks automatically.',
+ 'how': 'While the target gate or required tags are not ready, the step remains in progress. '
+        'After 8 hours it escalates once to the release owner and continues polling. A failed '
+        'orchestrator stage or final MRWP blocks Phase 4 for investigation.\n',
+ 'consequences': 'It stores state.pipeline_runs.final with orchestrator_run_id, mrwp_run_id, '
+                 'and resolved_at. Authenticator build/version capture happens later in Phase '
+                 '5 (`rollout_start.identify_auth_build`). It cannot approve the pipeline, '
+                 'create branches, modify repositories or open PRs.\n'}

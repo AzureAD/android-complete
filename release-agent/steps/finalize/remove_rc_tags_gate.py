@@ -19,6 +19,8 @@ from steps.finalize._orchestrator_gate import (
 WRITES = (WriteOperation.SUBMIT_PIPELINE_APPROVAL,)
 ID = "remove_rc_tags_gate"
 KIND = "gate"
+NAME = "Approve 'Remove RC Tags' gate"
+REQUIRED_TOOLS = ('az',)
 STAGE = "Remove RC Tags"
 APPROVAL_COMMAND = "approve-orchestrator-gate"
 CONFIG = dict(GATE_CONFIG)
@@ -116,3 +118,48 @@ def submit_approval(context: StepContext) -> tuple[bool, str]:
 def reconcile_approval(context: StepContext) -> tuple[bool, str]:
     """Read the frozen approval; retain the hold without matching approved evidence."""
     return reconcile_expected_approval(context, expected_stage=STAGE)
+
+KNOWLEDGE = {'summary': "1-click approve the Release Orchestrator's parked 'Remove RC Tags' gate — "
+            'triggers publish.',
+ 'what': 'After Phase 3, the Release Orchestrator (def 2828) runs and PARKS at a manual '
+         "approval on its 'Remove RC Tags' stage. This step is the human's 1-click approval of "
+         'that gate: Scout finds the orchestrator run for the release, detects the parked '
+         'stage + its pending approval, and shows a brief. When the release owner APPROVES, '
+         'Scout submits the real ADO pipeline approval, which un-parks the orchestrator into '
+         'the publish stages.\n',
+ 'who': 'The release owner decides (approve / deny). Scout runs the discovery and, on '
+        'approval, submits the ADO approval automatically via the pipeline approvals API — no '
+        'manual portal click needed.\n',
+ 'how': 'Preview `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`. '
+        "Show the exact approval/build/stage/comment and review hash, obtain the human's "
+        'decision, then submit with the same comment, --review-hash and --approved-by. Deny '
+        'with `deny` to HOLD. An interrupted or uncertain owned attempt requires its original '
+        '--execution-id for read-only reconciliation, never another submission. Only exact '
+        'approved provider evidence completes it; no pending approval, a completed stage or a '
+        'newer run cannot fabricate a receipt.\n',
+ 'consequences': "Approving the 'Remove RC Tags' gate makes the Release Orchestrator "
+                 'automatically: remove the RC tags; publish internal artifacts to the ADO '
+                 'Maven feed; publish MSAL/Common to Maven Central; create '
+                 'release-integration/<version> branches; update the orchestrator pipeline '
+                 'variables (MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version); and '
+                 'print GitHub PR compare links in the next stage. This is a REAL, '
+                 'externally-visible publish (Maven Central + GitHub) — not easily undone. '
+                 'Deny and investigate if anything looks off.\n',
+ 'links': [{'name': 'Release Orchestrator pipeline YAML',
+            'url': 'https://identitydivision.visualstudio.com/Engineering/_git/AuthClientAndroidPipelines?path=/production/monthly-release/release-orchestrator.yml'}],
+ 'faqs': [{'q': 'What exactly happens when I approve?',
+           'a': "Scout submits the ADO approval on the orchestrator's 'Remove RC Tags' stage. "
+                'The orchestrator then removes RC tags and publishes: internal artifacts to '
+                'the ADO Maven feed, MSAL/Common to Maven Central, creates '
+                'release-integration/<version> branches, updates the pipeline variables '
+                '(MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version), and prints GitHub '
+                'PR compare links.'},
+          {'q': 'Is it reversible?',
+           'a': 'No — it publishes to Maven Central and GitHub. Treat approval as the point of '
+                'no return; deny to hold if the RC verification or bug bash left anything '
+                'unresolved.'},
+          {'q': 'Nothing is parked — is that an error?',
+           'a': 'Inspect the exact stage. A successful already-completed stage can be shown as '
+                'nothing to approve, but an owned execution still needs its frozen approval '
+                'receipt. If the stage has not parked, hold; never infer approval or advance '
+                'early.'}]}

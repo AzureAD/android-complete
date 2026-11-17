@@ -19,6 +19,9 @@ from steps.lib.context import release_ctx, resolve_recipients
 
 ID = "notice"
 KIND = "scout"
+NAME = 'Send early release notice'
+REQUIRED_TOOLS = ('workiq',)
+REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
 
@@ -133,3 +136,20 @@ def build(context: StepContext[BuildParameters]):
         note=f"sent to {', '.join(recipients) if recipients else '(no recipients)'}",
         outbound=True,
     )
+
+KNOWLEDGE = {'summary': 'Email the early code-complete notice to the Android distribution list.',
+ 'what': "Sends a heads-up that code complete for the month's release is approaching, so teams "
+         'stop landing feature work and switch to the hotfix cherry-pick process after code '
+         'complete. Filled from a local template with the CCD and release owner.\n',
+ 'how': 'Scout uses `notification prepare --release <id> --source step --phase preflight '
+        "--step notice`, reviews and claims the exact hash, sends only the claim's payload, "
+        'then acknowledges with `notification result`. Recipients are the configured '
+        'distribution list; for a test, redirect with the `send_to` mock knob.\n',
+ 'links': [{'name': 'Hotfix cherry-pick guide (linked in the email)',
+            'url': 'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/microsoft-authenticator/microsoft-authenticator/release/cherry-pick-to-hotfix-guidelines'}],
+ 'faqs': [{'q': 'Who receives it?',
+           'a': 'The configured distribution list (androididentity@microsoft.com). Redirect '
+                'for a test with preflight.notice.send_to.'},
+          {'q': "What's the difference between the 'initial' and 'update' variant?",
+           'a': "'initial' is the CCD-7 heads-up; 'update' is the CCD-day reminder ('code "
+                "complete is Today'). Set via --param variant=update."}]}

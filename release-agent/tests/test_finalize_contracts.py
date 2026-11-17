@@ -15,17 +15,16 @@ from tools import pipelines as P, prs
 
 
 def test_each_phase4_step_has_distinct_non_overwritten_help():
-    phase = next(p for p in yaml.safe_load(Path(CONFIG).read_text(encoding="utf-8"))["phases"]
+    from orchestrator.workflow import normalize_workflow_config
+
+    phase = next(p for p in normalize_workflow_config(yaml.safe_load(Path(CONFIG).read_text(encoding="utf-8")))["phases"]
                  if p["id"] == "finalize")
-    document = yaml.compose(Path(knowledge.knowledge_path()).read_text(encoding="utf-8"))
-    entries = {key.value: value for key, value in document.value}
+    seen_summaries = set()
     for step in phase["steps"]:
-        key = "finalize." + step["id"]
-        assert key in entries, key
-        fields = [name.value for name, _ in entries[key].value]
-        assert len(fields) == len(set(fields)), key
         help_text = knowledge.get_knowledge("finalize", step["id"])
-        assert help_text["summary"] and help_text["what"] and help_text["how"]
+        assert help_text and help_text.get("summary") and help_text.get("what") and help_text.get("how"), step["id"]
+        seen_summaries.add(help_text["summary"])
+    assert len(seen_summaries) == len(phase["steps"])
     for gate in ("remove_rc_tags_gate", "publish_notes_gate"):
         how = knowledge.get_knowledge("finalize", gate)["how"]
         assert "--review-hash" in how and "--execution-id" in how

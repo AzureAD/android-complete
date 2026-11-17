@@ -158,8 +158,9 @@ def test_skill_requires_the_full_table_before_every_input_or_wait_handoff():
 
 def test_all_readiness_and_workflow_steps_are_mandatory_with_explicit_dependencies_and_tools():
     import yaml
+    from orchestrator.workflow import normalize_workflow_config
 
-    phases_raw = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    phases_raw = normalize_workflow_config(yaml.safe_load(open(CONFIG, encoding="utf-8")))
     for phase in phases_raw["phases"]:
         assert phase.get("execution") == "parallel"
         for step in phase["steps"]:
@@ -279,8 +280,9 @@ def test_external_steps_declare_requires_approval_order_gather_first_and_bound_e
     from datetime import date
     import yaml
     from orchestrator import render
+    from orchestrator.workflow import normalize_workflow_config
 
-    raw = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    raw = normalize_workflow_config(yaml.safe_load(open(CONFIG, encoding="utf-8")))
     for phase in raw["phases"]:
         for step in phase["steps"]:
             if step.get("kind") == "external":

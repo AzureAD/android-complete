@@ -38,6 +38,7 @@ from .transitions import OutcomePermit, TransitionIntent, TransitionKernel, Tran
 from .workflow import (
     StepKind,
     WorkflowDefinition,
+    normalize_workflow_config,
     workflow_fingerprint,
 )
 import steps
@@ -65,13 +66,13 @@ class Orchestrator(StatusViewMixin):
                  effect_services=None, clock=None, new_id=None, revision_provider=None,
                  automation_entries: Callable[[], list[dict]] | None = None):
         self.config_path = os.path.abspath(config_path)
+        self._handler_resolver = handler_resolver if handler_resolver is not None else steps.get_step
         with open(config_path, "rb") as fh:
             config_bytes = fh.read()
         self._config_file_hash = hashlib.sha256(config_bytes).digest()
-        self.config = yaml.safe_load(config_bytes)
+        self.config = normalize_workflow_config(yaml.safe_load(config_bytes), self._handler_resolver)
         self._config_file_fingerprint = workflow_fingerprint(self.config)
-        self.workflow = WorkflowDefinition.compile(self.config)
-        self._handler_resolver = handler_resolver if handler_resolver is not None else steps.get_step
+        self.workflow = WorkflowDefinition.compile(self.config, resolver=self._handler_resolver)
         self.handlers = HandlerCatalog.compile(self.workflow, self._handler_resolver)
         readiness_cfg = None
         if readiness_path is None:
@@ -140,14 +141,14 @@ class Orchestrator(StatusViewMixin):
             config_bytes = fh.read()
         config_hash = hashlib.sha256(config_bytes).digest()
         if config_hash != self._config_file_hash:
-            disk_config = yaml.safe_load(config_bytes)
+            disk_config = normalize_workflow_config(yaml.safe_load(config_bytes), self._handler_resolver)
             disk_fingerprint = workflow_fingerprint(disk_config)
             if disk_fingerprint != self._config_file_fingerprint:
                 self.config = disk_config
                 self._config_file_fingerprint = disk_fingerprint
             self._config_file_hash = config_hash
         if workflow_fingerprint(self.config) != self.workflow.fingerprint:
-            workflow = WorkflowDefinition.compile(self.config)
+            workflow = WorkflowDefinition.compile(self.config, resolver=self._handler_resolver)
             handlers = HandlerCatalog.compile(workflow, self._handler_resolver)
             self.workflow, self.handlers = workflow, handlers
         if cache is not None:

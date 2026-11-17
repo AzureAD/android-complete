@@ -474,7 +474,7 @@ def cmd_step_info(args):
     controls = _handler_info(args.config, args.phase, args.step)
     if not k:
         print(f"No knowledge entry yet for {args.phase}.{args.step}. "
-              f"Add one to config/knowledge.yaml.")
+              f"Add KNOWLEDGE = {{...}} to steps/{args.phase}/{args.step}.py (or config/knowledge.yaml for YAML-only steps).")
     else:
         print(kb.render_knowledge(args.phase, args.step, k))
     print("Requires approval: " + ("true (human confirmation before execution)" if controls["approval_required"]

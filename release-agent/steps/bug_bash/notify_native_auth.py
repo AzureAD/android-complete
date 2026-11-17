@@ -38,6 +38,9 @@ from steps.bug_bash.send_invite import sent_notification, source_matches, gate_p
 
 ID = "notify_native_auth"
 KIND = "scout"
+NAME = 'Notify the Native Auth release engineer'
+REQUIRED_TOOLS = ('microsoft_teams', 'workiq')
+REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
 
@@ -186,3 +189,33 @@ def build(context: StepContext[BuildParameters]):
         note="awaiting Native Auth RE notification (resolve → prepare → claim → send → result)",
         outbound=False,
     )
+
+KNOWLEDGE = {'summary': 'One-shot Teams ping to the Native Auth release engineer that the bug bash is '
+            'ready.',
+ 'what': "Sends ONE Teams message to the month's Native Auth Release Engineer (from the "
+         'release-engineer schedule doc) telling them the bug bash is ready, that the Broker '
+         "test plan now has a 'Manual Tests (Native Auth)' folder with their cases (linked), "
+         'asking them to run their Native Auth tests at their earliest convenience, and to '
+         'send the release owner a confirmation when done. Fired once and done — no '
+         'poller/automation.\n',
+ 'who': 'Scout runs it during `next` (a scout step). It resolves the Native Auth RE for the '
+        'release month from the schedule doc (an inline hint seeds the likely alias; the skill '
+        'confirms against the live doc), resolves their UPN (workiq_search_people), and sends '
+        'a 1:1 Teams message through the notification contract '
+        "(microsoft_teams-SendMessageToUser). Human fallback: if it can't resolve them it asks "
+        'the owner for the alias, or holds the step.\n',
+ 'how': "The skill verifies the engineer's UPN and schedule source, then uses `notification "
+        'prepare --release <id> --source step --phase bug_bash --step notify_native_auth` with '
+        'engineer and engineer_source parameters, followed by claim/result. Only confirmed '
+        'delivery records who was notified; replay never changes that evidence. Idempotent — '
+        'once an engineer is recorded it reports done without re-sending. Blocks if the Broker '
+        "plan isn't built yet (needs the Native Auth suite link).\n",
+ 'links': [{'name': 'Release engineer schedule (Native Auth RE column)',
+            'url': 'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/release-engineer-schedule'}],
+ 'faqs': [{'q': 'Who receives the message?',
+           'a': 'The Native Auth Release Engineer for the release month, from the schedule doc '
+                '(e.g. Aug 2026 → silviu.petrescu). The inline hint in the step is confirmed '
+                'against the live doc; update the hint when the schedule changes.'},
+          {'q': 'Does it track their confirmation?',
+           'a': "No — it just asks them to reply to the release owner when they finish. It's a "
+                'one-shot notification, not a poller.'}]}

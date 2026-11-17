@@ -16,6 +16,8 @@ from tools.coordinates import coords
 
 ID = "cron"
 KIND = "agent"
+NAME = 'Verify Calendar Checker scheduled'
+REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 
 # Step config (co-located). Pipeline 3038's cron proves it's FIRING via a recent
@@ -94,3 +96,13 @@ def build(context: StepContext):
             f"The schedule may be broken. Fix + rerun this step, or skip to override.")
     return Done(
         f"{name} is scheduled and firing — last scheduled run {when} ({run_.get('result')}).")
+
+KNOWLEDGE = {'summary': 'Verify the Code Complete Calendar Checker pipeline is scheduled and firing.',
+ 'what': "Pipeline 3038's cron lives in YAML (not exposed in its triggers), so the check "
+         "proves it's actually firing by confirming a recent schedule-reason run in its build "
+         'history. Live run freshness always uses the trusted current UTC clock, not a '
+         "simulated --as-of release date. Blocks if there's no recent scheduled run or it's "
+         'stale. The configured two-day limit uses actual elapsed time; missing, malformed or '
+         'future queue timestamps cannot prove freshness.\n',
+ 'how': "If blocked, investigate the pipeline's schedule (it may be disabled/broken), fix it, "
+        'and rerun the step — or skip to override.'}

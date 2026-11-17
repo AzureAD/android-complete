@@ -15,6 +15,9 @@ from tools.bugbash_meeting import meeting_chat_id, manual_matches, native_matche
 
 ID = "activate_chat"
 KIND = "scout"
+NAME = 'Activate the Bug Bash meeting chat + store its id'
+REQUIRED_TOOLS = ('workiq', 'microsoft_teams')
+REQUIRES_APPROVAL = False
 
 
 def meeting_matches(invite, verified, chat_id):
@@ -143,3 +146,55 @@ def build(context: StepContext):
         summary=f"Bind the exact meeting chat for '{invite['subject']}' (native evidence or owner-confirmed link)",
         note="awaiting event-bound chat verification",
     )
+
+KNOWLEDGE = {'summary': "Bind the exact sent invitation's chat through native connectors or an "
+            'owner-confirmed link.',
+ 'what': "Resolves the current send_invite calendar receipt's event id, reads that exact "
+         "event's Teams join URL and derives its encoded meeting thread. Native WorkIQ reads "
+         'the profile/event; Agency Teams GetChat verifies the exact thread. Opaque numeric '
+         'links request owner recovery, not an assumed onlineMeeting API. Calendar subject, '
+         'organizer, times, cancellation state and chat type/topic are verified. Stores '
+         'chat_id plus meeting identity and the originating invitation binding. A previous '
+         "month's chat, a topic-only match or a pasted thread id is not proof. An explicit "
+         'owner-confirmed Teams link is a separate supported recovery mode: it records '
+         'owner-attested identity, not independent provider verification.\n',
+ 'who': 'Scout gathers exact read-only native connector observations as the organizer. If '
+        "Teams has not exposed the thread, open that exact calendar event's Chat pane with "
+        'Playwright or ask the owner to do so, then retry. On the FIRST auth/access failure, '
+        'stop unchanged retries and offer owner-confirmed chat-link recovery, manual posting, '
+        'or keeping this held. Never choose another chat or manufacture a thread id.\n',
+ 'how': 'Run record-bugbash-chat --release <id>. The command enforces phase prerequisites, '
+        'requires a completed invite with an applied sent receipt and resolves the thread '
+        'itself. Optional --chat-id must equal the verified thread; it never authorizes an '
+        'unverified chat. Use --profile-observation, --event-observation and '
+        '--chat-observation with fresh owner/tool/argument-bound envelopes. Missing inputs '
+        'print exact connector reads, not completion. The engine never obtains a Graph token '
+        'through Azure CLI. No calendar or Teams message is sent. An identical completed '
+        'binding is a no-op; changing a completed binding requires owner-reviewed reopen of '
+        'activate_chat first. Missing historical event receipts require explicit owner '
+        'recovery, not creating a replacement invitation or hand-editing state. Progress only '
+        'consumes a current binding; prepared messages bind the invite receipt and chat so '
+        'changed sources cannot authorize delivery or completion. Previously prepared legacy '
+        'messages require owner review at deployment. HTTP 403 is not repaired by waiting for '
+        'a thread. For manual link recovery, preview record-bugbash-chat --release <id> '
+        '--chat-link <link> without Graph or state changes. Show the exact '
+        'event/recipients/link and owner-attestation limitations; ask the owner to confirm '
+        "they activated THIS invitation's chat and copied THIS link. Then record with "
+        '--confirm-activated --review-hash <hash> --approved-by <owner_email> --reason "<owner '
+        'confirmation>". Stale reviews or a contradictory receipted thread reject. Do not '
+        'reject this path solely because Graph access is forbidden. It proves neither current '
+        'event/attendee state nor posting access; delivery still needs normal receipts. If the '
+        'owner explicitly chooses manual posting, preserve the reviewed skips and use '
+        'bugbash-progress --release <id> for a private read-only report. Do not reopen chat or '
+        'resend notifications just to read progress.\n',
+ 'faqs': [{'q': "Why can't it just post to the meeting chat directly?",
+           'a': 'A topic is not unique and can identify an older release. Use native '
+                'verification of the exact sent event/thread, or explicit owner confirmation '
+                "of the link copied from that event's Chat pane. Link confirmation is "
+                'owner-attested, not provider-verified.'},
+          {'q': "What if Playwright can't open the chat?",
+           'a': "Ask the owner to activate the exact invitation's Chat pane and copy its Teams "
+                'link. Preview that link and obtain explicit owner confirmation before '
+                'recording the reviewed hash. Graph permission failure does not prevent this '
+                'recovery. Manual posting remains available if automated sending is '
+                'unavailable.'}]}

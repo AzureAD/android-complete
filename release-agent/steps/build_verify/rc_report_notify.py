@@ -13,6 +13,10 @@ from steps.build_verify import rc_report as R, _rc_report_rendering as H
 
 ID = "rc_report_notify"
 KIND = "scout"
+NAME = 'Post RC verification report summary to Scout bot'
+REQUIRED_TOOLS = ('scout_teams_relay',)
+REQUIRES_APPROVAL = False
+AUTOMATION = 'build-verify-rc-poller'
 NOTIFICATION = True
 
 
@@ -66,3 +70,22 @@ def build(context: StepContext):
             "completion": completion,
         },
     )
+
+KNOWLEDGE = {'summary': 'Send the RC verification summary and pipeline links to the release owner through '
+            'the Scout bot.',
+ 'what': 'This step sends a concise Scout-bot message to the release owner with the '
+         'consolidated RC verification summary (MRWP ECS, MRWP Local, and Authenticator ECS) '
+         'plus direct pipeline run links, directly after auth_ecs completes.\n',
+ 'who': 'Scout sends it to the release owner recorded in state.owner_email using the Scout bot '
+        'transport. It is a personal owner notification, not a broad team post.\n',
+ 'where': ["The release owner's Scout bot chat."],
+ 'how': 'Run step-action --phase build_verify --step rc_report_notify, send the returned '
+        'm_send_teams_message payload, then record completion with record-step --status '
+        'pass.\n',
+ 'faqs': [{'q': 'Why is the Scout-bot message short?',
+           'a': 'The bot message gives the high-level gate status and direct pipeline run '
+                'links so the chat stays readable.'},
+          {'q': 'Who receives it?', 'a': 'The release owner on record, via the Scout bot.'},
+          {'q': 'Does posting the summary approve the RC quality gate?',
+           'a': 'No. It only confirms delivery of the RC summary. The next step, '
+                'build_verify.rc_report_gate, remains a separate owner decision.'}]}

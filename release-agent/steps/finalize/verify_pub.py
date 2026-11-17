@@ -28,6 +28,8 @@ from tools import maven as M
 
 ID = "verify_pub"
 KIND = "agent"
+NAME = 'Verify Maven Central + GitHub publication'
+REQUIRED_TOOLS = ()
 EFFECT_MODE = "read_only"
 
 # What to verify: (artifact key, which state.versions value supplies its version, label).
@@ -96,3 +98,32 @@ def build(context: StepContext):
             links=links, poll_in_min=CONFIG["poll_in_min"])
     return Done(
         f"All three artifacts are live on Maven Central: {', '.join(published)}.", links=links)
+
+KNOWLEDGE = {'summary': 'Verify MSAL / Common / Common4j are live on Maven Central at the release '
+            'versions.',
+ 'what': "After the orchestrator's publish stages, confirm the three externally-published "
+         'artifacts appear on Maven Central: common4j and common at the Common version, and '
+         'msal at the MSAL version. Versions come from state.versions (populated at Phase 2). '
+         'Common4j has no separate version — it publishes at the Common version. All three '
+         'present -> done; not-yet-present -> in-progress (poll); a network error that blocks '
+         "the check -> blocked (so it's surfaced, not assumed as 'not published').\n",
+ 'who': 'Scout (an agent step) — read-only anonymous HTTPS to Maven Central; no auth needed.',
+ 'where': ['Common4j: https://repo1.maven.org/maven2/com/microsoft/identity/common4j/',
+           'Common:   https://repo1.maven.org/maven2/com/microsoft/identity/common/',
+           'MSAL:     https://repo1.maven.org/maven2/com/microsoft/identity/client/msal/'],
+ 'how': "Runs automatically and re-checks on a poll. It HEADs each artifact's per-version .pom "
+        '(200 = live, 404 = not yet). New releases can take a few HOURS to propagate to '
+        "repo1.maven.org, so a 404 is 'not yet' (keep polling), not a failure. The "
+        'search.maven.org UI can lag ~a day — the repo1 direct links above update within hours '
+        'and are what this step checks. Test with the `results` mock (artifactKey -> '
+        'published|missing|error) and `versions`.\n',
+ 'links': [{'name': 'Publish to Maven Central (internal checklist)',
+            'url': 'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/publish-to-maven-central'}],
+ 'faqs': [{'q': "Why does it stay 'in progress' for a while?",
+           'a': 'Maven Central propagation to repo1.maven.org typically takes a few hours '
+                'after publish. The step polls the .pom URLs until all three return 200, then '
+                "completes. It never marks the release failed just because an artifact isn't "
+                'visible yet.'},
+          {'q': 'What version is Common4j checked at?',
+           'a': 'The Common version. The orchestrator publishes Common4j with Common4jVersion '
+                "= NextCommonVersion, so there's no separate Common4j version to track."}]}

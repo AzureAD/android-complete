@@ -10,6 +10,9 @@ from tools import pipelines as P
 
 ID = "beta_play_store"
 KIND = "scout"
+NAME = 'Start 100% Beta - Play Store (release-owner approval)'
+REQUIRED_TOOLS = ('az',)
+REQUIRES_APPROVAL = True
 WRITE_COMMAND = "start-beta-play-store"
 STAGE_NAME = P.AUTH_BETA_STAGE_NAME
 AUTOMATION_LABEL = "beta-play-store"
@@ -84,3 +87,32 @@ def build(context: StepContext[BuildParameters]):
             "manager_approved_by": approver,
         },
     )
+
+KNOWLEDGE = {'summary': 'Start 100% Beta - Play Store with release-owner approval.',
+ 'what': 'Locates the matching Android Build Release run in msazure/One pipeline 397224 and '
+         'prepares the exact `100% Beta - Play Store` stage start. Unlike the earlier Phase-5 '
+         'stage starts, this write is never automation-approved: the release owner must review '
+         'and approve its exact build, stage and review hash.\n',
+ 'who': 'The release owner approves the exact checked write. Scout may execute it only when '
+        '`--approved-by` exactly matches `state.owner_email` and that owner is the account '
+        'currently signed in to Azure CLI. On Friday, the release must remain held unless a '
+        'manager has explicitly approved the Friday override and the authenticated release '
+        'owner attests who approved it. Manager identity is not independently authenticated.\n',
+ 'where': ['pipeline: msazure/One Android Build Release definition 397224',
+           'stage: 100% Beta - Play Store',
+           "release branch: state.versions.authenticator ('release/YYYY/MM/DD')"],
+ 'how': 'Run step-action for rollout_start.beta_play_store. On Monday through Thursday, '
+        'preview `start-beta-play-store --release <id>`, show the exact request and hash to '
+        'the release owner, and execute only after approval with the same hash and '
+        '`--approved-by <owner-email>`. On Friday, tell the owner that releases cannot start '
+        'on Friday. If they have manager approval, record the manager identity through '
+        '`--param manager_approved_by=<manager>` and repeat it as `--manager-approved-by '
+        '<manager>` in both preview and execution. Never use `--auto-approve` or `--as-of` for '
+        'execution. The target is pinned to the exact pipeline-397224 build recorded by the '
+        'completed Upload Alpha step.\n',
+ 'consequences': 'A real WRITE to Azure DevOps starts the 100% Beta - Play Store stage. The '
+                 'reviewed plan binds the owner-local start date and any Friday manager '
+                 'override evidence.\n',
+ 'faqs': [{'q': 'Can I start this stage on Friday?',
+           'a': 'Not by default. Keep the release held; only proceed after explicit manager '
+                'approval, with the manager identity bound into the reviewed request.'}]}

@@ -22,6 +22,9 @@ from tools.coordinates import coords
 
 ID = "flight_reminder"
 KIND = "scout"
+NAME = 'Send feature-owner reminders (flights · strings · flag-freeze)'
+REQUIRED_TOOLS = ('workiq',)
+REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
 # Step config (co-located). Posts to the real Android Core Team group chat
@@ -91,3 +94,21 @@ def build(context: StepContext):
         note=f"posted to {target_note}",
         outbound=True,
     )
+
+KNOWLEDGE = {'summary': 'Post the combined feature-owner reminders to the Android Core Team Teams chat.',
+ 'what': 'One Teams message with four reminders as code complete approaches: update local '
+         'flights, write flight pre-mortem docs, merge user-facing strings by CCD-7, and '
+         'complete the feature-flag freeze / default-OFF review.\n',
+ 'how': 'Scout uses `notification prepare --release <id> --source step --phase preflight '
+        '--step flight_reminder`, reviews and claims the hash, posts only the claimed payload, '
+        'then acknowledges with `notification result`. A raw preview is not send permission. '
+        'For a test, redirect to your own chat with the `send_to: me` mock knob.\n',
+ 'links': [{'name': 'release variable group (local flights)',
+            'url': 'https://identitydivision.visualstudio.com/Engineering/_library?itemType=VariableGroups&view=VariableGroupView&variableGroupId=40&path=release'},
+           {'name': 'Localization instructions',
+            'url': 'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/localization'},
+           {'name': 'EcsFlight.kt history (flag-freeze review)',
+            'url': 'https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/PhoneFactor/ExperimentationLibrary/src/main/java/com/microsoft/authenticator/experimentation/ecs/entities/EcsFlight.kt&version=GBworking'}],
+ 'faqs': [{'q': 'Why CCD-7 for strings?',
+           'a': "Strings merged inside the 1-week window aren't guaranteed to be localized in "
+                'time, so user-facing strings must land by CCD-7.'}]}

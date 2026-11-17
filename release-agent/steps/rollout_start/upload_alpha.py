@@ -6,6 +6,9 @@ from tools import pipelines as P
 
 ID = "upload_alpha"
 KIND = "scout"
+NAME = 'Start Upload Alpha'
+REQUIRED_TOOLS = ('az',)
+REQUIRES_APPROVAL = False
 WRITE_COMMAND = "start-upload-alpha"
 STAGE_NAME = P.AUTH_ALPHA_STAGE_NAME
 AUTOMATION_LABEL = "upload-alpha"
@@ -23,3 +26,21 @@ resolve_target, build = release_stage.make_chained_stage_step(
     previous_step_id=PREVIOUS_STEP_ID,
     previous_label=PREVIOUS_LABEL,
 )
+
+KNOWLEDGE = {'summary': 'Start the Authenticator Upload Alpha stage in pipeline 397224.',
+ 'what': "Locates the exact Android Build Release run recorded by Upload What's New and starts "
+         "the stage named 'Upload Alpha'. Today the matching run is selected by the "
+         'Authenticator release branch; when pipeline 397224 is resource-linked to '
+         'AndroidBuildBroker1ES, Scout prefers the run whose pipeline resource matches '
+         '`state.pipeline_runs.final_auth.authenticator_build_id`.\n',
+ 'who': 'Scout performs the checked ADO stage-start write. It is not a human approval gate: '
+        '`start-upload-alpha` recomputes the target, checkpoints the current plan hash and '
+        'sends one Run-stage request.\n',
+ 'where': ['pipeline: msazure/One Android Build Release definition 397224',
+           'stage: Upload Alpha',
+           "release branch: state.versions.authenticator ('release/YYYY/MM/DD')"],
+ 'how': 'Run step-action for rollout_start.upload_alpha. If it returns the checked follow-up, '
+        'run `start-upload-alpha --release <id> --execute --auto-approve --executor '
+        'upload-alpha-automation`. The command binds the selected build id, stage identity and '
+        "current stage state before setting the stage state to `pending` (ADO's Run-stage "
+        'operation), then verifies the stage is queued/running.\n'}

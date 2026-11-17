@@ -18,6 +18,95 @@ class WorkflowConfigError(ValueError):
     """The workflow configuration cannot form a deterministic state machine."""
 
 
+_MODULE_KIND_TO_STEP_KIND = {
+    "agent": "auto",
+    "scout": "external",
+    "human": "human_action",
+    "attest": "attestation",
+    "gate": "approval_gate",
+}
+
+
+def _hydrate_step_from_module(raw_step: Mapping[str, Any], module: object) -> dict[str, Any]:
+    """Populate omitted step metadata in `raw_step` from its co-located handler module."""
+    merged = dict(raw_step)
+    mod_kind_raw = getattr(module, "KIND", None)
+    mapped_kind = _MODULE_KIND_TO_STEP_KIND.get(mod_kind_raw) if isinstance(mod_kind_raw, str) else None
+    if "kind" not in merged and mapped_kind is not None:
+        merged["kind"] = mapped_kind
+    # If YAML explicitly overrides kind to something different from the module (e.g. a
+    # negative contract test), leave remaining fields untouched so HandlerCatalog reports
+    # the exact kind mismatch rather than a synthetic cross-field error.
+    if mapped_kind is not None and merged.get("kind") != mapped_kind:
+        return merged
+
+    if "name" not in merged and isinstance(getattr(module, "NAME", None), str):
+        merged["name"] = getattr(module, "NAME")
+    for attr, key in (
+        ("EFFECT_MODE", "effect_mode"),
+        ("EFFECT_RECOVERY", "effect_recovery"),
+        ("APPROVAL_COMMAND", "approval_command"),
+        ("WRITE_COMMAND", "write_command"),
+        ("WRITE_PRECONDITION", "write_precondition"),
+        ("REFRESH_INVALIDATION", "refresh_invalidation"),
+    ):
+        if key not in merged and getattr(module, attr, None) is not None:
+            val = getattr(module, attr)
+            merged[key] = val.value if isinstance(val, Enum) else val
+    for attr, key in (
+        ("EFFECT_RETRY", "effect_retry"),
+        ("MANUAL_RESULT", "manual_result"),
+        ("REPEATABLE", "repeatable"),
+        ("POLLABLE", "pollable"),
+        ("REQUIRES_APPROVAL", "requires_approval"),
+    ):
+        if key not in merged and hasattr(module, attr) and getattr(module, attr) is not None:
+            merged[key] = getattr(module, attr)
+    if "required_tools" not in merged and getattr(module, "REQUIRED_TOOLS", None) is not None:
+        tools_val = getattr(module, "REQUIRED_TOOLS")
+        merged["required_tools"] = list(tools_val) if isinstance(tools_val, (list, tuple)) else tools_val
+    return merged
+
+
+def normalize_workflow_config(config: Any, resolver=None) -> Any:
+    """Return a copy of `config` with omitted per-step metadata hydrated from step modules."""
+    if not isinstance(config, Mapping) or not isinstance(config.get("phases"), list):
+        return config
+    if resolver is None:
+        import steps as steps_pkg
+        resolver = steps_pkg.get_step
+    out = dict(config)
+    norm_phases = []
+    for raw_phase in config["phases"]:
+        if not isinstance(raw_phase, Mapping) or not isinstance(raw_phase.get("steps"), list):
+            norm_phases.append(raw_phase)
+            continue
+        pid = raw_phase.get("id")
+        p_copy = dict(raw_phase)
+        norm_steps = []
+        for raw_step in raw_phase["steps"]:
+            if (
+                isinstance(pid, str)
+                and isinstance(raw_step, Mapping)
+                and isinstance(raw_step.get("id"), str)
+                and raw_step.get("implementation") != StepImplementation.DUMMY.value
+            ):
+                mod = resolver(pid, raw_step["id"])
+                step_copy = _hydrate_step_from_module(raw_step, mod) if mod is not None else dict(raw_step)
+            else:
+                step_copy = dict(raw_step) if isinstance(raw_step, Mapping) else raw_step
+            if isinstance(step_copy, dict):
+                if step_copy.get("kind") == StepKind.APPROVAL_GATE.value and "gate" not in step_copy:
+                    step_copy["gate"] = True
+                elif step_copy.get("kind") == StepKind.ATTESTATION.value and "attest" not in step_copy:
+                    step_copy["attest"] = True
+            norm_steps.append(step_copy)
+        p_copy["steps"] = norm_steps
+        norm_phases.append(p_copy)
+    out["phases"] = norm_phases
+    return out
+
+
 class StepKind(str, Enum):
     AUTO = "auto"
     EXTERNAL = "external"
@@ -91,9 +180,10 @@ class WorkflowDefinition:
     fingerprint: str
 
     @classmethod
-    def compile(cls, config: Mapping[str, Any]) -> "WorkflowDefinition":
+    def compile(cls, config: Mapping[str, Any], resolver=None) -> "WorkflowDefinition":
         if not isinstance(config, Mapping):
             raise WorkflowConfigError("Workflow config must be a mapping.")
+        config = normalize_workflow_config(config, resolver=resolver)
         _reject_unknown_keys(config, {"version", "phases"}, "workflow")
         raw_phases = config.get("phases")
         if not isinstance(raw_phases, list) or not raw_phases:

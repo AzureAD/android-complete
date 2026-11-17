@@ -22,6 +22,9 @@ from tools.pipelines.auth_app import auth_branch_url, auth_build_url
 
 ID = "notice"
 KIND = "scout"
+NAME = 'Send initial Auth App release notice'
+REQUIRED_TOOLS = ('workiq',)
+REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
 CONFIG = {
@@ -541,3 +544,43 @@ def build(context: StepContext):
             },
         },
     )
+
+KNOWLEDGE = {'summary': 'Send the initial Authenticator rollout notice from exact final-release evidence.',
+ 'what': 'Builds the Android Authenticator rollout-intent email for '
+         "MAuthenticatorRel@microsoft.com, with windevxeng@microsoft.com CC'd for the Intune "
+         'AOSP partner team. It binds the final successful pipeline-475778 Authenticator '
+         "build's numeric app-version and exact commit, the final Authenticator build recorded "
+         'in release state, the Authenticator test suite, the release payload page and SDK '
+         'versions. Authenticator and DID payload bullets come only from commits reachable '
+         'from that exact build commit after the previous successful release build; each PR '
+         'bullet uses the canonical ADO PR-record title rather than its merge-commit message, '
+         'while non-PR commits retain their commit title. Each bullet retains its source link. '
+         'DID attribution uses canonical VerifiableCredential/Wallet paths; any DID-attributed '
+         'entry appears only in the DID section, even if it also changed general Authenticator '
+         'paths. OneLoc/LEGO generated localization commits are omitted. EcsFlight '
+         'additions/default changes are exact source diffs, explicitly not rollout intent.\n',
+ 'who': 'Scout composes and sends it through the standard notification claim/result protocol. '
+        'The release owner reviews the exact recipients and body before claim. A send_to test '
+        'mock redirects all delivery to the supplied address and clears the real CC.\n',
+ 'where': ['final app build: msazure/One AndroidBuildBroker1ES definition 475778',
+           'release-build link: state.pipeline_runs.final_auth (definition 475778)',
+           'Authenticator repo: msazure/One AD-MFA-phonefactor-phoneApp-android',
+           'recipients: MAuthenticatorRel@microsoft.com; CC windevxeng@microsoft.com',
+           'payload/plans: completed Phase 3-4 release evidence'],
+ 'how': 'Run step-action for rollout_start.notice, review the complete generated email, then '
+        'use notification prepare/claim/result. Missing final successful build/version, exact '
+        'source manifest, recorded RC build, Authenticator suite, payload link, or SDK '
+        'versions blocks preparation. For a test, inject build + manifest and set send_to; '
+        'never use an RC/failed build as an app version.\n',
+ 'faqs': [{'q': 'How are Major and Minor changes generated?',
+           'a': 'They are not inferred. The email uses raw PR/commit titles grouped '
+                'deterministically as Authenticator or DID by changed paths; DID wins so an '
+                'entry is never duplicated across both sections. Semantic Major/Minor labels '
+                'require a separate owner-authored source.'},
+          {'q': 'Does the feature-flight section say what will roll out?',
+           'a': 'No. It reports exact EcsFlight additions and code-default changes. Rollout '
+                'intent is not derivable from code defaults and is explicitly labelled as '
+                'requiring owner review.'},
+          {'q': 'What happens when the release branch has no successful final build?',
+           'a': 'The step blocks. It never derives an app version from the branch date or '
+                'build number.'}]}

@@ -14,6 +14,8 @@ from orchestrator.outcomes import NeedsHuman
 
 ID = "vitals"
 KIND = "attest"
+NAME = 'Confirm Play Console vitals & policy status reviewed'
+REQUIRED_TOOLS = ()
 
 
 def build(context: StepContext):
@@ -28,3 +30,22 @@ def build(context: StepContext):
             "An unresolved policy issue or a vitals regression → leave it holding."),
         attest=True,
     )
+
+KNOWLEDGE = {'summary': 'Attest that Google Play Console app health (Android vitals + Policy status) is '
+            'acceptable.',
+ 'what': 'Play Console has no API for policy status, so this is a manual confirmation: review '
+         "the app's technical health (crash rate / ANR rate) and its policy standing (open "
+         'issues or warnings), and confirm both are acceptable before code complete.\n',
+ 'where': ["Android vitals: Play Console → left panel → 'Monitor and improve' → 'Android "
+           "vitals' → Overview.",
+           "Policy status: Play Console → left panel → 'Monitor and improve' → 'Policy and "
+           "programs' → 'Policy status'."],
+ 'how': 'Open both pages, confirm crash/ANR are within acceptable bounds (no regression) and '
+        'there are no open policy issues/warnings, then mark the step done. An unresolved '
+        'policy issue or a vitals regression → leave it holding.\n',
+ 'links': [{'name': 'Google Play Console', 'url': 'https://play.google.com/console'}],
+ 'faqs': [{'q': 'Where do I find Android vitals?',
+           'a': 'Play Console → left panel → Monitor and improve → Android vitals → Overview.'},
+          {'q': 'Where is policy status?',
+           'a': 'Play Console → left panel → Monitor and improve → Policy and programs → '
+                'Policy status.'}]}

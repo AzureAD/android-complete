@@ -291,12 +291,12 @@ def _clear_lockdown(orch):
 
 
 def _clear_phase0_scout(orch):
-    """Clear ALL Phase-0 human/scout holds (notice + flight_reminder + lockdown + vitals)
-    so the flow can advance out of Phase 0."""
-    _clear_notice(orch)
-    orch.record_scout_step("preflight", "flight_reminder", "pass", "test: reminders posted")
-    _clear_lockdown(orch)
-    orch.complete_step("preflight", "vitals", "test: vitals & policy reviewed")
+    """Clear ALL Phase-0 human/scout holds dynamically from workflow config."""
+    for step_def in orch.workflow.phase("preflight").steps:
+        if step_def.kind.value == "external":
+            orch.record_scout_step("preflight", step_def.id, "pass", f"test: {step_def.id} completed")
+        elif step_def.is_human_action:
+            orch.complete_step("preflight", step_def.id, f"test: {step_def.id} confirmed")
 
 
 
@@ -319,14 +319,10 @@ def _clear_early_phase0_scout(orch):
 
 
 def _drain_phase0_scout_only(orch):
-    """Run the three Phase-0 SCOUT steps (notice, flight_reminder, lockdown) — Scout's
-    own automatic work — but LEAVE the human hold (vitals). This is
-    the state where the daily digest is actually DUE: Scout has finished its own steps,
-    and the phase is still open on the human's confirmations. (A headless `tick` can't
-    reach this state on its own — the skill drains scout steps; tests simulate that.)"""
-    _clear_notice(orch)
-    orch.record_scout_step("preflight", "flight_reminder", "pass", "test: reminders posted")
-    _clear_lockdown(orch)
+    """Run all Phase-0 SCOUT steps dynamically while leaving human holds open."""
+    for step_def in orch.workflow.phase("preflight").steps:
+        if step_def.kind.value == "external":
+            orch.record_scout_step("preflight", step_def.id, "pass", f"test: {step_def.id} completed")
 
 
 

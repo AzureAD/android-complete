@@ -586,3 +586,40 @@ def test_schema_v3_loader_rejects_malformed_nested_facts(tmp_path):
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="Invalid gate decisions"):
         ReleaseState.load(str(path))
+
+
+def test_single_line_yaml_step_removal_requires_no_other_file_edits(tmp_path):
+    """Removing a single step line in phases.yaml compiles, validates, and plans automations
+    without editing automations.yaml, knowledge.yaml, or deleting the step module."""
+    from pathlib import Path
+    import yaml
+    import steps as steps_pkg
+    from orchestrator import automations as A
+    from tests._harness import CONFIG
+
+    src = Path(CONFIG)
+    (tmp_path / "automations.yaml").write_bytes((src.parent / "automations.yaml").read_bytes())
+    (tmp_path / "readiness.yaml").write_bytes((src.parent / "readiness.yaml").read_bytes())
+
+    doc = yaml.safe_load(src.read_text(encoding="utf-8"))
+    for phase in doc["phases"]:
+        if phase["id"] == "ccd":
+            phase["steps"] = [s for s in phase["steps"] if s["id"] != "pr_reminder"]
+    edited = tmp_path / "phases.yaml"
+    edited.write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+    wf = WorkflowDefinition.compile(yaml.safe_load(edited.read_text(encoding="utf-8")))
+    assert wf.step("ccd", "pr_reminder") is None
+    assert wf.step("ccd", "final_reminder") is not None
+    catalog = HandlerCatalog.compile(wf, steps_pkg.get_step)
+    assert "ccd.final_reminder" in catalog.handler_by_key
+    assert A.validate(str(edited)) == []
+    planned = A.plan(
+        str(edited), "2026-09", "2026-09-09",
+        owner_timezone="America/Los_Angeles", scheduler_timezone="UTC",
+        now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert not planned["problems"]
+    morning = next(w for w in planned["automations"] if w["slug"] == "ccd-morning")
+    assert morning["steps"] == ["ccd.final_reminder"]
+

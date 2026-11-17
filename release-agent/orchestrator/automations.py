@@ -58,8 +58,55 @@ def _definition_document(config_path: str) -> dict:
     return doc
 
 
+def _configured_step_keys(config_path: str) -> list[str]:
+    """Ordered '<phase>.<step>' keys from `config_path` (falls back to discovered modules if unreadable)."""
+    try:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        keys = []
+        for phase in doc.get("phases") or []:
+            pid = phase.get("id") if isinstance(phase, dict) else None
+            if not isinstance(pid, str):
+                continue
+            for step in phase.get("steps") or []:
+                sid = step.get("id") if isinstance(step, dict) else None
+                if isinstance(sid, str):
+                    keys.append(f"{pid}.{sid}")
+        if keys:
+            return keys
+    except (OSError, yaml.YAMLError):
+        pass
+    return list(steps_pkg.discover().keys())
+
+
+def _module_automations(mod: object) -> tuple[str, ...]:
+    raw_multi = getattr(mod, "AUTOMATIONS", None)
+    if isinstance(raw_multi, (list, tuple)):
+        return tuple(str(s) for s in raw_multi if isinstance(s, str) and s.strip())
+    raw_single = getattr(mod, "AUTOMATION", None)
+    if isinstance(raw_single, str) and raw_single.strip():
+        return (raw_single.strip(),)
+    return ()
+
+
 def load_defs(config_path: str) -> list:
-    return _definition_document(config_path)["automations"]
+    raw_defs = _definition_document(config_path)["automations"]
+    active_keys = _configured_step_keys(config_path)
+    by_slug: dict[str, list[str]] = {}
+    for key in active_keys:
+        phase, _, sid = key.partition(".")
+        mod = steps_pkg.get_step(phase, sid)
+        if mod is None:
+            continue
+        for slug in _module_automations(mod):
+            by_slug.setdefault(slug, []).append(key)
+    resolved = []
+    for item in raw_defs:
+        entry = dict(item)
+        if "steps" not in entry:
+            entry["steps"] = list(by_slug.get(entry.get("slug", ""), ()))
+        resolved.append(entry)
+    return resolved
 
 
 def _provider_defaults(config_path: str) -> dict:
@@ -115,10 +162,14 @@ def fire_at(phase_id: str, step_id: str):
 
 
 def _all_scheduled_steps(config_path: str) -> dict:
-    """{ '<phase>.<step>': fire_at_local } for every discovered module that declares
-    a fire_at_local — i.e. every step that a timed automation must own."""
+    """{ '<phase>.<step>': fire_at_local } for every configured workflow step whose
+    module declares a fire_at_local — i.e. every active step a timed automation must own."""
     out = {}
-    for key, mod in steps_pkg.discover().items():
+    for key in _configured_step_keys(config_path):
+        phase, _, sid = key.partition(".")
+        mod = steps_pkg.get_step(phase, sid)
+        if mod is None:
+            continue
         fire = (getattr(mod, "CONFIG", {}) or {}).get("fire_at_local")
         if fire:
             out[key] = fire

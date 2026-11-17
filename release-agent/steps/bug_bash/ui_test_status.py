@@ -52,6 +52,8 @@ WRITES = (WriteOperation.FILL_AUTH_UI_RESULTS, WriteOperation.FILL_UI_AUTOMATION
           WriteOperation.SET_POINT_TESTERS, WriteOperation.FILL_AUTH_MONTHLY)
 ID = "ui_test_status"
 KIND = "agent"
+NAME = 'Fill current-RC automation results and failure triage'
+REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "idempotent"
 EFFECT_RECOVERY = "match_current"
 
@@ -721,3 +723,105 @@ def _apply_prepared(context, prepared):
         f"({p} Passed, {f} Failed, {na} N/A) across {summ.get('cases_touched', 0)} cases."
         f"{tail}",
         links=links)
+
+KNOWLEDGE = {'summary': 'Fill both current release layouts, set failed-point Current Tester and publish '
+            'complete result receipts.',
+ 'what': "Fills the release's UI-automation results from Phase-2's captured runs — for BOTH "
+         'apps. (1) BROKER: new source-v4 plans fill ONLY reconciled current-RC failure '
+         'investigations, grouped by flight/category with Stress Tests separate from UI '
+         'Automation. Both manual suites remain unchanged. Historical source versions retain '
+         'their original mapping. Uses the reconciled current-RC source evidence also '
+         'displayed by rc_report '
+         '(state.pipeline_runs.rcs[-1].ecs/local.tests.suites[].test_results), without '
+         'refetching pipeline results or reevaluating retries. Routing encodes the FULL '
+         'MSAL/Broker combination: PROD MSAL + RC Broker -> ECS292/Local328; RC MSAL + PROD '
+         'Broker -> ECS294/Local344; RC MSAL + RC Broker (including LTW and mapped Stress) -> '
+         'ECS293/Local330. BrokerHost explicitly rolls up into PROD MSAL + RC Broker, matching '
+         'the master subtree. Distinct exact titles, parameters and API suites stay separate '
+         'in the report. If several map to one plan point, any Failed verdict wins; otherwise '
+         'any Passed wins over NA, and NA-only evidence sets NotApplicable. Historical RCs '
+         "never contribute. (2) AUTHENTICATOR: reads this release's frozen auth ECS post-build "
+         'UI-test evidence (rcs[-1].auth.test, captured by auth_ecs) and fills ONLY the '
+         "Automated Tests child for new Authenticator layouts, using the clone's frozen Phase "
+         '2 mapping and exact child target. Manual Tests is never filled. Historical single '
+         'dynamic suites keep their original target. Passed->Passed and Failed->Failed; mapped '
+         'NA-only cases stay in the automated category without an invented result or a manual '
+         'assignment. Only cases actually written Failed are submitted for release-owner '
+         "assignment through Current Tester on this release's exact test points, never shared "
+         'test-case Assigned To (System.AssignedTo). This keeps other copies and historical '
+         'releases unchanged. Assignment errors are nonblocking, explicitly recorded, and '
+         'never claimed as successful reassignment. Both source projections are validated '
+         'before any external write; no alternate Phase-3 Authenticator refetch or best-effort '
+         'evidence skip is allowed.\n',
+ 'who': 'Scout runs it automatically during `next` (an agent step) — before distribute_tests.',
+ 'how': "New failure-only plans use the clone's frozen scenario bindings and typed "
+        'plan-root/flight/category suite IDs, not a fake UI-suite ID. Singleton UI references '
+        'and owned Stress/collision/no-ID cases preserve exact scenario identity and source '
+        'links. Missing target points or new RC/build/failure identities block before writes. '
+        'Historical matrix plans retain the existing title-based case-id extractor and '
+        'explicit combination mapping; --preview-ui-repair is only their reviewed repair path. '
+        'Old LTW outcomes at 294/344 are NEVER auto-cleared: equal outcomes are not ownership; '
+        'cleanup needs provenance receipts, match-before-write and later exact approval. For '
+        'Authenticator, E2E carries canonical case ids; Monthly intentionally has no canonical '
+        'map. Layout v1 keeps Monthly coverage report-only; Monthly-v2 layouts own distinct '
+        'unresolved failure investigations. P3S3 alone fills their bound points, attempts '
+        'failed-point Current Tester assignment, preserves manual resolutions/history, and '
+        'publishes the complete source-bound receipt required by '
+        'distribution/progress/invitations. Include ALL failures in the owner reminder/report. '
+        'Before ANY external mutation, both MRWP snapshots must be complete, have count_basis '
+        'distinct_tests_pass_any and build_id matching their MRWP run_id, and contain valid '
+        'complete reconciled test/attempt evidence. Missing/stale evidence blocks: refresh '
+        'Phase-2 verification, never fall back to raw counts or historical runs. Plan points '
+        'without matching evidence are untouched, including manual points. Stores compact '
+        'current-RC/build provenance and mapping diagnostics; reports partial writes '
+        'explicitly. Re-runs replace/clear generated ui_failures content from the same current '
+        'verdicts without changing human completion, notes or unrelated data. Exact-title '
+        'retry Passed wins first; different scenarios mapped to the same case use Failed-wins. '
+        'Source executions, distinct tests and case points have separate denominators. The '
+        'independent aggregate gate is unchanged. This step durably invalidates any old result '
+        'BEFORE a new attempt, then checkpoints partial write diagnostics. Only after BOTH '
+        'required fills succeed does it publish data.result: actual applied target/point '
+        'references, automated and applied-failed case IDs, report-only/ unmapped '
+        'investigations, and minimal source/target binding. Consumers use the small '
+        'ui_results.completed_result API, not diagnostic summary fields or raw evidence. '
+        'Missing, partial or stale results require supported owner refresh, never '
+        'fallback/migration. clone_plans_broker records the source-versioned validated '
+        'destination: typed automation hierarchy for v4, UI suite ID only for historical '
+        'matrix/v3. Refresh that owning step if its destination is missing; never silently '
+        'migrate it or invent a UI-suite ID. New Authenticator categories must contain the '
+        'entire frozen mapped-case set, including NA-only cases, and no unmapped or duplicate '
+        'case/configuration points. Check live coverage during preparation and again before '
+        'Broker writes; the Authenticator writer also rechecks. Missing coverage blocks the '
+        'combined step, not a successful partial fill.\n',
+ 'faqs': [{'q': 'A test failed for one config but passed for another — what gets written?',
+           'a': 'Per full combination AND flight. Never treat RC MSAL + RC Broker as RC MSAL + '
+                'PROD Broker. Distinct API/device/parameterized tests stay separate as '
+                'evidence and use Failed-wins only at their explicitly mapped case/config '
+                'point.'},
+          {'q': 'Should Monthly UI Tests get test-plan cases?',
+           'a': 'Never fabricate canonical Monthly mappings. Layout v1 keeps Monthly coverage '
+                'report-only; auth-manual-automated-monthly-v2 clones add distinct '
+                'unresolved-failure investigations only, never initial pass/NA/recovered cases '
+                'or an empty folder. P3S3 owns fills and preserves manual resolutions/history. '
+                'The source-execution gate stays independent of Broker.'},
+          {'q': 'What happens to a Firebase E2E test that FAILED?',
+           'a': 'A matching point is written Failed and its Current Tester is set to the '
+                'release owner for triage. New category layouts block before either product is '
+                'written if any frozen mapped case is missing; historical layouts retain their '
+                'existing diagnostics. Passed automated cases are marked Passed; both passed '
+                'and failed automated case IDs are excluded from the manual split. Assignment '
+                'errors remain visible and do not imply owner changes.'},
+          {'q': 'Do assignments change Assigned To or Current Tester?',
+           'a': 'Current Tester on the exact release plan/suite/test point. The legacy Test '
+                'Point API returns this as point.assignedTo and accepts tester in the PATCH '
+                "body; it is not the work item's System.AssignedTo. Shared Assigned To, other "
+                'release copies and history are not modified.'},
+          {'q': 'What does a test that failed then passed get?',
+           'a': 'Passed only for retries of that exact title within the same normalized suite '
+                'and current build. A failed sibling parameter/API suite mapping to the same '
+                'point still makes the point Failed. Earlier RC successes or failures are '
+                'irrelevant; recovered titles are not reassigned.'},
+          {'q': 'What outcome do skipped / not-run tests get?',
+           'a': 'Explicit NA-only evidence becomes NotApplicable. No matching evidence leaves '
+                'the point untouched and is diagnosed; it is not silently converted to '
+                'NotApplicable.'}]}

@@ -30,6 +30,10 @@ from steps.lib.mockctx import MISSING
 
 ID = "telemetry_verify"
 KIND = "scout"
+NAME = 'Verify bug-bash telemetry in Kusto'
+REQUIRED_TOOLS = ('kusto',)
+REQUIRES_APPROVAL = False
+REPEATABLE = True
 
 @dataclass(frozen=True)
 class BuildParameters:
@@ -161,3 +165,32 @@ def build(context: StepContext):
         note=f"queried {TABLE} for {VERSION_COLUMN} == {version}",
         outbound=False,
     )
+
+KNOWLEDGE = {'summary': "Confirm the bug-bash APK version's telemetry is reaching the ADX/Kusto cluster.",
+ 'what': 'Once the Authenticator release-app build (AndroidBuild-1ES) exists, its version IS '
+         "the bug-bash APK version. This step runs the checklist's telemetry query — "
+         '`loadaccountsoperations | where AppInfo_Version == "<version>" | count` — against '
+         "the ADX release cluster and passes only when the count is > 0 (proof the build's "
+         'instrumentation is reaching Kusto from at least one device). This is checklist Phase '
+         '3.3 Step 9, relocated to run right after the Authenticator ECS build is verified.\n',
+ 'who': "Scout runs it automatically (a scout-assisted check) — the deterministic engine can't "
+        'reach the Kusto MCP. The version is discovered from the release-app build; no user '
+        'action unless it comes back empty.\n',
+ 'where': ['ADX release-telemetry cluster + database (same as the adx_access readiness item).',
+           'Table: loadaccountsoperations · version column: AppInfo_Version.'],
+ 'how': "Runs via step-action → the kusto_query MCP with the step's "
+        'cluster_uri/database/query. Read the returned Count, then run the follow-up '
+        '`record-telemetry --release <id> --rows <N> --version <ver>`: rows > 0 records pass; '
+        'rows == 0 records `attention` — the owner posts a heads-up in Android Core Team '
+        'before declaring the bug bash complete, then re-runs the check. This owner task is '
+        'not permission for an ad-hoc automatic send. For a dry test, set the `version` mock '
+        'to query a version you know has telemetry.\n',
+ 'faqs': [{'q': 'Why is a Phase-3 checklist step (3.3 S9) run in Phase 2?',
+           'a': 'Because the check only needs the built APK version to exist, and running it '
+                "right after auth_ecs gives an early smoke-signal that the build's telemetry "
+                'pipeline works — before the go/hold at rc_report. Placement was the release '
+                "owner's call."},
+          {'q': 'What if telemetry is sparse right after the build?',
+           'a': 'The bar is just non-zero. As soon as the owner or any tester installs the '
+                "build, rows appear. Zero rows means telemetry isn't flowing at all — worth "
+                'surfacing before the bash closes.'}]}

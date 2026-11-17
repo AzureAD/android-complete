@@ -34,6 +34,9 @@ from tools import oneauth as OA
 
 ID = "oneauth_common_pr"
 KIND = "scout"
+NAME = 'Ingest published Common into OneAuth (PR to dev)'
+REQUIRED_TOOLS = ('az',)
+REQUIRES_APPROVAL = False
 WRITE_COMMAND = "create-oneauth-common-pr"
 
 MOCKABLE = {
@@ -127,3 +130,47 @@ def build(context: StepContext):
               f"{len(plan['changed_files'])} file(s) to bump"),
         outbound=True,
     )
+
+KNOWLEDGE = {'summary': 'Ingest the published final Common version into OneAuth through an exact checked '
+            'PR plan.',
+ 'what': 'After the release publishes and verify_pub confirms Common is live on Maven Central, '
+         'update OneAuth to consume that final (non-RC) Common version. On the standing '
+         '`android/common-ingestion` branch it bumps the AndroidCommon version in FOUR files — '
+         'the gradle version catalog (msIdentityCommon in libs.versions.toml), the CG manifest '
+         '(com.microsoft.identity:common maven version in deps/cgmanifest.json), the '
+         "deps/README.md 'MSAL Android Common' table row, and a new '(Android) Ingest "
+         "AndroidCommon <ver>' CHANGELOG.md bullet — then opens a PR into `dev`.\n",
+ 'who': 'Scout composes a read-only advisory, then the scheduled checked command executes the '
+        'release-owned write. Its current exact plan hash, provider identities and single '
+        'attempt are checkpointed and fenced even when --auto-approve is used.\n',
+ 'where': ['repo: OneAuth — office.visualstudio.com/OneAuth/_git/OneAuth '
+           '(config/coordinates.yaml repos.oneauth)',
+           'branch: android/common-ingestion -> dev',
+           'version: state.versions.common (final non-RC Common) + state.versions.msal (for '
+           'the changelog line)'],
+ 'how': 'Preview `create-oneauth-common-pr --release <id>` for the complete transient plan '
+        'without writes. Scheduled execution uses --execute --auto-approve --executor '
+        '<automation-id>; a manually reviewed execution instead supplies its exact '
+        '--review-hash and --approved-by. A clean local OneAuth checkout supplies '
+        'commit-pinned Git objects. The planner computes the dev/ingestion merge and four-file '
+        'edits in an isolated object database, then the checked writer pushes that exact '
+        'commit and opens/reuses the ingestion-to-dev PR. No server-side merge is performed. '
+        'Conflicts or missing objects hold before writing. Interrupted/uncertain attempts '
+        'retain their ownership and cannot be blindly retried. Test version overrides do not '
+        'bypass write guards.\n',
+ 'consequences': 'A real WRITE to OneAuth: the reviewed merge/version-bump commit on '
+                 'android/common-ingestion and a PR into dev. Exact repository/tip/content '
+                 'checks protect the write; conflicts and uncertain results remain held for '
+                 'owner recovery, never a forced merge.\n',
+ 'faqs': [{'q': 'Why merge dev into the ingestion branch instead of fast-forwarding?',
+           'a': 'android/common-ingestion is a long-lived staging branch that can diverge from '
+                'dev. The checked planner computes the exact merge in an isolated local Git '
+                'object database and preserves its history; it never requests an unreviewed '
+                'server-side merge.'},
+          {'q': 'What version does it write?',
+           'a': 'state.versions.common — the final non-RC Common version published to Maven '
+                'Central (verify_pub confirms it first). The changelog line also references '
+                'state.versions.msal.'},
+          {'q': 'What if the merge conflicts?',
+           'a': 'The step holds (attention) and surfaces it — a human resolves the '
+                'dev->ingestion merge, then re-runs. Scout never force-merges.'}]}

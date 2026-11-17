@@ -452,8 +452,8 @@ def test_refresh_notification_cannot_be_claimed_after_phase_advances(orch):
 
 def test_notify_is_read_only_and_order_independent(orch, tmp_path):
     from orchestrator.commands.notify import _notify_payload
-    for s in ("final_reminder", "localization"):
-        orch.state.set_step("ccd", s, StepState(status="done"))
+    for step_def in orch.workflow.phase("ccd").steps:
+        orch.state.set_step("ccd", step_def.id, StepState(status="done"))
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
     path = Path(C.state_path(str(tmp_path), orch.state.release_id))
     before = path.read_bytes()

@@ -39,6 +39,8 @@ from orchestrator.authority import WriteOperation
 WRITES = (WriteOperation.CREATE_LIGHTWEIGHT_TAG,)
 ID = "tag_authenticator"
 KIND = "agent"
+NAME = 'Tag the Authenticator release commit'
+REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "idempotent"
 EFFECT_RECOVERY = "frozen"
 
@@ -175,3 +177,42 @@ def _apply_target(context, target):
                    f"{str(res.get('objectId'))[:8]}, not the release commit {commit[:8]}. "
                    f"A human must reconcile (delete/repoint the tag) before this can pass.",
                    links=links)
+
+KNOWLEDGE = {'summary': "Tag the Auth App's released commit with its version (no 'v' prefix) in the auth "
+            'repo.',
+ 'what': "Once the release has published, mark the Authenticator app's released build by "
+         'creating a lightweight git tag on its release commit. The tag NAME is the Auth App '
+         "version (e.g. '6.2608.5658' — the auth app does NOT use a 'v' prefix). It tags the "
+         'EXACT commit the final Authenticator build (AndroidBuildBroker1ES, def 475778) was '
+         'built from — build.sourceVersion — on the release branch, not merely the branch '
+         'head.\n',
+ 'who': 'Scout does it (an agent step). There is NO preview/execute — the tag is created when '
+        'the step is reached. It writes to the Authenticator repo (msazure/One, '
+        'AD-MFA-phonefactor-phoneApp-android).\n',
+ 'where': ['repo: msazure/One AD-MFA-phonefactor-phoneApp-android (config/coordinates.yaml '
+           'repos.authenticator)',
+           "release branch: state.versions.authenticator ('release/YYYY/MM/DD', set at Phase 2 "
+           'by orchestrator_health)',
+           'version source: the numeric (\\d+.\\d+.\\d+) version parsed from the final '
+           'Authenticator build number (pipeline 475778)'],
+ 'how': 'Runs automatically. It reads the release branch from state.versions.authenticator, '
+        'finds the final pipeline-475778 build captured by identify_auth_build, verifies its '
+        'version + commit, and creates a lightweight git tag <version> at that commit. '
+        'Idempotent: if the tag already exists AT that commit it passes (no-op); if it exists '
+        'at a DIFFERENT commit it BLOCKS for a human to reconcile. If the final Authenticator '
+        "build hasn't been identified yet, it blocks. Test with the `version`/`commit` inject "
+        'mocks, `dry_run` (compose without writing), or `fail`.\n',
+ 'consequences': 'A real WRITE to the Authenticator repo: it creates the git tag ref. It never '
+                 'force-updates an existing tag (an existing tag at a different commit blocks '
+                 'instead), and it makes no other change.\n',
+ 'faqs': [{'q': "Does the tag use a 'v' prefix?",
+           'a': "No. The auth app tags with the bare version (e.g. '6.2608.5658'). Older "
+                "'v6.YYMM.xxxx' tags in the repo are a different/legacy scheme and don't map "
+                'to the release-branch heads.'},
+          {'q': 'Which commit gets tagged — the branch head or the built commit?',
+           'a': 'The exact commit the final pipeline-475778 build was built from '
+                '(build.sourceVersion). Usually that equals the release-branch head, but '
+                'tagging the built commit is deterministic even if commits land afterward.'},
+          {'q': 'Where does the version come from?',
+           'a': 'The final pipeline-475778 run carries the app version in its build number; '
+                "Scout parses that exact run — it doesn't compute or guess the version."}]}

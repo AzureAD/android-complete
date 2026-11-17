@@ -31,6 +31,8 @@ from steps.finalize import integ_prs as IP
 
 ID = "verify_release_notes"
 KIND = "agent"
+NAME = 'Verify GitHub release notes (Broker + MSAL + Common)'
+REQUIRED_TOOLS = ('gh',)
 EFFECT_MODE = "read_only"
 
 # (repo key in integ_prs.CONFIG, which state.versions value supplies its version, label).
@@ -118,3 +120,36 @@ def build(context: StepContext):
             links=links, poll_in_min=CONFIG["poll_in_min"])
     return Done(
         f"All three GitHub release notes are published: {', '.join(published)}.", links=links)
+
+KNOWLEDGE = {'summary': 'Verify the GitHub release notes are published for Broker, MSAL, and Common.',
+ 'what': "After the 'Publish GitHub Release Notes' gate (publish_notes_gate), the orchestrator "
+         'publishes a GitHub release for each library. This step confirms all three exist at '
+         "the release versions — it's the GitHub complement to verify_pub (which checks Maven "
+         "Central). Each release is tagged 'v<version>': Broker @ state.versions.broker, MSAL "
+         '@ state.versions.msal, Common @ state.versions.common.\n',
+ 'who': "Scout (an agent step) — read-only `gh release view` (uses the machine's gh auth).",
+ 'where': ['Broker: msft.ghe.com/security/ad-accounts-for-android (GitHub Enterprise) — '
+           'v<broker>',
+           'MSAL:   github.com/AzureAD/microsoft-authentication-library-for-android — v<msal>',
+           'Common: github.com/AzureAD/microsoft-authentication-library-common-for-android — '
+           'v<common>'],
+ 'how': 'Runs automatically and re-checks on a poll. For each repo it runs `gh release view '
+        'v<version>`; only a matching tag with a boolean non-draft flag and release URL counts '
+        'as published. An explicit release-not-found response or a draft stays pending; '
+        'repository access errors, malformed evidence and mismatched tags block rather than '
+        'pass. The repo slugs are REUSED from integ_prs.CONFIG (the single source for the '
+        'release repos). Test with the `results` mock (repoKey -> published|missing|error) and '
+        '`versions`.\n',
+ 'faqs': [{'q': 'How is this different from verify_pub?',
+           'a': 'verify_pub checks the Maven Central ARTIFACTS (MSAL/Common/Common4j .pom); '
+                'verify_release_notes checks the GitHub RELEASES (Broker/MSAL/Common, tagged '
+                'v<version>). Both must be true for the release to be fully published.'},
+          {'q': "Why does it include Broker but verify_pub doesn't?",
+           'a': "Broker isn't published to Maven Central (it's a private GHE repo), but it "
+                'DOES get a GitHub Enterprise release. So the GitHub-notes check covers all '
+                'three libraries; the Maven check covers only the two public artifacts (plus '
+                'Common4j).'},
+          {'q': "What if a release isn't there yet?",
+           'a': 'It stays in-progress and re-checks — publishing the notes happens right after '
+                'the publish_notes_gate is approved. A draft release or a gh auth error is '
+                'surfaced instead of silently passing.'}]}

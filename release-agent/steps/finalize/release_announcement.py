@@ -36,6 +36,9 @@ from tools.coordinates import coords
 
 ID = "release_announcement"
 KIND = "scout"
+NAME = "Announce the release in the 'General' Teams channel"
+REQUIRED_TOOLS = ('microsoft_teams',)
+REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
 # The "General" channel used to sync release plans between Android DevX and partner teams.
@@ -244,3 +247,37 @@ def build(context: StepContext):
         note=f"posted the release announcement to {note}",
         outbound=True,
     )
+
+KNOWLEDGE = {'summary': "Post the release-complete announcement to the 'General' Teams channel.",
+ 'what': 'Once the release has published, announce it in the Android DevX <-> partner '
+         "release-sync 'General' channel: a titled post ('Auth Client Android SDKs <Month "
+         "Year> Release') with a small SDK version table (Common / MSAL / Broker) and a cc "
+         'line. A root channel POST (not a reply), so partner teams see the completed build '
+         'numbers in one place.\n',
+ 'who': 'Scout composes and posts it (a scout step); the release owner owns the '
+        'content/recipients. Versions come from state.versions (the single source of truth '
+        'populated at Phase 2) — the step never re-discovers them.\n',
+ 'where': ["Team be33b3e7-c501-4225-9413-3b88046f3eb3, channel 'General' "
+           '19:715820c336d3454bbd75ef0bad68e460@thread.tacv2'],
+ 'how': 'Uses notification prepare (source step), claim, then the returned '
+        'microsoft_teams-SendMessageToChannel payload and notification result. A ROOT channel '
+        'post needs the microsoft_teams MCP; WorkIQ only does channel replies. To test, '
+        'redirect with the `post_to` mock knob ({teamId, channelId}) to a test channel — keeps '
+        'the post real, points it elsewhere. The `versions` mock overrides the shown SDK '
+        'versions. Missing, unreadable or malformed config/announcement_cc.yaml blocks '
+        'preparation instead of silently dropping the CC members.\n',
+ 'faqs': [{'q': 'Where do the versions come from?',
+           'a': 'state.versions — populated at Phase 2 by build_verify.orchestrator_health '
+                'from the orchestrator run tags. The announcement shows Common/MSAL/Broker '
+                '(the authenticator branch is stored too but not shown in this SDK table).'},
+          {'q': 'Why not WorkIQ like the other Teams messages?',
+           'a': 'WorkIQ can only REPLY to an existing channel message; a brand-new channel '
+                'post requires the microsoft_teams MCP (SendMessageToChannel). The 1:1/group '
+                'chat reminders use WorkIQ; this channel announcement uses microsoft_teams.'},
+          {'q': 'Does the cc line @-tag CP/Intune, LTW, OneAuth, Native Auth?',
+           'a': "Those are Teams TAGS, and the microsoft_teams tool can't @-mention a tag (it "
+                "maps the id to an unknown user). So instead the step @-mentions the tags' "
+                'MEMBERS as individual users — maintained by hand in '
+                'config/announcement_cc.yaml ({name,email} per group). Mock knobs: cc_mode '
+                "'mention' (default), 'self' (ping only you via self_email — safe test), or "
+                "'off' (plain text); cc_members overrides the registry."}]}

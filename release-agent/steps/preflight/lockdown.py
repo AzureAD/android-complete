@@ -22,6 +22,9 @@ from orchestrator.outcomes import NeedsSkill, Blocked
 
 ID = "lockdown"
 KIND = "scout"
+NAME = 'Detect lockdown/holiday overlap'
+REQUIRED_TOOLS = ('playwright',)
+REQUIRES_APPROVAL = False
 
 # Step config (co-located). The skill scrapes the CCOA No-Fly Zones page; the
 # engine decides overlap deterministically against CCD-7 .. CCD+14, Production only.
@@ -156,3 +159,19 @@ def build(context: StepContext):
         summary=f"Scrape CCOA No-Fly Zones, then check-lockdown decides overlap vs {window}",
         note="awaiting CCOA scrape + deterministic overlap decision",
     )
+
+KNOWLEDGE = {'summary': 'Detect whether a CCOA lockdown / holiday no-fly zone overlaps the release window.',
+ 'what': "Reads the CCOA 'No-Fly Zones' and checks whether any PRODUCTION-environment lockdown "
+         "overlaps the release window (CCD-7 through CCD+14). Banner-only advisories don't "
+         'block; a Production overlap holds the step so the owner can shift the CCD past it.\n',
+ 'where': ["CCOA periods page: the change-manager site — 'Upcoming CCOA periods' and 'Past "
+           "NoFly Zones' tables for every calendar year covered by CCD-7..CCD+14."],
+ 'how': 'Scout scrapes the page (AAD SSO), the engine decides overlap deterministically. On an '
+        'overlap it names the clashing lockdown(s); shift the CCD with set-ccd if you want to '
+        'proceed. On no overlap it passes. Missing or malformed period evidence must be '
+        'corrected and checked again, never treated as no overlap.\n',
+ 'links': [{'name': 'CCOA periods (change-manager)',
+            'url': 'https://prod.change-manager.msidentity.com/ccoa-periods'}],
+ 'faqs': [{'q': 'Which lockdowns actually block?',
+           'a': 'Only Production-environment CCOA periods that intersect CCD-7..CCD+14. '
+                'Banner-only advisories are ignored.'}]}

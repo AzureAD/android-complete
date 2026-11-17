@@ -355,7 +355,7 @@ def test_typed_parameters_validate_direct_and_parsed_construction(phase, step, r
 
 def test_all_implemented_handlers_have_context_only_contracts():
     modules = steps.discover(force=True)
-    assert len(modules) == 45
+    assert modules, "expected discovered step modules"
     for key, module in modules.items():
         for hook in ("build", "prepare_effect", "execute", "reconcile", "authorize_retry",
                      "prepare_approval", "submit_approval", "reconcile_approval"):

@@ -30,6 +30,9 @@ WRITES = (WriteOperation.CREATE_AUTH_QUERY_SUITE, WriteOperation.CREATE_AUTH_SUI
           WriteOperation.ENSURE_AUTH_MONTHLY)
 ID = "clone_plans_auth"
 KIND = "agent"
+NAME = 'Create Authenticator bug-bash test suite'
+REQUIRED_TOOLS = ('az',)
+EFFECT_RETRY = True
 EFFECT_MODE = "transactional"
 EFFECT_RECOVERY = "frozen"
 
@@ -373,3 +376,58 @@ def _build(context, *, allow_create, frozen=None):
         f"Created the Authenticator bug-bash query-suite '{name}' (suite {create_id}) "
         f"under 'MSAuthenticator Test Passes'. Next: assign testers (later step).",
         links=_links(create_id, frozen))
+
+KNOWLEDGE = {'summary': 'Create the Authenticator release folder with Manual Tests and Automated Tests.',
+ 'what': "NEW releases use a static parent under 'MSAuthenticator Test Passes' (plan714514, "
+         "root714515), named 'Android release/MM/DD/YYYY' from the CCD. Its two direct dynamic "
+         'children are Manual Tests and Automated Tests. Both preserve the curated Android + '
+         'ReleaseBugBash, Authenticator-area and non-Closed query filters. Automated Tests '
+         'includes the verified case IDs mapped from the captured current-RC Phase 2 Android '
+         'results; Manual Tests excludes exactly those IDs. The queries are disjoint and cover '
+         'the same curated set. This is NOT ADO Automation Status or the generic Automated '
+         'tag. Both children remain even when one is empty; existing cases are referenced, '
+         'never copied or edited. Monthly Firebase canonical coverage remains report-only with '
+         'no forced mapping. Explicit fresh clone preparation with --param '
+         'layout=auth-manual-automated-monthly-v2 adds a STATIC Monthly UI Failure Triage '
+         'sibling only for distinct unresolved failures after exact-title retries, with no '
+         'empty folder or initial passing/NA/recovered cases. Cases use '
+         'ReleaseMonthlyInvestigation (never ReleaseBugBash), exact source provenance, and '
+         'durable create/membership receipts. Completed layouts are not mutated in-place; '
+         'switching layouts requires an explicit fresh rerun. P3S3/downstream require '
+         'completed current fill/live points. This step stops after creating and validating '
+         'the hierarchy; no outcomes or Testers.\n',
+ 'who': 'Scout runs it automatically during `next` (an agent step, via the ADO test-suite '
+        'create API).',
+ 'how': 'Freeze layout auth-manual-automated-v1, RC/APK/test-build identities, sorted mapped '
+        'case IDs and both exact queries before writes. Every parent/child POST has its own '
+        'durable creation intent and acknowledged ID saved before readback. Validate exact '
+        'direct parent/name/type/query and configuration inheritance, plus unique exhaustive '
+        'discovery. A partial or uncertain create retains ownership; never clear IDs or '
+        'blindly create again. Explicit retry needs an owner reason and verified absence for '
+        'that exact unacknowledged category. Changed RC/build/mapped IDs hold for owner '
+        'recovery; outcome-only refresh does not reclassify. Old single-dynamic-suite records '
+        'and frozen executions keep their original recovery path, never migrate. A same-named '
+        'legacy suite is not a new static parent; use a separately reviewed TEST ONLY name for '
+        'testing. Saved suite_id links to the parent; manual_suite_id and automated_suite_id '
+        'identify the children. Only the automated child is filled by ui_test_status later.\n',
+ 'links': [{'name': 'MSAuthenticator Test Passes plan (#714514)',
+            'url': 'https://identitydivision.visualstudio.com/Engineering/_testManagement?_a=tests&planId=714514&suiteId=714515'},
+           {'name': 'How to make a test suite for bug bash (IDWiki 33580)',
+            'url': 'https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-'}],
+ 'faqs': [{'q': 'Does it assign testers?',
+           'a': 'No. It creates and validates the parent and two query children only. Results '
+                'and release-point Testers are handled by later steps; shared case AssignedTo '
+                'is never changed.'},
+          {'q': 'What names the suite?',
+           'a': "From the CCD: 'Android release/MM/DD/YYYY' (e.g. CCD 2026-08-13 → 'Android "
+                "release/08/13/2026'), matching prod."},
+          {'q': 'Which test cases does it include?',
+           'a': 'The existing curated Android ReleaseBugBash set, including matching '
+                'month-specific tags, under the Authenticator area and not Closed. Phase 2 '
+                'verified mapped Android IDs go into Automated Tests; the remainder go into '
+                'Manual Tests. It does not broaden to all Android cases or invent Monthly '
+                'mappings.'},
+          {'q': 'Does this change an existing release suite?',
+           'a': 'No. Historical single-query-suite identities and their frozen recovery inputs '
+                'remain unchanged. New layouts are explicit and malformed or conflicting '
+                'identities hold; no automatic migration or replacement.'}]}

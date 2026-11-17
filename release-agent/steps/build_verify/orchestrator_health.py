@@ -27,6 +27,8 @@ from orchestrator.authority import PipelineScope, PipelineSlot, VersionEvidence
 EVIDENCE = (PipelineScope(PipelineSlot.ORCHESTRATOR), VersionEvidence())
 ID = "orchestrator_health"
 KIND = "agent"
+NAME = 'Verify Release Orchestrator health (parked at Remove RC Tags)'
+REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 
 CONFIG = {
@@ -149,3 +151,31 @@ def build(context: StepContext):
         f"Release Orchestrator run {bid} healthy — Validate / Create Branches / "
         f"Trigger RC Testing all succeeded; parked at '{cfg['park_stage']}' awaiting "
         f"owner approval (cleared in a later phase). {vstr}.", links=links, updates=updates)
+
+KNOWLEDGE = {'summary': 'Confirm the Release Orchestrator is healthy and parked at the Remove RC Tags '
+            'gate.',
+ 'what': "Finds this release's orchestrator run (def 2828) by its AuthenticatorBranch tag and "
+         'confirms the pre-gate stages — Validate Branch and Versions, Create Release '
+         "Branches, Trigger RC Testing — all succeeded, and that it is PAUSED at 'Remove RC "
+         "Tags' (a manual approval the owner clears in a LATER phase). This step never "
+         'approves that gate. Reports the RC versions (Common/MSAL/Broker).\n',
+ 'who': 'Scout verifies it automatically (read-only). If a pre-gate stage failed, the RELEASE '
+        "ENGINEER follows the failed stage's guidance + the recovery TSG, retries the stage, "
+        'then reruns this step. Approving Remove RC Tags is a separate, later step — not '
+        'here.\n',
+ 'where': ['Release Orchestrator (def 2828): '
+           'https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2828',
+           'Recovery TSG: '
+           'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/release-orchestrator-recovery'],
+ 'how': "Each stage is descriptive — the failed stage's output explains the root cause and "
+        'suggested fix. Follow it, click Retry on the failed stage, then rerun this step. If '
+        'unresolved within 2h, escalate to the release Teams chat.\n',
+ 'faqs': [{'q': "It says 'parked at Remove RC Tags' — is that bad?",
+           'a': "No — that's the healthy expected state. The orchestrator pauses at Remove RC "
+                'Tags for a human approval that happens in a later phase. Phase 2 only '
+                'confirms it got there cleanly; it never approves it.'},
+          {'q': 'A pre-gate stage failed — what do I do?',
+           'a': 'Open the failed stage; its output describes the root cause + corrective '
+                'action. Fix it, click Retry on that stage, then rerun this step. Recovery '
+                'steps: the release-orchestrator-recovery TSG. Escalate to the release chat if '
+                'stuck > 2h.'}]}
