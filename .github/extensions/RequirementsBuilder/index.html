@@ -1,0 +1,62 @@
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT License. -->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Requirements Builder</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/app.js" defer></script>
+</head>
+<body>
+    <a class="skip" href="#editor">Skip to current question</a>
+    <header>
+        <div class="eyebrow">ANDROID SOFTWARE FACTORY / HUMAN INPUT</div>
+        <h1>From an idea to clear requirements.</h1>
+        <p>You bring the intent. AI helps with wording and gaps. You decide what becomes a requirement.</p>
+        <div class="toolbar"><span id="draft-name"></span><span id="saved" role="status" aria-live="polite">Loading saved draft...</span><button id="refresh" type="button">Refresh saved draft</button></div>
+    </header>
+    <div id="error" role="alert" hidden></div>
+    <nav id="steps" aria-label="Requirements steps"></nav>
+    <main>
+        <section class="interview" aria-label="Guided interview">
+            <section id="intro" class="card">
+                <div class="eyebrow">START WITH WHAT YOU KNOW</div>
+                <h2>Tell us about your feature</h2>
+                <p>A rough paragraph is enough to start. Avoid secrets and customer-identifying information.</p>
+                <label>Feature name<input data-meta="title" maxlength="300" placeholder="For example: backup and restore"></label>
+                <label>Describe the idea<textarea data-meta="description" rows="4" placeholder="Who is this for? What should they be able to do? Paste your rough notes here."></textarea></label>
+                <label>What does this feature affect?
+                    <select data-meta="uiKind">
+                        <option value="unknown">Not sure yet</option>
+                        <option value="authenticator">New or changed Authenticator UI</option>
+                        <option value="other-ui">Other user interface</option>
+                        <option value="non-ui">No user interface (caller/API journey)</option>
+                    </select>
+                </label>
+                <details><summary>Ownership and supporting context</summary>
+                    <label>Requirements owner<input data-meta="owner" placeholder="Person or team; Unknown is fine"></label>
+                    <label>Feature / work-item link<input data-meta="link" placeholder="A supplied link is not proof of inspection"></label>
+                    <label>Milestone<input data-meta="milestone" placeholder="Date, release or Unknown"></label>
+                </details>
+            </section>
+            <div class="question-bar"><label>Question<select id="questions"></select></label><span id="position"></span></div>
+            <section id="editor" class="card" tabindex="-1" aria-label="Current requirements question"></section>
+            <div class="pager"><button id="previous" type="button">Previous</button><button id="next" type="button" class="primary">Next question</button></div>
+        </section>
+        <aside aria-label="Requirements document and review">
+            <section class="card">
+                <div class="eyebrow">LIVE REQUIREMENTS / TEMPLATE V3</div>
+                <h2>Ready to review, not guessed.</h2>
+                <p id="progress"></p>
+                <p class="quiet">Unknowns are expected while drafting. Counts do not establish flow completeness, accessibility acceptance, design approval or rollout readiness.</p>
+                <details id="gap-details"><summary id="gap-count">Unresolved questions</summary><div id="gaps"></div></details>
+                <button id="download" class="primary" type="button">Export Markdown draft</button>
+                <p id="export-result" role="status"></p>
+            </section>
+            <section class="card preview"><h2>Document preview</h2><p class="quiet">Only confirmed answers appear. Unreviewed AI proposals never enter the export.</p><pre id="preview" tabindex="0" aria-label="Markdown requirements preview"></pre></section>
+        </aside>
+    </main>
+    <footer>Private draft in this Copilot session. No automatic design run, ADO item creation, publication or approval.</footer>
+</body>
+</html>
