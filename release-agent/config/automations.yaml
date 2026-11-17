@@ -128,8 +128,7 @@ automations:
     on_demand: true
     provision_when: step_status:build_verify.mrwp_ecs:in_flight
     steps:
-      - build_verify.rc_report_publish  # publish new report after poll-rc observes completed RC
-      - build_verify.rc_report_notify   # post lightweight SharePoint report link to Scout bot
+      - build_verify.rc_report_notify   # post RC verification summary to Scout bot
     cleanup_when: phase_done:build_verify
     purpose: "Poll a re-triggered RC every 30 min; hold while in-flight, re-apply the gate on completion, courtesy-nudge the owner at 6h"
 

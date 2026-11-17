@@ -57,7 +57,7 @@ def test_closing_email_uses_this_invocations_recipient_config(tmp_path, monkeypa
     assert state.steps == before
 
 
-@pytest.mark.parametrize("missing", [None, "rc_report_publish", "rc_report_notify", "rc_report_gate"])
+@pytest.mark.parametrize("missing", [None, "rc_report_notify", "rc_report_gate"])
 def test_completed_rc_milestone_uses_current_publication_and_quality_gate_steps(missing):
     state = _status_state("finalize")
     assert "build_verify.rc_report" not in state.steps

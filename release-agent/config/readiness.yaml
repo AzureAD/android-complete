@@ -60,24 +60,12 @@ items:
 
   - id: m365_access
     label: "M365 connector capabilities"
-    text: "Scout can read the owner's profile/calendar, complete configured roster, Teams membership and report site/library"
-    detail: "Python verifies profile/calendar, exact configured roster (all member pages), Teams membership, and report SharePoint site/library directly via native WorkIQ CLI without shell query mangling."
+    text: "Scout can read the owner's profile/calendar, complete configured roster, and Teams membership"
+    detail: "Python verifies profile/calendar, exact configured roster (all member pages), and Teams membership directly via native WorkIQ CLI without shell query mangling."
     verify: auto
     verifier: m365_capabilities
     depends_on: []
     required_tools: [workiq]
-
-  - id: silent_perms
-    label: "Silent-run permissions"
-    text: "Permissions allow fully unattended runs — shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are auto-approved so scheduled work and the on-call/telemetry checks never stall on a prompt"
-    detail: "Scout checks shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are all auto-approved so the daily automation and the readiness on-call/telemetry checks run silently when Scout isn't focused."
-    verify: auto
-    source: scout
-    verifier: silent_perms
-    depends_on: []
-    required_tools: [scout_settings]
-    required_servers: [shell, workiq, playwright, kusto, icm]
-    opt_out: true
 
   - id: teams_notify
     label: "Scout Teams notifications"

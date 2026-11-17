@@ -9,12 +9,11 @@ No blanket write authority follows from readiness. Every owning write step needs
 
 ## Mandatory `[auto]` and `[attest]` items
 
-- **Mandatory `[auto]` checks (Scout evaluates ALL 8 before returning control):**
+- **Mandatory `[auto]` checks (Scout evaluates ALL 7 before returning control):**
   - `build_access` (`required_tools: [az]`, Python verifier via `verify`) — Release build definitions `#2828` and `#397224` accessible.
   - `mcp_servers` (`required_tools: []`, Python verifier via `verify`) — ICM, Kusto/ADX, and Teams MCP servers registered in Scout config.
-  - `m365_access` (`required_tools: [workiq]`, Python verifier via `verify`) — Profile/calendar, configured roster (all member pages), Teams membership, and report SharePoint site/library verified directly in Python via native WorkIQ CLI (`shell=False`, no PowerShell `$filter`/`$select` mangling).
+  - `m365_access` (`required_tools: [workiq]`, Python verifier via `verify`) — Profile/calendar, configured roster (all member pages), and Teams membership verified directly in Python via native WorkIQ CLI (`shell=False`, no PowerShell `$filter`/`$select` mangling).
   - `ccd_confirmed` (`required_tools: [az]`, `check-ccd`) — Code Complete Date is valid and reconciled with pipeline `3038`.
-  - `silent_perms` (`required_tools: [scout_settings]`, `m_get_settings`) — Auto-approval settings checked (`opt_out: true` allows owner-confirmed `degraded` for foreground interactive runs).
   - `teams_notify` (`required_tools: [scout_teams_relay]`, `m_relay_status`) — Scout Teams relay & bot reachability checked (`opt_out: true` allows `degraded` email-only fallback).
   - `adx_access` (`required_tools: [kusto]`, Kusto `print 1`) — ADX release telemetry cluster queryable.
   - `oncall_now` (`required_tools: [icm]`, ICM `teamIds: [78848]`) — Release owner is not currently **primary** Android on-call.
@@ -29,7 +28,6 @@ No blanket write authority follows from readiness. Every owning write step needs
    - **`ccd_confirmed` (`az`):** Run `python -m orchestrator.cli check-ccd --release <id> --json`:
      - `match` → `record-check --release <id> --item ccd_confirmed --status pass --detail "CCD <ccd> reconciled with pipeline"` (note if `compressed: true`).
      - `past` / `conflict` / `unreadable` → record `--status fail` (or `needs_input` when awaiting an owner choice between pipeline override vs custom date) with the exact reason, **and continue running the remaining `[auto]` checks first**!
-   - **`silent_perms` (`m_get_settings`):** Read `m_get_settings` and check `required_servers` (`shell`, `workiq`, `playwright`, `kusto`, `icm`). If all are auto-approved → `pass`; if in interactive mode without silent auto-approvals or `m_get_settings` is unavailable → record `degraded` (when opted out of unattended silent runs) or `fail` with the exact missing servers, and **continue**.
    - **`teams_notify` (`m_relay_status`):** Check `m_relay_status`. If connected/reachable → `pass`; if disconnected or unavailable → record `degraded` (`"Teams relay unavailable — proceeding with email-only fallback"`) or `fail` with the exact reason, and **continue**.
    - **`adx_access` (`kusto`):** Run `print 1` against `cluster_uri` + `database`. On success → `pass`; if `kusto` MCP is missing or errors → record `record-check --release <id> --item adx_access --status fail --detail "Tool/connector failure (kusto): <exact error>"` and **continue**.
    - **`oncall_now` (`icm`):** Call `get_on_call_schedule_by_team_id` (`teamIds: [78848]`). Not in roster or backup → `pass`; primary on-call → `fail` (`"currently primary on-call for team 78848"`; mid-release continuation supports `override-oncall`); if `icm` MCP is missing/disconnected → `record-check --release <id> --item oncall_now --status fail --detail "Tool/connector failure (icm): <exact error>"`.

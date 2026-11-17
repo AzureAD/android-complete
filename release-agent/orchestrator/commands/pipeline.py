@@ -139,6 +139,11 @@ def cmd_set_ccd(args):
     st.ccd_source = source
     st.ccd_conflict = None            # the date is now settled — clear any conflict
     st.target_month = schedule.default_target_month(args.release, st.ccd)
+    # Re-bind an already-verified m365_access record so shifting CCD does not un-sign readiness.
+    m365_rec = st.readiness_items.get("m365_access")
+    if isinstance(m365_rec, dict) and m365_rec.get("status") == "pass" and m365_rec.get("capability_binding"):
+        from orchestrator import m365_capabilities as M
+        m365_rec["capability_binding"] = M.binding(st)
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
         "ccd_changed", value=value or "(default)", source=source, driver=args.reason.strip())

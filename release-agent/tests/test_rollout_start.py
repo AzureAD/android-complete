@@ -447,7 +447,8 @@ def test_notice_preparation_binds_exact_state_and_rejects_drift(tmp_path, monkey
         param=[], reserve=False, executor=None,
     )
     out = prepare_step(args, state, orch)
-    assert out["kind"] == "needs_skill" and out["permission_to_send"] is False
+    assert out["kind"] == "needs_skill" and out["ready_to_execute"] is True
+    assert "permission_to_send" not in out
     assert len(out["notifications"]) == 1
     item = out["notifications"][0]
     assert item["tool"] == "workiq_send_email"

@@ -174,10 +174,16 @@ def readiness_table(chk: dict, release_id: str) -> str:
     else:
         failed_items = [i for i in chk["items"] if i["status"] == "fail" and not i["satisfied"]]
         if failed_items:
+            from .remediation import readiness_remediation
             lines.append("❌ **Failed checks:**")
             for fi in failed_items:
                 reason = fi.get("message") or "check failed"
-                lines.append(f"- **{_cell(fi['label'])}**: {_cell(reason)}")
+                rem = readiness_remediation(release_id or "<YYYY-MM>", fi["id"], reason)
+                lines.append(
+                    f"- **{_cell(fi['label'])}**: {_cell(reason)}\n"
+                    f"  - *System:* {rem['system']} · *Fix:* {rem['how_to_fix']}\n"
+                    f"  - *Escape hatch:* `{rem['complete_manually_command']}` or `{rem['skip_command']}`"
+                )
         pending = [i["label"] for i in chk["items"] if not i["satisfied"]]
         lines.append("**Outstanding:** " + ", ".join(pending))
     if not chk["signed"]:
@@ -583,11 +589,19 @@ def status_view(r: dict) -> str:
         if s.get("state") == "blocked"
     ]
     if failed_steps and not (r.get("work_dispatch") or {}).get("continue_automatically"):
+        from .remediation import step_remediation
         lines.append("")
-        lines.append("⛔ **Failed / blocked step(s) (independent steps continued to completion):**")
+        lines.append("⛔ **Actionable fixes & manual escape hatches:**")
+        cur_phase = r.get("current_phase") or "<phase>"
+        rid = r.get("release_id") or "<YYYY-MM>"
         for fs in failed_steps:
+            sid = fs.get("id", "<step>")
             detail = step_detail(fs, limit=240) or "Step failed; see details."
-            lines.append(f"- **{_cell(fs['name'])}**: {detail}")
+            rem = step_remediation(rid, cur_phase, sid, fs.get("note") or detail)
+            lines.append(
+                f"- `{cur_phase}.{sid}` — *System:* {rem['system']} · *Fix:* {rem['how_to_fix']}\n"
+                f"  - *Escape hatch:* `{rem['complete_manually_command']}` or `{rem['skip_command']}`"
+            )
 
     # 2) Phase map (overview). Icon is prefixed onto the Phase name (no separate
     # empty-header icon column — that renders with a huge gap in Scout's tables).
@@ -615,8 +629,12 @@ def status_view(r: dict) -> str:
                   "| Step | State | Details |", "|---|---|---|"]
         for s in r["current_steps"]:
             icon = _STEP_ICON.get(s["state"], "⬜")
-            word = _STEP_STATE_WORD.get(s["state"], s["state"])
-            tag = " 🚦" if s["gate"] else (" 📌" if s.get("reminder") else "")
+            word = (
+                "Scout — approval needed"
+                if s["state"] == "scout" and s.get("requires_approval")
+                else _STEP_STATE_WORD.get(s["state"], s["state"])
+            )
+            tag = " 🚦" if s["gate"] or (s["state"] == "scout" and s.get("requires_approval")) else (" 📌" if s.get("reminder") else "")
             detail = step_detail(s)
             lines.append(f"| {icon} {s['name']}{tag} | {word} | {detail} |")
 
@@ -641,8 +659,12 @@ def status_view(r: dict) -> str:
             lines += ["", "### Step details"]
             for s in rich:
                 mark = _STEP_ICON.get(s["state"], "•")
-                note_lines = [ln.rstrip() for ln in str(s.get("note") or "").strip().split("\n")]
-                body = "  \n".join(ln for ln in note_lines if ln)  # markdown hard breaks
+                note_lines = [ln.rstrip() for ln in str(s.get("note") or "").strip().split("\n") if ln.strip()]
+                if len(note_lines) > 12:
+                    note_lines = note_lines[:12] + [f"… ({len(note_lines) - 12} more line(s) truncated)"]
+                body = "  \n".join(note_lines)
+                if len(body) > 900:
+                    body = body[:897].rstrip() + "..."
                 lines += ["", f"{mark} **{s['name']}**  ", body]
                 for l in (s.get("links") or []):
                     if l.get("url"):

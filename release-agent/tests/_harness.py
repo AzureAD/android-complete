@@ -100,7 +100,10 @@ _SAFE_AGENTS = {
         "outcome": "done",
         "note": "OneAuth write access confirmed (test)",
     },
-    "preflight.cron": {"run": {"queueTime": _recent_iso(), "result": "succeeded"}},  # fresh → pass
+    "preflight.cron": {
+        "outcome": "done",
+        "note": "Code Complete Calendar Checker is scheduled and firing (test).",
+    },
     "preflight.breaking": {"changelog": "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n"},  # no [MAJOR] → pass
     # Phase-2 build_verify agent steps — injected offline inputs so they pass without az.
     "build_verify.checker_fired": {
@@ -139,8 +142,7 @@ _SAFE_AGENTS = {
                 {"present": True, "passed": 96, "failed": 4, "total": 100, "pct": 96.0},
             "Firebase Test Lab - Monthly UI Tests":
                 {"present": True, "passed": 306, "failed": 0, "total": 306, "pct": 100.0}}},
-    "build_verify.rc_report_publish": {"outcome": "done", "note": "RC report published (test)"},
-    "build_verify.rc_report_notify": {"outcome": "done", "note": "RC report link posted to Scout bot (test)"},
+    "build_verify.rc_report_notify": {"outcome": "done", "note": "RC report summary posted to Scout bot (test)"},
     # Phase-2 telemetry_verify — scout Kusto check; short-circuit so flow tests never hit the MCP.
     "build_verify.telemetry_verify": {"outcome": "done", "note": "bug-bash telemetry verified (test)"},
     # Phase-3 bug_bash clone steps — real agents; keep flow tests offline.
@@ -236,10 +238,10 @@ def _stub_build_defs(status):
 
 def _pass_scout_checks(orch):
     """Record all scout-assisted (source: scout) auto checks as pass — mirrors the
-    skill running the ICM + Kusto + settings + Teams checks and recording results."""
+    skill running the ICM + Kusto + Teams checks and recording results."""
+    orch.gate.verify(pending_only=True)
     orch.gate.record_check("oncall_now", "pass", "stubbed: not on-call")
     orch.gate.record_check("adx_access", "pass", "stubbed: can query cluster")
-    orch.gate.record_check("silent_perms", "pass", "stubbed: all servers auto-approved")
     orch.gate.record_check("teams_notify", "pass", "stubbed: Scout Teams bot reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "stubbed: CCD reconciled with pipeline")
     # Broad offline flows do not claim real connector capability observations.
@@ -476,7 +478,7 @@ def _ready_for_rc_report(st):
     orch = Orchestrator(CONFIG, st)
     for phase in orch.config["phases"]:
         for step in phase["steps"]:
-            if (phase["id"], step["id"]) == ("build_verify", "rc_report_publish"):
+            if (phase["id"], step["id"]) == ("build_verify", "rc_report_notify"):
                 return
             st.set_step(phase["id"], step["id"], StepState(status="done"))
 

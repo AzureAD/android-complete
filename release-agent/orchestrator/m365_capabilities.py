@@ -296,31 +296,11 @@ def fetch_live_evidence(state, *, scout_root: str | None = None,
     ):
         raise ValueError("Teams chat membership does not include the verified release owner")
 
-    # 4. SharePoint report site + full library pagination
-    site_env = F.read(resolved_root, owner, site_path(target["report_site"]), discovered=discovered)
-    site = _site(site_env, owner)
-    lib_envelopes = []
-    while True:
-        try:
-            libraries = _libraries(site, lib_envelopes or None, owner)
-            break
-        except ConnectorObservationRequired as exc:
-            lib_envelopes.append(
-                F.read(resolved_root, owner, exc.arguments["entityUrls"][0], discovered=discovered))
-    matches = [row for row in libraries if isinstance(row, dict)
-               and row.get("name") == target["report_library"] and row.get("id")]
-    if len(matches) != 1:
-        raise ValueError(
-            f"SharePoint library '{target['report_library']}' did not resolve uniquely on {target['report_site']}"
-        )
-
     expected = plan(state)
     observations_summary = {
         "profile_id": profile["id"],
         "roster_count": len(roster),
         "chat_id": chat["id"],
-        "site_id": site["id"],
-        "library_id": matches[0]["id"],
     }
     return {
         "capability_binding": expected["binding"],
@@ -329,7 +309,6 @@ def fetch_live_evidence(state, *, scout_root: str | None = None,
             {"name": "owner/calendar", "ok": True, "detail": "owner identity and event read verified"},
             {"name": "distribution roster", "ok": True, "detail": f"exact group and {len(roster)} members verified"},
             {"name": "Teams chat/members", "ok": True, "detail": "exact representative chat and owner membership"},
-            {"name": "SharePoint library", "ok": True, "detail": "exact report site and library read"},
         ],
         "limitations": expected["limitations"],
         "observation_hash": delivery.fingerprint(observations_summary),

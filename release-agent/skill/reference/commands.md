@@ -134,22 +134,11 @@ not approve another gate or certify uncertain provider effects as applied.
 invalidates declared business consumers and retains gate history; it is not routine
 partial-write recovery. Never force-clear an active effect or approval.
 
-## Notifications
+## Notifications (2-Step Silent Contract)
 
-Use the shared prepare/claim/result/finalize protocol:
-
-1. Prepare the exact owning source and actual inputs.
-2. Review destination/payload and obtain required user/host consent.
-3. Claim the exact descriptor/hash. Send only with `permission_to_send:true`.
-4. Execute the returned supported tool/payload once.
-5. Record the real provider result/receipt and finalize completion.
-
-`workiq_send_email` requires exact descriptor/payload/transport proof. Direct MCP
-mail, not browser/OWA/Outlook/manual composition, proves that engine send.
-Do not shorten renderer-produced HTML/plain payloads or add courtesy copies.
-After lost acknowledgement retry result/finalize, never the send.
-`not_sent` requires positive evidence of no delivery; timeout is uncertain.
-Claimed/uncertain operations are not stolen by elapsed time.
+1. Run `step-action --release <id> --phase <p> --step <s>` to obtain `tool`, `mcp_arguments`, `requires_approval`, and `complete_command`.
+2. **When `requires_approval: false`:** This is NOT an owner approval step — invoking `/release-agent` already explicitly confirms sending configured `requires_approval: false` notifications. **Do NOT call `m_ask_user`, do NOT paste the payload for approval, and do NOT pause** — call the MCP tool (`workiq_send_email`, `workiq_send_chat_message`, `m_send_teams_message`, `microsoft_teams-*`) directly with `mcp_arguments`. (Only preview + call `m_ask_user` when `requires_approval: true` in `config/phases.yaml`.)
+3. Record completion in one command: `record-step --release <id> --phase <p> --step <s> --status pass --detail "Sent via <tool>"`.
 
 ## Human gates and external approval
 

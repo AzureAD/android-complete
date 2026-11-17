@@ -33,10 +33,10 @@ def test_teams_notify_is_scout_optout_item():
     # gate stays closed until it's recorded
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
-    orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
+    _pass_m365_check(orch)
     orch.gate.sign()
-    assert orch.gate.signed and not tn["required"]
+    assert not orch.gate.signed
     # degraded (Teams unreachable → email only) satisfies the opt-out item
     res = orch.gate.record_check("teams_notify", "degraded", "Teams unreachable — email only")
     assert "error" not in res
@@ -110,6 +110,7 @@ def test_notify_json_carries_owner_and_subject():
     import json as _json
     st, orch = _orch()                   # signed, phase due
     orch.state.owner_email = "owner@example.com"
+    _pass_m365_check(orch)
     orch.run_until_gate()
     r = orch.status_report()
     payload = {"message": render.notification(r), "subject": render.notification_subject(r),
@@ -288,6 +289,7 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
         rid = "2026-09"
         state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles",
                              execution_mode="unattended")
+        Orchestrator(CONFIG, state, mocks={})
         state.readiness_items["ccd_confirmed"] = {"status": "pass"}
         C.save_state(state, d, rid)
         base = ["--runs-root", d, "automation", "plan", "--release", rid, "--json"]
@@ -323,7 +325,6 @@ def test_cleanup_plan_applies_declared_lifecycle_rules():
     Orchestrator(CONFIG, st, mocks={})
     for sid in ("final_reminder", "pr_reminder", "localization"):
         st.set_step("ccd", sid, StepState(status="done"))
-    st.set_step("build_verify", "rc_report_publish", StepState(status="done"))
     st.set_step("build_verify", "rc_report_notify", StepState(status="done"))
     st.set_step("bug_bash", "bugbash_updates",
                 StepState(status="done", data={"poll_complete": True}))
@@ -331,7 +332,7 @@ def test_cleanup_plan_applies_declared_lifecycle_rules():
         {"id": "morning", "name": "Morning", "kind": "step-driving",
          "steps": ["ccd.final_reminder", "ccd.pr_reminder"], "cleanup_when": "steps_done"},
         {"id": "rc", "name": "RC poller", "kind": "step-driving",
-         "steps": ["build_verify.rc_report_publish", "build_verify.rc_report_notify"],
+         "steps": ["build_verify.rc_report_notify"],
          "cleanup_when": "steps_settled"},
         {"id": "bug", "name": "Bug poller", "kind": "step-driving",
          "steps": ["bug_bash.bugbash_updates"],

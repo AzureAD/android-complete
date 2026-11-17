@@ -17,25 +17,18 @@ CG/access check or send unrelated notices because the owner asked for status.
   order. The relevant source binding still determines applicability. Unverified
   claims remain visibly unverified; gates do not advance implicitly.
 
-## Notices and feature reminders
+## Lockdown (run BEFORE outbound notifications!)
 
-Use the shared notification protocol from [commands](../commands.md).
-The module supplies configured recipients and exact payloads; do not hardcode them.
-Preview, obtain required consent, claim, send once with permission, and record the
-real provider receipt. A wording variant is not permission for another acknowledged send.
-After lost acknowledgement retry result/finalize, not the message.
+1. Run `step-action --release <id> --phase preflight --step lockdown` to get `payload._gather.url` and `payload.followup_command`.
+2. Navigate (Playwright) to `payload._gather.url`. **On the Microsoft AAD account picker / sign-in page, click the user's own `@microsoft.com` account tile (`payload._gather.owner_email`) — or enter `<owner_email>` and click Next so Windows WAM SSO signs in automatically without a password — and wait for `"CCOA Periods"` to load!** Never call `fail-step` on the initial AAD redirect before clicking through Windows-SSO.
+3. Read all rows from **"Upcoming CCOA periods"** and **"Past NoFly Zones"** for every calendar year covered by the release window (`[{"name","environment","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}, ...]`).
+4. Immediately run `check-lockdown --release <id> --periods-json '<json>'` so the engine deterministically evaluates overlap and marks `lockdown` `done`!
 
-## Lockdown
+## Notices and feature reminders (2-Step Silent Contract)
 
-The task returns the exact gather URL/window and `check-lockdown` follow-up.
-Use supported browser access to read complete Production CCOA periods for every
-calendar year covered by the release window. Verify table completeness before using
-an empty list. Missing pages, SSO/access failures, malformed dates, or reversed ranges
-are errors, not "no overlap."
-
-The engine computes overlap. If it finds one, show the actual periods/window and
-the supported CCD-change decision. Do not change dates, permissions, or accounts
-to make the check pass.
+1. After `lockdown` is recorded, run `step-action --release <id> --phase preflight --step notice` and `step-action --release <id> --phase preflight --step flight_reminder` to get their `mcp_arguments` (which already honor `mocks.local.yaml` test redirects).
+2. **When `requires_approval: false` (default):** This is NOT an owner approval step — invoking `/release-agent` already confirms sending these configured release notices. **Do NOT call `m_ask_user`, do NOT paste the email/Teams payloads asking whether to send, and do NOT pause!** Call `workiq_send_email` and `workiq_send_chat_message` directly with exact `mcp_arguments` (only ask via `m_ask_user` if `requires_approval: true` in `config/phases.yaml`).
+3. Immediately record each with `record-step --release <id> --phase preflight --step <notice|flight_reminder> --status pass --detail "Sent"`!
 
 ## Handoff
 

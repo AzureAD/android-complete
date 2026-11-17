@@ -611,6 +611,7 @@ def test_engine_holds_scout_assisted_lockdown():
     skill to run via step-action), NOT as the user's `current_step`/`action`. Clearing
     them drains the list; an attest step (confirm_reminders) becomes a real user hold."""
     st, orch = _orch(signed=False)
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()                 # NOTE: no scout steps cleared yet
     orch.run_until_gate()
@@ -647,7 +648,7 @@ def test_check_lockdown_pass_and_attention():
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-08-12", ccd_source="default")
         orch = Orchestrator(CONFIG, st)
-        _pass_scout_checks(orch); orch.gate.sign()
+        orch.gate.verify(); _pass_scout_checks(orch); orch.gate.sign()
         C.save_state(st, d, rid)
 
         class A:
@@ -1059,6 +1060,7 @@ def test_confirm_reminders_is_attestation_hold():
     ready only after flight_reminder is sent; it surfaces as a hold with a confirm
     pill and clears via `done`."""
     st, orch = _orch(signed=False)
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
     _clear_notice(orch)
@@ -1080,6 +1082,7 @@ def test_confirm_reminders_is_attestation_hold():
 def test_confirm_reminders_gated_by_flight_send():
     """confirm_reminders must NOT be offered until flight_reminder is sent (dependency)."""
     st, orch = _orch(signed=False)
+    orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
     _clear_notice(orch)
@@ -1296,6 +1299,7 @@ def test_cli_skip_surfaces_the_next_parallel_human_hold(tmp_path, capsys, monkey
     rid = "2026-08"
     st, orch = _orch()
     st.release_id = rid
+    _pass_m365_check(orch)
     for step in orch.config["phases"][0]["steps"]:
         if step["id"] not in ("cg", "vitals"):
             st.set_step("preflight", step["id"], StepState(status="done"))

@@ -241,7 +241,6 @@ class StateProjection:
             "workflow_revision" if self.revision_problem else
             "cancelled" if self.state.cancellation else
             "halted" if self.state.halt else
-            "automation" if not self.startup_ready else
             "blocked" if self.readiness_blocked else
             "readiness_gate" if not self.readiness_signed else None
         )

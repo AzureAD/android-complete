@@ -48,23 +48,21 @@ def args_for(tmp_path, st):
     (["pipeline_runs", "rcs", -1, "ecs", "tests", "categories", "ui"],
      {"total": 100, "passed": 10, "failed": 90}),
 ])
-def test_rc_report_publish_review_hash_tracks_source_evidence(ready, path, value):
-    from orchestrator import write_review as W
-    from orchestrator.commands.rc_report_publish import plan_rc_report_publish
+def test_rc_report_notify_lineage_tracks_source_evidence(ready, path, value):
+    from steps.build_verify import rc_report_notify as N
 
     orch = Orchestrator(CONFIG, ready, mocks={}, as_of=date(2026, 9, 10))
-    before = W.review_hash(orch, "build_verify", "rc_report_publish", plan_rc_report_publish(orch))
+    before = N.build(orch.context("build_verify", "rc_report_notify")).notification["checkpoint"]
     container = vars(ready)
     for key in path[:-1]:
         container = container[key]
     container[path[-1]] = value
 
+    after_outcome = N.build(orch.context("build_verify", "rc_report_notify"))
     if path[:4] == ["pipeline_runs", "rcs", -1, "auth"] or "categories" in path:
-        with pytest.raises(ValueError):
-            plan_rc_report_publish(orch)
+        assert after_outcome.kind == "blocked"
     else:
-        after = W.review_hash(orch, "build_verify", "rc_report_publish", plan_rc_report_publish(orch))
-        assert after != before
+        assert after_outcome.notification["checkpoint"] != before
 
 
 @pytest.mark.parametrize("mrwp_failed,auth_failed,incomplete,recommendation", [
@@ -105,7 +103,7 @@ def test_report_prominent_consolidated_recommendation(
         assert "https://msazure.visualstudio.com/One/_build/results?buildId=" in action
         assert "Monthly UI failures are not mapped to ADO test-plan cases" in action
         assert "reopen --release" in action and "--step auth_ecs" in action
-        assert "notification prepare --release" in action and "--step rc_report" in action
+        assert "step-action --release" in action and "--step rc_report_notify" in action
         assert "Cherry%252DPick-to-Android-Release-Instructions.md" in action
         assert "href='https://msazure.visualstudio.com/One/_build/results?buildId=" in html
     if mrwp_failed >= 20:
@@ -242,7 +240,7 @@ def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, c
     base = ["--config", CONFIG, "--runs-root", str(tmp_path)]
     before = copy.deepcopy(stored_vars(C.load_state(str(tmp_path), ready.release_id)))
     assert cli.main(base + ["step-action", "--release", ready.release_id,
-                            "--phase", "build_verify", "--step", "rc_report_publish"]) == 0
+                            "--phase", "build_verify", "--step", "rc_report_notify"]) == 0
     assert json.loads(capsys.readouterr().out)["kind"] == "blocked"
     assert cli.main(base + ["record-rc-report", "--release", ready.release_id]) == 1
     assert "notification claim/result" in json.loads(capsys.readouterr().out)["error"]
@@ -253,7 +251,7 @@ def test_skipping_prerequisite_does_not_fabricate_evidence(ready, tmp_path):
     ready.set_step("build_verify", "auth_ecs", StepState(status="skipped", by="human"))
     ready.pipeline_runs["rcs"][-1].pop("auth")
     orch = Orchestrator(CONFIG, ready, mocks={})
-    assert orch.step_action_guard("build_verify", "rc_report_publish") is None
+    assert orch.step_action_guard("build_verify", "rc_report_notify") is None
     assert _invoke(rc_report.build, ready).kind == "blocked"
     assert RR.cmd_record_rc_report(args_for(tmp_path, ready)) == 1
 
@@ -403,7 +401,6 @@ def test_poll_does_not_resolve_premature_done_report(
 def test_resolved_poll_reports_passed_after_rc_gate_approval(
         ready, tmp_path, monkeypatch, capsys):
     ready.set_step("build_verify", "rc_report_gate", StepState(status="done", by="human", note="Owner decision"))
-    ready.set_step("build_verify", "rc_report_publish", StepState(status="done"))
     ready.set_step("build_verify", "rc_report_notify", StepState(status="done"))
     ready.gate_decisions.append({"step": "build_verify.rc_report_gate", "decision": "approved",
                                  "at": "now", "by": "owner", "comment": None})
@@ -421,14 +418,14 @@ def test_capture_dependencies_hold_both_independent_children(ready):
     orch = Orchestrator(CONFIG, ready, mocks={})
     assert orch.reopen("build_verify", "mrwp_local", "Recapture current RC").changed
     assert orch.scout_pending_steps() == []
-    assert orch.step_action_guard("build_verify", "rc_report_publish").kind == "blocked"
+    assert orch.step_action_guard("build_verify", "rc_report_notify").kind == "blocked"
     orch.skip_step("build_verify", "mrwp_local", "Verified externally")
     assert orch.scout_pending_steps() == []
     orch.skip_step("build_verify", "auth_ecs", "Verified externally")
-    assert orch.scout_pending_steps() == ["telemetry_verify", "rc_report_publish"]
+    assert orch.scout_pending_steps() == ["telemetry_verify", "rc_report_notify"]
     assert orch.step_action_guard("build_verify", "telemetry_verify") is None
     orch.skip_step("build_verify", "telemetry_verify", "Owner override")
-    assert orch.scout_pending_steps() == ["rc_report_publish"]
+    assert orch.scout_pending_steps() == ["rc_report_notify"]
 
 
 def test_phase_zero_parallel_uses_only_explicit_dependencies(ready):
@@ -458,8 +455,8 @@ def test_sequential_engine_respects_explicit_dependencies_and_mocks(ready):
     phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
     phase["execution"] = "sequential"
     telemetry = next(s for s in phase["steps"] if s["id"] == "telemetry_verify")
-    assert "rc_report_publish" not in orch.scout_pending_steps()
-    telemetry["depends_on"] = ["rc_report_publish"]
+    assert "rc_report_notify" not in orch.scout_pending_steps()
+    telemetry["depends_on"] = ["rc_report_notify"]
     with pytest.raises(WorkflowConfigError, match="cannot depend on later step"):
         orch.step_once()
     assert not ready.is_done("build_verify", "telemetry_verify")
@@ -469,4 +466,4 @@ def test_sequential_engine_respects_explicit_dependencies_and_mocks(ready):
     ready.steps = seeded
     orch.step_once()
     assert ready.is_done("build_verify", "telemetry_verify")
-    assert orch.step_action_guard("build_verify", "rc_report_publish") is None
+    assert orch.step_action_guard("build_verify", "rc_report_notify") is None

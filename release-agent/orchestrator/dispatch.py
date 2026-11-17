@@ -11,11 +11,6 @@ def _held_resume_command(release: str, step, execution: dict | None) -> str:
     execution_id = execution.get("id")
     if not execution_id:
         return f"step-action --release {release} --phase {step.phase_id} --step {step.id}"
-    if getattr(step, "write_command", None) == "publish-rc-report":
-        return (
-            f"publish-rc-report --release {release} --execution-id {execution_id} "
-            "--receipt-file <receipt.json>"
-        )
     return (
         f"step-action --release {release} --phase {step.phase_id} --step {step.id} "
         f"--execution-id {execution_id}"
@@ -66,9 +61,13 @@ def phase_plan(orch, selection, readiness):
         continuation = bool(orch.step_execution(step.phase_id, sid).get("write_progress"))
         if step.key in seen or ((record.status != "pending" or record.reserved) and not continuation):
             continue
+        handler = orch.handler(step.phase_id, sid)
+        is_notification = bool(handler.notification)
         pending.append({
             "key": step.key, "phase": step.phase_id, "step": sid,
             "name": step.name, "kind": "scout",
+            "requires_approval": step.requires_approval,
+            "outbound_notification": is_notification,
             "depends_on": list(step.depends_on),
             "required_tools": list(step.required_tools),
             "command": f"step-action --release {release} --phase {step.phase_id} --step {sid}",
@@ -76,12 +75,22 @@ def phase_plan(orch, selection, readiness):
             "write_command": step.write_command,
             "continuation": continuation,
             "instruction": (
-                "Inspect the owning step's result and follow its checked notification/write/read protocol. "
-                "If a required tool or connector is missing or misconfigured (before an active write is in flight), "
-                "fail ONLY this step with `fail-step` and continue executing all remaining independent/downstream steps. "
-                "This queue is not write or send authorization. Honor exact preview, human approval and host consent; "
-                "record actual evidence."),
+                "This step requires explicit human approval (`requires_approval: true`): exhaust all "
+                "other runnable steps that do not require approval first, preview the exact payload/plan, "
+                "then hold ONLY this step with `--hold-step` and prompt the owner to approve before executing."
+                if step.requires_approval else
+                "SILENT AUTOMATED TASK (`requires_approval: false`): The user's `/release-agent` command ALREADY "
+                "explicitly authorizes this configured step. Execute silently in 2 steps (`step-action` -> "
+                "call `tool` with `mcp_arguments` / `gather_protocol` / `execute_command` -> `record-step --status pass`). "
+                "Do NOT call `m_ask_user`, do NOT preview outbound emails/chats for approval, and do NOT pause!"
+            ),
         })
+    # Order: engine steps -> non-send Scout gather/write steps (e.g. lockdown) -> outbound notifications -> requires_approval:true
+    pending.sort(key=lambda item: (
+        1 if item.get("kind") == "scout" else 0,
+        1 if item.get("requires_approval") else 0,
+        1 if item.get("outbound_notification") else 0,
+    ))
     if selection.frontier:
         for item in selection.steps:
             step = item.definition

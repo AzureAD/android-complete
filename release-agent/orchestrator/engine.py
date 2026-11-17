@@ -1238,9 +1238,10 @@ class Orchestrator(StatusViewMixin):
     @revision_checked
     def record_scout_step(self, phase_id: str, step_id: str, status: str,
                           detail: str = "", *, execution_id: str = None,
-                          refresh: bool = False) -> NextAction:
+                          refresh: bool = False, links: list | None = None,
+                          data: dict | None = None) -> NextAction:
         """Record the outcome of a scout-assisted step (one the skill ran via MCP/
-        browser, e.g. the CCOA lockdown check).
+        browser, e.g. the CCOA lockdown check or a 2-step notification).
           * status == "pass"      -> mark the step done and let the flow continue.
           * status == "attention" -> keep it held (needs the owner) with the detail
             (e.g. a Production CCOA lockdown overlaps — the owner must shift CCD).
@@ -1265,16 +1266,16 @@ class Orchestrator(StatusViewMixin):
             raise ValueError(
                 f"{phase_id}/{step_id} requires an active {definition.write_command} reservation."
             )
-        links = self.state.get_step(phase_id, step_id).links
-        outcome = Done(detail, by="scout", links=links) if status == "pass" else Blocked(
-            detail, by="scout", links=links)
+        step_links = links if links is not None else self.state.get_step(phase_id, step_id).links
+        outcome = Done(detail, by="scout", links=step_links) if status == "pass" else Blocked(
+            detail, by="scout", links=step_links)
         if execution or execution_id:
-            return self.settle_execution(phase_id, step_id, execution_id, outcome)
+            return self.settle_execution(phase_id, step_id, execution_id, outcome, data=data)
         permit = self.authorize_outcome(
             TransitionIntent.REFRESH if refresh else TransitionIntent.RECORD,
             phase_id, step_id,
         )
-        return self.apply_outcome(permit, outcome)
+        return self.apply_outcome(permit, outcome, data=data)
 
     @revision_checked
     def fail_step(self, phase_id: str, step_id: str, reason: str, *,
@@ -1306,14 +1307,21 @@ class Orchestrator(StatusViewMixin):
             raise ValueError(
                 f"Cannot evaluate {phase_id}/{step_id} before its dependencies complete: {', '.join(missing)}"
             )
+        clean_reason = " ".join(ln.strip() for ln in reason.strip().splitlines() if ln.strip())
+        if len(clean_reason) > 420:
+            clean_reason = clean_reason[:417].rstrip() + "..."
         msg = (
-            f"Required tool/connector '{tool.strip()}' failed: {reason.strip()}"
+            f"Required tool/connector '{tool.strip()}' failed: {clean_reason}"
             if isinstance(tool, str) and tool.strip()
-            else reason.strip()
+            else clean_reason
         )
+        from .remediation import step_remediation
         data = dict(self.state.get_step(phase_id, step_id).data or {})
         if isinstance(tool, str) and tool.strip():
             data["failed_tool"] = tool.strip()
+        data["remediation"] = step_remediation(
+            self.state.release_id, phase_id, step_id, msg, tool=tool,
+        )
         res = kernel._apply_outcome(
             phase_id, step_id, status="blocked", note=msg, by="scout",
             data=data, block_holds=False,

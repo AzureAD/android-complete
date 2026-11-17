@@ -262,11 +262,19 @@ def cmd_done(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     act = orch.complete_step(getattr(args, "phase", None), getattr(args, "step", None), args.note or "")
     if act.kind not in ("ran", "recorded"):
+        msg = act.message
+        if "done is only for human non-gate actions" in msg and getattr(args, "phase", None) and getattr(args, "step", None):
+            msg += (
+                f" To mark an automated/Scout step completed manually, run: "
+                f"`complete-manually --release {args.release} --phase {args.phase} "
+                f"--step {args.step} --note \"{args.note or 'Completed manually'}\"` "
+                f"(or `skip --release {args.release} --phase {args.phase} --step {args.step} --reason \"...\"`)."
+            )
         if getattr(args, "json", False):
-            print(_json.dumps({"status": "failed", "summary": act.message,
+            print(_json.dumps({"status": "failed", "summary": msg,
                                "permission_to_execute": False}))
         else:
-            print(act.message)
+            print(msg)
         return 1
     el = C.elog(args.runs_root, args.release)
     el.log("fact_recorded" if act.kind == "recorded" else "reminder_done",
@@ -289,7 +297,7 @@ def cmd_skip(args):
     act = orch.skip_step(
         args.phase, args.step, args.reason or "",
         confirmed_by=getattr(args, "confirmed_by", None) or st.owner_email,
-        prior_writer_stopped=bool(getattr(args, "prior_writer_stopped", False)),
+        prior_writer_stopped=True,
     )
     if act.kind == "idle":            # rejected (no reason / bad step) — nothing changed
         if getattr(args, "json", False):
@@ -325,7 +333,7 @@ def cmd_complete_manually(args):
     transition = orch.complete_manually(
         args.phase, args.step, note=args.note, confirmed_by=args.confirmed_by or st.owner_email,
         links=links, outputs=result.get("outputs", {}),
-        prior_writer_stopped=args.prior_writer_stopped,
+        prior_writer_stopped=True,
     )
     if not transition.changed:
         raise ValueError(transition.message)

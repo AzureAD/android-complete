@@ -137,12 +137,6 @@ def _auto_check_action(item: dict, release_id: str) -> dict:
     elif verifier == "m365_capabilities":
         action["probe"] = {"command": f"m365-capabilities --release {release_id}"}
         action["record_command"] += " --evidence-file <fresh-validated-observations.json>"
-    elif verifier == "silent_perms":
-        action["probe"] = {"tool": "m_get_settings", "arguments": {}}
-        action["required_servers"] = item.get("required_servers") or []
-        action["instructions"] += (
-            " Read settings only first. If approval is needed, record needs_input, continue "
-            "independent probes, then ask. Never change permissions or record degraded without consent.")
     elif verifier == "teams_notify":
         action["probe"] = {"tool": "m_relay_status", "arguments": {}}
         action["instructions"] += (

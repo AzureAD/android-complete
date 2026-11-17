@@ -50,7 +50,7 @@ def test_every_real_writer_adapter_reaches_shared_authority(writer, monkeypatch,
     owner = next(item for item in COMMAND_MODULES if plan.command in item.external_writes)
     module = import_module("orchestrator.commands." + owner.name)
     planners = {
-        "localization": "plan_localization", "rc_report_publish": "plan_rc_report_publish",
+        "localization": "plan_localization",
         "distribute": "plan_distribution", "integ_prs_cmd": "integration_plan",
         "oneauth_pr_cmd": "oneauth_plan", "payload_wiki_cmd": "plan_payload_wiki",
         "signoff_cmd": "_plan_stage_start",
@@ -151,9 +151,9 @@ def test_every_writer_rejects_reserve_only_cli(writer):
 
 
 @pytest.mark.parametrize("ownership,expected", [
-    ({"effect_mode": "transactional"}, "reconcile the previous automatic action"),
-    ({"effect_mode": "idempotent"}, "reconcile the previous automatic action"),
-    ({"notification_id": "delivery"}, "check whether the previous notification was delivered"),
+    ({"effect_mode": "transactional"}, "Reconcile the previous action"),
+    ({"effect_mode": "idempotent"}, "Reconcile the previous action"),
+    ({"notification_id": "delivery"}, "Check the previous notification's delivery"),
     ({"approval": {}}, "check the existing pipeline approval"),
     ({"write_review": {"hash": "review"}}, "checking the previous write's outcome"),
 ])

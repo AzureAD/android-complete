@@ -395,11 +395,9 @@ def _auth_next_steps(model) -> str:
             f"`reopen --release {release} --phase build_verify --step auth_ecs "
             "--reason \"Auth ECS UI tests reran\"`, then `next --release "
             f"{release}`.",
-            "When `auth_ecs` is recaptured, publish and send the report again with "
-            f"`publish-rc-report --release {release} --execute --auto-approve "
-            "--executor rc-report-publish-automation`, then "
-            f"`notification prepare --release {release} --source step --phase build_verify "
-            "--step rc_report_notify` and follow claim/send/acknowledge.",
+            "When `auth_ecs` is recaptured, send the updated RC summary via "
+            f"`step-action --release {release} --phase build_verify --step rc_report_notify` "
+            "and record completion with `record-step`.",
             "If this is a real Authenticator product bug, follow the Android Authenticator "
             f"cherry-pick instructions ({AUTH_CHERRY_PICK_TSG}). After the cherry-pick "
             "produces a new Authenticator ECS build + UI-test run, use the same "

@@ -40,7 +40,6 @@ AUTO_APPROVED_WRITE_COMMANDS = {
     "start-release-signoff",
     "start-upload-whats-new",
     "start-upload-alpha",
-    "publish-rc-report",
 }
 
 
@@ -202,8 +201,30 @@ def prepare_step(args, st, orch):
                 f"{metadata.get('checkpoint', 'once')}:{generation}",
                 scope, out["tool"], payload, completion)
             out["notifications"] = [item] if D.available(orch, item) else []
-            out["permission_to_send"] = False
+            out["mcp_arguments"] = payload
+            out["ready_to_execute"] = not definition.requires_approval
+            out["complete_command"] = (
+                f"record-step --release {args.release} --phase {args.phase} "
+                f"--step {args.step} --status pass --detail \"Sent via {out['tool']}\""
+            )
             out["reservable"] = False
+            if out["notifications"]:
+                n0 = out["notifications"][0]
+                out["execution_protocol"] = {
+                    "contract": "two_step",
+                    "preauthorized_by_user": not definition.requires_approval,
+                    "step_1_send": (
+                        f"Preview `mcp_arguments` in chat and ask the user via `m_ask_user` before calling `{n0['tool']}`."
+                        if definition.requires_approval
+                        else (
+                            f"SILENT SEND (`requires_approval: false`): Launching `/release-agent` ALREADY counts as "
+                            f"explicit user confirmation for this configured release notification. Do NOT call "
+                            f"`m_ask_user`, do NOT paste the payload asking 'Send now?', and do NOT pause — invoke "
+                            f"`{n0['tool']}` directly with `mcp_arguments` right now."
+                        )
+                    ),
+                    "step_2_record": out["complete_command"],
+                }
             if getattr(args, "reserve", False):
                 raise ValueError("Use notification prepare/claim with the approved hash, not step-action --reserve")
         elif out.get("outbound"):
@@ -212,13 +233,15 @@ def prepare_step(args, st, orch):
                 out["reservable"] = False
                 out["review_command"] = definition.write_command
                 if definition.write_command in AUTO_APPROVED_WRITE_COMMANDS:
+                    out["execute_command"] = (
+                        f"{definition.write_command} --release {args.release} "
+                        "--execute --auto-approve --executor interactive"
+                    )
                     out["note"] = (
-                        out.get("note", "") + " Run the checked write command with "
-                        "--execute --auto-approve --executor <automation-id>. It checkpoints "
-                        "the current plan hash before the fenced provider write. A generic "
-                        "reservation cannot authorize writes."
+                        out.get("note", "") + " Run `execute_command` directly (`--execute --auto-approve --executor interactive`)."
                     ).strip()
                 else:
+                    out["preview_command"] = f"{definition.write_command} --release {args.release}"
                     out["note"] = (
                         out.get("note", "") + " Preview the checked write command and approve its exact "
                         "--review-hash with --approved-by. A generic reservation cannot authorize writes."
@@ -244,8 +267,36 @@ def prepare_step(args, st, orch):
         out["owner_forced_rerun"] = True
     definition = orch.workflow.step(args.phase, args.step)
     if definition is not None:
+        out["requires_approval"] = definition.requires_approval
         out["depends_on"] = list(definition.depends_on)
         out["required_tools"] = list(definition.required_tools)
+        if not definition.is_gate:
+            out["manual_escape_commands"] = {
+                "complete_manually": (
+                    f"complete-manually --release {args.release} --phase {args.phase} "
+                    f"--step {args.step} --note \"Completed manually outside Scout\""
+                ),
+                "skip": (
+                    f"skip --release {args.release} --phase {args.phase} "
+                    f"--step {args.step} --reason \"Handled outside orchestrator\""
+                ),
+            }
+    if out.get("kind") == "blocked":
+        from orchestrator.remediation import step_remediation
+        out["remediation"] = step_remediation(
+            args.release, args.phase, args.step, out.get("reason", ""),
+        )
+    if isinstance(out.get("payload"), dict) and out["payload"].get("_gather"):
+        out["gather_protocol"] = {
+            "note": (
+                "This is a 2-hop gather-then-decide task (`status: waiting` means Scout must "
+                "perform `_gather` right now, NOT that the step failed!). Execute `_gather` "
+                "(e.g. Playwright browser navigate+snapshot, Kusto query, or MCP read), then "
+                "run `payload.followup_command` with the gathered data."
+            ),
+            "gather": out["payload"]["_gather"],
+            "followup_command": out["payload"].get("followup_command"),
+        }
     return out
 
 
@@ -450,6 +501,8 @@ def cmd_step_info(args):
               f"Add one to config/knowledge.yaml.")
     else:
         print(kb.render_knowledge(args.phase, args.step, k))
+    print("Requires approval: " + ("true (human confirmation before execution)" if controls["approval_required"]
+                                   else "false (runs automatically)"))
     print("Owner controls: rerun" + (", skip, complete-manually" if controls["skip"]
                                     else "; approval gates still require their genuine decision"))
     print("Public task inputs: " + (", ".join(item["name"] for item in controls["parameters"]) or "(none)"))
@@ -465,7 +518,7 @@ def _handler_info(config_path, phase, step):
     return {
         "rerun": True, "skip": not handler.definition.is_gate,
         "complete_manually": not handler.definition.is_gate,
-        "approval_required": handler.definition.is_gate,
+        "approval_required": handler.definition.requires_approval,
         "depends_on": list(handler.definition.depends_on),
         "required_tools": list(handler.definition.required_tools),
         "parameters": [

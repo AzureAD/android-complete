@@ -288,9 +288,7 @@ def test_real_capture_handlers_save_and_reload_each_lane(tmp_path):
 
 
 def _consumer_outputs(state):
-    from orchestrator import write_review
-    from orchestrator.commands.rc_report_publish import plan_rc_report_publish
-    from steps.build_verify import rc_report
+    from steps.build_verify import rc_report, rc_report_notify as N
 
     ctx = context(state, now=NOW)
     email = rc_report.rc_email(ctx)
@@ -300,11 +298,10 @@ def _consumer_outputs(state):
             "kind": "release", "state_matches": rc_report.report_source_matches(ctx),
         }, "workiq_send_email", {"to": [state.owner_email], "subject": email[0], "body": email[1]})
     orch = Orchestrator(CONFIG, state, mocks={}, as_of=date(2026, 9, 11), now=NOW)
-    plan = plan_rc_report_publish(orch)
+    notify = N.build(orch.context("build_verify", "rc_report_notify"))
     return {
         "email": email, "lineage": lineage, "descriptor": descriptor,
-        "write_plan": plan,
-        "write_hash": write_review.review_hash(orch, "build_verify", "rc_report_publish", plan),
+        "notify_checkpoint": notify.notification["checkpoint"],
         "mrwp_gate": rc_report.rc_ui_gate(email[3]),
         "auth_gate": rc_report.auth_report_gate(email[3]),
     }

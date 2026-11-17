@@ -185,12 +185,11 @@ def test_unclaimed_step_refresh_preserves_audit_and_requires_new_approval(
     setattr(st, change, "new-owner@example.com" if change == "owner_email" else "2026-09-10")
     C.save_state(st, str(tmp_path), st.release_id)
     assert cli.main(prepare) == 0
-    refreshed_preview = json.loads(capsys.readouterr().out)
-    assert len(refreshed_preview["notifications"]) == 1
-    assert refreshed_preview["notifications"][0]["hash"] != first["hash"]
+    unsigned_preview = json.loads(capsys.readouterr().out)
+    assert unsigned_preview["notifications"] == []
     st, refreshed = C.load_orch(str(tmp_path), st.release_id, C.DEFAULT_CONFIG)
     assert st.notification_deliveries[first["id"]]["attempts"] == original["attempts"]
-    assert refreshed.gate.signed
+    assert not refreshed.gate.signed
     result = refreshed.gate.record_check(
         "m365_access", "pass", "synthetic refreshed connector probes", evidence=capability_evidence(st))
     assert "error" not in result and refreshed.gate.signed
@@ -738,10 +737,11 @@ def test_outbound_notification_steps_declare_contract():
 
 
 def test_release_wide_prompt_pins_all_advancement_and_cleanup():
-    text = (ROOT / "skill" / "reference" / "starting-and-scheduling.md").read_text(encoding="utf-8")
-    block = text[text.index("**prompt:**"):text.index("## Ensure the daily partner")]
-    for command in ("status", "next", "tick", "automation cleanup"):
-        assert f"{command} --release <YYYY-MM>" in block
+    from orchestrator import automations
+    specs = {item["slug"]: item for item in automations.plan(C.DEFAULT_CONFIG, "2026-09", "2026-09-09")["automations"]}
+    block = specs["push-reminders"]["prompt"]
+    for command in ("status", "next", "automation cleanup"):
+        assert command in block
     assert "finally" in block and "courtesy copies" in block
 
 

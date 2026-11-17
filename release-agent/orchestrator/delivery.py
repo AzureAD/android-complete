@@ -366,7 +366,10 @@ def claim(orch, notification_id, approved_hash, executor):
     else:
         record["status"] = "claimed"
         record["attempts"].append({**execution, "status": "claimed", "hash": item["hash"]})
-    return {**deepcopy(item), "execution_id": execution["id"], "permission_to_send": True}
+    claimed = {**deepcopy(item), "execution_id": execution["id"], "permission_to_send": True}
+    if item["tool"] in EXACT_PAYLOAD_RECEIPT_TOOLS:
+        claimed["receipt_template"] = exact_payload_receipt(item)
+    return claimed
 
 
 def result(orch, notification_id, execution_id, outcome, evidence, receipt=None, review=False):

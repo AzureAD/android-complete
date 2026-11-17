@@ -44,15 +44,45 @@ def cmd_record_step(args):
         except ValueError as exc:
             print(str(exc))
             return 1
-        if args.status != "pass" or not outcome.get("no_delivery_required"):
-            print("Use notification claim/result for notification steps; record-step is not delivery evidence.")
+        if outcome.get("no_delivery_required"):
+            if outcome.get("state_changed"):
+                C.save_state(orch.state, args.runs_root, args.release)
+                C.emit(
+                    args.runs_root,
+                    args.release,
+                    outcome.get("note", "No delivery required; step completed."),
+                    kind="step",
+                )
+                return 0
+        elif (args.detail or "").strip().lower() == "no external work required":
+            print("Outbound notification still requires delivery before marking pass; send the payload or use skip/complete-manually.")
             return 1
-        if outcome.get("state_changed"):
+        elif outcome.get("kind") == "blocked":
+            print(outcome.get("reason") or "Notification step is currently blocked.")
+            return 1
+        else:
+            notif_list = outcome.get("notifications") or []
+            completion = (notif_list[0].get("completion") if notif_list else None) or {}
+            comp_status = completion.get("status") if completion.get("status") in ("pass", "attention") else args.status
+            comp_links = completion.get("links")
+            comp_data = completion.get("data")
+            note_text = (args.detail or "").strip() or completion.get("note") or outcome.get("note") or f"Sent {args.step}"
+            try:
+                act = orch.record_scout_step(
+                    args.phase, args.step, comp_status, note_text,
+                    execution_id=getattr(args, "execution_id", None),
+                    links=comp_links, data=comp_data,
+                )
+            except ValueError as exc:
+                print(str(exc))
+                return 1
+            field = completion.get("release_field")
+            if field and completion.get("date") and (getattr(orch.state, field, None) or "") < completion["date"]:
+                setattr(orch.state, field, completion["date"])
             C.save_state(orch.state, args.runs_root, args.release)
             C.emit(
-                args.runs_root,
-                args.release,
-                outcome.get("note", "No delivery required; step completed."),
+                args.runs_root, args.release,
+                f"[{'ok' if comp_status == 'pass' else 'attention'}] {args.step}: {act.message}",
                 kind="step",
             )
             return 0

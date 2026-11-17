@@ -23,25 +23,9 @@ and build, not a broker-library or unrelated release-app version.
 Positive row count proves flow; zero/failed/stale evidence is not a pass.
 The query does not authorize an ad-hoc notification or quality decision.
 
-## Report: preview, publish, or adopt
+## RC summary notification (`rc_report_notify`)
 
-`publish-rc-report` defaults to a read-only checked preview of current captured
-evidence. Automatic publication binds the exact target and reviewed HTML bytes.
-Execute only a supported checked upload handoff, at most once, then verify its
-route-specific owning receipt. An unknown upload is reconciled, not replayed.
-Reads, registration, and help output do not prove write access.
-
-If the owner already uploaded a report, use the separate `--adopt-file` path with
-actual release/RC, selected URL, SHA-256/size, exact resolve/download observations,
-owner identity, and explanation. Different filenames/content are supported as an
-owner-selected result, not fabricated proof of the original automatic upload.
-For an owned prior uploader, obtain explicit stopped-writer confirmation.
-Keep the original attempt and uncertainty in history.
-
-Follow `rc_report_notify` to send the selected link through its notification
-claim/result protocol. Never treat a link preview or manual upload as message delivery.
-The notification identifies owner-selected provenance and uses captured pipeline
-evidence for its summary.
+Once `auth_ecs` finishes, run `step-action --release <id> --phase build_verify --step rc_report_notify`, send `mcp_arguments` via `m_send_teams_message`, and complete with `record-step --release <id> --phase build_verify --step rc_report_notify --status pass --detail "Sent RC summary"` (2-step contract — no SharePoint upload step required).
 
 ## Quality remains a human gate
 

@@ -220,6 +220,7 @@ class StatusViewMixin:
                 s_state = "auto"             # an agent step Scout runs itself — no user action
             out.append({
                 "id": s["id"], "name": s["name"],
+                "requires_approval": bool(s.get("requires_approval", kind == "gate")),
                 "depends_on": list(s.get("depends_on") or ()),
                 "required_tools": list(s.get("required_tools") or ()),
                 "gate": kind == "gate",

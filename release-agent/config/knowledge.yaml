@@ -151,36 +151,6 @@ readiness.m365_access:
     - q: "Do I need to add Hosted WorkIQ?"
       a: "No. The custom remote registration stays removed. Exact structured fetch can use an actual exposed MCP tool or the selected profile's existing native WorkIQ CLI. Discover that user's capability and verify live exact reads; absent MCP fetch or failed WorkIQ Ask does not prove CLI fetch unavailable. Missing launcher/version support holds with --workiq-path guidance. Never switch identity/transport after authentication failure or denial, replace membership with people search, or use Azure CLI Graph tokens."
 
-readiness.silent_perms:
-  summary: "Scout's permissions allow fully unattended (silent) runs."
-  what: >
-    Confirms shell, WorkIQ (email + Teams), the browser (Playwright), and the ICM +
-    Kusto MCP servers are all auto-approved in Scout settings — so scheduled /
-    background work (the daily digest, Teams reminders, CCOA-lockdown browser checks,
-    the on-call & telemetry checks) runs WITHOUT stalling on a permission prompt when
-    Scout isn't focused.
-  who: >
-    The skill checks it (reads m_get_settings — the engine can't see Scout's own
-    settings). Enabling requires the user to flip one master toggle (only the user
-    can). OPT-OUT: you may proceed without.
-  where:
-    - "Scout → Settings → Permissions — the per-server auto-approve flags."
-    - "The master toggle: 'When blocked, let Scout ask instead of stopping' (allowModelPermissionsChange)."
-  how: >
-    If not all auto-approved, record needs_input with the exact missing consent,
-    exhaust independent readiness probes, then use the guarded checklist handoff
-    before offering 'Enable silent runs'. Never bypass actual host consent.
-    On explicit consent the skill requests
-    auto-approval for WorkIQ/browser/ICM/Kusto (you click Allow once); if the master
-    toggle is off you turn it on first. Or choose 'Proceed without' → recorded as
-    `degraded`, which STILL clears the gate (⚠️ 'Proceeding (not silent)') but
-    background checks will prompt and can stall until you open Scout.
-  faqs:
-    - q: "Does this block the release?"
-      a: "No — it's soft/opt-out. `degraded` satisfies the gate; you just risk occasional prompts on unattended runs."
-    - q: "Exactly what gets auto-approved?"
-      a: "shell, workiq, playwright, kusto, icm."
-
 readiness.teams_notify:
   summary: "The daily digest can also reach you over the Scout Teams bot."
   what: >
@@ -805,31 +775,26 @@ build_verify.rc_report:
       a: "A prominent Recommendation combines both gates: WAIT for incomplete evidence; STOP / HOLD if either gate blocks; CONTINUE WITH WARNINGS if MRWP passes with warnings and Authenticator clears; PROCEED when both gates are clean. These are recommendations, not actions that stop ADO pipelines. Authenticator percentages display two decimals, but gate decisions use the unrounded ratio."
 
 build_verify.rc_report_notify:
-  summary: "Share the published RC verification report link with the release owner through the Scout bot."
+  summary: "Send the RC verification summary and pipeline links to the release owner through the Scout bot."
   what: >
-    This step sends a lightweight Scout-bot message to the release owner with the
-    SharePoint RC verification report link and a short gate summary. It deliberately
-    does NOT repeat failure lists, investigation commands, fallback URLs or long
-    remediation text; the report is the source of detail.
+    This step sends a concise Scout-bot message to the release owner with the
+    consolidated RC verification summary (MRWP ECS, MRWP Local, and Authenticator ECS)
+    plus direct pipeline run links, directly after auth_ecs completes.
   who: >
     Scout sends it to the release owner recorded in state.owner_email using the
     Scout bot transport. It is a personal owner notification, not a broad team post.
   where:
-    - "The SharePoint report link recorded by build_verify.rc_report_publish."
     - "The release owner's Scout bot chat."
   how: >
-    It requires build_verify.rc_report_publish to be done with a report_link or web_url.
-    Use the shared notification lifecycle: prepare the step notification, review/claim
-    the exact descriptor, send the authorized m_send_teams_message payload, then record
-    notification result and finalize. If the report is republished or source state changes,
-    prepare a fresh descriptor instead of reusing an old one.
+    Run step-action --phase build_verify --step rc_report_notify, send the returned
+    m_send_teams_message payload, then record completion with record-step --status pass.
   faqs:
     - q: "Why is the Scout-bot message short?"
-      a: "The bot message is only a pointer and high-level status. Long failure details and next actions belong in the SharePoint report so the chat stays readable."
+      a: "The bot message gives the high-level gate status and direct pipeline run links so the chat stays readable."
     - q: "Who receives it?"
-      a: "The release owner on record, via the Scout bot. Do not add extra recipients or repost it to a channel unless a separate notification descriptor authorizes that."
-    - q: "Does posting the link approve the RC quality gate?"
-      a: "No. It only confirms delivery of the report link. The next step, build_verify.rc_report_gate, remains a separate owner decision."
+      a: "The release owner on record, via the Scout bot."
+    - q: "Does posting the summary approve the RC quality gate?"
+      a: "No. It only confirms delivery of the RC summary. The next step, build_verify.rc_report_gate, remains a separate owner decision."
 
 # =============================== Phase 3 · bug_bash ===============================
 

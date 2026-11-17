@@ -224,7 +224,6 @@ def test_rc_retriggered_reopens_phase2_rc_steps():
         again = _C.load_state(d, "2026-08")
     assert not again.is_done("build_verify", "mrwp_ecs")
     assert not again.is_done("build_verify", "mrwp_local")
-    assert again.get_step("build_verify", "rc_report_publish").status == "pending"
     assert again.get_step("build_verify", "rc_report_notify").status == "pending"
     assert again.get_step("build_verify", "rc_report_gate").status == "pending"
     assert again.is_done("build_verify", "checker_fired")        # untouched
@@ -433,15 +432,14 @@ def test_rc_report_shows_three_result_legs_at_a_glance():
 
 
 
-def test_build_verify_rc_report_publish_builds_renderer_payload():
-    """rc_report_publish composes the full HTML report from state.pipeline_runs (no live call)."""
+def test_build_verify_rc_report_notify_builds_summary_payload():
+    """rc_report_notify composes the RC summary directly from state.pipeline_runs (no SharePoint upload)."""
     from orchestrator.outcomes import as_dict
     from steps.build_verify import _common as K
     import steps as _steps
 
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
                       owner_email="dev@microsoft.com", owner_name="Dev")
-    # Seed the RC snapshot the verify steps would have stored (full categories + a suite).
     _pipeline(K.stash_checker, st, "1678599", "2026-08-13T06:00")
     _pipeline(K.stash_orchestrator, st, "1678611", parked=True)
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
@@ -454,19 +452,10 @@ def test_build_verify_rc_report_publish_builds_renderer_payload():
     _pipeline(K.stash_mrwp, st, "Local", snapshot(1678864, {PROD: ui}))
     _seed_auth(st)
 
-    out = as_dict(_invoke(_steps.get_step("build_verify", "rc_report_publish").build, st))
-    assert out["kind"] == "needs_skill" and out["tool"] == "publish-rc-report"
-    from hashlib import sha256
-    digest = sha256(out["payload"]["html"].encode("utf-8")).hexdigest()
-    assert out["payload"]["file_name"] == f"rc-verification-report-2026-08-rc1-{digest}.html"
-    assert out["payload"]["site_url"] == "https://microsoft.sharepoint-df.com/teams/MsalAndroidRelease"
-    body = out["payload"]["html"]
-    assert "1678863" in body                          # run id present
-    assert "UI+Stress success rate" in body
-    assert "61.8%" in body                            # 102/165 UI failures — the real UI rate
-    assert "Unit" in body and "Instrumented" in body and "UI automation" in body
-    assert "test_1_Foo" in body                       # failing test names still listed
-    assert out["record_as"] == "rc_report_publish" and out["outbound"] is True
+    out = as_dict(_invoke(_steps.get_step("build_verify", "rc_report_notify").build, st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "m_send_teams_message"
+    assert "1678863" in out["payload"]["message"]
+    assert out["record_as"] == "rc_report_notify" and out["outbound"] is True
 
 
 
@@ -531,28 +520,33 @@ def test_rc_ui_gate_and_run_links():
 
 
 
-def test_rc_report_split_publishes_notifies_then_holds_for_human_gate():
-    from tests.test_rc_report_delivery import published, delivered_notify
+def test_rc_report_notifies_then_holds_for_human_gate(tmp_path):
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26", owner_email="dev@microsoft.com")
     _ready_for_rc_report(st)
     _seed_rc_pipeline(st, {"total": 100, "passed": 95, "failed": 5},
                       {"total": 100, "passed": 95, "failed": 5})
-    published(st)
-    orch = Orchestrator(CONFIG, st)
-    delivered_notify(st, orch)
+    C.save_state(st, str(tmp_path), st.release_id)
+    from orchestrator import cli
+    assert cli.main([
+        "--runs-root", str(tmp_path),
+        "record-step", "--release", st.release_id,
+        "--phase", "build_verify", "--step", "rc_report_notify",
+        "--status", "pass", "--detail", "Sent RC summary",
+    ]) == 0
+    st = C.load_state(str(tmp_path), st.release_id)
+    orch = Orchestrator(CONFIG, st, mocks={})
     report = orch.status_report()
 
     assert report["current_phase"] == "build_verify"
     assert report["current_step"] == "rc_report_gate"
     assert "build_verify.rc_report_gate" in report["pending_human"]
     assert not st.is_done("build_verify", "rc_report_gate")
-    assert orch.approve_gate("Owner reviewed the linked report; proceed to Bug Bash").kind == "ran"
+    assert orch.approve_gate("Owner reviewed the RC summary; proceed to Bug Bash").kind == "ran"
     assert st.is_done("build_verify", "rc_report_gate")
     assert orch.current_phase_id() == "bug_bash"
 
 
-def test_rc_report_notify_uses_published_sharepoint_link():
-    from tests.test_rc_report_delivery import published
+def test_rc_report_notify_includes_summary_and_pipeline_links():
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
@@ -560,18 +554,14 @@ def test_rc_report_notify_uses_published_sharepoint_link():
     _ready_for_rc_report(st)
     _seed_rc_pipeline(st, {"total": 100, "passed": 95, "failed": 5},
                       {"total": 100, "passed": 95, "failed": 5})
-    published(st)
 
     out = as_dict(_invoke(_steps.get_step("build_verify", "rc_report_notify").build, st))
 
     assert out["kind"] == "needs_skill" and out["tool"] == "m_send_teams_message"
     message = out["payload"]["message"]
-    assert "https://sharepoint/report.html" in message
     assert ("Summary: MRWP ECS: 95.0% pass (UI+Stress); MRWP Local: 95.0% pass (UI+Stress); "
             "Authenticator ECS: pass (97.0% lowest-suite pass).") in message
-    assert "Open the report for failure details and next steps." in message
-    assert "Next:" not in message
-    assert "Fallback file URL" not in message
+    assert "Pipeline runs:" in message
     assert "Scout bot" in out["summary"]
     assert out["record_as"] == "rc_report_notify" and out["outbound"] is True
 
@@ -582,7 +572,7 @@ def test_rc_report_notify_has_step_knowledge():
     k = kb.get_knowledge("build_verify", "rc_report_notify")
 
     assert k and "Scout bot" in k["summary"]
-    assert "report link" in k["what"]
+    assert "summary" in k["what"]
 
 
 def test_rc_report_email_shows_retry_warning():
@@ -915,7 +905,6 @@ def test_poll_rc_resolved_blocked_idle():
         st.set_step("build_verify", "rc_report_gate", StepState(status="done", note="UI CLEAN"))
         st.gate_decisions.append(_gate_decision("build_verify.rc_report_gate"))
         _ready_for_rc_report(st)
-        st.set_step("build_verify", "rc_report_publish", StepState(status="done"))
         st.set_step("build_verify", "rc_report_notify", StepState(status="done"))
         C.save_state(st, d, rid)
         assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "resolved"
@@ -936,7 +925,7 @@ def test_rc_poller_automation_is_on_demand_interval():
     plan = A.plan(CONFIG, "2026-08", "2026-08-26")
     rc = next(a for a in plan["automations"] if a["slug"] == "build-verify-rc-poller")
     assert rc["on_demand"] and rc["interval"] == "30 minutes"
-    assert rc["steps"] == ["build_verify.rc_report_publish", "build_verify.rc_report_notify"]
+    assert rc["steps"] == ["build_verify.rc_report_notify"]
     assert "poll-rc --release 2026-08" in rc["prompt"] or "RC verification poller" in rc["name"]
 
 
@@ -1024,7 +1013,7 @@ def test_sim_fast_forwards_to_rc_gate_offline():
     assert all(st.is_done("ccd", s) for s in ("final_reminder", "localization"))
     # the verification + report steps ran (real build() on mocks) and the human gate remains.
     for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-              "auth_ecs", "telemetry_verify", "rc_report_publish", "rc_report_notify"):
+              "auth_ecs", "telemetry_verify", "rc_report_notify"):
         assert st.is_done("build_verify", s), s
     from tests._context import fresh_orchestrator as _O
     assert _O(CONFIG, st).current_phase_id() == "bug_bash"

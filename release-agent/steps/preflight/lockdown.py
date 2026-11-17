@@ -136,15 +136,20 @@ def build(context: StepContext):
                 "url": cfg.get("url"),
                 "window": window,
                 "blocking_environment": blocking_env,
+                "owner_email": context.release.owner_email,
                 "instructions": (
-                    "Browser-scrape the 'Upcoming CCOA periods' and "
-                    "'Past NoFly Zones' tables for every calendar year covered by "
-                    "the release window (AAD SSO, no password). Build a JSON "
-                    "array of {name, environment, start:YYYY-MM-DD, end:YYYY-MM-DD} "
-                    "(UTC) — the engine keeps only Production-env periods and decides "
-                    "overlap deterministically. If the page or any required table "
-                    "cannot be verified, keep the step held; do not substitute an "
-                    "empty array for missing evidence."),
+                    "1) Navigate (Playwright) to `url`. "
+                    f"2) On the Microsoft AAD sign-in / account picker, click the user's own account tile "
+                    f"(`{context.release.owner_email or 'your @microsoft.com account'}`) — or if an email box "
+                    f"is shown, type `{context.release.owner_email or '<owner_email>'}` and click Next so Windows "
+                    "WAM SSO signs in automatically without a password! Wait for 'CCOA Periods' to appear (do NOT "
+                    "fail immediately on the initial AAD redirect before clicking the account / waiting for SSO!). "
+                    "3) Read the 'Upcoming CCOA periods' and 'Past NoFly Zones' tables for every calendar year "
+                    "covered by the release window, build a JSON array of "
+                    "{name, environment, start:YYYY-MM-DD, end:YYYY-MM-DD} (UTC), and run `followup_command` "
+                    "(`check-lockdown --release <id> --periods-json '<json>'`) to record the step! "
+                    "If a required table still cannot be verified after SSO, keep the step held; "
+                    "do not substitute an empty array for missing evidence."),
             },
         },
         record_as=ID,

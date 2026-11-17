@@ -314,7 +314,7 @@ def test_start_continues_scout_checks_after_only_python_verification():
     assert payload["continue_automatically"] and not payload["ready"]
     assert "answers" not in payload
     assert {item["id"] for item in payload["pending_auto_checks"]} == {
-        "ccd_confirmed", "silent_perms", "teams_notify", "adx_access", "oncall_now"}
+        "ccd_confirmed", "teams_notify", "adx_access", "oncall_now"}
     assert all(item["source"] == "scout" and item["verifier"]
                for item in payload["pending_auto_checks"])
     assert payload["failed_auto_checks"] == []
@@ -333,7 +333,7 @@ def test_auto_failure_does_not_hide_independent_pending_checks():
     orch.gate.record_check("oncall_now", "fail", "Read permission denied")
     payload = render.attest_prompt_payload(orch.gate.checklist(), st.release_id)
     assert payload["failed_auto_checks"] == ["oncall_now"]
-    assert len(payload["pending_auto_checks"]) == 4
+    assert len(payload["pending_auto_checks"]) == 3
     assert "oncall_now" not in {item["id"] for item in payload["pending_auto_checks"]}
     assert payload["next_action"] == "run_auto_checks" and payload["continue_automatically"]
     assert "answers" not in payload
@@ -499,31 +499,21 @@ def test_record_check_rejects_non_scout_item():
 
 
 
-def test_silent_perms_is_mandatory_scout_item():
-    """silent_perms (source: scout) is a mandatory auto item — the gate stays closed
-    until the skill records it, and it carries required_servers as data."""
+def test_silent_perms_removed_from_readiness():
+    """silent_perms is removed so interactive runs never stall on silent permission checks."""
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
-    # it's a scout item, so verify() must NOT touch it
+    ids = {i["id"] for i in orch.gate.checklist()["items"]}
+    assert "silent_perms" not in ids
     orch.gate.verify()
-    assert st.readiness_items.get("silent_perms", {}).get("status", "pending") == "pending"
-    # required_servers is exposed as data for the skill (m_get_settings check)
-    sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
-    assert sp["verify"] == "auto" and sp["source"] == "scout"
-    assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm"]
-    assert "required" not in sp
     _pass_m365_check(orch)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
-    orch.gate.record_check("teams_notify", "pass", "teams reachable")
+    orch.gate.record_check("teams_notify", "degraded", "proceeding with email-only fallback")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
-    assert not orch.gate.signed
-    orch.gate.record_check("silent_perms", "pass", "all servers auto-approved")
     assert orch.gate.signed
-
-
 
 
 def test_mcp_servers_is_python_auto_item():
@@ -535,29 +525,6 @@ def test_mcp_servers_is_python_auto_item():
     assert st.readiness_items["mcp_servers"]["status"] == "pass"
     m = next(i for i in orch.gate.checklist()["items"] if i["id"] == "mcp_servers")
     assert m["verify"] == "auto" and not m["source"]   # python, not scout
-
-
-
-
-def test_silent_perms_opt_out_degraded_satisfies_gate():
-    """silent_perms is soft/opt-out: recording 'degraded' (user proceeds without
-    silent runs) SATISFIES the gate, unlike a normal auto item where only pass counts."""
-    _stub_build_defs("pass")
-    st = ReleaseState(release_id="t")
-    orch = Orchestrator(CONFIG, st)
-    orch.gate.verify()
-    _pass_m365_check(orch)
-    orch.gate.record_check("oncall_now", "pass", "not on-call")
-    orch.gate.record_check("adx_access", "pass", "can query")
-    orch.gate.record_check("teams_notify", "pass", "teams reachable")
-    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
-    # user opts out of silent runs -> degraded, but the gate still clears on sign
-    res = orch.gate.record_check("silent_perms", "degraded", "proceeding without silent runs")
-    assert "error" not in res
-    sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
-    assert sp["status"] == "degraded" and sp["satisfied"]
-    orch.gate.sign()
-    assert orch.gate.signed
 
 
 

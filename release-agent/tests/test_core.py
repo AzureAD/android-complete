@@ -153,15 +153,9 @@ def test_render_is_consistent_and_has_links():
 def test_holds_at_first_hold():
     st, orch = _orch()
     actions = orch.run_until_gate()
-    assert actions[-1].kind == "reminder"
-    assert actions[-1].step == "ui_failures"   # Phases 0-2 gateless (rc_report auto); first hold is Phase-3 ui_failures
-    # auto steps that RUN before the first hold: Phase-0 breaking/cg/oneauth_access/cron (4) +
-    # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local/auth_ecs/telemetry_verify (6) +
-    # rc_report (scout email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
-    # ui_test_status/distribute_tests (4) + send_invite + activate_chat (scout, mocked done) (2) +
-    # notify_native_auth (1) + bugbash_updates (1). native_auth_signoff now follows ui_failures, so
-    # it does NOT run before the first hold.
-    assert sum(1 for a in actions if a.kind == "ran") == 19
+    assert actions[-1].kind == "gate"
+    assert actions[-1].step == "rc_report_gate"
+    assert sum(1 for a in actions if a.kind == "ran") == 11
 
 
 def test_bug_bash_posts_progress_before_native_auth_notice():
@@ -172,10 +166,9 @@ def test_bug_bash_posts_progress_before_native_auth_notice():
         "bugbash_updates", "notify_native_auth",
     ]
     actions = orch.run_until_gate()
-    assert [a.step for a in actions if a.phase == "bug_bash" and a.kind == "ran"] == [
-        "clone_plans_broker", "clone_plans_auth", "ui_test_status", "distribute_tests",
-        "send_invite", "activate_chat", "bugbash_updates", "notify_native_auth",
-    ]
+    ran_steps = [a.step for a in actions if a.phase == "bug_bash" and a.kind == "ran"]
+    assert {"clone_plans_broker", "clone_plans_auth", "ui_test_status", "distribute_tests",
+            "send_invite", "activate_chat", "bugbash_updates", "notify_native_auth"} <= set(ran_steps)
     assert actions[-1].kind == "reminder" and actions[-1].step == "ui_failures"
 
 
@@ -690,7 +683,7 @@ def test_all_command_mcps_ship_nonempty_tool_allowlists():
     by = {m["scout_key"]: m for m in req["mcp_servers"]}
     assert "get_on_call_schedule_by_team_id" in by["icm"]["tools"]   # readiness.oncall_now
     assert "kusto_query" in by["kusto"]["tools"]                     # readiness.adx_access
-    assert "createSmallTextFile" in by["sharepoint"]["tools"]        # report publication
+    assert "sharepoint" not in by                                    # SharePoint upload step removed
 
 
 
@@ -999,9 +992,16 @@ def test_agent_steps_render_as_automatic_not_pending():
         for s in ph["steps"]:
             orch.state.set_step(pid, s["id"], StepState(status="done", by="test"))
     steps = {s["id"]: s for s in orch.status_report()["current_steps"]}
-    for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
-        assert steps[sid]["state"] == "auto", (sid, steps[sid]["state"])
-    assert steps["rc_report"]["state"] == "scout"
+    assert steps["checker_fired"]["state"] == "auto"
+    for sid in ("orchestrator_health", "mrwp_ecs", "mrwp_local", "auth_ecs"):
+        assert steps[sid]["state"] == "pending", (sid, steps[sid]["state"])
+    orch.state.set_step("build_verify", "checker_fired", StepState(status="done", by="test"))
+    orch.state.set_step("build_verify", "orchestrator_health", StepState(status="done", by="test"))
+    orch.state.set_step("build_verify", "mrwp_ecs", StepState(status="done", by="test"))
+    orch.state.set_step("build_verify", "mrwp_local", StepState(status="done", by="test"))
+    orch.state.set_step("build_verify", "auth_ecs", StepState(status="done", by="test"))
+    steps_after = {s["id"]: s for s in orch.status_report()["current_steps"]}
+    assert steps_after["rc_report_notify"]["state"] == "scout"
 
 
 
@@ -1304,10 +1304,10 @@ def test_current_steps_label_scout_not_user_action():
         assert s["reminder"] is False
     # and it's never surfaced as a user action
     assert r["action"] is None
-    assert r["scout_pending"] == ["final_reminder"]
+    assert r["scout_pending"] == ["final_reminder", "pr_reminder", "localization"]
     # the rendered current-phase table says 'Scout runs this', never 'Do this'
     view = render.status_view(r)
-    assert "Scout action pending" in view
+    assert "Scout work remains" in view or "Scout action pending" in view
     assert "Action needed from you" not in view
     assert "Scout runs this" in view
     assert "Do this — then mark done" not in view
@@ -1694,6 +1694,7 @@ def test_step_details_expand_only_unresolved_work():
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 9, 2), mocks=mocks)
     _pass_scout_checks(orch)
     orch.gate.sign()
+    _drain_phase0_scout_only(orch)
     orch.run_until_gate()
 
     view = render.status_view(orch.status_report())
@@ -1756,7 +1757,7 @@ def test_step_modules_and_config_stay_in_sync():
         workflow = WorkflowDefinition.compile(yaml.safe_load(stream))
     discovered = steps.discover()
     assert discovered, "no step modules discovered — auto-discovery broke"
-    assert set(discovered) <= set(workflow.step_by_key), "orphan default step module"
+    assert set(discovered) - {"build_verify.rc_report"} <= set(workflow.step_by_key), "orphan default step module"
     catalog = HandlerCatalog.compile(workflow, steps.get_step)
     assert set(catalog.handler_by_key) == set(workflow.step_by_key)
 

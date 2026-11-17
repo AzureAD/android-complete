@@ -50,6 +50,7 @@ class StepDefinition:
     effect_mode: Optional[EffectMode]
     effect_recovery: Optional[EffectRecovery]
     effect_retry: bool
+    requires_approval: bool
     depends_on: tuple[str, ...]
     required_tools: tuple[str, ...]
     raw: Mapping[str, Any]
@@ -156,7 +157,8 @@ class WorkflowDefinition:
                     raw_step,
                     {
                         "id", "name", "kind", "owner", "source", "gate",
-                        "attest", "depends_on", "required_tools", "maps_to", "approval_command",
+                        "attest", "depends_on", "required_tools", "requires_approval",
+                        "maps_to", "approval_command",
                         "write_command", "write_precondition", "manual_result", "repeatable",
                         "pollable", "refresh_invalidation", "effect_mode",
                         "effect_recovery", "effect_retry", "implementation",
@@ -345,6 +347,22 @@ class WorkflowDefinition:
                     raise WorkflowConfigError(
                         f"Step {phase_id}.{step_id} has invalid required_tools."
                     )
+                default_approval = kind == StepKind.APPROVAL_GATE
+                requires_approval = raw_step.get("requires_approval", default_approval)
+                if type(requires_approval) is not bool:
+                    raise WorkflowConfigError(
+                        f"Step {phase_id}.{step_id} requires_approval must be a boolean."
+                    )
+                if kind == StepKind.APPROVAL_GATE and not requires_approval:
+                    raise WorkflowConfigError(
+                        f"Approval gate {phase_id}.{step_id} cannot set requires_approval: false."
+                    )
+                if "requires_approval" in raw_step and kind not in (
+                    StepKind.EXTERNAL, StepKind.APPROVAL_GATE
+                ) and requires_approval:
+                    raise WorkflowConfigError(
+                        f"Only external or approval_gate steps may declare requires_approval: true ({phase_id}.{step_id})."
+                    )
                 step = StepDefinition(
                     phase_id=phase_id,
                     id=step_id,
@@ -363,6 +381,7 @@ class WorkflowDefinition:
                     effect_mode=effect_mode,
                     effect_recovery=effect_recovery,
                     effect_retry=effect_retry,
+                    requires_approval=requires_approval,
                     depends_on=tuple(dependencies),
                     required_tools=tuple(required_tools),
                     raw=_freeze(raw_step),

@@ -25,6 +25,9 @@
 #                               only these consumers are invalidated by a reopen
 #   steps[].required_tools    : required tools/connectors; missing/misconfigured tool
 #                               fails only that step without halting independent steps
+#   steps[].requires_approval : boolean (default false for external steps, true for
+#                               approval_gate); when false, Scout executes the step
+#                               automatically without asking in chat first
 #   steps[].maps_to           : the Release-Stabilization action-item ID(s) this step uses
 
 version: 1
@@ -36,9 +39,9 @@ phases:
     anchor: "CCD-7"          # opens 7 days before the Code Complete Date (start window)
     execution: parallel
     steps:
-      - { id: notice,          name: "Send early release notice",              kind: external, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [S0] }
-      - { id: flight_reminder, name: "Send feature-owner reminders (flights · strings · flag-freeze)",  kind: external, owner: agent, source: scout, depends_on: [], required_tools: [workiq, microsoft_teams], maps_to: [S3, S4, S5] }
-      - { id: lockdown,        name: "Detect lockdown/holiday overlap",         kind: external, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [S1] }
+      - { id: notice,          name: "Send early release notice",              kind: external, requires_approval: false, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [S0] }
+      - { id: flight_reminder, name: "Send feature-owner reminders (flights · strings · flag-freeze)",  kind: external, requires_approval: false, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [S3, S4, S5] }
+      - { id: lockdown,        name: "Detect lockdown/holiday overlap",         kind: external, requires_approval: false, owner: agent, source: scout, depends_on: [], required_tools: [playwright], maps_to: [S1] }
       - { id: breaking,        name: "Detect BREAKING-OneAuth + draft comms",   kind: auto, effect_mode: read_only, owner: agent, depends_on: [], required_tools: [gh], maps_to: [S2] }
       - { id: cg,              name: "Report critical CG alerts",               kind: auto, effect_mode: read_only, owner: agent, depends_on: [], required_tools: [gh], maps_to: [S8] }
       - { id: oneauth_access,  name: "Verify OneAuth write access (create a probe branch)", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, depends_on: [], required_tools: [az], maps_to: [S8] }
@@ -52,9 +55,9 @@ phases:
     anchor: "CCD"            # opens ON the Code Complete Date — these are CCD-DAY comms; must not fire early
     execution: parallel
     steps:
-      - { id: final_reminder,  name: "CCD final code-complete reminder (email)", kind: external, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [P1-1] }
-      - { id: pr_reminder,     name: "Remind Code Reviews chat of the CCD PR-merge deadline", kind: external, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [P1-1b] }
-      - { id: localization,    name: "Trigger localization pipeline (PR)", kind: external, repeatable: true, pollable: true, write_command: launch-localization, owner: agent, source: scout, depends_on: [], required_tools: [az, microsoft_teams], maps_to: [P1-2] }
+      - { id: final_reminder,  name: "CCD final code-complete reminder (email)", kind: external, requires_approval: false, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [P1-1] }
+      - { id: pr_reminder,     name: "Remind Code Reviews chat of the CCD PR-merge deadline", kind: external, requires_approval: false, owner: agent, source: scout, depends_on: [], required_tools: [workiq], maps_to: [P1-1b] }
+      - { id: localization,    name: "Trigger localization pipeline (PR)", kind: external, requires_approval: false, repeatable: true, pollable: true, write_command: launch-localization, owner: agent, source: scout, depends_on: [], required_tools: [az, microsoft_teams], maps_to: [P1-2] }
 
   - id: build_verify
     name: "Build & Lib Verification"
@@ -68,9 +71,8 @@ phases:
       - { id: mrwp_ecs,            name: "Verify MRWP (ECS) ran to completion + tests", depends_on: [orchestrator_health], required_tools: [az], kind: auto, effect_mode: read_only, owner: agent, maps_to: [B2] }
       - { id: mrwp_local,          name: "Verify MRWP (Local) ran to completion + tests", depends_on: [mrwp_ecs], required_tools: [az], kind: auto, effect_mode: read_only, owner: agent, maps_to: [B3] }
       - { id: auth_ecs,            name: "Verify Authenticator ECS build + UI tests", depends_on: [mrwp_local], required_tools: [az], kind: auto, effect_mode: read_only, owner: agent, maps_to: [B3] }
-      - { id: telemetry_verify,    name: "Verify bug-bash telemetry in Kusto", depends_on: [auth_ecs], required_tools: [kusto], kind: external, repeatable: true, owner: agent, source: scout, maps_to: [B3] }
-      - { id: rc_report_publish,   name: "Publish RC verification report to SharePoint", depends_on: [auth_ecs], required_tools: [playwright, sharepoint], kind: external, write_command: publish-rc-report, manual_result: true, owner: agent, source: scout, maps_to: [B4] }
-      - { id: rc_report_notify,    name: "Post RC verification report link to Scout bot", depends_on: [rc_report_publish], required_tools: [scout_teams_relay], kind: external, owner: agent, source: scout, maps_to: [B4] }
+      - { id: telemetry_verify,    name: "Verify bug-bash telemetry in Kusto", depends_on: [auth_ecs], required_tools: [kusto], kind: external, requires_approval: false, repeatable: true, owner: agent, source: scout, maps_to: [B3] }
+      - { id: rc_report_notify,    name: "Post RC verification report summary to Scout bot", depends_on: [auth_ecs], required_tools: [scout_teams_relay], kind: external, requires_approval: false, owner: agent, source: scout, maps_to: [B4] }
       - { id: rc_report_gate,      name: "Decide RC quality gate after reviewing report", depends_on: [telemetry_verify, rc_report_notify], required_tools: [], kind: approval_gate, owner: human, gate: true, maps_to: [B4] }
 
   - id: bug_bash
@@ -81,11 +83,11 @@ phases:
       - { id: clone_plans_broker, name: "Build Broker test plan (manual suites + failure triage by flight/category)", kind: auto, effect_mode: transactional, effect_recovery: frozen, depends_on: [build_verify.mrwp_ecs, build_verify.mrwp_local], required_tools: [az], owner: agent, maps_to: [T3] }
       - { id: clone_plans_auth,   name: "Create Authenticator bug-bash test suite", kind: auto, effect_mode: transactional, effect_recovery: frozen, effect_retry: true, depends_on: [build_verify.auth_ecs], required_tools: [az], owner: agent, maps_to: [T3] }
       - { id: ui_test_status,     name: "Fill current-RC automation results and failure triage", kind: auto, effect_mode: idempotent, effect_recovery: match_current, depends_on: [clone_plans_broker, clone_plans_auth, build_verify.auth_ecs], required_tools: [az], owner: agent, maps_to: [T4] }
-      - { id: distribute_tests,   name: "Distribute bug-bash tests across the team", kind: external, repeatable: true, write_command: distribute-tests, write_precondition: command, depends_on: [ui_test_status], required_tools: [az, workiq], owner: agent, source: scout, maps_to: [T2] }
-      - { id: send_invite,        name: "Schedule Bug Bash + send Teams invite", kind: external, manual_result: true, depends_on: [clone_plans_broker, clone_plans_auth], required_tools: [workiq], owner: agent, source: scout, maps_to: [T2] }
-      - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", kind: external, depends_on: [send_invite], required_tools: [workiq, microsoft_teams], owner: agent, source: scout, maps_to: [T2] }
-      - { id: bugbash_updates, name: "Post bug-bash progress updates (first post + periodic poller)", kind: external, repeatable: true, depends_on: [activate_chat, ui_test_status], required_tools: [az, workiq], owner: agent, source: scout, maps_to: [T2] }
-      - { id: notify_native_auth, name: "Notify the Native Auth release engineer", kind: external, depends_on: [clone_plans_broker], required_tools: [microsoft_teams, workiq], owner: agent, source: scout, maps_to: [T2] }
+      - { id: distribute_tests,   name: "Distribute bug-bash tests across the team", kind: external, requires_approval: true, repeatable: true, write_command: distribute-tests, write_precondition: command, depends_on: [ui_test_status], required_tools: [az, workiq], owner: agent, source: scout, maps_to: [T2] }
+      - { id: send_invite,        name: "Schedule Bug Bash + send Teams invite", kind: external, requires_approval: false, manual_result: true, depends_on: [clone_plans_broker, clone_plans_auth], required_tools: [workiq], owner: agent, source: scout, maps_to: [T2] }
+      - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", kind: external, requires_approval: false, depends_on: [send_invite], required_tools: [workiq, microsoft_teams], owner: agent, source: scout, maps_to: [T2] }
+      - { id: bugbash_updates, name: "Post bug-bash progress updates (first post + periodic poller)", kind: external, requires_approval: false, repeatable: true, depends_on: [activate_chat, ui_test_status], required_tools: [az, workiq], owner: agent, source: scout, maps_to: [T2] }
+      - { id: notify_native_auth, name: "Notify the Native Auth release engineer", kind: external, requires_approval: false, depends_on: [clone_plans_broker], required_tools: [microsoft_teams, workiq], owner: agent, source: scout, maps_to: [T2] }
       - { id: ui_failures,     name: "Review Phase 2 automation failures (Broker + Authenticator)", kind: human_action, depends_on: [ui_test_status], required_tools: [], owner: human, maps_to: [T4] }
       - { id: native_auth_signoff, name: "Native Auth team sign-off (attest)", kind: attestation, depends_on: [notify_native_auth], required_tools: [], owner: human, attest: true, maps_to: [T5] }
       - { id: bugbash_complete, name: "Bug bash complete + signed off", kind: approval_gate, depends_on: [ui_failures, native_auth_signoff], required_tools: [], owner: human, gate: true }
@@ -97,13 +99,13 @@ phases:
     steps:
       - { id: remove_rc_tags_gate, name: "Approve 'Remove RC Tags' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, depends_on: [bug_bash.bugbash_complete], required_tools: [az], owner: human, gate: true, maps_to: [F1] }
       - { id: orchestrator_finalization, name: "Monitor Release Orchestrator to 'Publish GitHub Release Notes'", kind: auto, effect_mode: read_only, depends_on: [remove_rc_tags_gate], required_tools: [az], owner: agent, maps_to: [F2] }
-      - { id: integ_prs,       name: "Auto-create integration PRs", kind: external, pollable: true, write_command: create-integration-prs, owner: agent, source: scout, depends_on: [orchestrator_finalization], required_tools: [gh, az], maps_to: [F2] }
+      - { id: integ_prs,       name: "Auto-create integration PRs", kind: external, requires_approval: false, pollable: true, write_command: create-integration-prs, owner: agent, source: scout, depends_on: [orchestrator_finalization], required_tools: [gh, az], maps_to: [F2] }
       - { id: publish_notes_gate, name: "Approve 'Publish GitHub Release Notes' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, depends_on: [orchestrator_finalization], required_tools: [az], owner: human, gate: true, maps_to: [F4] }
       - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", kind: auto, effect_mode: read_only, depends_on: [publish_notes_gate], required_tools: [], owner: agent, maps_to: [F3] }
       - { id: verify_release_notes, name: "Verify GitHub release notes (Broker + MSAL + Common)", kind: auto, effect_mode: read_only, depends_on: [publish_notes_gate], required_tools: [gh], owner: agent, maps_to: [F5] }
-      - { id: oneauth_common_pr, name: "Ingest published Common into OneAuth (PR to dev)", kind: external, write_command: create-oneauth-common-pr, depends_on: [verify_pub], required_tools: [az], owner: agent, source: scout, maps_to: [F5] }
-      - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", kind: external, depends_on: [verify_pub, verify_release_notes], required_tools: [microsoft_teams], owner: agent, source: scout, maps_to: [F4] }
-      - { id: final_status_email, name: "Send the closing partner status email + close the daily automation", kind: external, depends_on: [release_announcement], required_tools: [workiq], owner: agent, source: scout, maps_to: [F4] }
+      - { id: oneauth_common_pr, name: "Ingest published Common into OneAuth (PR to dev)", kind: external, requires_approval: false, write_command: create-oneauth-common-pr, depends_on: [verify_pub], required_tools: [az], owner: agent, source: scout, maps_to: [F5] }
+      - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", kind: external, requires_approval: false, depends_on: [verify_pub, verify_release_notes], required_tools: [microsoft_teams], owner: agent, source: scout, maps_to: [F4] }
+      - { id: final_status_email, name: "Send the closing partner status email + close the daily automation", kind: external, requires_approval: false, depends_on: [release_announcement], required_tools: [workiq], owner: agent, source: scout, maps_to: [F4] }
 
   - id: rollout_start
     name: "Rollout Start"
@@ -112,12 +114,12 @@ phases:
     steps:
       - { id: identify_auth_build, name: "Identify final Authenticator build", kind: auto, effect_mode: read_only, depends_on: [finalize.orchestrator_finalization], required_tools: [az], owner: agent, maps_to: [R1] }
       - { id: tag_authenticator, name: "Tag the Authenticator release commit", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, depends_on: [identify_auth_build], required_tools: [az], maps_to: [F6] }
-      - { id: wiki_payload,      name: "Create/update the release payload wiki page", kind: external, write_command: create-payload-wiki, owner: agent, source: scout, depends_on: [tag_authenticator], required_tools: [az], maps_to: [S0, F6] }
-      - { id: notice,          name: "Send initial Auth App release notice", kind: external, owner: agent, source: scout, depends_on: [wiki_payload], required_tools: [workiq], maps_to: [R1] }
-      - { id: signoff_start,   name: "Start Release Sign Off", kind: external, write_command: start-release-signoff, owner: agent, source: scout, depends_on: [notice], required_tools: [az], maps_to: [R3] }
-      - { id: upload_whats_new, name: "Start Upload What's New", kind: external, write_command: start-upload-whats-new, owner: agent, source: scout, depends_on: [signoff_start], required_tools: [az], maps_to: [R3] }
-      - { id: upload_alpha,    name: "Start Upload Alpha", kind: external, write_command: start-upload-alpha, owner: agent, source: scout, depends_on: [upload_whats_new], required_tools: [az], maps_to: [R3] }
-      - { id: beta_play_store, name: "Start 100% Beta - Play Store (release-owner approval)", kind: external, write_command: start-beta-play-store, owner: agent, source: scout, depends_on: [upload_alpha], required_tools: [az], maps_to: [R3] }
+      - { id: wiki_payload,      name: "Create/update the release payload wiki page", kind: external, requires_approval: false, write_command: create-payload-wiki, owner: agent, source: scout, depends_on: [tag_authenticator], required_tools: [az], maps_to: [S0, F6] }
+      - { id: notice,          name: "Send initial Auth App release notice", kind: external, requires_approval: false, owner: agent, source: scout, depends_on: [wiki_payload], required_tools: [workiq], maps_to: [R1] }
+      - { id: signoff_start,   name: "Start Release Sign Off", kind: external, requires_approval: false, write_command: start-release-signoff, owner: agent, source: scout, depends_on: [notice], required_tools: [az], maps_to: [R3] }
+      - { id: upload_whats_new, name: "Start Upload What's New", kind: external, requires_approval: false, write_command: start-upload-whats-new, owner: agent, source: scout, depends_on: [signoff_start], required_tools: [az], maps_to: [R3] }
+      - { id: upload_alpha,    name: "Start Upload Alpha", kind: external, requires_approval: false, write_command: start-upload-alpha, owner: agent, source: scout, depends_on: [upload_whats_new], required_tools: [az], maps_to: [R3] }
+      - { id: beta_play_store, name: "Start 100% Beta - Play Store (release-owner approval)", kind: external, requires_approval: true, write_command: start-beta-play-store, owner: agent, source: scout, depends_on: [upload_alpha], required_tools: [az], maps_to: [R3] }
 
   - id: monitor
     name: "Monitoring & Ring Advancement"

@@ -275,3 +275,44 @@ def test_start_release_requires_explicit_folder_and_date_confirmation_before_ini
     assert "Tool/connector failure (icm)" in readiness
 
 
+def test_external_steps_declare_requires_approval_order_gather_first_and_bound_error_markdown():
+    from datetime import date
+    import yaml
+    from orchestrator import render
+
+    raw = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    for phase in raw["phases"]:
+        for step in phase["steps"]:
+            if step.get("kind") == "external":
+                assert "requires_approval" in step and isinstance(step["requires_approval"], bool), (
+                    f"{phase['id']}.{step['id']} must explicitly declare boolean requires_approval"
+                )
+
+    st = ReleaseState(
+        release_id="2026-11", ccd="2026-11-20", ccd_source="manual",
+        owner_email="pedroro@microsoft.com", timezone="America/Los_Angeles",
+    )
+    orch = Orchestrator(CONFIG, st, mocks=_safe(), as_of=date(2026, 11, 16))
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+
+    scout_keys = [
+        item["key"]
+        for item in orch.status_report()["work_dispatch"]["pending_work"]
+        if item["kind"] == "scout"
+    ]
+    # Non-send gather step `lockdown` runs BEFORE outbound notifications (`notice`, `flight_reminder`)
+    assert scout_keys[0] == "preflight.lockdown"
+    assert set(scout_keys[1:]) == {"preflight.notice", "preflight.flight_reminder"}
+
+    # Even a 10,000-char CLI error never bloats `status_view` / `display_markdown`
+    orch.fail_step("preflight", "notice", "ERROR_LINE\n" * 1000, tool="workiq_send_email")
+    orch.fail_step("preflight", "flight_reminder", "ERROR_LINE\n" * 1000, tool="workiq_send_chat_message")
+    orch.fail_step("preflight", "lockdown", "SSO needed", tool="playwright")
+    orch.run_until_gate()
+    md = render.status_view(orch.status_report())
+    assert "### Phases" in md and "### ▶ Current phase" in md
+    assert len(md) < 5_000
+
+
+

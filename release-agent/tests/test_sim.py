@@ -38,7 +38,7 @@ def test_sim_done_mode_completes_phase_and_advances():
     st = res.state
     assert all(st.is_done("build_verify", s) for s in
                ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-                "rc_report_publish", "rc_report_notify", "rc_report_gate"))
+                "rc_report_notify", "rc_report_gate"))
     from tests._context import fresh_orchestrator as Orchestrator
     orch = Orchestrator(CONFIG, st)
     assert orch.current_phase_id() == "bug_bash"

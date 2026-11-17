@@ -198,7 +198,6 @@ def milestones(state, phase_order, selection=None):
                  "status": _roll_up(state, [("build_verify", "mrwp_ecs"),
                                             ("build_verify", "mrwp_local"),
                                             ("build_verify", "auth_ecs"),
-                                            ("build_verify", "rc_report_publish"),
                                             ("build_verify", "rc_report_notify"),
                                             ("build_verify", "rc_report_gate")],
                                      phase_order, selection),
