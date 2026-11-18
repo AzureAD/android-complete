@@ -37,6 +37,8 @@ import {
     applyPrerequisiteAnswers,
     applyTargetFiles,
     buildAdoPullRequestPublicationScript,
+    buildGitHubKeyringEnv,
+    buildGitHubTokenOverrides,
     buildInspectedFilesContext,
     buildNormalizedProcessEnv,
     capturePreBuilderBaselineBackups,
@@ -56,6 +58,7 @@ import {
     isProtectedPipelineOrQualityPath,
     isSafeRelativeFilePath,
     normalizeEvidenceResponse,
+    normalizeImplementationResponse,
     normalizeReviewResponse,
     normalizeTask,
     parseAdoDesignDocUrl,
@@ -264,6 +267,17 @@ test("missing, stale, or incomplete task approval requires clarification without
         assert.equal(ctx.calls.length, 0);
         assert.equal(result.pullRequests.length, 0);
     }
+});
+
+test("an explicit zero correction allowance never silently grants two fix rounds", async () => {
+    const rejected = review();
+    rejected.criteria[0].pass = false;
+    const ctx = context([evidence(), implementation(), rejected], task(), { maxFixIterations: 0 });
+    const result = await runCodeFeature(ctx);
+    assert.equal(result.recommendation, "NO-GO");
+    assert.equal(result.fixIterations, 0);
+    assert.equal(result.maxFixIterations, 0);
+    assert.equal(ctx.calls.filter((call) => call.options.agent === BUILDER_AGENT).length, 1);
 });
 
 function assertWorkflowJson(value, location = "$") {
@@ -1970,6 +1984,35 @@ test("question deduplication, pre-coding spec challenge, resume worktree inspect
             },
         });
         assert.equal(readFileSync(path.join(tempDiffRoot, "Dirty.kt"), "utf8"), "package test\n// human edit\n");
+
+        const keyringEnv = buildGitHubKeyringEnv({
+            SystemRoot: "C:\\Windows",
+            Path: "C:\\Program Files\\Git\\cmd",
+            GH_TOKEN: "ambient-emu-token",
+            GITHUB_TOKEN: "ambient-gh-token",
+            GH_ENTERPRISE_TOKEN: "ambient-ghe-token",
+            GITHUB_ENTERPRISE_TOKEN: "ambient-ghe2-token",
+            GH_HOST: "github.com",
+        });
+        assert.equal(keyringEnv.GH_TOKEN, undefined);
+        assert.equal(keyringEnv.GITHUB_TOKEN, undefined);
+        assert.equal(keyringEnv.GH_ENTERPRISE_TOKEN, undefined);
+        assert.equal(keyringEnv.GITHUB_ENTERPRISE_TOKEN, undefined);
+        assert.equal(keyringEnv.GH_HOST, undefined);
+        assert.deepEqual(buildGitHubTokenOverrides("msft.ghe.com", "ghe-tok"), {
+            GH_HOST: "msft.ghe.com",
+            GH_TOKEN: "ghe-tok",
+            GITHUB_TOKEN: "ghe-tok",
+            GH_ENTERPRISE_TOKEN: "ghe-tok",
+            GITHUB_ENTERPRISE_TOKEN: "ghe-tok",
+        });
+        assert.deepEqual(buildGitHubTokenOverrides("github.com", "gh-tok"), {
+            GH_HOST: "github.com",
+            GH_TOKEN: "gh-tok",
+            GITHUB_TOKEN: "gh-tok",
+            GH_ENTERPRISE_TOKEN: undefined,
+            GITHUB_ENTERPRISE_TOKEN: undefined,
+        });
     } finally {
         rmSync(tempDiffRoot, { recursive: true, force: true });
     }
@@ -2708,4 +2751,291 @@ ${script}
     assert.throws(() => execFileSync("powershell", [
         "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(failureFixture, "utf16le").toString("base64"),
     ], { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] }), /Creation failed/);
+});
+
+test("normalizeImplementationResponse applies surgical edits with CRLF preservation and carries forward unchanged fix-round files", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "code-feature-surgical-edits-"));
+    try {
+        const repoDir = path.join(tmp, "common");
+        mkdirSync(path.join(repoDir, "src"), { recursive: true });
+        writeFileSync(
+            path.join(repoDir, "src", "AttributeName.java"),
+            "package com.example;\r\npublic enum AttributeName {\r\n    EXISTING_KEY,\r\n}\r\n",
+            "utf8",
+        );
+        const t = task();
+        const round1Raw = {
+            taskRevision: t.revision,
+            targets: [{
+                targetId: t.targets[0].id,
+                repository: t.targets[0].repository,
+                summary: "Add throttle key attribute and parser.",
+                files: [
+                    {
+                        path: "src/AttributeName.java",
+                        action: "modify",
+                        content: "",
+                        edits: [{
+                            oldText: "public enum AttributeName {\n    EXISTING_KEY,\n}",
+                            newText: "public enum AttributeName {\n    EXISTING_KEY,\n    THROTTLE_RETRY_AFTER_MS,\n}",
+                        }],
+                        summary: "Add THROTTLE_RETRY_AFTER_MS.",
+                    },
+                    {
+                        path: "src/RetryAfterParserTest.java",
+                        action: "create",
+                        content: "package com.example;\npublic class RetryAfterParserTest {}\n",
+                        edits: [],
+                        summary: "Add parser unit tests.",
+                    },
+                ],
+                testsAddedOrUpdated: ["src/RetryAfterParserTest.java"],
+                verificationCommandsRun: [],
+                pr: {
+                    title: "Add throttling",
+                    summary: "Summary",
+                    testPlan: "Unit tests",
+                    breakingChanges: "None",
+                    rolloutAndFlag: "Default off",
+                },
+            }],
+            traceability: t.requirements.map((r) => ({
+                requirementId: r.id,
+                targetIds: [t.targets[0].id],
+                filePaths: ["src/AttributeName.java"],
+                testLocations: ["src/RetryAfterParserTest.java"],
+                verification: "Unit test",
+            })),
+            assumptions: [],
+            openDecisions: [],
+            blockingUnknowns: [],
+        };
+
+        const round1 = normalizeImplementationResponse(round1Raw, t, {
+            workspaceRoot: tmp,
+            requireFullOrEditsContent: true,
+        });
+        assert.deepEqual(validateImplementation(round1, t, { workspaceRoot: tmp }), []);
+        const attrFile = round1.targets[0].files.find((f) => f.path === "src/AttributeName.java");
+        assert.equal(
+            attrFile.content,
+            "package com.example;\r\npublic enum AttributeName {\r\n    EXISTING_KEY,\r\n    THROTTLE_RETRY_AFTER_MS,\r\n}\r\n",
+        );
+        assert.equal("edits" in attrFile, false);
+
+        // Round 2 fix omits untouched RetryAfterParserTest.java and patches AttributeName.java on top of round 1.
+        const round2Raw = {
+            ...round1Raw,
+            targets: [{
+                ...round1Raw.targets[0],
+                files: [{
+                    path: "src/AttributeName.java",
+                    action: "modify",
+                    content: "",
+                    edits: [{
+                        oldText: "    THROTTLE_RETRY_AFTER_MS,\n}",
+                        newText: "    THROTTLE_RETRY_AFTER_MS,\n    THROTTLE_CACHE_HIT,\n}",
+                    }],
+                    summary: "Add THROTTLE_CACHE_HIT.",
+                }],
+            }],
+        };
+        const round2 = normalizeImplementationResponse(round2Raw, t, {
+            workspaceRoot: tmp,
+            previousImplementation: round1,
+            requireFullOrEditsContent: true,
+        });
+        assert.deepEqual(validateImplementation(round2, t, { workspaceRoot: tmp }), []);
+        assert.equal(round2.targets[0].files.length, 2, "unchanged files from round 1 must be carried forward");
+        assert.match(
+            round2.targets[0].files.find((f) => f.path === "src/AttributeName.java").content,
+            /THROTTLE_RETRY_AFTER_MS,\r\n    THROTTLE_CACHE_HIT,/,
+        );
+    } finally {
+        rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test("prepareCodeFeature chunks >6 hosted planned files into bounded production and test batches", async () => {
+    const { prepareCodeFeature } = await import("./workflow.mjs");
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "code-feature-chunked-batches-"));
+    try {
+        const repoDir = path.join(tmp, "common");
+        mkdirSync(path.join(repoDir, "src", "main"), { recursive: true });
+        writeFileSync(path.join(repoDir, "src", "main", "Existing.java"), "class Existing {\n    int v = 1;\n}\n", "utf8");
+        execFileSync("git", ["init", "--quiet", repoDir]);
+        execFileSync("git", ["-C", repoDir, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", repoDir, "config", "user.name", "Test"]);
+        execFileSync("git", ["-C", repoDir, "add", "."]);
+        execFileSync("git", ["-C", repoDir, "commit", "--quiet", "-m", "init"]);
+        execFileSync("git", ["-C", repoDir, "update-ref", "refs/remotes/origin/dev", "HEAD"]);
+        const plannedFiles = [
+            "src/main/Existing.java",
+            "src/main/New1.java",
+            "src/main/New2.java",
+            "src/main/New3.java",
+            "src/main/New4.java",
+            "src/test/FirstTest.java",
+            "src/test/SecondTest.java",
+            "src/test/ThirdTest.java",
+        ];
+        const baseTask = task();
+        const hostedTask = {
+            ...baseTask,
+            designSummary: JSON.stringify({ item: { id: baseTask.targets[0].id, files: plannedFiles } }),
+            targets: [{ ...baseTask.targets[0], localPath: "common", verificationCommands: [] }],
+        };
+        const labels = [];
+        let appliedFiles = [];
+        const backups = new Map();
+        const packet = await prepareCodeFeature(
+            {
+                runId: "chunk-test",
+                args: {
+                    task: hostedTask,
+                    options: {
+                        workspaceRoot: tmp,
+                        createPullRequests: false,
+                        observePullRequests: false,
+                        applyToWorkspace: true,
+                        allowLocalOnly: true,
+                        maxFixIterations: 1,
+                        slimSchemas: false,
+                        pauseOnBlocker: false,
+                        verifyPrerequisites: false,
+                        iterativeIntake: false,
+                        requireBriefApproval: false,
+                        challengeBrief: false,
+                    },
+                },
+                step: async (_key, fn) => fn(),
+                phase: () => {},
+                log: () => {},
+                agent: async (prompt, opts) => {
+                    labels.push(opts.label);
+                    const data = JSON.parse(prompt.split("\nDATA:\n").at(-1));
+                    if (opts.label === "Repository evidence") {
+                        assert.deepEqual(data.plannedFiles, plannedFiles);
+                        return {
+                            approvalVerification: { verified: true, revision: hostedTask.revision, reference: hostedTask.approval.reference, rationale: "ok" },
+                            references: [{ id: "R1", repository: "common", revision: "abc", path: "src/main/Existing.java", locator: "L1-L3" }],
+                            facts: [{ statement: "Existing baseline.", referenceIds: ["R1"] }],
+                            conflicts: [], assumptions: [], unknowns: [], blockingUnknowns: [],
+                        };
+                    }
+                    if (opts.label.startsWith("Code builder")) {
+                        assert.equal("edits" in opts.schema.properties.targets.items.properties.files.items.properties, false);
+                        const batchFiles = data.batchFiles.map((fp) =>
+                            fp === "src/main/Existing.java"
+                                ? {
+                                    path: fp,
+                                    action: "modify",
+                                    content: `${"<".repeat(7)} SEARCH\n    int v = 1;\n${"=".repeat(7)}\n    int v = 2;\n${">".repeat(7)} REPLACE`,
+                                    summary: "Bump v",
+                                }
+                                : { path: fp, action: "create", content: `class ${path.basename(fp, ".java")} {}\n`, summary: `Add ${fp}` },
+                        );
+                        return {
+                            taskRevision: hostedTask.revision,
+                            targets: [{
+                                targetId: hostedTask.targets[0].id,
+                                repository: "common",
+                                summary: "Chunked implementation",
+                                files: batchFiles,
+                                testsAddedOrUpdated: data.batchFiles.filter((fp) => fp.includes("/test/")),
+                                verificationCommandsRun: [],
+                                pr: { title: "Title", summary: "Summary", testPlan: "Unit tests", breakingChanges: "None", rolloutAndFlag: "Off" },
+                            }],
+                            traceability: hostedTask.requirements.map((r) => ({
+                                requirementId: r.id,
+                                targetIds: [hostedTask.targets[0].id],
+                                filePaths: ["Existing.java", "New1.java"],
+                                testLocations: ["src/test/FirstTest.java"],
+                                verification: "JUnit",
+                            })),
+                            assumptions: [], openDecisions: [], blockingUnknowns: [],
+                        };
+                    }
+                    return {
+                        criteria: rubric.map((id) => ({ id, pass: true })),
+                        acceptanceCriteria: hostedTask.targets[0].acceptanceCriteria.map((criterion) => ({
+                            targetId: hostedTask.targets[0].id, criterion, passed: true, evidence: "ok",
+                        })),
+                        findings: [],
+                        blockingUnknowns: [],
+                    };
+                },
+            },
+            {
+                verifyLocal: () => ({ ok: true, errors: [], deferredWarnings: [], commandsAttempted: [] }),
+                implementationHost: {
+                    guides: { evidence: ["g1"], builder: ["g2"], reviewer: ["g3"] },
+                    prepareTarget: async () => {},
+                    applyFiles: (_target, files) => {
+                        appliedFiles = files;
+                        applyTargetFiles(repoDir, files, backups);
+                    },
+                    restoreFiles: () => restoreTargetFiles(repoDir, backups),
+                },
+            },
+        );
+        assert.deepEqual(labels, [
+            "Code builder (round 1 · production batch 1/1)",
+            "Code builder (round 1 · test batch 1/2)",
+            "Code builder (round 1 · test batch 2/2)",
+            "Independent code reviewer (round 1)",
+        ]);
+        assert.equal(packet.recommendation, "publication-ready");
+        assert.equal(appliedFiles.length, 8);
+        assert.match(appliedFiles.find((f) => f.path === "src/main/Existing.java").content, /int v = 2;/);
+    } finally {
+        rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test("structured Repository evidence uses native Markdown + metadata fence while host stamps taskRevision and omitted empty arrays", async () => {
+    const markdownEvidence = [
+        "## Inspected Target Summary",
+        "- Verified `CommandDispatcher.java` silent dispatch path.",
+        "",
+        "```json",
+        JSON.stringify({
+            references: [
+                {
+                    id: "E1",
+                    repository: "common",
+                    path: "common4j/src/main/com/microsoft/identity/common/java/controllers/CommandDispatcher.java",
+                    locator: "common4j/src/main/com/microsoft/identity/common/java/controllers/CommandDispatcher.java:L100-L140 — CommandDispatcher.submitSilent",
+                },
+            ],
+            facts: [
+                {
+                    statement: "CommandDispatcher dispatches silent token commands after checking cache.",
+                    referenceIds: ["E1"],
+                },
+            ],
+        }, null, 2),
+        "```",
+    ].join("\n");
+
+    const compactImpl = structuredClone(implementation());
+    delete compactImpl.taskRevision;
+    delete compactImpl.assumptions;
+    delete compactImpl.openDecisions;
+    delete compactImpl.blockingUnknowns;
+
+    const compactReview = structuredClone(review());
+    delete compactReview.findings;
+    delete compactReview.blockingUnknowns;
+
+    const ctx = context([markdownEvidence, compactImpl, compactReview], task(), { verifyPrerequisites: false });
+    const packet = await runCodeFeature(ctx, { verifyLocal: () => ({ ok: true, errors: [], deferredWarnings: [], commandsAttempted: [] }) });
+
+    assert.equal("schema" in ctx.calls[0].options, false, "Repository evidence omits JSON schema in structured mode");
+    assert.ok(ctx.calls[1].options.schema, "Code builder keeps compact JSON schema");
+    assert.ok(ctx.calls[2].options.schema, "Independent code reviewer keeps compact JSON schema");
+    assert.equal(packet.recommendation, "GO to PR Review");
+    assert.equal(packet.implementation.taskRevision, "plan-v2");
+    assert.equal(packet.evidence.approvalVerification.verified, true);
+    assert.equal(packet.evidence.approvalVerification.revision, "plan-v2");
 });

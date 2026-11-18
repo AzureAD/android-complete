@@ -46,6 +46,14 @@ to discover a newly added skill; an older session may retain its previous instru
 
 ## Goal
 
+Software Factory reuses the exported `prepareCodeFeature` engine for evidence,
+structured implementation, local verification and independent review. Its
+application adapter owns isolated target admission, safe source application and
+restoration, and publication under the exact Factory approval. The adapter is
+supplied by trusted application code, never selected by workflow tool arguments.
+Standalone `runCodeFeature` retains its existing authoring/publication/observer
+path. Sharing preparation does not enable Factory's post-publication repairs.
+
 Given an approved coding task or PBI specification:
 
 1. **Validate task & approval**: Verify immutable revision binding, human approval provenance,
@@ -91,6 +99,9 @@ Given an approved coding task or PBI specification:
   so the native Gradle invocation receives the entire property, rather than a spurious task.
 - Runtime cancellation is propagated rather than converted to a clarification answer or
   failed review; already-written builder edits are preserved for inspection.
+- Quiet observer waits honor the owning run's cancellation signal, including
+  embedded read-only observation. A read-only observation never returns a standalone
+  `pr-observer` continuation that could restore repair/publication authority.
 - Concrete Detekt weighted-issue failures remain local validation failures, even if
   the same command also reports an infrastructure error.
 - Slim review results retain the review summary and citations once in the result packet.
