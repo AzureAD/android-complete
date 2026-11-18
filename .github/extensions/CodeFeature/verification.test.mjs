@@ -1788,4 +1788,82 @@ test("formatPrBody space-delimits every AB# token and observer deduplicates supe
     });
     assert.equal(ciEvidenceFromSnapshot(multiJobMidFlight).status, "pending");
     assert.equal(isSnapshotWaitingForCiOnly(multiJobMidFlight), true);
+
+    // Overlapping workflow runs where an older run's slow job starts AFTER the newer run's
+    // failed job: newer runId must win latestByKey so the superseded-run filter never drops
+    // the newer run's failure, while retries within the same runId still compare timestamps.
+    const overlappingLateOldJob = snapshot({
+        statusCheckRollup: [
+            {
+                __typename: "CheckRun",
+                name: "Job A",
+                workflowName: "CI",
+                status: "COMPLETED",
+                conclusion: "SUCCESS",
+                startedAt: "2026-11-14T10:01:00Z",
+                completedAt: "2026-11-14T10:02:00Z",
+                detailsUrl: "https://github.com/AzureAD/android-complete/actions/runs/50000000101/job/9000000001",
+            },
+            {
+                __typename: "CheckRun",
+                name: "Job B",
+                workflowName: "CI",
+                status: "COMPLETED",
+                conclusion: "FAILURE",
+                startedAt: "2026-11-14T10:02:00Z",
+                completedAt: "2026-11-14T10:03:00Z",
+                detailsUrl: "https://github.com/AzureAD/android-complete/actions/runs/50000000101/job/9000000002",
+            },
+            {
+                __typename: "CheckRun",
+                name: "Job B",
+                workflowName: "CI",
+                status: "COMPLETED",
+                conclusion: "SUCCESS",
+                startedAt: "2026-11-14T10:05:00Z",
+                completedAt: "2026-11-14T10:05:30Z",
+                detailsUrl: "https://github.com/AzureAD/android-complete/actions/runs/50000000100/job/8999999992",
+            },
+            {
+                __typename: "CheckRun",
+                name: "Job C",
+                workflowName: "CI",
+                status: "COMPLETED",
+                conclusion: "SUCCESS",
+                startedAt: "2026-11-14T10:06:00Z",
+                completedAt: "2026-11-14T10:06:30Z",
+                detailsUrl: "https://github.com/AzureAD/android-complete/actions/runs/50000000101/job/9000000003",
+            },
+        ],
+        prBuilds: [],
+    });
+    const overlappingDeduped = deduplicateStatusCheckRollup(overlappingLateOldJob.statusCheckRollup);
+    assert.equal(overlappingDeduped.length, 3);
+    assert.equal(overlappingDeduped.find((entry) => entry.name === "Job B")?.conclusion, "FAILURE");
+    assert.equal(ciEvidenceFromSnapshot(overlappingLateOldJob).status, "failed");
+
+    const sameRunRetry = deduplicateStatusCheckRollup([
+        {
+            __typename: "CheckRun",
+            name: "Job B",
+            workflowName: "CI",
+            status: "COMPLETED",
+            conclusion: "FAILURE",
+            startedAt: "2026-11-14T10:02:00Z",
+            completedAt: "2026-11-14T10:03:00Z",
+            detailsUrl: "https://github.com/AzureAD/android-complete/actions/runs/50000000101/job/9000000002",
+        },
+        {
+            __typename: "CheckRun",
+            name: "Job B",
+            workflowName: "CI",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            startedAt: "2026-11-14T10:10:00Z",
+            completedAt: "2026-11-14T10:11:00Z",
+            detailsUrl: "https://github.com/AzureAD/android-complete/actions/runs/50000000101/job/9000000099",
+        },
+    ]);
+    assert.equal(sameRunRetry.length, 1);
+    assert.equal(sameRunRetry[0].conclusion, "SUCCESS");
 });

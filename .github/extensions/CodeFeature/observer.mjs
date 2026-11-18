@@ -845,6 +845,11 @@ export function deduplicateStatusCheckRollup(checks) {
         };
     };
     const isNewer = (candidate, current) => {
+        const candIds = parseActionsIds(candidate);
+        const currIds = parseActionsIds(current);
+        if (candIds && currIds && candIds.runId !== currIds.runId) {
+            return candIds.runId > currIds.runId;
+        }
         const candStart = parseMillis(candidate?.startedAt || candidate?.createdAt);
         const currStart = parseMillis(current?.startedAt || current?.createdAt);
         if (Number.isFinite(candStart) && Number.isFinite(currStart) && candStart !== currStart) {
@@ -855,11 +860,8 @@ export function deduplicateStatusCheckRollup(checks) {
         if (Number.isFinite(candDone) && Number.isFinite(currDone) && candDone !== currDone) {
             return candDone > currDone;
         }
-        const candIds = parseActionsIds(candidate);
-        const currIds = parseActionsIds(current);
-        if (candIds && currIds) {
-            if (candIds.runId !== currIds.runId) return candIds.runId > currIds.runId;
-            if (candIds.jobId !== currIds.jobId) return candIds.jobId > currIds.jobId;
+        if (candIds && currIds && candIds.jobId !== currIds.jobId) {
+            return candIds.jobId > currIds.jobId;
         }
         return true;
     };
@@ -883,25 +885,11 @@ export function deduplicateStatusCheckRollup(checks) {
         if (!checkName) return "";
         return `check:${workflowName.toLowerCase()}::${checkName.toLowerCase()}`;
     };
-    const maxActivityByRunId = new Map();
-    const recordRunActivity = (runId, entry) => {
-        const activity = Math.max(
-            ...[
-                parseMillis(entry?.startedAt || entry?.createdAt),
-                parseMillis(entry?.completedAt || entry?.updatedAt),
-            ].filter(Number.isFinite),
-            -Infinity,
-        );
-        const prev = maxActivityByRunId.get(runId) ?? -Infinity;
-        if (activity > prev) maxActivityByRunId.set(runId, activity);
-        else if (!maxActivityByRunId.has(runId)) maxActivityByRunId.set(runId, -Infinity);
-    };
     const runIdsByKey = new Map();
     const latestByKey = new Map();
     const unkeyed = [];
     checks.forEach((entry, index) => {
         const ids = parseActionsIds(entry);
-        if (ids) recordRunActivity(ids.runId, entry);
         const key = keyFor(entry);
         if (!key) {
             unkeyed.push({ index, entry });
@@ -925,10 +913,9 @@ export function deduplicateStatusCheckRollup(checks) {
         if (seen.size <= 1) continue;
         const runs = [...seen];
         for (const candidateOld of runs) {
-            const oldActivity = maxActivityByRunId.get(candidateOld) ?? -Infinity;
-            const superseded = runs.some((candidateNew) =>
-                candidateNew > candidateOld && (maxActivityByRunId.get(candidateNew) ?? -Infinity) >= oldActivity);
-            if (superseded) supersededRunIds.add(candidateOld);
+            if (runs.some((candidateNew) => candidateNew > candidateOld)) {
+                supersededRunIds.add(candidateOld);
+            }
         }
     }
     return [...unkeyed, ...latestByKey.values()]

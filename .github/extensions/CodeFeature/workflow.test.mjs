@@ -3039,3 +3039,285 @@ test("structured Repository evidence uses native Markdown + metadata fence while
     assert.equal(packet.evidence.approvalVerification.verified, true);
     assert.equal(packet.evidence.approvalVerification.revision, "plan-v2");
 });
+
+test("standalone empty-content modify entry is not overwritten by prior round in-memory content", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "code-feature-standalone-empty-content-"));
+    try {
+        const repoDir = path.join(tmp, "common");
+        mkdirSync(path.join(repoDir, "src"), { recursive: true });
+        const filePath = path.join(repoDir, "src", "Foo.java");
+        writeFileSync(filePath, "class Foo { int v = 0; }\n", "utf8");
+
+        const t = task();
+        t.targets = [{ ...t.targets[0], localPath: "common" }];
+
+        const round1 = normalizeImplementationResponse({
+            ...implementation(),
+            targets: [{
+                ...implementation().targets[0],
+                targetId: t.targets[0].id,
+                files: [{ path: "src/Foo.java", action: "modify", content: "class Foo { int v = 1; }\n", summary: "Round 1" }],
+            }],
+        }, t, { workspaceRoot: tmp, requireFullOrEditsContent: false });
+
+        const backups = new Map();
+        applyTargetFiles(repoDir, round1.targets[0].files, backups);
+        assert.equal(readFileSync(filePath, "utf8"), "class Foo { int v = 1; }\n");
+
+        // Round 2 standalone builder edits disk directly and returns content: "".
+        writeFileSync(filePath, "class Foo { int v = 2; }\n", "utf8");
+        const round2 = normalizeImplementationResponse({
+            ...implementation(),
+            targets: [{
+                ...implementation().targets[0],
+                targetId: t.targets[0].id,
+                files: [{ path: "src/Foo.java", action: "modify", content: "", summary: "Round 2 on-disk fix" }],
+            }],
+        }, t, { workspaceRoot: tmp, previousImplementation: round1, requireFullOrEditsContent: false });
+
+        assert.equal(round2.targets[0].files[0].content, "");
+        applyTargetFiles(repoDir, round2.targets[0].files, backups);
+        assert.equal(readFileSync(filePath, "utf8"), "class Foo { int v = 2; }\n");
+    } finally {
+        rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test("prepareCodeFeature disables slim schemas by default on session-backed prompt runs when implementationHost is present", async () => {
+    const { prepareCodeFeature } = await import("./workflow.mjs");
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "code-feature-hosted-session-prompt-"));
+    try {
+        const repoDir = path.join(tmp, "common");
+        mkdirSync(path.join(repoDir, "src"), { recursive: true });
+        execFileSync("git", ["init", "--quiet", repoDir]);
+        execFileSync("git", ["-C", repoDir, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", repoDir, "config", "user.name", "Test"]);
+        writeFileSync(path.join(repoDir, "src", "Base.java"), "class Base {}\n", "utf8");
+        execFileSync("git", ["-C", repoDir, "add", "."]);
+        execFileSync("git", ["-C", repoDir, "commit", "--quiet", "-m", "init"]);
+        execFileSync("git", ["-C", repoDir, "update-ref", "refs/remotes/origin/dev", "HEAD"]);
+
+        let builderSchemaSeen = null;
+        let appliedFiles = [];
+        const backups = new Map();
+        const packet = await prepareCodeFeature(
+            {
+                runId: "hosted-session-prompt",
+                session: {},
+                args: {
+                    prompt: "Add Helper.java and HelperTest.java in common for AB#12345.",
+                    workItemId: 12345,
+                    options: {
+                        workspaceRoot: tmp,
+                        createPullRequests: false,
+                        observePullRequests: false,
+                        applyToWorkspace: true,
+                        allowLocalOnly: true,
+                        pauseOnBlocker: false,
+                        verifyPrerequisites: false,
+                        iterativeIntake: false,
+                        requireBriefApproval: false,
+                        challengeBrief: false,
+                    },
+                },
+                step: async (_key, fn) => fn(),
+                phase: () => {},
+                log: () => {},
+                agent: async (prompt, opts) => {
+                    const data = JSON.parse(prompt.split("\nDATA:\n").at(-1));
+                    if (opts.label.startsWith("Repository evidence")) {
+                        return {
+                            approvalVerification: {
+                                verified: true,
+                                revision: data.task.revision,
+                                reference: data.task.approval.reference,
+                                rationale: "ok",
+                            },
+                            references: [{ id: "E1", repository: "common", revision: "abc", path: "src/Base.java", locator: "L1-L1" }],
+                            facts: [{ statement: "Base exists.", referenceIds: ["E1"] }],
+                            conflicts: [], assumptions: [], unknowns: [], blockingUnknowns: [],
+                            clarificationQuestions: [],
+                            extractedSpec: {
+                                title: "Add Helper",
+                                workItemId: 12345,
+                                designSummary: "Add Helper in common.",
+                                requirements: [{ id: "R1", text: "Provide Helper class." }],
+                                targets: [{
+                                    id: "common-helper",
+                                    repository: "common",
+                                    localPath: "common",
+                                    baseBranch: "dev",
+                                    branchName: "user/helper",
+                                    summary: "Add Helper",
+                                    acceptanceCriteria: ["Helper exists and is tested."],
+                                    verificationCommands: ["node -e \"process.exit(0)\""],
+                                }],
+                            },
+                        };
+                    }
+                    if (opts.label.startsWith("Code builder")) {
+                        builderSchemaSeen = opts.schema;
+                        return {
+                            taskRevision: data.task.revision,
+                            targets: [{
+                                targetId: "common-helper",
+                                repository: "common",
+                                summary: "Added Helper and test",
+                                files: [
+                                    { path: "src/Helper.java", action: "create", content: "class Helper {}\n", summary: "Add Helper" },
+                                    { path: "src/HelperTest.java", action: "create", content: "class HelperTest {}\n", summary: "Add HelperTest" },
+                                ],
+                                testsAddedOrUpdated: ["src/HelperTest.java"],
+                                verificationCommandsRun: ["node -e \"process.exit(0)\""],
+                                pr: { title: "Add Helper", summary: "Summary", testPlan: "Unit test", breakingChanges: "None", rolloutAndFlag: "Off" },
+                            }],
+                            traceability: [{
+                                requirementId: "R1",
+                                targetIds: ["common-helper"],
+                                filePaths: ["src/Helper.java"],
+                                testLocations: ["src/HelperTest.java"],
+                                verification: "JUnit",
+                            }],
+                            assumptions: [], openDecisions: [], blockingUnknowns: [],
+                        };
+                    }
+                    return {
+                        criteria: rubric.map((id) => ({ id, pass: true })),
+                        acceptanceCriteria: [{ targetId: "common-helper", criterion: "Helper exists and is tested.", passed: true, evidence: "ok" }],
+                        findings: [],
+                        blockingUnknowns: [],
+                    };
+                },
+            },
+            {
+                verifyLocal: () => ({ ok: true, errors: [], deferredWarnings: [], commandsAttempted: [] }),
+                implementationHost: {
+                    guides: { evidence: ["g1"], builder: ["g2"], reviewer: ["g3"] },
+                    prepareTarget: async () => {},
+                    applyFiles: (_target, files) => {
+                        appliedFiles = files;
+                        applyTargetFiles(repoDir, files, backups);
+                    },
+                    restoreFiles: () => restoreTargetFiles(repoDir, backups),
+                },
+            },
+        );
+
+        assert.ok(builderSchemaSeen?.properties?.targets, "hosted session-backed prompt run must use full implementationSchema with targets");
+        assert.equal(packet.recommendation, "publication-ready");
+        assert.equal(appliedFiles.length, 2);
+    } finally {
+        rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test("prepareCodeFeature preserves non-final batch blockingUnknowns across chunked initial batches", async () => {
+    const { prepareCodeFeature } = await import("./workflow.mjs");
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "code-feature-batch-blockers-"));
+    try {
+        const repoDir = path.join(tmp, "common");
+        mkdirSync(path.join(repoDir, "src", "main"), { recursive: true });
+        writeFileSync(path.join(repoDir, "src", "main", "Existing.java"), "class Existing {}\n", "utf8");
+        execFileSync("git", ["init", "--quiet", repoDir]);
+        execFileSync("git", ["-C", repoDir, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", repoDir, "config", "user.name", "Test"]);
+        execFileSync("git", ["-C", repoDir, "add", "."]);
+        execFileSync("git", ["-C", repoDir, "commit", "--quiet", "-m", "init"]);
+        execFileSync("git", ["-C", repoDir, "update-ref", "refs/remotes/origin/dev", "HEAD"]);
+
+        const plannedFiles = [
+            "src/main/Existing.java",
+            "src/main/New1.java",
+            "src/main/New2.java",
+            "src/main/New3.java",
+            "src/main/New4.java",
+            "src/test/FirstTest.java",
+            "src/test/SecondTest.java",
+        ];
+        const baseTask = task();
+        const hostedTask = {
+            ...baseTask,
+            designSummary: JSON.stringify({ item: { id: baseTask.targets[0].id, files: plannedFiles } }),
+            targets: [{ ...baseTask.targets[0], localPath: "common", verificationCommands: [] }],
+        };
+        const seenPriorBlockers = [];
+        const packet = await prepareCodeFeature(
+            {
+                runId: "chunk-blocker-test",
+                args: {
+                    task: hostedTask,
+                    options: {
+                        workspaceRoot: tmp,
+                        createPullRequests: false,
+                        observePullRequests: false,
+                        applyToWorkspace: true,
+                        allowLocalOnly: true,
+                        slimSchemas: false,
+                        pauseOnBlocker: false,
+                        verifyPrerequisites: false,
+                        iterativeIntake: false,
+                        requireBriefApproval: false,
+                        challengeBrief: false,
+                    },
+                },
+                step: async (_key, fn) => fn(),
+                phase: () => {},
+                log: () => {},
+                agent: async (prompt, opts) => {
+                    const data = JSON.parse(prompt.split("\nDATA:\n").at(-1));
+                    if (opts.label.startsWith("Code builder")) {
+                        seenPriorBlockers.push(data.priorBlockingUnknowns);
+                        const isFirstBatch = data.batchIndex === 1;
+                        return {
+                            taskRevision: hostedTask.revision,
+                            targets: [{
+                                targetId: hostedTask.targets[0].id,
+                                repository: "common",
+                                summary: "Chunked implementation",
+                                files: data.batchFiles.map((fp) => ({
+                                    path: fp,
+                                    action: fp === "src/main/Existing.java" ? "modify" : "create",
+                                    content: `class ${path.basename(fp, ".java")} {}\n`,
+                                    summary: `Author ${fp}`,
+                                })),
+                                testsAddedOrUpdated: data.batchFiles.filter((fp) => fp.includes("/test/")),
+                                verificationCommandsRun: [],
+                                pr: { title: "Title", summary: "Summary", testPlan: "Unit tests", breakingChanges: "None", rolloutAndFlag: "Off" },
+                            }],
+                            traceability: hostedTask.requirements.map((r) => ({
+                                requirementId: r.id,
+                                targetIds: [hostedTask.targets[0].id],
+                                filePaths: ["src/main/Existing.java"],
+                                testLocations: ["src/test/FirstTest.java"],
+                                verification: "JUnit",
+                            })),
+                            assumptions: [],
+                            openDecisions: [],
+                            blockingUnknowns: isFirstBatch
+                                ? ["Clarify whether sovereign cloud cache entries share eviction TTL."]
+                                : [],
+                        };
+                    }
+                    throw new Error(`Unexpected agent call: ${opts.label}`);
+                },
+            },
+            {
+                verifyLocal: () => ({ ok: true, errors: [], deferredWarnings: [], commandsAttempted: [] }),
+                implementationHost: {
+                    guides: { evidence: ["g1"], builder: ["g2"], reviewer: ["g3"] },
+                    prepareTarget: async () => {},
+                    applyFiles: () => {},
+                    restoreFiles: () => {},
+                },
+            },
+        );
+
+        assert.equal(packet.recommendation, "needs clarification");
+        assert.deepEqual(packet.questions, ["Clarify whether sovereign cloud cache entries share eviction TTL."]);
+        assert.deepEqual(packet.implementation.blockingUnknowns, ["Clarify whether sovereign cloud cache entries share eviction TTL."]);
+        assert.deepEqual(seenPriorBlockers[0], []);
+        assert.deepEqual(seenPriorBlockers[1], ["Clarify whether sovereign cloud cache entries share eviction TTL."]);
+    } finally {
+        rmSync(tmp, { recursive: true, force: true });
+    }
+});

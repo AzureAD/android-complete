@@ -3133,6 +3133,26 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
         if (rawImpl.assumptions === undefined) rawImpl.assumptions = [];
         if (rawImpl.openDecisions === undefined) rawImpl.openDecisions = [];
         if (rawImpl.blockingUnknowns === undefined) rawImpl.blockingUnknowns = [];
+        if (record(previousImplementation)) {
+            const mergeUniqueStrings = (priorList, nextList) => {
+                const merged = [];
+                const seen = new Set();
+                for (const item of [
+                    ...(Array.isArray(priorList) ? priorList : []),
+                    ...(Array.isArray(nextList) ? nextList : []),
+                ]) {
+                    if (typeof item !== "string") continue;
+                    const trimmed = item.trim();
+                    if (!trimmed || seen.has(trimmed)) continue;
+                    seen.add(trimmed);
+                    merged.push(item);
+                }
+                return merged;
+            };
+            rawImpl.assumptions = mergeUniqueStrings(previousImplementation.assumptions, rawImpl.assumptions);
+            rawImpl.openDecisions = mergeUniqueStrings(previousImplementation.openDecisions, rawImpl.openDecisions);
+            rawImpl.blockingUnknowns = mergeUniqueStrings(previousImplementation.blockingUnknowns, rawImpl.blockingUnknowns);
+        }
         for (const expectedTarget of task.targets || []) {
             const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
             const actual = rawImpl.targets.find((t) => t?.targetId === expectedTarget.id) ||
@@ -3175,7 +3195,7 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
                             }
                         }
                     } else if (file.action === "modify" && !nonempty(file.content)) {
-                        if (record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
+                        if (requireFullOrEditsContent && record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
                             file.content = priorFile.content;
                         } else if (requireFullOrEditsContent) {
                             file._editError = `Modified file ${file.path} must provide ${SEARCH_MARKER} ... ${REPLACE_MARKER} blocks or full content.`;
@@ -4665,9 +4685,9 @@ export async function prepareCodeFeature(ctx, dependencies = {}) {
         ? rawOptions.iterativeIntake === true
         : Boolean(ctx?.session?.ui?.elicitation);
     const requireBriefApproval = rawOptions.requireBriefApproval === true || typeof dependencies.askBriefApproval === "function";
-    const useSlimSchemas = rawOptions.slimSchemas !== undefined
-        ? rawOptions.slimSchemas === true && !implementationHost
-        : (Boolean(ctx?.session) && task.inputMode !== "structured");
+    const useSlimSchemas = !implementationHost && (rawOptions.slimSchemas !== undefined
+        ? rawOptions.slimSchemas === true
+        : (Boolean(ctx?.session) && task.inputMode !== "structured"));
 
     const captureTargetSnapshots = () => {
         const map = new Map();
@@ -5191,6 +5211,7 @@ ${isFinalBatch
                     batchFiles: batch.batchFiles,
                     batchBaselineFiles,
                     alreadyAuthoredFiles,
+                    priorBlockingUnknowns: Array.isArray(runningImpl?.blockingUnknowns) ? runningImpl.blockingUnknowns : [],
                     maxFixIterations: maxFixes,
                     task,
                     evidence,
