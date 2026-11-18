@@ -1362,7 +1362,7 @@ export const workflowDefinition = {
         },
         limits: {
             maxConcurrentSubagents: 1, maxTotalSubagents: 7,
-            timeoutSeconds: 10800, maxAiCredits: 20,
+            timeoutSeconds: 7200, maxAiCredits: 20,
         },
     },
     run: runDesignFeature,
