@@ -12,11 +12,19 @@ ES modules are required by the extension runtime (the Android Kotlin-first rule
 still applies to application code).
 
 API reference: [official Dynamic Workflow documentation](https://github.com/github/copilot-sdk/blob/main/nodejs/docs/workflows.md).
-The existing `.github/skills/design-author/SKILL.md` informs the design content;
-this workflow does **not** execute that skill's ADO publishing steps.
+The existing `.github/skills/design-author/references/design-standards.md` informs the design content;
+this workflow does **not** execute `.github/skills/design-author/SKILL.md`'s ADO publishing steps.
 
 The executable template is the `sections`/`designSchema`, author/revision prompts
-and independent-review rubric in `workflow.mjs`. It does not load the external
+and independent-review rubric in `workflow.mjs`. Evidence and design-authoring turns
+emit native Markdown sections plus a compact trailing ```` ```json ```` metadata fence
+(parsed and host-stamped into the canonical `evidence` and `design` snapshots) so
+long architectural designs and KQL/Mermaid blocks never hit JSON-string output truncation.
+Round 2+ independent review turns receive a deterministic `reviewDelta` packet
+(`changedSections`, `unchangedPassingSections` SHA-256 hashes, `changedRegisters`,
+and `priorOpenFindings`) so reviewers focus source reads on modified claims, prior
+open findings, and affected cross-cutting invariants without weakening any gate.
+It does not load the external
 `design-docs/Template/template.md` or the orchestrator plugin's Markdown template.
 
 ## Input and use
