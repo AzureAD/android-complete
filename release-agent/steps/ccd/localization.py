@@ -1,16 +1,15 @@
-"""Step: `localization` — trigger the loc pipeline at noon, then monitor its PR
-through merge (Phase 1, P1-2).
+"""Step: `localization` — trigger the OneLoc localization pipeline on CCD, then monitor its PR
+through merge or the 6:00 PM PT omission cutoff (Phase 1, P1-2).
 
-Lifecycle (a small state machine — the engine can't wait/poll, so it's driven by a
-per-release poller automation + this deterministic decider):
+Lifecycle (state-driven — runs identically from the 7:00 AM morning drain or any
+interactive `/release-agent` session):
 
   1. TRIGGER  — `build()` routes to `launch-localization`: review the exact source,
                 variables and provider target, then reserve/execute that checked plan.
                 Only a matching provider receipt records build id + queue time.
                 `record-localization-run` is recovery-only, never trigger authorization.
-  2. POLL     — every `poll_interval_min` (default 60) a poller calls
-                `check-localization`, which reads the run status and applies
-                `decide()`:
+  2. POLL     — whenever reconciled (`check-localization`), reads the run/PR status and
+                applies `decide()`:
                   * still running & within `timeout_hours` (3h) → wait, poll again.
                   * still running past 3h → EMAIL the release engineer to check it /
                     do the manual steps (localization doc), and hold the step.
@@ -50,12 +49,12 @@ from tools.coordinates import coords
 
 ID = "localization"
 KIND = "scout"
-NAME = 'Trigger localization pipeline (PR)'
-REQUIRED_TOOLS = ('az', 'microsoft_teams')
+NAME = 'Trigger localization pipeline (OneLoc)'
+REQUIRED_TOOLS = ('az',)
 REQUIRES_APPROVAL = False
 REPEATABLE = True
 POLLABLE = True
-AUTOMATIONS = ('ccd-noon', 'ccd-localization-poller')
+AUTOMATION = "ccd-localization-watcher"
 WRITE_COMMAND = "launch-localization"
 
 # Coordinates (org/project/pipeline id, repo urls, the Code-reviews chat) come from
@@ -70,8 +69,7 @@ CONFIG = {
     "project": _LOC["project"],
     "pipeline_id": _LOC["def"],
     "variables": {"isCreatePrSelected": "true"},
-    "fire_at_local": "12:00",                 # noon on CCD (trigger; automation-driven)
-    "poll_interval_min": 60,                  # re-check the run/PR every N minutes
+    "poll_interval_min": 60,                  # advisory poll cadence while in-flight
     "timeout_hours": 3,                       # escalate to the engineer if not done by then
     "merge_deadline_local": "16:00",
     "merge_deadline_timezone": "America/Los_Angeles",
@@ -582,11 +580,9 @@ def build(context: StepContext):
                 "--execute --auto-approve --executor localization-automation"),
             "after": (
                 "Run launch-localization with --execute --auto-approve. The command computes "
-                "the current reviewed plan, checkpoints its hash, and fences the launch before "
-                "its single trigger. "
-                "Never use a raw pipeline tool or treat step-action as launch approval. "
-                "record-localization-run may only recover a matching provider receipt. "
-                "Poll the verified recorded build using check-localization."),
+                "the current reviewed plan, checkpoints its hash, queues OneLoc once, verifies "
+                "its provider receipt, and marks `ccd.localization` done so `ccd.localization_pr` "
+                "can locate the PR and verify its merge status."),
             "links": _links(cfg),
         },
         record_as=ID,
@@ -596,94 +592,14 @@ def build(context: StepContext):
     )
 
 
-def automation_prompt(release: str, spec: dict) -> str:
-    """The bespoke automation instruction for THIS step — owned here (single source of
-    truth, like `fire_at_local`) so the generic automations planner doesn't special-case
-    the step id. Two shapes: the interval POLLER vs the one-shot noon TRIGGER (the planner
-    passes the automation `spec`; `interval` set ⇒ poller)."""
-    if spec.get("interval"):
-        return (
-            f"Release {release} — localization poller (hourly).\n"
-            f"If localization for {release} is in-flight (triggered at noon and not "
-            f"done/blocked), poll it once. The ADO MCP can't reach msazure/One:\n"
-            f"1. run `status --release {release} --json`; read the active "
-            f"`ccd.localization` execution id. Run `check-localization --release {release} "
-            f"--execution-id <execution-id>`. It returns `poll_pipeline` "
-            f"or `poll_pr` with the persisted build/PR id and exact read-only az command(s).\n"
-            f"2. for `poll_pipeline`, run its az status command. If complete, also run "
-            f"its log_id and log commands. Then call `check-localization --release "
-            f"{release} --execution-id <execution-id> --complete <true|false> "
-            f"--run-result <exact-ADO-result> [--logs-file <task-log-file> --logs-complete]`. "
-            f"Pass --logs-complete ONLY after retrieving the entire OneLocBuild@3 task log, "
-            f"not a truncated response/excerpt. Missing result is unknown, not success. "
-            f"Only a succeeded run and the documented PR-created line prove a new PR. "
-            f"If the complete task log says `/createpr: True` and no PR line appears, "
-            f"post the no-strings Code reviews notice and mark localization done. "
-            f"If the log says `/createpr: False`, block as a misconfigured run. "
-            f"If the log does not expose the create-PR flag, do not infer no strings; "
-            f"keep polling/escalate for owner review unless the owner explicitly supplies "
-            f"`--no-change-confirmation`.\n"
-            f"3. for `poll_pr`, run both az status (PR) and run_status commands and pass "
-            f"the returned states to "
-            f"`check-localization --release {release} --execution-id <execution-id> "
-            f"--pr-status <status> --complete <true|false> --run-result <exact-ADO-result>`. "
-            f"A merged PR requires positive run success too; pipeline_complete alone "
-            f"is not saved proof of success.\n"
-            f"4. `timeout`, `announce_pr`, `announce_none`, and `warn_unmerged` stage notifications. "
-            f"Use notification prepare --release {release} --source pending and the shared "
-            f"claim/result protocol; never send raw decision.email/chat directly. "
-            f"`wait`/`wait_for_merge`/`omit_unmerged`/`merged`/`complete_none`/`not_started`/"
-            f"`already_final`/`stopped` → nothing to send. `failed` is a blocked owner-review "
-            f"task with the run link, never no strings. Missing outcome evidence also escalates "
-            f"after 3h, even when the pipeline finished. The command marks the step done only "
-            f"for `merged`, `complete_none`, or after the `announce_none` send is acknowledged, "
-            f"or skipped/omitted at the 6 PM cutoff.\n"
-            f"5. silently journal: `journal --release {release} --source scout --kind "
-            f"automation --text \"localization-poller: <decision>\"`. Stay silent if "
-            f"there is nothing to do. Never re-trigger a recorded blocked run: require "
-            f"owner-reviewed reopen and a fresh reservation.")
-
-    # One-shot (noon) trigger — trigger then hand off to the poller.
-    return (
-        f"Release {release} — checked localization launch.\n"
-        f"1. run `launch-localization --release {release} --execute --auto-approve "
-        f"--executor localization-automation`. This is localization-specific: it computes "
-        f"the current provider/source/variable plan, checkpoints that review hash, fences "
-        f"one provider write, queues once, and verifies the actual provider receipt before "
-        f"attaching a run. Never invoke a raw pipeline trigger, a generic reservation, or "
-        f"record-step. If uncertain, keep the execution owned; record-localization-run only "
-        f"recovers a matching receipt and cannot authorize a new launch.\n"
-        f"2. run `automation obligations --release {release} --json`; it must now list "
-        f"`ccd-localization-poller` as required (or as an owned recovery). Follow its "
-        f"complete-spec prepare, fresh "
-        f"reconcile-create and owning create-result protocol, including "
-        f"--on-demand ccd-localization-poller. Never directly create/register;\n"
-        f"3. silently journal: `journal --release {release} --source scout --kind "
-        f"automation --text \"ccd-noon: <actual checked-launch result>\"`.")
-
-
 KNOWLEDGE = {
-    "summary": "Trigger localization at noon and monitor its PR until merge or the 6 PM omission cutoff.",
+    "summary": "Queue the OneLoc localization pipeline (405133) once and record its build receipt.",
     "what": (
-        "At noon on CCD, pipeline 405133 (msazure/One) is triggered with "
-        "isCreatePrSelected=true. Scout then polls the run every hour. If it "
-        "has no verified outcome within 3 hours (including missing results/logs), Scout "
-        "emails the release engineer to inspect it or run the manual localization steps. "
-        "Failed/canceled runs block with their run link. After positive run success, "
-        "Scout reads the complete OneLocBuild@3 task log: if it created a translations PR ('Pull request "
-        "created with ID <n>'), there ARE new strings — Scout posts that PR to the "
-        "Code reviews chat and @mentions the release engineer. Scout keeps polling the "
-        "PR hourly and keeps Phase 1 open until it merges or reaches the omission cutoff. "
-        "If it is still unmerged at "
-        "4:00 PM Los Angeles time, Scout posts one Code reviews warning that translated "
-        "strings are at risk. At 6:00 PM Los Angeles time, Scout marks localization "
-        "omitted so the scheduled release continues to Phase 2 without those strings. "
-        "If the successful full log says PR creation was enabled and no PR was generated, "
-        "Scout posts a no-strings notice to Code reviews and then marks localization done. "
-        "A log showing PR creation disabled blocks as a misconfigured run; a missing create-PR "
-        "flag still needs owner-reviewed no-change proof. Confirmed merge "
-        "and positive run success win even "
-        "if the initial post was not acknowledged; never omit a confirmed merged PR."),
+        "On Code Complete Day, queues pipeline 405133 (`OneLoc-1ES` in `msazure/One`) with "
+        "`isCreatePrSelected=true`, verifies the ADO build receipt (`build_id`, `started_at`, "
+        "`run_url`), and immediately marks this trigger step done. Downstream step "
+        "`ccd.localization_pr` then inspects the build, locates any generated translations PR, "
+        "and verifies that it is merged (or confirms no PR was required)."),
     "who": (
         "Scout runs the whole flow automatically (trigger + poll + notify/post). The "
         "release engineer steps in for failed runs, unrecognized/no-change output, "

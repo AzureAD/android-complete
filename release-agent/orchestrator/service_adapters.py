@@ -40,7 +40,7 @@ def _changelog(url, timeout=20):
 def production_services(*, status_email=None, status_recipients=None):
     from tools import pipelines as P, prs as PR, oneauth as OA, checks as C
     from tools import testplans as T, broker_plans as B, distribution as D
-    from tools import bugbash as BB, maven as M, invite as I
+    from tools import bugbash as BB, maven as M, invite as I, localization as LOC
     from .automations import load_defs
 
     def unavailable(*args, **kwargs):
@@ -59,6 +59,7 @@ def production_services(*, status_email=None, status_recipients=None):
             P.merged_release_prs, P.release_change_manifest,
             C.latest_scheduled_build, I.local_flights,
             P.get_pipeline_approval,
+            LOC.inspect_build, LOC.inspect_pr,
         ),
         RepositoryReads(
             PR.remote_branch_exists, PR.gh_find_open_pr, PR.az_find_open_pr,

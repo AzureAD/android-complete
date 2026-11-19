@@ -315,12 +315,6 @@ class Orchestrator(StatusViewMixin):
             fire_at=lambda step: handlers.get(step.phase_id, step.id).fire_at_local,
             revision_problem=mismatch_reason(self),
         )
-        if self.automation_entries is not None:
-            from .dispatch import startup_plan
-            selection = projection.scheduling()
-            if selection.suspension not in ("workflow_revision", "cancelled", "halted", "denied", "blocked"):
-                startup = startup_plan(self, selection)
-                projection.startup_ready = startup is None or startup["complete"]
         return projection
 
     def _transition_kernel(self) -> TransitionKernel:

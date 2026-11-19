@@ -1515,16 +1515,10 @@ class TransitionKernel:
         if self.projection_factory().scheduling().suspension:
             return self._reject("Notification evidence finalization waits for release resume.")
         completion = item["completion"]
-        field = completion.get("release_field")
         checkpoint = completion.get("checkpoint")
-        if field and getattr(self.state, field) is not None and not isinstance(getattr(self.state, field), str):
-            return self._reject("Notification evidence date must be text or null.")
         if checkpoint and not isinstance(self.state.escalation_checkpoints, dict):
             return self._reject("Notification checkpoints must be a mapping.")
         changed = False
-        if field and (getattr(self.state, field) or "") < completion["date"]:
-            setattr(self.state, field, completion["date"])
-            changed = True
         if checkpoint and checkpoint not in self.state.escalation_checkpoints:
             self.state.escalation_checkpoints[checkpoint] = {
                 "sent_at": ledger["attempts"][-1]["acknowledged_at"],

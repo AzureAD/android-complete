@@ -163,24 +163,30 @@ def test_registry_relocates_release_automations_into_release_folder():
 
 
 def test_automation_plan_derives_specs_from_ccd():
-    """`plan` turns automations.yaml + the release CCD into concrete specs: a one-shot
-    pinned to the EXACT CCD date (cron on the CCD's day+month, NOT 'every <weekday>'
-    which would fire the next matching weekday a week early), the steps it drives, and
-    the registration args (so linkage is captured when it's created)."""
+    """`plan` turns automations.yaml into concrete optional accelerator specs:
+    `morning-step-drain` (7:00 AM daily NL schedule) plus optional phase pollers."""
     from orchestrator import automations as A
-    result = A.plan(CONFIG, "2026-09", "2026-09-09", owner_timezone="America/Los_Angeles")
+    result = A.plan(
+        CONFIG, "2026-09", "2026-09-09",
+        owner_timezone="America/Los_Angeles",
+        scheduler_timezone="America/Los_Angeles",
+    )
     assert result["problems"] == []
     by = {a["slug"]: a for a in result["automations"]}
-    assert by["ccd-morning"]["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
-    assert by["ccd-morning"]["fire_at"] == "09:00"
-    # cron: minute hour day month * → 0 9 9 9 * = 09:00 on Sept 9 exactly
-    assert by["ccd-morning"]["schedule"] == "cron: 0 9 9 9 *"
-    assert by["ccd-noon"]["schedule"] == "cron: 0 12 9 9 *"
-    assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
-    # the poller stays an interval automation (not date-pinned)
-    assert by["ccd-localization-poller"]["schedule"] == "every 1 hour"
-    assert by["ccd-localization-poller"]["provision_when"] == \
-        "step_status:ccd.localization:in_flight"
+    assert set(by) == {
+        "morning-step-drain",
+        "ccd-localization-watcher",
+        "finalize-orchestrator-poller",
+        "build-verify-rc-poller",
+        "bug-bash-update-poller",
+    }
+    assert by["morning-step-drain"]["daily_at"] == "07:00"
+    assert by["morning-step-drain"]["schedule"] == "every day at 7am"
+    assert by["morning-step-drain"]["one_shot"] is False
+    assert by["morning-step-drain"]["optional"] is True
+    assert by["morning-step-drain"]["registration"]["slug"] == "morning-step-drain"
+    assert by["morning-step-drain"]["registration"]["schedule"] == "every day at 7am"
+    assert by["morning-step-drain"]["registration"]["cleanup_when"] == "release_done"
     assert by["finalize-orchestrator-poller"]["schedule"] == "every 2 hours"
     assert by["finalize-orchestrator-poller"]["steps"] == [
         "finalize.orchestrator_finalization"]
@@ -191,80 +197,72 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["bug-bash-update-poller"]["registration"]["schedule"] == "every 3 hours"
     assert "every 3 hours" in by["bug-bash-update-poller"]["prompt"]
     assert by["bug-bash-update-poller"]["on_demand"]
-    # registration carries slug + schedule so sync can re-pin on a CCD move
-    assert by["ccd-morning"]["registration"]["slug"] == "ccd-morning"
-    assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"
-    assert by["ccd-morning"]["registration"]["cleanup_when"] == "steps_done"
     assert by["build-verify-rc-poller"]["cleanup_when"] == "phase_done:build_verify"
     assert by["build-verify-rc-poller"]["provision_when"] == \
         "step_status:build_verify.mrwp_ecs:in_flight"
 
 
-def test_on_demand_obligation_survives_trigger_worker_race():
-    """Any worker can launch localization; durable state must still require its poller."""
+def test_on_demand_obligation_remains_optional_and_non_blocking():
+    """State-triggered on-demand pollers surface under `optional`, never `required`."""
     from orchestrator import automations as A
     from orchestrator.state import StepState
 
     st = ReleaseState(
         release_id="2026-09", ccd="2026-09-09",
-        timezone="America/Los_Angeles", execution_mode="unattended")
+        timezone="America/Los_Angeles")
     Orchestrator(CONFIG, st, mocks={})
-    st.set_step(
-        "ccd", "localization",
-        StepState(
-            status="in_flight",
-            data={"started_at": "2026-09-09T19:00:00Z", "build_id": "42"}))
+    _active_phase(st, "build_verify")
+    st.set_step("build_verify", "mrwp_ecs", StepState(status="in_flight"))
 
     missing = A.provisioning_obligations(st, [], CONFIG)
-    assert [item["slug"] for item in missing["required"]] == [
-        "push-reminders", "ccd-localization-poller"]
+    assert missing["required"] == []
+    assert "build-verify-rc-poller" in [item["slug"] for item in missing["optional"]]
     assert missing["recoveries"] == []
 
     planned = {item["slug"]: item for item in A.plan(
         CONFIG, st.release_id, st.ccd,
         owner_timezone=st.timezone)["automations"]}
     active = [{
-        **planned["ccd-localization-poller"]["registration"],
-        "key": "release:2026-09:ccd-localization-poller",
+        **planned["build-verify-rc-poller"]["registration"],
+        "key": "release:2026-09:build-verify-rc-poller",
         "id": "poller-id",
         "status": "active",
     }]
     satisfied = A.provisioning_obligations(st, active, CONFIG)
-    assert [item["slug"] for item in satisfied["required"]] == ["push-reminders"]
-    assert satisfied["active"] == ["ccd-localization-poller"]
+    assert satisfied["required"] == []
+    assert satisfied["active"] == ["build-verify-rc-poller"]
 
-    st.set_step("ccd", "localization", StepState(status="done"))
+    st.set_step("build_verify", "mrwp_ecs", StepState(status="done"))
     settled = A.provisioning_obligations(st, [], CONFIG)
-    assert [item["slug"] for item in settled["required"]] == ["push-reminders"]
+    assert settled["required"] == []
+    assert "build-verify-rc-poller" not in [item["slug"] for item in settled["optional"]]
 
 
-def test_push_worker_recovers_on_demand_obligations():
+def test_morning_step_drain_prompt_drains_and_never_resurrects():
     from orchestrator import automations as A
 
     by = {item["slug"]: item for item in A.plan(
         CONFIG, "2026-09", "2026-09-09",
         owner_timezone="America/Los_Angeles")["automations"]}
-    prompt = by["push-reminders"]["prompt"]
-    assert "automation obligations --release 2026-09 --json" in prompt
-    assert "even when scout_pending is empty" in prompt
+    prompt = by["morning-step-drain"]["prompt"]
+    assert "next --release 2026-09 --deliver --json" in prompt
+    assert "tick --release 2026-09 --deliver --json" in prompt
+    assert "reconcile-create --ensure" not in prompt
+    assert "never recreate or re-enable" in prompt
 
 
 def test_automation_names_follow_standard_format():
     """Every provisioned automation title is `<release-id> · <scope> — <label>`, where <scope>
-    is the phase's DISPLAY name (from phases.yaml) and <label> is the yaml `label`. This keeps
-    titles consistent + scannable (release first, then phase, then purpose)."""
+    is the phase's DISPLAY name (from phases.yaml) and <label> is the yaml `label`."""
     from orchestrator import automations as A
     result = A.plan(CONFIG, "2026-09", "2026-09-09", owner_timezone="America/Los_Angeles")
     by = {a["slug"]: a for a in result["automations"]}
-    assert by["ccd-morning"]["name"] == "2026-09 · Code Complete Day — morning reminders"
-    assert by["ccd-noon"]["name"] == "2026-09 · Code Complete Day — noon localization"
+    assert by["morning-step-drain"]["name"] == "2026-09 · Release-wide — morning step drain"
     assert by["build-verify-rc-poller"]["name"] == "2026-09 · Build & Lib Verification — RC verification poller"
     assert by["finalize-orchestrator-poller"]["name"] == \
         "2026-09 · Finalize & Publish — Release Orchestrator poller"
     assert by["bug-bash-update-poller"]["name"] == "2026-09 · Test / Bug Bash — bug-bash update poller"
-    # the registration name matches the display name (so the registry row is the standard title)
-    assert by["ccd-morning"]["registration"]["name"] == by["ccd-morning"]["name"]
-    # every name has exactly the three standard segments
+    assert by["morning-step-drain"]["registration"]["name"] == by["morning-step-drain"]["name"]
     for a in result["automations"]:
         assert a["name"].startswith("2026-09 · ")
         assert " — " in a["name"]
@@ -273,8 +271,8 @@ def test_automation_names_follow_standard_format():
 def test_automation_name_helper_and_phase_label():
     """The name-builder + phase-label helpers are the single source of the standard title."""
     from orchestrator import automations as A
-    assert A.automation_name("2026-08", "Release-wide", "push reminders") == \
-        "2026-08 · Release-wide — push reminders"
+    assert A.automation_name("2026-08", "Release-wide", "morning step drain") == \
+        "2026-08 · Release-wide — morning step drain"
     # scope falls back to 'Release-wide' when empty (non-phase automations)
     assert A.automation_name("2026-08", "", "x") == "2026-08 · Release-wide — x"
     assert A.phase_label(CONFIG, "ccd") == "Code Complete Day"
@@ -287,8 +285,7 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
     from orchestrator import cli
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
-        state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles",
-                             execution_mode="unattended")
+        state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles")
         Orchestrator(CONFIG, state, mocks={})
         state.readiness_items["ccd_confirmed"] = {"status": "pass"}
         C.save_state(state, d, rid)
@@ -297,24 +294,25 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
         startup = json.loads(capsys.readouterr().out)["automations"]
         assert startup and all(not a["on_demand"] for a in startup)
         assert {a["slug"] for a in startup} == {
-            "ccd-morning", "ccd-noon", "push-reminders", "daily-status-email",
-            "finalize-orchestrator-poller"}
+            "morning-step-drain",
+            "finalize-orchestrator-poller",
+        }
 
         assert cli.main(base[:-1] + ["--on-demand", "build-verify-rc-poller", "--json"]) == 0
         on_demand = json.loads(capsys.readouterr().out)["automations"]
         assert [a["slug"] for a in on_demand] == ["build-verify-rc-poller"]
 
         from orchestrator.state import StepState
-        state.set_step(
-            "ccd", "localization",
-            StepState(status="in_flight", data={"started_at": "now"}))
+        _active_phase(state, "build_verify")
+        state.set_step("build_verify", "mrwp_ecs", StepState(status="in_flight"))
         C.save_state(state, d, rid)
         obligations = [
             "--runs-root", d, "automation", "obligations",
             "--release", rid, "--json"]
         assert cli.main(obligations) == 0
-        required = json.loads(capsys.readouterr().out)["required"]
-        assert [a["slug"] for a in required] == ["push-reminders", "ccd-localization-poller"]
+        out = json.loads(capsys.readouterr().out)
+        assert out["required"] == []
+        assert "build-verify-rc-poller" in [a["slug"] for a in out["optional"]]
 
 
 def test_cleanup_plan_applies_declared_lifecycle_rules():
@@ -476,7 +474,7 @@ def test_automation_sync_repins_on_ccd_change():
         from tests._automation import observed
         planned = automations.plan(CONFIG, rid, st.ccd, owner_timezone=st.timezone)
         for item in planned["automations"]:
-            if item["slug"] not in ("ccd-morning", "ccd-noon", "ccd-localization-poller"):
+            if item["slug"] not in ("morning-step-drain", "finalize-orchestrator-poller"):
                 continue
             entry = reg.prepare(**item["registration"], spec=item["provider_spec"])
             reg.reconcile_create(entry["key"], observed({"id": item["slug"], "spec": item["provider_spec"]}),
@@ -492,15 +490,12 @@ def test_automation_sync_repins_on_ccd_change():
         # in sync → nothing changed
         u0 = {u["slug"]: u for u in sync()["updates"]}
         assert all(not u["changed"] for u in u0.values())
-        assert u0["ccd-morning"]["cleanup_when"] == "steps_done"
-        # noon matched to the CRON, not the poller's hourly interval (slug disambiguates)
-        assert u0["ccd-noon"]["desired_schedule"] == "cron: 0 12 26 8 *"
-        # move the CCD within the month → the two cron automations go stale, poller unchanged
-        st.ccd = "2026-08-27"; C.save_state(st, d, rid)
+        assert u0["morning-step-drain"]["cleanup_when"] == "release_done"
+        # change owner timezone → morning-step-drain host-converted schedule drifts, interval poller unchanged
+        st.timezone = "America/New_York"; C.save_state(st, d, rid)
         u1 = {u["slug"]: u for u in sync()["updates"]}
-        assert u1["ccd-morning"]["changed"] and u1["ccd-morning"]["desired_schedule"] == "cron: 0 9 27 8 *"
-        assert u1["ccd-noon"]["changed"] and u1["ccd-noon"]["desired_schedule"] == "cron: 0 12 27 8 *"
-        assert not u1["ccd-localization-poller"]["changed"]
+        assert u1["morning-step-drain"]["changed"]
+        assert not u1["finalize-orchestrator-poller"]["changed"]
 
 
 
@@ -517,7 +512,7 @@ def test_tick_advances_and_reports(tmp=None):
         # signed release, CCD reached so Phase 0 is open
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com", execution_mode="unattended")
+                          ccd_source="default", owner_email="o@x.com")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
@@ -560,7 +555,7 @@ def test_tick_dedup_same_day():
         rid = "2026-07"
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com", execution_mode="unattended")
+                          ccd_source="default", owner_email="o@x.com")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
@@ -593,7 +588,7 @@ def test_tick_payload_carries_teams_block_when_enabled():
         rid = "2026-07"
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com", execution_mode="unattended")
+                          ccd_source="default", owner_email="o@x.com")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
@@ -666,9 +661,9 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
     from orchestrator.state import StepState
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
-        st = ReleaseState(release_id=rid, ccd="2026-09-09", target_month="2026-10",
+        st = ReleaseState(release_id=rid, ccd="2026-09-09", target_month="2026-09",
                           owner_email="owner@microsoft.com",
-                          owner_name="Release Owner", execution_mode="unattended")
+                          owner_name="Release Owner")
         _ready_state(st)
         cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
         preflight = next(p for p in cfg["phases"] if p["id"] == "preflight")
@@ -762,10 +757,10 @@ def test_fill_ui_automation_results_maps_configs():
     verdicts = {3321136: {("ECS", "prod_msal_rc_broker"): "Passed", ("ECS", "rc_msal_prod_broker"): "Failed",
                           ("Local", "prod_msal_rc_broker"): "NotApplicable"}}  # absent pair untouched
     points = [
-        {"id": 1, "testCase": {"id": "3321136"}, "configuration": {"id": "292"}},  # ECS prod -> Passed
-        {"id": 2, "testCase": {"id": "3321136"}, "configuration": {"id": "294"}},  # ECS rc  -> Failed
-        {"id": 3, "testCase": {"id": "3321136"}, "configuration": {"id": "328"}},  # Local prod -> N/A
-        {"id": 4, "testCase": {"id": "3321136"}, "configuration": {"id": "344"}},  # no verdict
+        {"id": 1, "outcome": "Unspecified", "testCase": {"id": "3321136"}, "configuration": {"id": "292"}},  # ECS prod -> Passed
+        {"id": 2, "outcome": "Unspecified", "testCase": {"id": "3321136"}, "configuration": {"id": "294"}},  # ECS rc  -> Failed
+        {"id": 3, "outcome": "Unspecified", "testCase": {"id": "3321136"}, "configuration": {"id": "328"}},  # Local prod -> N/A
+        {"id": 4, "outcome": "Unspecified", "testCase": {"id": "3321136"}, "configuration": {"id": "344"}},  # no verdict
     ]
     sent = []
 

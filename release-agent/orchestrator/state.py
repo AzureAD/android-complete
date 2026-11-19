@@ -45,7 +45,6 @@ class ReleaseState:
     schema_version: int = SCHEMA_VERSION
     workflow_revision: Optional[dict] = None
     release_id: str = ""             # e.g. 2026-07
-    execution_mode: str = "interactive"
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     # Release owner — the engineer running this release (release metadata). The
@@ -72,7 +71,6 @@ class ReleaseState:
     # persisted detail
     steps: dict = field(default_factory=dict)         # "phase.step" -> StepState (as dict)
     gate_decisions: list = field(default_factory=list)
-    last_status_email_date: Optional[str] = None       # YYYY-MM-DD of the last partner status email sent
     escalation_checkpoints: dict = field(default_factory=dict)  # successfully sent alert key -> {sent_at, target}
     notification_deliveries: dict = field(default_factory=dict)  # id -> immutable descriptor, status, attempts, completion
     resources: dict = field(default_factory=dict)  # release-owned external identities; survives step reopen
@@ -123,8 +121,6 @@ class ReleaseState:
             )
         data = evidence_store.hydrate_records(data, os.path.dirname(os.path.abspath(path)))
         obj = cls(**data)
-        if obj.execution_mode not in ("interactive", "unattended"):
-            raise ValueError("Execution mode must be interactive or unattended")
         from orchestrator.revision import validate_binding, is_hash
         validate_binding(obj.workflow_revision)
         obj._loaded_from_disk = True

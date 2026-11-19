@@ -284,14 +284,26 @@ def test_cli_email_sent_acknowledgement_requires_exact_payload_receipt(
 
 
 def test_cli_claim_rechecks_real_step_fire_time(orch, tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(schedule, "now_local", lambda _tz:
-                        datetime.fromisoformat("2026-09-09T08:45:00-07:00"))
+    from orchestrator.engine import Orchestrator as RawOrch
+    from orchestrator.revision import current_revision
+    from steps.ccd import final_reminder
+    monkeypatch.setitem(final_reminder.CONFIG, "fire_at_local", "09:00")
+    orch.state.workflow_revision = current_revision(RawOrch(C.DEFAULT_CONFIG, orch.state, mocks={}))
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
     base = ["--runs-root", str(tmp_path), "notification"]
     scope = ["--release", orch.state.release_id]
     assert cli.main(base + ["prepare"] + scope + ["--source", "step", "--phase", "ccd",
                     "--step", "final_reminder", "--as-of", "2026-09-09"]) == 0
     item = json.loads(capsys.readouterr().out)["notifications"][0]
+    # 1. Before CCD (`2026-09-08`), preview `--as-of 2026-09-09` never authorizes an early claim.
+    monkeypatch.setattr(schedule, "now_local", lambda _tz:
+                        datetime.fromisoformat("2026-09-08T10:00:00-07:00"))
+    assert cli.main(base + ["claim"] + scope + ["--id", item["id"], "--hash", item["hash"],
+                                               "--executor", "A"]) == 1
+    assert not json.loads(capsys.readouterr().out)["permission_to_send"]
+    # 2. If a step declares `fire_at_local`, `claim` also enforces that local wall-clock time.
+    monkeypatch.setattr(schedule, "now_local", lambda _tz:
+                        datetime.fromisoformat("2026-09-09T08:45:00-07:00"))
     assert cli.main(base + ["claim"] + scope + ["--id", item["id"], "--hash", item["hash"],
                                                "--executor", "A"]) == 1
     assert not json.loads(capsys.readouterr().out)["permission_to_send"]
@@ -301,7 +313,7 @@ def test_cli_claim_rechecks_real_step_fire_time(orch, tmp_path, monkeypatch, cap
 def test_cli_receipt_after_midnight_needs_no_clock_override(orch, tmp_path, monkeypatch, capsys):
     item = D.descriptor(orch.state, "midnight", email(orch)["scope"], "workiq_send_email",
                         email(orch)["payload"],
-                        {"release_field": "last_status_email_date", "date": "2026-09-09"})
+                        {"checkpoint": "midnight-check"})
     D.offer(orch, item)
     claim = D.claim(orch, item["id"], item["hash"], "A")
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
@@ -313,19 +325,19 @@ def test_cli_receipt_after_midnight_needs_no_clock_override(orch, tmp_path, monk
                     "--evidence", "provider receipt",
                     "--receipt-file", exact_receipt_file(tmp_path, item)]) == 0
     capsys.readouterr()
-    assert C.load_state(str(tmp_path), orch.state.release_id).last_status_email_date == "2026-09-09"
+    assert "midnight-check" in C.load_state(str(tmp_path), orch.state.release_id).escalation_checkpoints
 
 
-def test_midnight_ack_preserves_prepared_day(orch):
+def test_midnight_ack_preserves_prepared_checkpoint(orch):
     item = email(orch)
-    item["completion"] = {"release_field": "last_status_email_date", "date": "2026-09-09"}
+    item["completion"] = {"checkpoint": "midnight-ack"}
     item["hash"] = D.fingerprint({k: v for k, v in item.items() if k != "hash"})
     D.offer(orch, item)
     claim = D.claim(orch, item["id"], item["hash"], "A")
     orch.now_local = datetime.fromisoformat("2026-09-10T00:01:00-07:00")
     D.result(orch, item["id"], claim["execution_id"], "sent", "provider success")
     assert finish(orch, item["id"])
-    assert orch.state.last_status_email_date == "2026-09-09"
+    assert "midnight-ack" in orch.state.escalation_checkpoints
 
 
 def test_explicit_clock_uses_owner_day_and_rejects_missing_timezone(orch, tmp_path):
@@ -493,13 +505,10 @@ def test_cleanup_backstop_and_suspend(orch):
     assert [r["id"] for r in automations.cleanup_plan(orch.state, entries, C.DEFAULT_CONFIG)["removals"]] == ["old"]
 
 
-def test_noon_skip_without_start_cleanup_and_rc_phase_scope(orch):
+def test_rc_poller_phase_scope(orch):
     defs = {d["slug"]: d for d in automations.load_defs(C.DEFAULT_CONFIG)}
-    orch.state.set_step("ccd", "localization", StepState(status="skipped"))
-    entry = {**defs["ccd-noon"], "id": "noon", "name": "noon",
-             "scope": "release", "release": orch.state.release_id}
-    assert automations.cleanup_plan(orch.state, [entry], C.DEFAULT_CONFIG)["removals"]
     assert defs["build-verify-rc-poller"]["cleanup_when"] == "phase_done:build_verify"
+    assert defs["morning-step-drain"]["cleanup_when"] == "release_done"
 
 
 def test_generated_worker_contract_cannot_omit_lifecycle():
@@ -737,10 +746,10 @@ def test_outbound_notification_steps_declare_contract():
 def test_release_wide_prompt_pins_all_advancement_and_cleanup():
     from orchestrator import automations
     specs = {item["slug"]: item for item in automations.plan(C.DEFAULT_CONFIG, "2026-09", "2026-09-09")["automations"]}
-    block = specs["push-reminders"]["prompt"]
-    for command in ("status", "next", "automation cleanup"):
+    block = specs["morning-step-drain"]["prompt"]
+    for command in ("status", "next --release 2026-09 --deliver", "tick --release 2026-09 --deliver", "automation cleanup"):
         assert command in block
-    assert "finally" in block and "courtesy copies" in block
+    assert "finally" in block and "never recreate or re-enable" in block
 
 
 def test_no_delivery_done_revalidates_instead_of_inventing_receipt(orch, tmp_path, monkeypatch, capsys):
@@ -804,20 +813,3 @@ def test_stale_terminal_rc_report_does_not_retire_poller(orch):
                 if s["slug"] == "build-verify-rc-poller")
     entry = {**spec, "scope": "release", "release": orch.state.release_id, "id": "rc", "name": "rc"}
     assert not automations.cleanup_plan(orch.state, [entry], C.DEFAULT_CONFIG)["removals"]
-
-
-def test_partner_preparation_honors_configured_closing_step(orch, monkeypatch):
-    from tests._harness import _active_phase
-    from orchestrator.commands import status_email_cmd
-    _active_phase(orch.state, "finalize")
-    orch.now_local = datetime.fromisoformat("2026-09-11T17:00:00-07:00")
-    monkeypatch.setattr(status_email_cmd, "_broker_changes", lambda _st: [])
-    args = SimpleNamespace(config=C.DEFAULT_CONFIG, release=orch.state.release_id, force=True,
-                           send_to=None)
-    prepared = status_email_cmd.prepare_status_email(args, orch.state, orch)
-    item = prepared["notifications"][0]
-    D.offer(orch, item)
-    orch.state.set_step("finalize", "final_status_email", StepState(status="skipped"))
-    assert status_email_cmd.prepare_status_email(args, orch.state, orch)["skip"]
-    with pytest.raises(ValueError, match="closing step"):
-        D.claim(orch, item["id"], item["hash"], "A")

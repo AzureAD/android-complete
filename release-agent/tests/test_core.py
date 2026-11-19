@@ -1297,13 +1297,16 @@ def test_current_steps_label_scout_not_user_action():
     orch.run_until_gate()
     r = orch.status_report()
     assert r["current_phase"] == "ccd"
-    # every current step is a scout step → state 'scout', not 'reminder'
+    # every current step is automatic/scout/pending — never a human 'reminder'
     for s in r["current_steps"]:
-        assert s["state"] == "scout", f"{s['id']} state={s['state']}"
+        assert s["state"] in ("scout", "auto", "pending"), f"{s['id']} state={s['state']}"
         assert s["reminder"] is False
     # and it's never surfaced as a user action
     assert r["action"] is None
-    assert r["scout_pending"] == [s.id for s in orch.workflow.phase("ccd").steps]
+    assert r["scout_pending"] == [
+        s.id for s in orch.workflow.phase("ccd").steps
+        if s.kind.value == "external" and not s.depends_on
+    ]
     # the rendered current-phase table says 'Scout runs this', never 'Do this'
     view = render.status_view(r)
     assert "Scout work remains" in view or "Scout action pending" in view

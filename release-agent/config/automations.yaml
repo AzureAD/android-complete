@@ -1,5 +1,7 @@
-# Per-release automation definitions.
-# Step membership and fire_at_local are single-sourced on each step module (`AUTOMATION` / `AUTOMATIONS`).
+# Per-release optional automation accelerators.
+# Automations are non-blocking convenience accelerators: disabling or deleting them
+# never blocks or breaks interactive or manual workflow progression.
+# Step membership is single-sourced on each step module (`AUTOMATION` / `AUTOMATIONS`).
 
 version: 2
 provider_defaults:
@@ -10,24 +12,27 @@ provider_defaults:
   browserHeadless: true
   teamsNotify: never
 automations:
-- slug: push-reminders
-  label: push reminders
+- slug: morning-step-drain
+  label: morning step drain
   scope: Release-wide
-  prompt_kind: push-reminders
-  required_on_start: true
-  every: 1 hour
+  prompt_kind: morning-step-drain
+  daily_at: "07:00"
   steps: []
   cleanup_when: release_done
-  purpose: Advance the pinned release, recover owned work and deliver the eligible owner digest
-- slug: daily-status-email
-  label: daily status email
-  scope: Phases 2–4
-  prompt_kind: daily-status-email
-  every: 1 hour
-  steps: []
-  cleanup_when: phase_done:finalize
-  purpose: Send the partner status email on the first eligible owner-local business-day tick at or after
-    17:00
+  purpose: Run once daily at 7:00 AM before the workday to drain all eligible non-blocking steps and park
+    cleanly at the next human gate
+- slug: ccd-localization-watcher
+  label: localization check & reminder
+  phase: ccd
+  prompt_kind: ccd-localization-watcher
+  ccd_window: "08:00-22:00/2h"
+  on_demand: true
+  provision_when: phase_reached:ccd
+  cleanup_when:
+  - phase_done:ccd
+  - ccd_after:22:00
+  purpose: Every 2 hours on CCD (8:00 AM–10:00 PM), check localization trigger & PR merge status, remind
+    the release owner if incomplete, and auto-delete when Phase 1 completes or at 10:00 PM on CCD
 - slug: finalize-orchestrator-poller
   label: Release Orchestrator poller
   phase: finalize
@@ -35,31 +40,6 @@ automations:
   cleanup_when: steps_done
   purpose: Poll final release orchestration every 2 hours until the GitHub release-notes gate, capture
     final build identities, and escalate once after 8 hours
-- slug: ccd-morning
-  label: morning reminders
-  phase: ccd
-  cleanup_when: steps_done
-  purpose: Send the CCD-day code-complete email + the Code reviews PR-merge reminder
-- slug: ccd-noon
-  label: noon localization
-  phase: ccd
-  cleanup_when:
-  - step_flag:ccd.localization:started_at
-  - steps_done
-  - phase_done:ccd
-  purpose: Launch localization at noon through launch-localization auto-approval; record-localization-run
-    is recovery only
-- slug: ccd-localization-poller
-  label: localization poller
-  phase: ccd
-  every: 1 hour
-  on_demand: true
-  provision_when: step_status:ccd.localization:in_flight
-  cleanup_when:
-  - steps_settled
-  - phase_done:ccd
-  purpose: Poll localization with positive run-result/task evidence; escalate unresolved evidence at 3h,
-    warn on unmerged PRs at 4 PM Los Angeles and omit them at 6 PM
 - slug: build-verify-rc-poller
   label: RC verification poller
   phase: build_verify

@@ -15,7 +15,6 @@ class HoldKind(str, Enum):
 
 
 class LifecycleStatus(str, Enum):
-    AUTOMATION = "automation"
     AWAITING_ACTION = "awaiting_action"
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
@@ -32,13 +31,11 @@ class DispatchAction(str, Enum):
     COMPLETE = "complete"
     OWNER_OR_WAIT = "owner_or_wait"
     READINESS = "readiness"
-    RECOVER_STARTUP_AUTOMATION = "recover_startup_automation"
     RESOLVE_HOST_INPUT = "resolve_host_input"
     RESOLVE_PHASE_HOLD = "resolve_phase_hold"
     RESOLVE_RELEASE_HOLD = "resolve_release_hold"
     RUN_PHASE_WORK = "run_phase_work"
     SCHEDULED = "scheduled"
-    PROVISION_STARTUP_AUTOMATION = "provision_startup_automation"
 
 
 _SUSPENSION_TO_LIFECYCLE: dict[str, LifecycleStatus] = {
@@ -46,7 +43,6 @@ _SUSPENSION_TO_LIFECYCLE: dict[str, LifecycleStatus] = {
     "workflow_revision": LifecycleStatus.BLOCKED,
     "halted": LifecycleStatus.HALTED,
     "cancelled": LifecycleStatus.CANCELLED,
-    "automation": LifecycleStatus.AUTOMATION,
     "readiness_gate": LifecycleStatus.READINESS_GATE,
     "blocked": LifecycleStatus.BLOCKED,
 }

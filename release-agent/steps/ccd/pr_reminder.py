@@ -26,16 +26,14 @@ KIND = "scout"
 NAME = 'Remind Code Reviews chat of the CCD PR-merge deadline'
 REQUIRED_TOOLS = ('workiq',)
 REQUIRES_APPROVAL = False
-AUTOMATION = 'ccd-morning'
 NOTIFICATION = True
 
 # Step config (co-located). Posts to the real "Code reviews" chat (redirect for
-# tests via send_to). fire_at_local is read by the CCD-morning automation.
+# tests via send_to). Eligible as soon as Phase 1 opens on Code Complete Day.
 _CHAT = coords.team("code_reviews")
 CONFIG = {
     "live_chat_id": _CHAT["chat"],
     "live_chat_name": _CHAT["name"],
-    "fire_at_local": "09:00",                # morning of CCD (automation-driven)
     "branch_cut_local": "11:00 PM",          # release branch auto-cuts at this time
     "approver_name": "Moumita Ghosh",        # CCD-delay / cherry-pick approver
     "approver_email": "moghosh@microsoft.com",
@@ -107,8 +105,9 @@ KNOWLEDGE = {
         "PR won't make the cut, to request a CCD delay or a post-CCD cherry-pick.\n"
     ),
     'who': (
-        'Scout posts it automatically on CCD morning. CCD-delay and cherry-pick requests must '
-        'be approved by Moumita Ghosh (moghosh@microsoft.com).\n'
+        'Scout posts it automatically on CCD (via the optional 7:00 AM morning drain or the '
+        'next interactive session). CCD-delay and cherry-pick requests must be approved by '
+        'Moumita Ghosh (moghosh@microsoft.com).\n'
     ),
     'where': ["Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / EXTERNAL-REFERENCES.md)."],
     'how': (

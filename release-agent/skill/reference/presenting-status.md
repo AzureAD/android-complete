@@ -31,7 +31,5 @@ Never end an actionable hold with prose-only `"please review/confirm"` — alway
   *(An uncertain/owned prior runner requires confirming the prior runner stopped before `--prior-writer-stopped`.)*
 - **Approval gate (`gate`):** approval gates remain genuine decisions, not manual-completion or skip toggles. Local gate → paste `display_markdown` + `m_ask_user` **Approve gate / Deny gate / Keep on hold**. External gate (`remove_rc_tags_gate`, `publish_notes_gate`) → run `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`, display the exact coordinates/build/stage/approval ID/hash alongside `display_markdown`, then `m_ask_user` **Approve / Deny / Keep on hold**.
 
-Ask only for genuinely missing information, never a confirmation the owner already clearly supplied. After recording the owner's answer, **resume automatic guided progression** immediately unless the owner explicitly limited the scope.
-
-In unattended mode, show a missing driver's startup receipt/health as unavailable coverage and never claim unattended success until acknowledged. Interactive operation does not require that driver, recreate it, or delete it implicitly.
+Ask only for genuinely missing information, never a confirmation the owner already clearly supplied. After recording the owner's answer, **resume automatic guided progression** immediately unless the owner explicitly limited the scope. Background accelerators (`morning-step-drain`, phase pollers) are optional and non-blocking; never block status or auto-recreate automations the owner disabled or deleted.
 

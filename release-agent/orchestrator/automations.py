@@ -31,8 +31,38 @@ def _cleanup_rules(value) -> list:
 
 
 def _valid_cleanup_rule(rule) -> bool:
-    return isinstance(rule, str) and (rule in _CLEANUP_RULES
-                                     or rule.startswith(("phase_done:", "step_flag:")))
+    if not isinstance(rule, str):
+        return False
+    if rule in _CLEANUP_RULES or rule.startswith(("phase_done:", "step_flag:")):
+        return True
+    if rule.startswith("ccd_after:"):
+        hhmm = rule.split(":", 1)[1]
+        try:
+            return len(hhmm) == 5 and bool(datetime.strptime(hhmm, "%H:%M"))
+        except ValueError:
+            return False
+    return False
+
+
+def _parse_ccd_window(value) -> tuple[int, int, int, int] | None:
+    """Parse `'HH:MM-HH:MM/<N>h'` -> `(start_hour, end_hour, step_hours, minute)`."""
+    if not isinstance(value, str) or "/" not in value or "-" not in value:
+        return None
+    span, _, step_part = value.strip().partition("/")
+    if not step_part.endswith("h") or not step_part[:-1].isdigit():
+        return None
+    step_hours = int(step_part[:-1])
+    start_s, _, end_s = span.partition("-")
+    try:
+        if len(start_s) != 5 or len(end_s) != 5:
+            return None
+        t0 = datetime.strptime(start_s, "%H:%M")
+        t1 = datetime.strptime(end_s, "%H:%M")
+    except ValueError:
+        return None
+    if step_hours < 1 or t0.minute != t1.minute or t1.hour < t0.hour:
+        return None
+    return t0.hour, t1.hour, step_hours, t0.minute
 
 
 def automations_path(config_path: str) -> str:
@@ -198,21 +228,29 @@ def validate(config_path: str) -> list:
             problems.append(f"duplicate automation slug '{slug}'")
         slugs.add(slug)
         if set(d) - {
-            "slug", "label", "phase", "scope", "steps", "every", "on_demand",
-            "provision_when", "cleanup_when", "purpose", "prompt_kind", "required_on_start",
+            "slug", "label", "phase", "scope", "steps", "every", "daily_at", "ccd_window",
+            "on_demand", "provision_when", "cleanup_when", "purpose", "prompt_kind",
         }:
             problems.append(f"automation '{slug}' has unknown settings")
-        if "required_on_start" in d and (
-                type(d["required_on_start"]) is not bool
-                or d["required_on_start"] and (d.get("on_demand") or not d.get("every"))):
-            problems.append(f"automation '{slug}' has invalid required_on_start (must be an interval startup worker)")
-        if d.get("required_on_start") and _provider_defaults(config_path).get("enabled") is not True:
-            problems.append(f"automation '{slug}' is mandatory but provider_defaults.enabled is not true")
+        sched_modes = sum(bool(d.get(k)) for k in ("every", "daily_at", "ccd_window"))
+        if sched_modes > 1:
+            problems.append(f"automation '{slug}' cannot combine 'every', 'daily_at', and 'ccd_window'")
+        if d.get("daily_at") is not None:
+            try:
+                if not isinstance(d["daily_at"], str) or len(d["daily_at"]) != 5:
+                    raise ValueError
+                datetime.strptime(d["daily_at"], "%H:%M")
+            except ValueError:
+                problems.append(f"automation '{slug}' has invalid daily_at {d.get('daily_at')!r} (expected HH:MM)")
+        if d.get("ccd_window") is not None and _parse_ccd_window(d.get("ccd_window")) is None:
+            problems.append(
+                f"automation '{slug}' has invalid ccd_window {d.get('ccd_window')!r} (expected HH:MM-HH:MM/<N>h)"
+            )
         provision_when = d.get("provision_when")
         if provision_when is not None and (
             not d.get("on_demand")
             or not isinstance(provision_when, str)
-            or not provision_when.startswith(("step_status:", "step_flag:"))
+            or not provision_when.startswith(("step_status:", "step_flag:", "phase_reached:"))
         ):
             problems.append(
                 f"automation '{slug}' has invalid provision_when")
@@ -220,10 +258,10 @@ def validate(config_path: str) -> list:
         if not rules or not all(_valid_cleanup_rule(rule) for rule in rules):
             problems.append(f"automation '{slug}' has invalid/missing cleanup_when")
         s_steps = d.get("steps", []) or []
-        if not s_steps and d.get("prompt_kind") not in ("push-reminders", "daily-status-email"):
+        if not s_steps and d.get("prompt_kind") != "morning-step-drain":
             problems.append(f"automation '{slug}' has no steps")
             continue
-        interval = bool(d.get("every"))
+        interval = bool(d.get("every") or d.get("daily_at") or d.get("ccd_window"))
         fires = set()
         for sk in s_steps:
             mod = steps_pkg.get_step(*sk.split(".", 1)) if "." in sk else None
@@ -250,6 +288,66 @@ def validate(config_path: str) -> list:
             problems.append(f"scheduled step '{sk}' (has fire_at_local) is not owned "
                             f"by any time-of-day automation in automations.yaml")
     return problems
+
+
+def _format_scout_time_12h(hour: int, minute: int) -> str:
+    """Format (hour, minute) in Scout's canonical `m_create_automation` NL token (`7am`, `7:30am`, `3pm`)."""
+    suffix = "am" if hour < 12 else "pm"
+    h12 = 12 if hour % 12 == 0 else hour % 12
+    return f"{h12}{suffix}" if minute == 0 else f"{h12}:{minute:02d}{suffix}"
+
+
+def _daily_schedule(hhmm: str, *, owner_timezone=None, scheduler_timezone=None, now=None) -> str:
+    """Convert an owner-local HH:MM daily trigger into Scout's canonical `every day at <time>` schedule."""
+    if not isinstance(hhmm, str) or len(hhmm) != 5:
+        raise ValueError("Invalid daily_at time (expected HH:MM)")
+    try:
+        parsed = datetime.strptime(hhmm, "%H:%M")
+    except ValueError:
+        raise ValueError("Invalid daily_at time (expected HH:MM)") from None
+    hour, minute = parsed.hour, parsed.minute
+    if owner_timezone and scheduler_timezone and owner_timezone != scheduler_timezone:
+        owner = schedule.get_tz(owner_timezone)
+        host = schedule.get_tz(scheduler_timezone)
+        if owner is None or host is None:
+            raise ValueError("Owner and scheduler host IANA timezones must both be available")
+        ref_utc = now if (now is not None and now.tzinfo is not None) else datetime.now(timezone.utc)
+        ref_date = ref_utc.astimezone(owner).date()
+        local_dt = datetime.combine(ref_date, parsed.time(), owner)
+        host_dt = local_dt.astimezone(host)
+        hour, minute = host_dt.hour, host_dt.minute
+    return f"every day at {_format_scout_time_12h(hour, minute)}"
+
+
+def _ccd_window_cron(ccd_date, window_spec: str, *, owner_timezone=None, scheduler_timezone=None) -> str:
+    """Compile a CCD-day recurring window (`08:00-22:00/2h`) into a date-pinned Scout cron schedule."""
+    if not ccd_date:
+        raise ValueError("Confirmed CCD is required for CCD window automation")
+    parsed = _parse_ccd_window(window_spec)
+    if parsed is None:
+        raise ValueError(f"Invalid ccd_window specification: {window_spec!r}")
+    start_h, end_h, step_h, minute = parsed
+    hours_local = list(range(start_h, end_h + 1, step_h))
+    if not owner_timezone or not scheduler_timezone or owner_timezone == scheduler_timezone:
+        hour_expr = f"{start_h}-{end_h}/{step_h}" if step_h > 1 else f"{start_h}-{end_h}"
+        return f"cron: {minute} {hour_expr} {ccd_date.day} {ccd_date.month} *"
+    owner = schedule.get_tz(owner_timezone)
+    host = schedule.get_tz(scheduler_timezone)
+    if owner is None or host is None:
+        raise ValueError("Owner and scheduler host IANA timezones must both be available")
+    from datetime import time as _time
+    host_pts = [
+        datetime.combine(ccd_date, _time(h, minute), owner).astimezone(host)
+        for h in hours_local
+    ]
+    mins = sorted({dt.minute for dt in host_pts})
+    hrs = sorted({dt.hour for dt in host_pts})
+    days = sorted({dt.day for dt in host_pts})
+    months = sorted({dt.month for dt in host_pts})
+    return (
+        f"cron: {','.join(map(str, mins))} {','.join(map(str, hrs))} "
+        f"{','.join(map(str, days))} {','.join(map(str, months))} *"
+    )
 
 
 def _ccd_cron(ccd_date, hhmm: str, *, owner_timezone, scheduler_timezone, now=None):
@@ -304,89 +402,67 @@ def _prompt_for(spec: dict, release: str) -> str:
         f"This is a finally block: "
         f"execute it even on silence, stopped work, or errors. Halts suspend, not delete.")
     protocol = (
-        "Before every release command, pass the global --scheduled flag before its subcommand. "
-        "If it reports interactive mode, stop new scheduled work. Owning receipt acknowledgement "
-        "remains permitted; never discard an in-flight result. Path discovery is read-only and "
-        "does not need --scheduled. Attempt each operation at most once per unchanged progress "
+        "Before every mutating or scheduled release command, pass the global --scheduled flag before its "
+        "subcommand so execution serializes cleanly on `<runs-root>/<release>/.state.lock` with any "
+        "concurrent interactive session. Attempt each operation at most once per unchanged progress "
         "snapshot; no progress returns a concrete wait/input/failure instead of another loop.\n"
         + delivery.PROTOCOL.replace("<release>", release)) + (
         "\nFor every release-advancing task, inspect work_dispatch after each result. "
         "A sibling failure/owner gate does not cancel independent pending_work. "
-        "Drain only eligible work through its owning protocol; never bypass scope, consent, "
-        "dependency/time guards or unknown-write recovery. Before returning or asking, run "
+        "Drain only eligible non-approval work through its owning protocol; never bypass scope, consent, "
+        "dependency/time guards or unknown-write recovery. Before finishing, run "
         f"`status --release {release} --handoff --json --no-pipeline-check`. "
-        "Exit 2/may_return_to_user:false means more work, not a final summary. "
-        "For a Scout task genuinely needing input/consent after its preview, or unresolved "
-        "owning recovery, use --hold-step phase.step=<actual-reason> on this read-only guard "
-        "after independent work is exhausted. This is host-reported, not provider-verified; "
-        "it changes no state or authorization. Notification-only/poll workers retain their "
-        "scope and never start unrelated phase work."
-    )
-    provisioning = (
-        "\nProvision workers only through `automation plan` and the exact complete "
-        "provider_spec/registration it returns. Write the exact provider_spec once to "
-        "a fresh temporary JSON file outside release state. For declared desired workers "
-        "use idempotent `automation reconcile-create --ensure`; it prepares a missing intent "
-        "and recovers a proven-absent settled generation without an owner reset. "
-        "Custom/manual workers retain explicit automation prepare and their own reviewed lifecycle. "
-        "Obtain a fresh exhaustive provider list and full details; "
-        "losslessly write {observed_at:<UTC>,complete:true,automations:[{id:<id>,"
-        "spec:<complete-provider-kwargs>}]} to a second temporary JSON file. Call "
-        "`automation reconcile-create` with the SAME --spec-file, --observed-file, "
-        "--ensure --claim and --executor for declared workers. Only permission_to_create:true permits "
-        "m_create_automation with exactly returned spec. Immediately acknowledge "
-        "create-result with owning --attempt-id, the SAME --spec-file and receipt evidence "
-        "of that exact invocation. Unknown outcomes are uncertain, never retry them. "
-        "Pass --on-demand <slug> for on-demand provisioning. Never register directly "
-        "or update a live worker in place. Disabled/mismatched/duplicate live workers require review. "
-        "Absent settled generations preserve prior ids, intent hashes and observation digests. "
-        "Delete both temporary files only "
-        "after the owning result is durably recorded. Do not persist prompts/specs or "
-        "raw provider responses in release state, registry, journals, or evidence text."
+        "For a Scout task genuinely needing human approval (`requires_approval: true`), input, or "
+        "unresolved recovery, use --hold-step phase.step=<actual-reason> on that read-only guard after "
+        "independent non-approval work is exhausted so the release parks cleanly at the human gate. "
+        "Never resurrect or recreate automations that the owner disabled or deleted."
     )
 
-    if spec.get("prompt_kind") == "push-reminders":
+    if spec.get("prompt_kind") == "morning-step-drain":
         return (
-            f"Release {release} — advance this pinned release autonomously.\n"
-            f"1. Run `status --release {release} --json`. Missing, unsigned, halted, "
-            "blocked, cancelled or complete means skip new work, NOT cleanup.\n"
-            f"2. Loop `next --release {release} --json`; resolve scout_pending via "
-            f"`step-action --release {release} --phase <phase> --step <step>`. "
-            "Non-notification gather/trigger actions retain domain follow-ups and "
-            "owning effect recovery; never blind-record pass or start another write. "
-            "Every response includes work_dispatch: drain all pending_work in every phase, "
-            "even beside a sibling block or pending owner gate. Continue engine tasks with "
-            f"`next --release {release} --pending-only --json`, not a blind failed-step retry. "
-            f"Before an owner handoff run `status --release {release} --handoff --json --no-pipeline-check`; "
-            "exit 2/may_return_to_user:false requires finishing the queue. If a checked preview "
-            "or host tool needs actual input/consent/recovery, finish independent work then "
-            "use --hold-step phase.step=<exact-reason> on that read-only handoff. This never "
-            "completes a step or authorizes sending/replaying; preserve unknown ownership.\n"
-            f"3. Run `automation obligations --release {release} --json` after the drain "
-            "and on every later run, even when scout_pending is empty. Provision every "
-            "required on-demand worker through its exact plan; reconcile any listed "
-            "recovery instead of creating a duplicate. This durable check is mandatory "
-            "when another worker won a trigger race. Stop on problems.\n"
-            f"4. Run `tick --release {release} --json`, then `notification prepare "
-            f"--release {release} --source digest`. Independently deliver eligible "
-            "owner email, owner Teams and Core alerts through claim/result, not raw "
-            "message blocks. Core alerts are scoped to active preflight after 9 AM on "
-            "the previous business day or CCD. Inspect source pending for completion "
-            "and provisioning recovery; never resend claimed/uncertain/sent records. "
-            "Never add courtesy copies. Respect mocks.local.yaml redirects.\n"
-            + protocol + provisioning + cleanup
+            f"Release {release} — 7:00 AM pre-work step drainer (optional background accelerator).\n"
+            f"1. Run `status --release {release} --json`. If the release is missing, unsigned, halted, "
+            "blocked on readiness/workflow revision, cancelled, or complete, skip new phase work and run "
+            "only the final cleanup check.\n"
+            f"2. Loop `next --release {release} --deliver --json`. This single locked command advances "
+            "all eligible Python `auto` steps AND delivers all `requires_approval: false` notification "
+            "steps (`notice`, `flight_reminder`, `ccd.final_reminder`, `ccd.pr_reminder`, "
+            "`final_status_email`, etc.) silently in Python via Agency MCP — NEVER call `workiq_send_*` "
+            "or `m_ask_user`!\n"
+            "3. Inspect `work_dispatch.pending_work` after each `next --deliver`: for every remaining "
+            "task with `requires_approval: false` (e.g. `preflight.lockdown` Playwright CCOA scrape, "
+            "`ccd.localization` via `launch-localization --execute --auto-approve`), execute it silently "
+            "once through its owning `step-action` and domain follow-up command, then re-run "
+            f"`next --release {release} --deliver --json` to discover newly unblocked work. "
+            "Do NOT execute `requires_approval: true` tasks in the background — hold them with "
+            "`--hold-step phase.step=Requires owner approval` on the final handoff check so the pipeline "
+            "waits cleanly at the human-in-the-loop gate when the owner starts work.\n"
+            "4. Inspect `work_dispatch.held_work`: for each entry with `pollable: true` (`in_flight` "
+            "async work such as `ccd.localization_pr` or `finalize.orchestrator_finalization`), execute ONE "
+            "reconciliation pass via its `resume_command` (`task ... --retry`), then re-run `next --release "
+            f"{release} --deliver --json` if the step settled. If `status --release {release} --json` returns "
+            "`ccd_watcher_setup` (Phase 1 reached with no registry entry yet for `ccd-localization-watcher`), "
+            "create it once via `m_create_automation` and record with `automation record-setup`. "
+            "Never re-trigger an owned build or tight-loop.\n"
+            f"5. Run `tick --release {release} --deliver --json` to send the once-per-day morning owner "
+            "digest (and any eligible preflight Core deadline alert) silently in Python via Agency MCP. "
+            "Respect `mocks.local.yaml` redirects.\n"
+            + protocol + cleanup
         )
-    if spec.get("prompt_kind") == "daily-status-email":
+
+    if spec.get("prompt_kind") == "ccd-localization-watcher":
         return (
-            f"Release {release} — hourly partner status-email check. The command sends "
-            "only on the first eligible tick at/after 17:00 in the stored owner timezone "
-            "(weekdays excluding US holidays), during Phases 2–4; hourly polling avoids "
-            "host/owner DST drift. Never use --force in this worker.\n"
-            f"Run `notification prepare --release {release} --source status-email`. "
-            "For an isolated TEST release use --send-to <verified-test-address>. "
-            "Empty/stopped/claimed/uncertain/sent means no send; no automatic retry. "
-            "The final-status step has its own closing send. Respect mocks.local.yaml.\n"
-            + protocol + provisioning + cleanup
+            f"Release {release} — Code Complete Day localization check & reminder (runs every 2h from 8:00 AM to 10:00 PM on CCD).\n"
+            f"1. Run `python -m orchestrator.cli --scheduled watch-ccd-localization --release {release} --deliver --json`.\n"
+            "   - Python checks live ADO build & Localization PR status automatically.\n"
+            "   - If the Localization PR merged (or no PR was required), Python marks `ccd.localization_pr` done.\n"
+            "   - If localization has not started yet, is still running, or the Localization PR is open and unmerged, "
+            "Python sends a reminder to the release owner via Agency MCP prompting them to open `/release-agent` "
+            "and complete the pending Phase 1 steps (NEVER call `workiq_send_*` or `m_ask_user`).\n"
+            "2. Always execute the cleanup block below: once all Phase 1 items are complete OR it is at/after "
+            "10:00 PM on Code Complete Day, `automation cleanup` will list this automation in `removals` — "
+            "claim it with `claim-delete`, delete it via `m_delete_automation`, and record `delete-result`.\n"
+            + protocol + cleanup
         )
 
     # Single-step automation whose step owns a bespoke prompt → delegate to the module.
@@ -397,22 +473,23 @@ def _prompt_for(spec: dict, release: str) -> str:
         if callable(fn):
             prompt = fn(release, spec)
             if prompt:
-                return protocol + "\n" + prompt + provisioning + cleanup
+                return protocol + "\n" + prompt + cleanup
 
     # Default: notification claim/result, or the existing non-notification follow-up.
     return (
         f"Release {release} — {spec['name']}.\n"
-        f"It is Code Complete Day. For EACH of these steps in order: {step_list} —\n"
+        f"For EACH of these steps in order: {step_list} —\n"
         f"1. run `step-action --release {release} --phase {spec['phase']} --step <step>`;\n"
         f"2. done means no send (record-step only for no_delivery_required:true); "
         f"blocked/error means skip sending and proceed to cleanup. "
-        f"For notifications use source step with phase {spec['phase']} and the step ID. "
+        f"For `requires_approval: false` notifications use `deliver-step --release {release} "
+        f"--phase {spec['phase']} --step <step> --json`. "
         f"{protocol}\n"
         f"3. Non-notification actions retain their existing reservation and domain follow-up.\n"
         f"4. silently journal it: `journal --release {release} --source scout "
         f"--kind automation --text \"<slug> ran <step>\"`.\n"
         f"Respect the mocks.local.yaml redirects if present. Report a one-line summary."
-    ) + provisioning + cleanup
+    ) + cleanup
 
 
 def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
@@ -434,6 +511,8 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
         slug = d.get("slug", "?")
         s_steps = d.get("steps", []) or []
         interval = d.get("every")
+        daily_at = d.get("daily_at")
+        ccd_window = d.get("ccd_window")
         # STANDARD name: '<release> · <scope> — <label>'. `label` is the short purpose; `scope`
         # is the phase display name (or an explicit `scope:` override for non-phase automations).
         label = d.get("label", slug)
@@ -441,6 +520,32 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
         name = automation_name(release, scope, label)
         if interval:
             fire_at, sched, one_shot = None, f"every {interval}", False
+        elif daily_at:
+            fire_at = daily_at
+            one_shot = False
+            try:
+                sched = _daily_schedule(
+                    daily_at,
+                    owner_timezone=owner_timezone,
+                    scheduler_timezone=scheduler_timezone,
+                    now=now,
+                )
+            except ValueError as exc:
+                sched = None
+                entry_problems.append(str(exc))
+        elif ccd_window:
+            fire_at = ccd_window
+            one_shot = False
+            try:
+                sched = _ccd_window_cron(
+                    ccd_date,
+                    ccd_window,
+                    owner_timezone=owner_timezone,
+                    scheduler_timezone=scheduler_timezone,
+                )
+            except ValueError as exc:
+                sched = None
+                entry_problems.append(str(exc))
         else:
             fire_at = _step_fire_at(s_steps[0]) if s_steps else None
             # Pin to the EXACT CCD date via cron — never 'every <weekday>' (which fires
@@ -463,16 +568,18 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             "prompt_kind": d.get("prompt_kind"),
             "purpose": d.get("purpose", ""),
             "fire_at": fire_at,
+            "daily_at": daily_at,
+            "ccd_window": ccd_window,
             "ccd_date": ccd_date.isoformat() if ccd_date else None,
             "weekday": weekday,
-            "schedule": sched,          # one-shot on the CCD date, or an interval poller
+            "schedule": sched,          # daily NL schedule, interval poller, or one-shot cron
             "one_shot": one_shot,
             "interval": interval or None,
+            "optional": True,
             # ON-DEMAND automations (e.g. the RC poller) are NOT provisioned at release
             # start — the skill creates them only when their trigger condition arises
             # (an in-flight re-triggered RC) and tears them down when it clears.
             "on_demand": bool(d.get("on_demand")),
-            "required_on_start": bool(d.get("required_on_start")),
             "provision_when": d.get("provision_when"),
             "cleanup_when": d.get("cleanup_when"),
         }
@@ -482,15 +589,9 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             f"Work from the authoritative release-agent root: {agent_root}. "
             "All command fragments below mean `python -m orchestrator.cli` in this root. "
             "Use ONE authoritative runs directory, never a copied release snapshot.\n"
-            f"At each operational run first read `automation obligations --release {release} --json`. "
-            "Reconcile the whole-release driver and currently desired workers within this worker's scope "
-            "from its ensure list using a fresh exhaustive Scout list/details and canonical exact spec. "
-            "Use automation reconcile-create --ensure --claim; reuse an existing exact worker, recreate "
-            "only a proven-absent settled worker, and acknowledge its owning create-result. "
-            "A historical registry id is not live presence. Never repeat uncertain creation/deletion, "
-            "replace shared/manual workers, resurrect completed objectives or roll missed CCD jobs "
-            "into another year. Scope-limited poll/notification workers may repair the shared driver "
-            "but never start unrelated phase work. Real host consent still applies.\n"
+            "Automations are optional non-blocking accelerators: never recreate or re-enable "
+            "automations that the owner disabled or deleted, never repeat uncertain creation/deletion, "
+            "and never start `requires_approval: true` writes without live owner consent.\n"
             + spec["prompt"]
         )
         from orchestrator.registry import provider_spec
@@ -516,11 +617,15 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             "owner_timezone": owner_timezone, "scheduler_timezone": scheduler_timezone}
 
 
-def _provision_rule_matches(state, rule: str) -> bool:
+def _provision_rule_matches(state, rule: str, selection=None) -> bool:
     """Evaluate a declarative on-demand provisioning condition from live release state."""
     kind, sep, remainder = str(rule or "").partition(":")
+    if not sep or not remainder:
+        return False
+    if kind == "phase_reached":
+        return bool(selection and selection.frontier and selection.frontier.id == remainder)
     step_key, sep2, expected = remainder.rpartition(":")
-    if not sep or not sep2 or "." not in step_key or not expected:
+    if not sep2 or "." not in step_key or not expected:
         return False
     phase, step_id = step_key.split(".", 1)
     step = state.get_step(phase, step_id)
@@ -550,9 +655,7 @@ def _producer_applied(state, spec):
 
 
 def ensure_reason(state, spec, config_path, selection=None, *, ignore_holds=False):
-    """Why a declared worker is not desired now; no provider calls or mutations."""
-    if state.execution_mode != "unattended":
-        return "Interactive mode does not provision unattended workers"
+    """Why a declared optional accelerator is not eligible now; no provider calls or mutations."""
     if selection is None:
         from orchestrator.engine import Orchestrator
         selection = Orchestrator(config_path, state, mocks={}).scheduling()
@@ -565,7 +668,7 @@ def ensure_reason(state, spec, config_path, selection=None, *, ignore_holds=Fals
     if spec["on_demand"]:
         rule = spec.get("provision_when")
         if rule:
-            requested = _provision_rule_matches(state, rule)
+            requested = _provision_rule_matches(state, rule, selection=selection)
         else:
             requested = _producer_applied(state, spec)
         if not requested:
@@ -580,12 +683,12 @@ def ensure_reason(state, spec, config_path, selection=None, *, ignore_holds=Fals
 
 
 def provisioning_obligations(state, entries: list[dict], config_path: str) -> dict:
-    """Return missing or unresolved startup/on-demand workers required by current state.
+    """Return optional background accelerators and any unresolved registry recoveries.
 
-    This is computed from durable release state plus the automation registry, so the
-    obligation survives whichever scheduled worker wins the triggering action.
+    In the unified hybrid model, automations are purely optional non-blocking accelerators:
+    `required` is always empty so missing, disabled, or deleted automations never stall
+    interactive or manual workflow execution.
     """
-    from orchestrator.registry import has_creation_receipt
     planned = plan(
         config_path, state.release_id, state.ccd, owner_timezone=state.timezone)
     by_slug = {
@@ -595,7 +698,7 @@ def provisioning_obligations(state, entries: list[dict], config_path: str) -> di
     from orchestrator.engine import Orchestrator
     selection = Orchestrator(config_path, state, mocks={}).scheduling()
     terminal = selection.frontier is None or bool(state.cancellation)
-    required = []
+    optional = []
     recoveries = []
     active = []
     ensure = []
@@ -607,11 +710,12 @@ def provisioning_obligations(state, entries: list[dict], config_path: str) -> di
     }
     for spec in planned["automations"]:
         rule = spec.get("provision_when")
-        needed = spec["required_on_start"] or (
-            spec["on_demand"] and (_provision_rule_matches(state, rule) if rule else
-                                   _producer_applied(state, spec)))
+        eligible_trigger = (
+            not spec["on_demand"]
+            or (_provision_rule_matches(state, rule, selection=selection) if rule else _producer_applied(state, spec))
+        )
         managed = spec["slug"] in by_slug
-        if terminal or not (needed or managed):
+        if terminal or not (eligible_trigger or managed):
             continue
         if ensure_reason(state, spec, config_path, selection, ignore_holds=True):
             continue
@@ -621,14 +725,16 @@ def provisioning_obligations(state, entries: list[dict], config_path: str) -> di
         problems.extend(f"{spec['slug']}: {problem}" for problem in spec["problems"])
         if not spec["problems"] and not ensure_reason(state, spec, config_path, selection):
             ensure.append(spec)
-        if not needed:
-            continue
         existing = by_slug.get(spec["slug"])
         if existing is None:
-            required.append(spec)
-        elif (existing.get("status") == "active" and existing.get("id")
-              and (not spec["required_on_start"] or has_creation_receipt(existing))):
+            if eligible_trigger and not spec["problems"]:
+                optional.append(spec)
+        elif existing.get("status") == "active" and existing.get("id"):
             active.append(spec["slug"])
+        elif existing.get("status") in ("absent", "deleted", "abandoned"):
+            # Owner-deleted or retired workers remain optional and never demand recovery.
+            if eligible_trigger and not spec["problems"]:
+                optional.append(spec)
         else:
             recoveries.append({
                 "slug": spec["slug"],
@@ -638,7 +744,8 @@ def provisioning_obligations(state, entries: list[dict], config_path: str) -> di
             })
     return {
         "release": state.release_id,
-        "required": required,
+        "required": [],
+        "optional": optional,
         "recoveries": recoveries,
         "active": active,
         "problems": problems,
@@ -646,12 +753,12 @@ def provisioning_obligations(state, entries: list[dict], config_path: str) -> di
     }
 
 
-def cleanup_plan(state, entries: list, config_path: str) -> dict:
+def cleanup_plan(state, entries: list, config_path: str, *, now=None) -> dict:
     """Decide which registered automations reached their declared lifecycle end."""
     with open(config_path, "r", encoding="utf-8") as fh:
         phases = {p["id"]: p for p in (yaml.safe_load(fh) or {}).get("phases", [])}
     from orchestrator.engine import Orchestrator
-    orch = Orchestrator(config_path, state, mocks={})
+    orch = Orchestrator(config_path, state, mocks={}, now=now)
     from orchestrator.revision import mismatch_reason
     revision_problem = mismatch_reason(orch)
     if revision_problem:
@@ -710,6 +817,18 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
                 return False, ""
             return (bool(state.get_step(phase_id, step_id).data.get(flag)),
                     f"{step_key}.{flag} set")
+        if isinstance(rule, str) and rule.startswith("ccd_after:"):
+            hhmm = rule.split(":", 1)[1]
+            ccd = schedule.parse_date(state.ccd)
+            if ccd is None or orch.tz is None:
+                return False, ""
+            try:
+                parsed_t = datetime.strptime(hhmm, "%H:%M").time()
+            except ValueError:
+                problems.append(f"{entry.get('id')}: malformed cleanup rule '{rule}'")
+                return False, ""
+            cutoff = datetime.combine(ccd, parsed_t, tzinfo=orch.tz)
+            return (orch.now_local >= cutoff, f"CCD {hhmm} cutoff reached")
         problems.append(f"{entry.get('id')}: invalid/missing cleanup_when")
         return False, ""
 
@@ -723,7 +842,7 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
             continue
         due = release_terminal
         reason = f"{terminal_reason} (universal backstop)" if due else ""
-        if selection.status in ("halted", "blocked", "cancelled") and not due:
+        if selection.status == "halted" and not due:
             continue
         if not due:
             if (not isinstance(steps, list)
@@ -752,6 +871,6 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
             })
     kinds = {e["id"]: e.get("kind") for e in entries}
     removals.sort(key=lambda r: (
-        kinds.get(r["id"]) == "release-level", r.get("slug") == "push-reminders", r["name"]
+        kinds.get(r["id"]) == "release-level", r.get("slug") == "morning-step-drain", r["name"]
     ))
     return {"release": state.release_id, "removals": removals, "problems": problems}

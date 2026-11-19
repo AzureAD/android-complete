@@ -106,9 +106,10 @@ def _attach_run(args, orch, build, *, authorization=None):
     data.update(build_id=build_id, started_at=started_at, run_url=run_url)
     orch.settle_execution(
         "ccd", L.ID, args.execution_id,
-        InProgress("Verified localization launch; Scout is polling its outcome.",
-                   links=[{"name": "Localization run", "url": run_url}],
-                   poll_in_min=L.CONFIG["poll_interval_min"]), data=data)
+        Done(f"Queued localization build #{build_id}.",
+             by="scout",
+             links=[{"name": f"Localization build #{build_id}", "url": run_url}]),
+        data=data)
     C.save_state(orch.state, args.runs_root, args.release)
     print(_json.dumps({"recorded": True, "build_id": build_id, "run_url": run_url}))
     return 0
@@ -147,6 +148,16 @@ def cmd_record_localization_run(args):
     """Recover only a provider-verified receipt belonging to an already-reviewed launch."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     try:
+        step = orch.state.get_step("ccd", L.ID)
+        if (
+            step.status == "done"
+            and args.execution_id
+            and (step.data.get("last_write_review") or {}).get("execution_id") == args.execution_id
+        ):
+            if str(step.data.get("build_id") or "") == str(args.build_id):
+                print(_json.dumps({"recorded": False, "reason": "build already recorded"}))
+                return 0
+            raise ValueError("A different localization build is already recorded for this execution")
         _receipt_owner(orch, args.execution_id)
         cfg = _launch_config()
         build = provider.read_build(cfg["org"], cfg["project"], args.build_id)
@@ -396,7 +407,231 @@ def cmd_check_localization(args):
                 {"message": _owner_scout_message(st, decision, d)}, {}))
         decision["notifications"] = [D.offer(orch, item) for item in items]
         C.save_state(st, args.runs_root, args.release)
+        if getattr(args, "deliver", False) and not getattr(args, "as_of", None) and not getattr(args, "now", None):
+            from orchestrator.commands.deliver_cmd import deliver_descriptor_items
+            decision["delivered"] = deliver_descriptor_items(
+                args.runs_root, args.release, args.config, items, executor="localization-agency-mcp"
+            )
     print(_json.dumps(decision))
+    return 0
+
+
+def watch_ccd_localization(
+    runs_root: str,
+    release: str,
+    config: str,
+    *,
+    now=None,
+    as_of=None,
+    deliver: bool = False,
+    mcp_caller=None,
+) -> dict:
+    """Every-2h CCD localization watcher (8:00 AM–10:00 PM on CCD):
+    1. Re-evaluates `ccd.localization_pr` against live ADO if `ccd.localization` already ran,
+       so a merged PR or no-strings completion settles Phase 1 automatically without nagging.
+    2. If localization hasn't started yet or its PR isn't merged (or any Phase 1 item remains),
+       stages/delivers a concise reminder to the release owner prompting them to open
+       `/release-agent` and complete the pending Phase 1 steps.
+    3. Reports `cleanup_due: True` as soon as Phase 1 is complete OR it reaches 10:00 PM on CCD.
+    """
+    from html import escape
+    from orchestrator import notifications as notif, schedule
+
+    st, orch = C.load_orch(runs_root, release, config, now or as_of)
+    now_local = now.astimezone(orch.tz) if (now is not None and orch.tz is not None) else orch.now_local
+    ccd_date = schedule.parse_date(st.ccd)
+    selection = orch.scheduling()
+
+    past_10pm = bool(
+        ccd_date
+        and (
+            now_local.date() > ccd_date
+            or (now_local.date() == ccd_date and now_local.hour >= 22)
+        )
+    )
+    phase_complete = selection.phase("ccd").complete
+    if selection.suspension or not orch.gate.signed or phase_complete:
+        return {
+            "status": "complete" if phase_complete else "suspended",
+            "release": release,
+            "phase_complete": phase_complete,
+            "reminded": False,
+            "cleanup_due": bool(phase_complete or past_10pm),
+            "notifications": [],
+        }
+
+    if ccd_date is None or now_local.date() != ccd_date or now_local.hour < 8 or now_local.hour > 22:
+        return {
+            "status": "outside_ccd_window",
+            "release": release,
+            "phase_complete": False,
+            "reminded": False,
+            "cleanup_due": past_10pm,
+            "notifications": [],
+        }
+
+    # If `ccd.localization` already queued a build and `ccd.localization_pr` is not yet done,
+    # refresh `ccd.localization_pr` against live ADO once before deciding whether to remind.
+    loc_step = st.get_step("ccd", "localization")
+    pr_step = st.get_step("ccd", "localization_pr")
+    if loc_step.status in ("done", "skipped") and pr_step.status not in ("done", "skipped"):
+        orch.run_task("ccd", "localization_pr", retry=True)
+        C.save_state(st, runs_root, release)
+        selection = orch.scheduling()
+        pr_step = st.get_step("ccd", "localization_pr")
+        phase_complete = selection.phase("ccd").complete
+        if phase_complete:
+            C.elog(runs_root, release).log("ccd_watcher_settled", status="phase_complete")
+            return {
+                "status": "complete",
+                "release": release,
+                "phase_complete": True,
+                "reminded": False,
+                "cleanup_due": True,
+                "notifications": [],
+            }
+
+    # Summarize exact localization & Phase 1 status for the release owner.
+    pr_data = pr_step.data or {}
+    loc_data = loc_step.data or {}
+    if loc_step.status not in ("done", "skipped"):
+        loc_summary = "Localization pipeline (OneLoc #405133) has NOT been triggered yet."
+        loc_html = "<li><b>Localization:</b> OneLoc pipeline (#405133) has <b>not been triggered yet</b>.</li>"
+    elif pr_step.status == "in_flight":
+        bid = loc_data.get("build_id") or "?"
+        loc_summary = f"OneLoc build #{bid} is still running in ADO (PR not created yet)."
+        loc_html = f"<li><b>Localization:</b> OneLoc build <code>#{escape(str(bid))}</code> is still running in ADO.</li>"
+    elif pr_data.get("pr_id"):
+        pid = str(pr_data["pr_id"])
+        purl = str(pr_data.get("pr_url") or L.pr_url(pid))
+        pstat = str(pr_data.get("pr_status") or "active")
+        loc_summary = f"Localization PR #{pid} ({purl}) is open ({pstat}) and waiting to be merged."
+        loc_html = (
+            f"<li><b>Localization PR:</b> <a href=\"{escape(purl, quote=True)}\">PR #{escape(pid)}</a> "
+            f"is <b>not yet merged</b> (ADO status: <code>{escape(pstat)}</code>) &mdash; "
+            "merge it in Azure DevOps and re-run the check.</li>"
+        )
+    else:
+        detail = pr_step.note or "pending verification"
+        loc_summary = f"Localization verification needs attention: {detail}"
+        loc_html = f"<li><b>Localization:</b> {escape(str(detail))}</li>"
+
+    pending_steps = [
+        s.name
+        for s in orch.workflow.phase("ccd").steps
+        if not selection.step("ccd", s.id).complete
+    ]
+    steps_md = "\n".join(f"- {name}" for name in pending_steps)
+    steps_li = "".join(f"<li>{escape(name)}</li>" for name in pending_steps)
+    owner_name = _owner_label(st)
+
+    text_msg = (
+        f"**Code Complete Day Localization Reminder — {release}**\n\n"
+        f"{owner_name} — {loc_summary}\n\n"
+        f"**Pending Phase 1 (CCD) steps:**\n{steps_md}\n\n"
+        "Please open `/release-agent` in Scout (and merge the Localization PR if open) "
+        "to complete the pending Code Complete Day steps."
+    )
+    html_msg = (
+        f"<div style=\"font-family:-apple-system,Segoe UI,sans-serif;font-size:14px;color:#101828;\">"
+        f"<p><b>Code Complete Day Localization Reminder &mdash; {escape(release)}</b></p>"
+        f"<p>Hi {escape(owner_name)},</p>"
+        f"<ul>{loc_html}</ul>"
+        f"<p><b>Pending Phase 1 (Code Complete Day) steps:</b></p>"
+        f"<ul>{steps_li}</ul>"
+        f"<p>Please open <code>/release-agent</code> in Scout (and merge the Localization PR if open) "
+        f"to complete the pending steps.</p></div>"
+    )
+    subject = f"[Release {release}] Code Complete Day — Localization & Phase 1 Reminder"
+
+    slot_hour = (now_local.hour // 2) * 2
+    logical_id = f"ccd-watch:{release}:{ccd_date.isoformat()}:{slot_hour:02d}"
+    scope = {
+        "kind": "phase",
+        "phase": "ccd",
+        "date": ccd_date.isoformat(),
+        "release_matches": {"owner_email": st.owner_email, "ccd": st.ccd},
+    }
+
+    ncfg = notif.load_config(config)
+    ch = notif.channels(ncfg)
+    descriptors = []
+    if ch.get("email") and st.owner_email:
+        descriptors.append(
+            D.descriptor(
+                st,
+                logical_id,
+                scope,
+                "workiq_send_email",
+                {"to": [st.owner_email], "subject": subject, "body": html_msg, "isHtml": True},
+            )
+        )
+    if ch.get("teams"):
+        teams = notif.teams_delivery(ncfg, html_msg, text_msg, text_msg)
+        if teams:
+            tool = "m_send_teams_message" if teams["via"] == "scout_bot" else "workiq_send_chat_message"
+            payload = (
+                {"message": teams["text"]}
+                if teams["via"] == "scout_bot"
+                else {k: v for k, v in teams.items() if k != "via"}
+            )
+            descriptors.append(D.descriptor(st, logical_id, scope, tool, payload))
+
+    eligible = [item for item in descriptors if D.available(orch, item)]
+    offered = [D.offer(orch, item) for item in eligible]
+    if offered:
+        C.save_state(st, runs_root, release)
+
+    delivered = []
+    if deliver and eligible:
+        from orchestrator.commands.deliver_cmd import deliver_descriptor_items
+        delivered = deliver_descriptor_items(
+            runs_root,
+            release,
+            config,
+            eligible,
+            executor="ccd-watcher-agency-mcp",
+            mcp_caller=mcp_caller,
+        )
+
+    return {
+        "status": "reminded" if (delivered or offered) else "already_reminded_this_slot",
+        "release": release,
+        "phase_complete": False,
+        "localization_summary": loc_summary,
+        "pending_steps": pending_steps,
+        "reminded": bool(delivered if deliver else offered),
+        "cleanup_due": past_10pm,
+        "notifications": offered,
+        **({"delivered": delivered} if deliver else {}),
+    }
+
+
+def cmd_watch_ccd_localization(args):
+    now = None
+    if getattr(args, "now", None):
+        try:
+            now = datetime.fromisoformat(args.now.replace("Z", "+00:00"))
+            if now.tzinfo is None:
+                raise ValueError("timezone is required")
+        except ValueError:
+            print(_json.dumps({"error": f"bad --now: {args.now!r}"}))
+            return 1
+    if getattr(args, "deliver", False) and (now is not None or getattr(args, "as_of", None)):
+        print(_json.dumps({"error": "watch-ccd-localization --deliver requires the trusted current clock"}))
+        return 1
+    out = watch_ccd_localization(
+        args.runs_root,
+        args.release,
+        args.config,
+        now=now,
+        as_of=C.parse_as_of(args),
+        deliver=bool(getattr(args, "deliver", False)),
+    )
+    if getattr(args, "json", False):
+        print(_json.dumps(out))
+    else:
+        print(out.get("localization_summary") or out["status"])
     return 0
 
 
@@ -436,6 +671,8 @@ def register(sub):
     cl.add_argument("--complete", default=None,
                     choices=("true", "false"),
                     help="Whether the pipeline run status is completed; not its result")
+    cl.add_argument("--deliver", action="store_true",
+                    help="Immediately deliver any staged localization notifications via Agency MCP")
     cl.add_argument("--run-result", default=None, dest="run_result",
                     help="Exact ADO run result (succeeded/failed/canceled/etc.); missing is unknown")
     cl.add_argument("--logs-complete", action="store_true", dest="logs_complete",
@@ -452,3 +689,14 @@ def register(sub):
     cl.add_argument("--now", default=None, help="Override 'now' (ISO-8601) for elapsed/timeout math")
     cl.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     cl.set_defaults(func=cmd_check_localization)
+
+    wl = sub.add_parser(
+        "watch-ccd-localization",
+        help="2-hour CCD localization watcher (8 AM–10 PM on CCD): refresh PR status and remind owner if incomplete",
+    )
+    wl.add_argument("--release", required=True)
+    wl.add_argument("--now", default=None, help="Override 'now' (ISO-8601 with TZ) for preview/testing")
+    wl.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); preview only")
+    wl.add_argument("--deliver", action="store_true", help="Deliver due owner reminder silently via Agency MCP")
+    wl.add_argument("--json", action="store_true")
+    wl.set_defaults(func=cmd_watch_ccd_localization)

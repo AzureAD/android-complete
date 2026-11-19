@@ -1035,10 +1035,6 @@ def test_launch_routes_to_checked_command():
     assert action.tool == "launch-localization"
     assert "--auto-approve" in action.payload["followup_command"]
     assert "azure_devops-pipelines_run_pipeline" not in json.dumps(action.payload)
-    prompt = L.automation_prompt("checked-ado", {})
-    assert "--auto-approve" in prompt
-    assert "--review-hash" not in prompt and "--approved-by" not in prompt
-    assert "step-action" not in prompt
 
 
 def test_localization_auto_approve_launches_without_human_hash(launch_provider, memory, monkeypatch):
@@ -1053,13 +1049,14 @@ def test_localization_auto_approve_launches_without_human_hash(launch_provider, 
         "localization-automation",
     )
     plan = localization.plan_localization(args, orch)
+    expected_hash = W.review_hash(orch, "ccd", L.ID, plan)
     calls = []
 
     def trigger(operation):
         durable = snapshots[-1]["steps"]["ccd.localization"]
         assert durable["status"] == "in_flight"
         assert durable["execution"]["write_review"] == {
-            "hash": W.review_hash(orch, "ccd", L.ID, plan),
+            "hash": expected_hash,
             "approved_by": "localization-automation",
         }
         calls.append(operation)
@@ -1068,15 +1065,16 @@ def test_localization_auto_approve_launches_without_human_hash(launch_provider, 
     monkeypatch.setattr(provider, "trigger", trigger)
     assert localization.cmd_launch_localization(args) == 0
     step = orch.state.get_step("ccd", L.ID)
-    assert step.status == "in_flight"
+    assert step.status == "done" and step.execution is None
     assert step.data["build_id"] == "123"
-    assert args.review_hash == W.review_hash(orch, "ccd", L.ID, plan)
+    assert args.review_hash == expected_hash
     assert args.approved_by == "localization-automation"
     assert len(calls) == 1
 
 
 def test_auto_approve_uses_fixed_approver_not_executor(launch_provider, memory, monkeypatch):
     orch = make_orch("ccd", "localization")
+    _, snapshots = memory
     memory[0](orch)
     args = arguments(
         "launch-localization",
@@ -1086,11 +1084,18 @@ def test_auto_approve_uses_fixed_approver_not_executor(launch_provider, memory, 
         "runner-session",
     )
     plan = localization.plan_localization(args, orch)
-    monkeypatch.setattr(provider, "trigger", lambda operation: build_receipt(plan))
+
+    def trigger(operation):
+        durable = snapshots[-1]["steps"]["ccd.localization"]
+        assert durable["execution"]["owner"] == "runner-session"
+        assert durable["execution"]["write_review"]["approved_by"] == "localization-automation"
+        return build_receipt(plan)
+
+    monkeypatch.setattr(provider, "trigger", trigger)
     assert localization.cmd_launch_localization(args) == 0
     step = orch.state.get_step("ccd", L.ID)
-    assert step.execution["owner"] == "runner-session"
-    assert step.execution["write_review"]["approved_by"] == "localization-automation"
+    assert step.status == "done" and step.execution is None
+    assert step.data["last_write_review"]["approved_by"] == "localization-automation"
 
 
 def test_launch_checkpoints_before_only_trigger_and_recovers_no_payload(launch_provider, memory, monkeypatch):
@@ -1113,7 +1118,7 @@ def test_launch_checkpoints_before_only_trigger_and_recovers_no_payload(launch_p
     monkeypatch.setattr(provider, "trigger", trigger)
     assert localization.cmd_launch_localization(args) == 0
     step = orch.state.get_step("ccd", L.ID)
-    assert step.status == "in_flight" and step.data["build_id"] == "123"
+    assert step.status == "done" and step.execution is None and step.data["build_id"] == "123"
     assert "parameters" not in step.data and "operations" not in step.data
     assert localization.cmd_launch_localization(args) == 1
     assert len(calls) == 1

@@ -247,9 +247,8 @@ def validate_record_state(state, record):
             or not valid_links(completion.get("links", []))
             or not isinstance(completion.get("stamp", []), list)
             or any(not isinstance(k, str) for k in completion.get("stamp", []))
-            or completion.get("release_field") not in (None, "last_status_email_date")
-            or "checkpoint" in completion and not isinstance(completion["checkpoint"], str)
-            or completion.get("release_field") and not isinstance(completion.get("date"), str)):
+            or "release_field" in completion
+            or "checkpoint" in completion and not isinstance(completion["checkpoint"], str)):
         raise ValueError("Malformed notification completion evidence; owner recovery required")
     if (not isinstance(scope.get("step_matches", {}), dict)
             or not isinstance(scope.get("release_matches", {}), dict)

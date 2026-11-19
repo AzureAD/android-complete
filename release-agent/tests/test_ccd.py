@@ -72,15 +72,22 @@ def ccd_replay(tmp_path, monkeypatch, capsys):
     from tools import checks, localization as provider, pipelines as P
 
     rid, root = "2026-09", str(tmp_path)
-    clock = {"now": datetime.fromisoformat("2026-09-09T08:00:00-07:00")}
-    control = {"uncertain_launch": False, "writes": [], "receipts": {}}
+    clock = {"now": datetime.fromisoformat("2026-09-08T07:00:00-07:00")}
+    control = {
+        "uncertain_launch": False,
+        "writes": [],
+        "receipts": {},
+        "build_status": "inProgress",
+        "build_result": None,
+        "build_logs": _NO_PR_CREATE_TRUE_LOG,
+        "pr_status": "active",
+    }
     monkeypatch.setattr(schedule, "now_local", lambda _tz=None: clock["now"])
     monkeypatch.setattr(engine, "_now", lambda: clock["now"].astimezone(timezone.utc).isoformat())
     monkeypatch.setattr(delivery, "now_iso", lambda: clock["now"].astimezone(timezone.utc).isoformat())
     redirects = {
         "ccd.final_reminder": {"send_to": ["owner@example.test"]},
         "ccd.pr_reminder": {"send_to": "19:ccd-replay@thread.v2"},
-        "ccd.localization": {"send_to": "19:ccd-replay@thread.v2"},
     }
     monkeypatch.setattr(mocks, "load_mocks", lambda: deepcopy(redirects))
     monkeypatch.setattr(checks, "read_pipeline_variable",
@@ -97,9 +104,22 @@ def ccd_replay(tmp_path, monkeypatch, capsys):
             return True, deepcopy(definition), ""
         if "/refs?" in url:
             return True, {"value": [{"name": "refs/heads/main", "objectId": "a" * 40}]}, ""
+        if "/builds/123/timeline" in url:
+            return True, {"records": [{"name": "OneLocBuild@3", "log": {"id": 9}}]}, ""
         if "/builds/123" in url:
-            return True, deepcopy(control["receipts"][123]), ""
+            base = deepcopy(control["receipts"][123])
+            base["status"] = control["build_status"]
+            if control["build_result"] is not None:
+                base["result"] = control["build_result"]
+            return True, base, ""
+        if "/pullrequests/16790317" in url:
+            return True, {"pullRequestId": 16790317, "status": control["pr_status"], "mergeStatus": "succeeded"}, ""
         raise AssertionError(f"Unexpected fixture read: {url}")
+
+    def read_text(url, timeout):
+        if "/builds/123/logs/9" in url:
+            return True, control["build_logs"], ""
+        raise AssertionError(f"Unexpected fixture text read: {url}")
 
     def queue(url, method, content, timeout):
         assert method == "POST" and "/_apis/build/builds?" in url
@@ -117,6 +137,7 @@ def ccd_replay(tmp_path, monkeypatch, capsys):
         return True, {"id": 123}, ""
 
     monkeypatch.setattr(P, "_ado_rest_get", read)
+    monkeypatch.setattr(P, "_ado_rest_get_text", read_text)
     monkeypatch.setattr(P, "_ado_rest_send", queue)
     real_receipt_time = provider.receipt_time
     monkeypatch.setattr(provider, "receipt_time",
@@ -196,7 +217,7 @@ def test_ccd_phase_replay_without_waiting_or_running_preflight(ccd_replay, scena
     assert output["status"] == "scheduled" and output["scout_pending"] == []
     assert all(not client.load().is_done("ccd", sid)
                for sid in ("final_reminder", "pr_reminder", "localization"))
-    client.at("2026-09-09T09:00:00-07:00")
+    client.at("2026-09-09T07:00:00-07:00")
     for sid in ("final_reminder", "pr_reminder"):
         item, = client.result(
             "notification", "prepare", "--source", "step", "--phase", "ccd", "--step", sid,
@@ -205,10 +226,10 @@ def test_ccd_phase_replay_without_waiting_or_running_preflight(ccd_replay, scena
             {"to": ["owner@example.test"]}, {"chatId": "19:ccd-replay@thread.v2"})
         client.deliver(item, interrupt=sid == "final_reminder" and scenario == "no_strings")
         assert client.load().is_done("ccd", sid)
-    assert client.result("next", "--json")["status"] == "scheduled"
+    next_on_ccd = client.result("next", "--json")
+    assert "localization" in next_on_ccd["scout_pending"]
     assert not client.load().get_step("ccd", "localization").execution
 
-    client.at("2026-09-09T12:00:00-07:00")
     action = client.result("step-action", "--phase", "ccd", "--step", "localization")
     assert action["tool"] == "launch-localization"
     client.control["uncertain_launch"] = scenario == "uncertain_launch"
@@ -217,9 +238,9 @@ def test_ccd_phase_replay_without_waiting_or_running_preflight(ccd_replay, scena
         expected=2 if scenario == "uncertain_launch" else 0,
     )
     step = client.load().get_step("ccd", "localization")
-    execution_id = step.execution["id"]
     assert len(client.control["writes"]) == 1
     if scenario == "uncertain_launch":
+        execution_id = step.execution["id"]
         assert "uncertain" in launch["error"].lower()
         assert not step.data.get("build_id")
         client.result("launch-localization", "--execute", "--auto-approve",
@@ -227,71 +248,68 @@ def test_ccd_phase_replay_without_waiting_or_running_preflight(ccd_replay, scena
         assert len(client.control["writes"]) == 1
         client.result("record-localization-run", "--execution-id", execution_id, "--build-id", "123")
         step = client.load().get_step("ccd", "localization")
-    assert step.status == "in_flight" and step.data["build_id"] == "123"
-    assert step.data["run_url"].endswith("buildId=123")
-    target = client.result("check-localization", "--execution-id", execution_id)
-    assert target["decision"] == "poll_pipeline" and target["build_id"] == "123"
-    if scenario == "failed":
-        client.result("check-localization", "--execution-id", execution_id,
-                      "--complete", "true", "--run-result", "failed")
-        step = client.load().get_step("ccd", "localization")
-        assert step.status == "blocked" and step.execution["id"] == execution_id
-    elif scenario == "timeout":
-        client.at("2026-09-09T15:01:00-07:00")
-        decision = client.result("check-localization", "--execution-id", execution_id,
-                                 "--complete", "false")
-        assert decision["decision"] == "timeout"
-        assert client.load().get_step("ccd", "localization").status == "in_flight"
-        client.deliver(decision["notifications"][0])
-        assert client.load().get_step("ccd", "localization").status == "blocked"
-    elif scenario in ("omit_at_cutoff", "unknown_at_cutoff"):
-        client.at("2026-09-09T18:00:00-07:00")
-        decision = client.result(
-            "check-localization", "--execution-id", execution_id, "--complete", "true",
-            "--run-result", "succeeded", "--logs-complete", "--logs", _PR_LOG,
-            *(("--pr-status", "active") if scenario == "omit_at_cutoff" else ()))
-        step = client.load().get_step("ccd", "localization")
-        if scenario == "omit_at_cutoff":
-            assert decision["decision"] == "omit_unmerged"
-            assert step.status == "skipped" and step.execution is None
-            assert step.data["pr_status"] == "active"
-        else:
-            assert decision["decision"] == "wait_for_merge" and step.status == "in_flight"
-            current = client.result(
-                "check-localization", "--execution-id", execution_id, "--complete", "true",
-                "--run-result", "succeeded", "--pr-status", "completed")
-            assert current["decision"] == "merged"
-            step = client.load().get_step("ccd", "localization")
-            assert step.status == "done"
-        assert step.data["pr_id"] == "16790317"
-        assert step.data["pipeline_complete"] is True
-        assert step.data["last_checked"]
     else:
-        client.at("2026-09-09T13:00:00-07:00")
-        decision = client.result(
-            "check-localization", "--execution-id", execution_id, "--complete", "true",
-            "--run-result", "succeeded", "--logs-complete",
-            "--logs", _PR_LOG if scenario == "merged" else _NO_PR_CREATE_TRUE_LOG)
-        assert decision["decision"] == ("announce_pr" if scenario == "merged" else "announce_none")
-        assert client.load().get_step("ccd", "localization").status == "in_flight"
-        for notification in decision["notifications"]:
-            client.deliver(notification, interrupt=scenario == "no_strings")
-        if scenario == "merged":
-            client.at("2026-09-09T16:00:00-07:00")
-            warning = client.result(
-                "check-localization", "--execution-id", execution_id, "--complete", "true",
-                "--run-result", "succeeded", "--pr-status", "active")
-            assert warning["decision"] == "warn_unmerged"
-            for notification in warning["notifications"]:
-                client.deliver(notification)
-            client.at("2026-09-09T16:30:00-07:00")
-            merged = client.result(
-                "check-localization", "--execution-id", execution_id, "--complete", "true",
-                "--run-result", "succeeded", "--pr-status", "completed")
-            assert merged["decision"] == "merged"
-        step = client.load().get_step("ccd", "localization")
-        assert step.status == "done" and step.execution is None
-        assert step.data["last_write_review"]["execution_id"] == execution_id
+        execution_id = step.data["last_write_review"]["execution_id"]
+
+    # Step 3 (`ccd.localization`) completes immediately once the build receipt is attached!
+    assert step.status == "done" and step.execution is None and step.data["build_id"] == "123"
+    assert step.data["run_url"].endswith("buildId=123")
+
+    # Step 4 (`ccd.localization_pr`): initial check while pipeline is still running -> pending (`in_flight`).
+    after_trigger = client.result("next", "--json")
+    assert client.load().get_step("ccd", "localization_pr").status == "in_flight"
+    assert any(h["key"] == "ccd.localization_pr" and h["pollable"]
+               for h in after_trigger["work_dispatch"]["held_work"])
+
+    if scenario == "failed":
+        client.control.update(build_status="completed", build_result="failed")
+        client.call("task", "--phase", "ccd", "--step", "localization_pr", "--retry", expected=1)
+        assert client.load().get_step("ccd", "localization_pr").status == "blocked"
+    elif scenario == "timeout":
+        client.at("2026-09-09T10:30:00-07:00")
+        client.call("task", "--phase", "ccd", "--step", "localization_pr", "--retry", expected=1)
+        assert client.load().get_step("ccd", "localization_pr").status == "blocked"
+    else:
+        has_pr = scenario in ("merged", "omit_at_cutoff", "unknown_at_cutoff")
+        client.at("2026-09-09T08:00:00-07:00")
+        client.control.update(
+            build_status="completed",
+            build_result="succeeded",
+            build_logs=_PR_LOG if has_pr else _NO_PR_CREATE_TRUE_LOG,
+            pr_status="completed" if scenario == "merged" else "active",
+        )
+        if not has_pr:
+            # No PR generated -> immediately marked Done with clear no-PR-required message!
+            client.call("task", "--phase", "ccd", "--step", "localization_pr", "--retry")
+            pstep = client.load().get_step("ccd", "localization_pr")
+            assert pstep.status == "done" and pstep.data["no_strings"] is True
+            assert "No localization PR required" in pstep.note
+        elif scenario == "merged":
+            # PR generated and already merged -> immediately marked Done!
+            client.call("task", "--phase", "ccd", "--step", "localization_pr", "--retry")
+            pstep = client.load().get_step("ccd", "localization_pr")
+            assert pstep.status == "done" and pstep.data["pr_id"] == "16790317"
+            assert "merged" in pstep.note
+        elif scenario == "omit_at_cutoff":
+            # PR generated and NOT merged -> marked Blocked with PR link asking owner to merge & re-run,
+            # or owner can explicitly skip/waive!
+            client.call("task", "--phase", "ccd", "--step", "localization_pr", "--retry", expected=1)
+            pstep = client.load().get_step("ccd", "localization_pr")
+            assert pstep.status == "blocked" and pstep.data["pr_id"] == "16790317"
+            assert "merge the PR" in pstep.note
+            assert any("16790317" in link["url"] for link in pstep.links)
+            client.call("skip", "--phase", "ccd", "--step", "localization_pr", "--reason", "Omitted by owner")
+            assert client.load().get_step("ccd", "localization_pr").status == "skipped"
+        else:
+            # PR generated and NOT merged -> Blocked with PR link; owner merges PR and re-runs check -> Done!
+            client.call("task", "--phase", "ccd", "--step", "localization_pr", "--retry", expected=1)
+            pstep = client.load().get_step("ccd", "localization_pr")
+            assert pstep.status == "blocked" and pstep.data["pr_id"] == "16790317"
+            client.at("2026-09-09T14:30:00-07:00")
+            client.control["pr_status"] = "completed"
+            client.call("task", "--phase", "ccd", "--step", "localization_pr", "--retry")
+            pstep = client.load().get_step("ccd", "localization_pr")
+            assert pstep.status == "done" and pstep.data["pr_status"] == "completed"
 
     saved = client.load()
     assert {key: value for key, value in saved.steps.items() if key.startswith("preflight.")} == {
@@ -977,21 +995,100 @@ def test_localization_inflight_is_not_retriggered_by_release_worker():
 
 
 
-def test_automation_localization_poller_is_interval():
-    """The poller is an hourly INTERVAL automation; it shares ccd.localization
-    with the noon trigger, which is allowed. validate() stays clean."""
+def test_ccd_steps_are_purely_state_driven_without_dedicated_ccd_automations():
+    """Phase 1 (`ccd`) uses 4 clean steps plus the 8 AM–10 PM every-2h `ccd-localization-watcher`
+    (provisioned once Phase 1 is reached and auto-removed when Phase 1 completes or at 10 PM on CCD)."""
     from orchestrator import automations as A
     assert A.validate(CONFIG) == []
-    by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
-    poller = by["ccd-localization-poller"]
-    assert poller["interval"] == "1 hour"
-    assert (poller["schedule"] == "every 1 hour" and poller["one_shot"] is False
-            and poller["on_demand"] is True)
-    assert poller["steps"] == ["ccd.localization"]
-    # the noon trigger also drives localization (one-shot) — shared step is fine
-    assert by["ccd-noon"]["steps"] == ["ccd.localization"] and by["ccd-noon"]["one_shot"] is True
-    assert by["ccd-noon"]["cleanup_when"] == [
-        "step_flag:ccd.localization:started_at", "steps_done", "phase_done:ccd"]
+    by = {
+        a["slug"]: a
+        for a in A.plan(
+            CONFIG,
+            "2026-09",
+            "2026-09-09",
+            owner_timezone="America/Los_Angeles",
+            scheduler_timezone="America/Los_Angeles",
+        )["automations"]
+    }
+    assert "ccd-morning" not in by
+    assert "ccd-noon" not in by
+    drain = by["morning-step-drain"]
+    assert drain["daily_at"] == "07:00" and drain["one_shot"] is False and drain["optional"] is True
+    watcher = by["ccd-localization-watcher"]
+    assert watcher["schedule"] == "cron: 0 8-22/2 9 9 *"
+    assert watcher["one_shot"] is False and watcher["on_demand"] is True
+    assert watcher["provision_when"] == "phase_reached:ccd"
+    assert watcher["cleanup_when"] == ["phase_done:ccd", "ccd_after:22:00"]
+    assert watcher["steps"] == ["ccd.localization", "ccd.localization_pr"]
+
+
+def test_ccd_localization_watcher_lifecycle_reminds_settles_and_retires_at_10pm(ccd_replay):
+    """End-to-end check of the Phase 1 `ccd-localization-watcher` automation:
+    1. Surfaced via `ccd_watcher_setup` right when Phase 1 is reached.
+    2. At 8:00 AM on CCD when localization hasn't started yet -> reminds owner.
+    3. When PR #16790317 is open & unmerged at 10:00 AM -> reminds owner with PR link.
+    4. At 10:00 PM on CCD -> `cleanup_plan` marks it for deletion even if Phase 1 is still open.
+    5. When PR #16790317 merges in ADO -> `watch-ccd-localization` marks `localization_pr` Done
+       automatically with `reminded: False`, and `cleanup_plan` marks it for deletion immediately."""
+    from datetime import datetime
+    from orchestrator import automations as A
+    from orchestrator.commands.localization import watch_ccd_localization
+
+    client = ccd_replay
+    # 1. Phase 1 reached on 2026-09-08 (before CCD) -> `ccd_watcher_setup` surfaced once!
+    rep0 = client.result("status", "--json")
+    hint = rep0["ccd_watcher_setup"]
+    assert hint["slug"] == "ccd-localization-watcher"
+    assert "cron:" in hint["schedule"]
+    client.result(
+        "automation",
+        "record-setup",
+        "--slug",
+        "ccd-localization-watcher",
+        "--id",
+        "watcher-auto-id",
+        "--json",
+    )
+    assert "ccd_watcher_setup" not in client.result("status", "--json")
+
+    # 2. 8:00 AM on CCD before localization has started -> stages owner reminder!
+    t_8am = datetime.fromisoformat("2026-09-09T08:00:00-07:00")
+    client.at("2026-09-09T08:00:00-07:00")
+    w8 = watch_ccd_localization(client.root, client.rid, CONFIG, now=t_8am)
+    assert w8["status"] == "reminded" and w8["reminded"] is True and not w8["cleanup_due"]
+    assert "NOT been triggered yet" in w8["localization_summary"]
+
+    # Complete reminders + launch localization -> open unmerged PR #16790317 at 10:00 AM
+    for sid in ("final_reminder", "pr_reminder"):
+        item, = client.result(
+            "notification", "prepare", "--source", "step", "--phase", "ccd", "--step", sid
+        )["notifications"]
+        client.deliver(item)
+    client.result("launch-localization", "--execute", "--auto-approve", "--executor", "test")
+    client.control.update(build_status="completed", build_result="succeeded", build_logs=_PR_LOG, pr_status="active")
+
+    t_10am = datetime.fromisoformat("2026-09-09T10:00:00-07:00")
+    client.at("2026-09-09T10:00:00-07:00")
+    w10 = watch_ccd_localization(client.root, client.rid, CONFIG, now=t_10am)
+    assert w10["status"] == "reminded" and "16790317" in w10["localization_summary"]
+    assert client.load().get_step("ccd", "localization_pr").status == "blocked"
+
+    # 4. At 10:00 PM on CCD while still unmerged -> `cleanup_plan` retires `ccd-localization-watcher`!
+    from orchestrator.registry import AutomationRegistry
+    entries = AutomationRegistry(client.root, client.rid).list(release=client.rid)
+    t_10pm = datetime.fromisoformat("2026-09-09T22:00:00-07:00")
+    cleanup_at_10pm = A.cleanup_plan(client.load(), entries, CONFIG, now=t_10pm)
+    assert [r["id"] for r in cleanup_at_10pm["removals"]] == ["watcher-auto-id"]
+    assert "22:00" in cleanup_at_10pm["removals"][0]["reason"]
+
+    # 5. If owner merges PR #16790317 in ADO at 12:00 PM -> `watch-ccd-localization` settles Phase 1 with no nag!
+    t_noon = datetime.fromisoformat("2026-09-09T12:00:00-07:00")
+    client.at("2026-09-09T12:00:00-07:00")
+    client.control["pr_status"] = "completed"
+    w12 = watch_ccd_localization(client.root, client.rid, CONFIG, now=t_noon)
+    assert w12["status"] == "complete" and w12["phase_complete"] is True and w12["reminded"] is False
+    cleanup_on_done = A.cleanup_plan(client.load(), entries, CONFIG, now=t_noon)
+    assert [r["id"] for r in cleanup_on_done["removals"]] == ["watcher-auto-id"]
 
 
 
@@ -1012,12 +1109,15 @@ def test_ccd_phase_not_due_before_ccd_and_no_scout_pending():
     assert r["status"] == "scheduled"
     assert r["scout_pending"] == [], r["scout_pending"]
     assert next(p["done"] for p in r["phases"] if p["id"] == "ccd") == 0
-    # advance the clock to the CCD → Phase 1 opens and its scout steps become pending
+    # advance the clock to the CCD → Phase 1 opens and its initial scout steps become pending
     orch.as_of = date(2026, 8, 26)
     orch.run_until_gate()
     r2 = orch.status_report()
     assert r2["current_phase"] == "ccd"
-    assert r2["scout_pending"] == [s.id for s in orch.workflow.phase("ccd").steps]
+    assert r2["scout_pending"] == [
+        s.id for s in orch.workflow.phase("ccd").steps
+        if s.kind.value == "external" and not s.depends_on
+    ]
 
 
 @pytest.mark.parametrize("result,logs,complete_log,confirmation,expected", [
@@ -1147,12 +1247,9 @@ def test_localization_block_requires_reopen_and_preserves_run_history(
     assert lc.cmd_record_localization_run(receipt) == 0  # Idempotent receipt, not a second refresh.
     receipt.build_id = "3"
     assert lc.cmd_record_localization_run(receipt) == 1  # Same refresh cannot replace the owned run.
-    saved, resumed = C.load_orch(root, rid, CONFIG,
-                                datetime.fromisoformat("2026-09-09T23:00:00+00:00"))
-    action.reserve, action.execution_id = False, new_execution
-    poll = prepare_step(action, saved, resumed)
-    assert poll["tool"] == "check-localization"
-    assert poll["payload"]["execution_id"] == new_execution
+    saved, _ = C.load_orch(root, rid, CONFIG,
+                           datetime.fromisoformat("2026-09-09T23:00:00+00:00"))
+    assert saved.get_step("ccd", "localization").status == "done"
     assert saved.get_step("ccd", "localization").data["build_id"] == "2"
 
 

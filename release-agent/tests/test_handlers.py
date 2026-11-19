@@ -466,14 +466,14 @@ def test_external_gate_requires_each_recovery_hook(hook):
 
 
 def test_workflow_metadata_is_detached_and_recursively_frozen():
-    config = _config(implementation="dummy", maps_to=["one"])
+    config = _config(implementation="dummy", required_tools=["az"])
     workflow = WorkflowDefinition.compile(config)
     catalog = HandlerCatalog.compile(workflow, lambda phase, step: None)
     config["phases"][0]["steps"][0]["name"] = "Replacement"
-    config["phases"][0]["steps"][0]["maps_to"].append("two")
+    config["phases"][0]["steps"][0]["required_tools"].append("gh")
     handler = catalog.get("phase", "work")
     assert "Test operation" in handler.build(_context(handler)).reason
-    assert handler.definition.raw["maps_to"] == ("one",)
+    assert handler.definition.raw["required_tools"] == ("az",)
     assert workflow.phases[0].raw["steps"][0]["name"] == "Test operation"
     with pytest.raises(TypeError):
         handler.definition.raw["name"] = "Replacement"

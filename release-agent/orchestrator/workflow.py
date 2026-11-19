@@ -83,6 +83,7 @@ def normalize_workflow_config(config: Any, resolver=None) -> Any:
             continue
         pid = raw_phase.get("id")
         p_copy = dict(raw_phase)
+        p_copy.setdefault("execution", "parallel")
         norm_steps = []
         for raw_step in raw_phase["steps"]:
             if (
@@ -96,6 +97,8 @@ def normalize_workflow_config(config: Any, resolver=None) -> Any:
             else:
                 step_copy = dict(raw_step) if isinstance(raw_step, Mapping) else raw_step
             if isinstance(step_copy, dict):
+                step_copy.setdefault("depends_on", [])
+                step_copy.setdefault("required_tools", [])
                 if step_copy.get("kind") == StepKind.APPROVAL_GATE.value and "gate" not in step_copy:
                     step_copy["gate"] = True
                 elif step_copy.get("kind") == StepKind.ATTESTATION.value and "attest" not in step_copy:
@@ -199,7 +202,7 @@ class WorkflowDefinition:
             _reject_unknown_keys(
                 raw_phase,
                 {
-                    "id", "name", "checklist_phase", "anchor", "execution",
+                    "id", "name", "anchor", "execution",
                     "steps", "show_pipeline_runs", "conditional",
                 },
                 f"phase {phase_id}",
@@ -248,7 +251,7 @@ class WorkflowDefinition:
                     {
                         "id", "name", "kind", "owner", "source", "gate",
                         "attest", "depends_on", "required_tools", "requires_approval",
-                        "maps_to", "approval_command",
+                        "approval_command",
                         "write_command", "write_precondition", "manual_result", "repeatable",
                         "pollable", "refresh_invalidation", "effect_mode",
                         "effect_recovery", "effect_retry", "implementation",

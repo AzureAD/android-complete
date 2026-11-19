@@ -10,7 +10,7 @@ The agent handles those details from actual engine/tool responses.
 |---|---|
 | Discover paths/releases | `paths --json`; `list --json` |
 | Contextual command guide & `/release-agent` launcher | `commands [--release <id>] [--json]` |
-| Initialize interactively | `init --release <id> --json` |
+| Initialize release | `init --release <id> --json` |
 | Inspect local state | `status --release <id> [--details] [--json]` |
 | Execute one operation | `task --release <id> --phase <p> --step <s> [--param name=value]` |
 | Fresh attempt with changed inputs | `rerun --release <id> --phase <p> --step <s> --reason "<owner request>" [--param key=value]` |
@@ -26,7 +26,10 @@ The agent handles those details from actual engine/tool responses.
 | Required readiness | `checklist --release <id> --attest-prompt --json` |
 | Record named readiness confirmations | `sign --release <id> --item <id> --note "<owner confirmation>"` |
 | Optional setup diagnostics | `onboarding --json` |
-| Select execution mode | `set-mode --release <id> --mode interactive|unattended` |
+| Heartbeat / morning drain + digest | `tick --release <id> [--deliver] --json` |
+| CCD 2-hour localization check & owner reminder | `watch-ccd-localization --release <id> [--deliver] --json` |
+| Record one-time accelerator setup | `automation record-setup --release <id> --slug <slug> [--id <id> \| --skipped "<reason>"] --json` |
+| Plan / inspect optional accelerators | `automation plan --release <id> --json`; `automation obligations --release <id> --json` |
 
 `done` aliases fact recording. Low-level commands remain atomic; by default the
 conversation adapter continues through `next --json` and `work_dispatch` after
@@ -159,18 +162,19 @@ exact adoption review. Schema 5/contract 4 do not migrate older runs.
   separate as defined by the compiled source/configuration. Use the owning preview
   for plan repair; preserve original create/results and manual histories.
 
-## Structured reads and optional workers
+## Structured reads and optional background accelerators
 
 `workiq-read --scout-root <profile> --account <owner> --entity-url '<exact path>'`
-uses the verified native wrapper and literal arguments. Reuse its fresh discovery
-descriptor with `--route-file` across pagination. Stale/changed routes require
-rediscovery; denied reads never trigger alternate-account/transport fallback.
+uses Agency MCP (`agency.exe mcp workiq`) as primary and the verified local CLI wrapper
+as fallback, keeping arguments literal. Denied reads (`401`/`403`) never trigger
+alternate-account or transport fallback.
 
-Unattended mode alone provisions workers. Use canonical `automation plan`,
-fresh complete provider observations, `reconcile-create --ensure --claim`, and
-the owning creation receipt. Reuse exact workers or recreate only a proven-absent
-settled generation. Unknown operations retain ownership. Cleanup uses its checked
-claim/result protocol, not direct registry deletion.
+Release execution uses a single unified state-driven model with no mode split.
+Optional background accelerators (such as `morning-step-drain`) are non-blocking and
+never required to start or advance a release; when explicitly requested, provision them
+via `automation plan`, fresh provider observations, `reconcile-create --ensure --claim`,
+and `create-result`, and never auto-recreate disabled or deleted automations. Cleanup uses
+its checked claim/result protocol, not direct registry deletion.
 
 The engine journals operational outcomes. Journal owner decisions only when they
 are not already captured by the owning command; never announce internal logging

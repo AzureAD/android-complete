@@ -126,8 +126,15 @@ def _classify_external_fix(
                 f"{clean_reason} Verify telemetry ingestion for the current RC build and re-run, "
                 "or waive with `skip` if approved.",
             )
+        if step_id == "localization_pr":
+            return (
+                "Azure DevOps — Localization Pull Request (OneLoc)",
+                f"{clean_reason} Open the linked Localization PR in Azure DevOps, review and merge it, "
+                f"then click 'Fixed — retry' (`task --release {release_id} --phase ccd --step localization_pr --retry`) "
+                "— or override with `complete-manually` / `skip`.",
+            )
         if step_id in (
-            "cron", "checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
+            "localization", "cron", "checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
             "auth_ecs", "verify_pub", "verify_release_notes", "identify_auth_build",
         ):
             return (

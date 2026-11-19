@@ -25,6 +25,10 @@ class AgencyTransportUnavailableError(RuntimeError):
     """Raised when `agency.exe` is absent or its MCP stdio server fails to start/respond."""
 
 
+class AgencyAmbiguousDeliveryError(RuntimeError):
+    """Raised when `tools/call` was dispatched over stdio and timed out or exited before replying."""
+
+
 def resolve_agency_exe(explicit: str | None = None) -> str:
     """Locate a working `agency.exe` binary on this machine."""
     import shutil
@@ -141,7 +145,10 @@ def call_mcp_tool(
             "method": "tools/call",
             "params": {"name": tool_name, "arguments": arguments},
         })
-        call_resp = _recv(2)
+        try:
+            call_resp = _recv(2)
+        except RuntimeError as exc:
+            raise AgencyAmbiguousDeliveryError(str(exc)) from exc
         return _unwrap_mcp_result(server, tool_name, call_resp)
     finally:
         try:

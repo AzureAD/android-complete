@@ -1,16 +1,8 @@
-"""Step: `final_status_email` — send the CLOSING partner status email + close the channel
-(Phase 4, finalize; the LAST step).
-
-The daily status email (an hourly owner-local 17:00-guarded automation) covers
-Phase 2 through Phase 4. This terminal step guarantees the FINAL status email goes out when
-Phase 4 completes — even if Phase 4 and Phase 5 land on the same day, when the daily automation
-might not fire again — and signals the skill to tear the daily automation down so no status
-emails leak into Phase 5+.
+"""Step: `final_status_email` — send the CLOSING partner status email (Phase 4, finalize).
 
 Scout-assisted: `build()` composes the closing email (the Phase-4-complete snapshot) and returns
-NeedsSkill(workiq_send_email); the generic notification protocol completes it after delivery.
-After acknowledgement, claimed cleanup retires the daily partner status-email automation
-(`<release> · Phases 2–4 — daily status email`; see the finalize phase reference / knowledge).
+NeedsSkill(workiq_send_email); Python's Agency MCP delivery (`deliver-step` / `next --deliver`)
+sends it silently and records completion.
 
 Mock knobs (mocks.local.yaml / tests):
   send_to : redirect recipients to these address(es) (owner → you) for a test send.
@@ -25,7 +17,7 @@ from steps.lib.mockctx import MISSING
 STATUS_EMAIL = True
 ID = "final_status_email"
 KIND = "scout"
-NAME = 'Send the closing partner status email + close the daily automation'
+NAME = 'Send the closing partner status email'
 REQUIRED_TOOLS = ('workiq',)
 REQUIRES_APPROVAL = False
 NOTIFICATION = True
@@ -70,39 +62,25 @@ def build(context: StepContext):
         },
         record_as=ID,
         summary=f"Send the CLOSING {month_year} status email to "
-                f"{len(recipients)} recipient(s) + close the daily status automation",
-        note="final status email (Phase 4 complete); run automation cleanup, claim-delete, then delete-result; stop on any barrier or uncertainty",
+                f"{len(recipients)} recipient(s)",
+        note="final status email (Phase 4 complete)",
         outbound=True,
-        notification={"completion": {"note": "Closing partner status email delivered; channel closed."}},
+        notification={"completion": {"note": "Closing partner status email delivered."}},
     )
 
-KNOWLEDGE = {'summary': 'Send the closing partner status email and shut down the daily status automation.',
- 'what': 'The partner-facing DAILY status email (a weekday automation running `status-email`) '
-         'covers Phase 2 through Phase 4. This terminal Phase-4 step guarantees the FINAL '
-         'status email — the Phase-4-complete snapshot — goes out when finalize completes, '
-         'even if Phase 4 and Phase 5 land on the same day (when the daily automation might '
-         'not fire again), and signals that the daily automation should be torn down so no '
-         'status emails leak into Phase 5+.\n',
- 'who': 'Scout composes it (a scout step) and sends it via WorkIQ to the release DLs '
-        "(notifications.yaml beside the invocation's phases.yaml, status_email.recipients). An "
+KNOWLEDGE = {'summary': 'Send the closing partner status email when Phase 4 completes.',
+ 'what': 'Terminal Phase-4 step that sends the Phase-4-complete partner status email '
+         'summarizing finalized versions, Maven publishing, and rollout readiness.\n',
+ 'who': 'Scout composes it and delivers it automatically in Python via Agency MCP to the release '
+        "DLs (notifications.yaml beside the invocation's phases.yaml, status_email.recipients). An "
         'isolated test configuration is respected; the canonical production recipients are not '
         'a fallback. The `send_to` mock remains an explicit recipient override.\n',
  'where': ['recipients: config/notifications.yaml status_email.recipients (authsdkrelease@, '
            'androididentity@)',
-           'template: orchestrator/status_email.py (same as the daily email)'],
- 'how': 'Runs via `notification prepare --release <id> --source step --phase finalize --step '
-        'final_status_email`. Claim the exact snapshot and acknowledge confirmed delivery with '
-        '`notification result`; only then does the step complete and close the channel. Always '
-        'run `automation cleanup --release <id> --json`; delete the returned daily status '
-        'automation with `m_delete_automation`, and deregister only after deletion succeeds. '
-        'RC milestones use rc_report_notify and rc_report_gate. To test, configure isolated '
+           'template: orchestrator/status_email.py'],
+ 'how': 'Delivered automatically via `deliver-step --release <id> --phase finalize --step '
+        'final_status_email --json` (or `next --deliver`), which claims the exact snapshot, '
+        'sends via Agency MCP, and acknowledges confirmed delivery. To test, configure isolated '
         'recipients or set the `send_to` mock to your own address.\n',
- 'faqs': [{'q': "Won't this double-send with the daily automation?",
-           'a': 'The daily automation is idempotent per day (last_status_email_date), and its '
-                'window ends at Phase 5. The terminal step is the guaranteed CLOSING send; at '
-                'worst you get a morning daily + the closing email on the last day, which is '
-                'intended.'},
-          {'q': 'Who tears down the daily automation?',
-           'a': 'The central cleanup plan makes it eligible after Phase 4 completes. The skill '
-                'deletes the live automation first and deregisters it after success; '
-                'release-close cleanup is the backstop.'}]}
+ 'faqs': [{'q': 'How can I redirect this email during testing?',
+           'a': 'Set `finalize.final_status_email.send_to` in `mocks.local.yaml` to your own email address.'}]}

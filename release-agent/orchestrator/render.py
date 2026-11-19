@@ -188,26 +188,6 @@ def readiness_table(chk: dict, release_id: str) -> str:
         lines.append("**Outstanding:** " + ", ".join(pending))
     if not chk["signed"]:
         lines.extend(["", readiness_followup(chk, release_id)])
-    startup = chk.get("startup_automation")
-    if startup is not None and not startup["complete"]:
-        dispatch = chk.get("dispatch") or {}
-        queued_startup = {
-            item["key"].split(":", 1)[1]
-            for item in dispatch.get("pending_work", [])
-            if item.get("kind") == "automation" and isinstance(item.get("key"), str)
-            and item["key"].startswith("automation:")
-        }
-        lines.extend(["", "**Startup incomplete — the release-wide automation is not active.**"])
-        lines.extend(f"- **{_cell(item.get('name') or item['slug'])}**: startup automation must be provisioned by the AI agent."
-                     for item in startup["required"])
-        lines.extend(
-            f"- **{_cell(item.get('name') or item['slug'])}**: queued below for startup recovery."
-            for item in startup["recoveries"] if item["slug"] in queued_startup)
-        lines.extend(
-            f"- **{_cell(item.get('name') or item['slug'])}**: {item['status']}; preserve its existing ownership and reconcile. "
-            f"Run `{item['command']}`."
-            for item in startup["recoveries"] if item["slug"] not in queued_startup)
-        lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
     if not (chk.get("dispatch") or {}).get("continue_automatically"):
         lines.extend([
             "",
@@ -291,6 +271,10 @@ def attest_prompt_payload(chk: dict, release_id: str) -> dict:
         **plan,
         "release": release_id,
         "display_markdown": readiness_table(chk, release_id),
+        "render_instruction": (
+            "Emit display_markdown directly as raw live Markdown in your reply "
+            "(starting directly with ### Readiness Entry Gate) — NEVER wrap it in ```markdown or ``` code fences!"
+        ),
     }
     if plan["next_action"] not in ("attest", "complete"):
         reason = ("auto checks pending: " + ", ".join(i["id"] for i in plan["pending_auto_checks"])
@@ -428,23 +412,6 @@ def work_followup(plan: dict) -> str:
                 lines.append(f"- `{key}` is `{status}`{tail}.")
     if plan.get("pending_work") or plan.get("deferred_work"):
         lines.append("Scout must finish these actions before control can return to you.")
-    startup = plan.get("startup_automation")
-    if startup is not None and not startup["complete"]:
-        queued_startup = {
-            item["key"].split(":", 1)[1]
-            for item in plan.get("pending_work", [])
-            if item.get("kind") == "automation" and isinstance(item.get("key"), str)
-            and item["key"].startswith("automation:")
-        }
-        lines.append("**Unattended startup is NOT complete.**")
-        lines.extend(
-            f"- **{_cell(item.get('name') or item['slug'])}**: queued below for startup recovery."
-            for item in startup["recoveries"] if item["slug"] in queued_startup)
-        lines.extend(
-            f"- **{_cell(item.get('name') or item['slug'])}**: {item['status']}; owning automation recovery is required. "
-            f"Run `{item['command']}`."
-            for item in startup["recoveries"] if item["slug"] not in queued_startup)
-        lines.extend(f"- {_cell(problem)}" for problem in startup["problems"])
     return "\n".join(lines)
 
 
@@ -452,19 +419,15 @@ def status_brief(r: dict) -> str:
     """Local inspection result; the full checklist is an explicit detail view."""
     focus = r.get("gate") or r.get("action") or {}
     next_step = focus.get("step_name") or r.get("current_step_name")
-    label = ("Unattended setup needed" if r["status"] == "automation"
-             else _STATE_LABEL.get(r["status"], r["status"]))
+    label = _STATE_LABEL.get(r["status"], r["status"])
     lines = [
-        f"Release {r['release_id']} ({r.get('execution_mode', 'interactive')})",
+        f"Release {r['release_id']}",
         f"Checklist: {r['done']}/{r['total']} ({r['percent']}%). "
         + label,
     ]
     if r.get("current_phase_name"):
         lines.append(f"Phase: {r['current_phase_name']}")
-    startup = r.get("startup_automation")
-    if startup is not None and not startup["complete"]:
-        lines.append("Next: reconcile the unattended worker, or select interactive mode with set-mode.")
-    elif r.get("readiness") and not r["readiness_signed"]:
+    if r.get("readiness") and not r["readiness_signed"]:
         pending = [item["label"] for item in r["readiness"]["items"]
                    if not item["satisfied"]]
         if pending:
@@ -541,9 +504,6 @@ def status_view(r: dict) -> str:
                      "Resolve it, or hand the release to someone who can.")
     elif not r["readiness_signed"]:
         lines.append("▣ **Entry gate** — the readiness checklist isn't signed yet.")
-    elif r.get("startup_automation") and not r["startup_automation"]["complete"]:
-        lines.append("⏸ **Startup incomplete — the required release-wide driver is not active.** "
-                     "Provision or reconcile it before phase execution; the release is not running unattended.")
     elif r.get("scheduled"):
         sc = r["scheduled"]
         when = _delta_phrase(sc.get("opens_in_days"))
@@ -678,8 +638,7 @@ def status_view(r: dict) -> str:
                         lines.append(f"🔗 [{l.get('name', 'link')}]({l['url']})  ")
 
     plan = r.get("work_dispatch") or {}
-    if (plan.get("pending_work") or plan.get("deferred_work")
-            or plan.get("startup_automation") and not plan["startup_automation"]["complete"]):
+    if plan.get("pending_work") or plan.get("deferred_work"):
         lines.extend(["", work_followup(plan)])
     if not plan.get("continue_automatically"):
         lines.extend(_quick_commands_footer(r))

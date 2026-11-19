@@ -33,7 +33,7 @@ REQUIREMENTS_CONFIG = os.path.join(ROOT, "config", "requirements.yaml")
 DEFAULT_RUNS_ROOT = os.path.join(os.path.dirname(ROOT), ".release-runs")
 
 # ---- inter-process state lock ----
-_LOCK_TIMEOUT = 30.0    # max seconds to wait for another CLI process to release
+_LOCK_TIMEOUT = 120.0   # max seconds to wait for a concurrent background/interactive CLI process
 _LOCKED_STATE = ContextVar("locked_release_state", default=None)
 
 
@@ -167,7 +167,7 @@ def emit(runs_root: str, release: str, text: str, kind: str = "message", options
 # ---- advancing the loop (shared by next / approve / done) ----
 TAGS = {"ran": "[ok]", "gate": "[gate]", "reminder": "[action]", "scheduled": "[scheduled]",
         "complete": "[done]", "idle": "[--]", "readiness": "[entry-gate]",
-        "blocked": "[BLOCKED]", "halted": "[HALTED]", "automation": "[startup-automation]"}
+        "blocked": "[BLOCKED]", "halted": "[HALTED]"}
 
 
 def log_actions(el: EventLog, actions, state=None):
@@ -182,7 +182,6 @@ def log_actions(el: EventLog, actions, state=None):
         "ran": "step_ran", "gate": "gate_hold", "reminder": "reminder_hold",
         "scheduled": "scheduled_hold", "readiness": "readiness_hold",
         "blocked": "blocked_hold", "halted": "halted_hold", "complete": "release_complete",
-        "automation": "startup_automation_hold",
     }
     for a in actions:
         name = events.get(a.kind)
@@ -219,6 +218,8 @@ def guided_followup(orch, report=None) -> dict:
         result["display_markdown"] = report["display_markdown"]
     if report.get("owner_prompt") is not None:
         result["owner_prompt"] = report["owner_prompt"]
+    if report.get("ccd_watcher_setup") is not None:
+        result["ccd_watcher_setup"] = report["ccd_watcher_setup"]
     return result
 
 

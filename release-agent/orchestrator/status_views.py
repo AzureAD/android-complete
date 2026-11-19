@@ -103,9 +103,13 @@ class StatusViewMixin:
                     "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_attest or s_blocked)),
                 })
             opens = selection.phase(phase["id"]).opens
+            phase_idx = next(
+                (i for i, p in enumerate(self.config["phases"]) if p["id"] == phase["id"]),
+                0,
+            )
             return {
                 "id": phase["id"], "name": phase["name"],
-                "num": phase.get("checklist_phase"),
+                "num": phase.get("checklist_phase", phase_idx),
                 "show_pipeline_runs": bool(phase.get("show_pipeline_runs")),
                 "done": done, "total": len(steps),
                 "due": selection.phase(phase["id"]).due, "started": done > 0,
@@ -357,15 +361,50 @@ class StatusViewMixin:
         # until its wall-clock time arrives, so the every-hour worker doesn't fire it early
         # — its dedicated cron automation runs it at the pinned time.
         scout_pending = list(selection.scout_pending)
-        from orchestrator.dispatch import (
-            phase_plan, startup_plan, with_startup, startup_checklist, decorate_handoff_contract,
-        )
-        startup = startup_plan(self, selection)
-        work_dispatch = with_startup(phase_plan(self, selection, chk), startup)
-        chk = startup_checklist(chk, work_dispatch)
+        from orchestrator.dispatch import phase_plan, decorate_handoff_contract
+        from orchestrator.release_contract import DispatchAction
+        work_dispatch = phase_plan(self, selection, chk)
+        ccd_watcher = None
+        if chk["signed"] and current_phase == "ccd" and self.automation_entries is not None:
+            from orchestrator.commands.automation import ccd_watcher_setup_hint
+            ccd_watcher = ccd_watcher_setup_hint(
+                self.automation_entries(),
+                self.state.release_id,
+                self.config_path,
+                self.state,
+                selection,
+                now=self.now_local,
+            )
+            if ccd_watcher is not None:
+                setup_task = {
+                    "key": "setup:ccd-localization-watcher",
+                    "phase": "ccd",
+                    "step": "ccd-localization-watcher",
+                    "name": f"Set up CCD localization check & reminder ({ccd_watcher['schedule']})",
+                    "kind": "scout",
+                    "requires_approval": False,
+                    "outbound_notification": False,
+                    "depends_on": [],
+                    "required_tools": [],
+                    "command": ccd_watcher["plan_command"],
+                    "record_command": ccd_watcher["record_command"],
+                    "skip_command": ccd_watcher["skip_command"],
+                    "instruction": ccd_watcher["instruction"],
+                }
+                work_dispatch = {
+                    **work_dispatch,
+                    "pending_work": [setup_task, *work_dispatch["pending_work"]],
+                    "next_action": DispatchAction.RUN_PHASE_WORK.value,
+                    "continue_automatically": True,
+                    "may_return_to_user": False,
+                    "instruction": (
+                        "Complete the one-time Phase 1 `ccd-localization-watcher` automation setup in "
+                        "`pending_work` (via `automation plan` -> `m_create_automation` -> "
+                        "`automation record-setup`) before returning to the owner."
+                    ),
+                }
         report = {
             "release_id": self.state.release_id,
-            "execution_mode": self.state.execution_mode,
             "completion_provenance": self._completion_provenance(selection),
             "task_attempts": {
                 key: {"id": attempt["id"], "mode": attempt["mode"], "by": attempt["by"],
@@ -389,7 +428,6 @@ class StatusViewMixin:
             "readiness": chk,
             "readiness_dispatch": readiness_dispatch,
             "work_dispatch": work_dispatch,
-            "startup_automation": startup,
             "readiness_pending": [i["id"] for i in chk["items"]
                                   if not i["satisfied"]],
             "blocked": chk["blocked"] or bool(revision_problem),
@@ -419,4 +457,7 @@ class StatusViewMixin:
             ],
             "updated_at": self.state.updated_at,
         }
-        return decorate_handoff_contract(report)
+        decorated = decorate_handoff_contract(report)
+        if ccd_watcher is not None:
+            decorated["ccd_watcher_setup"] = ccd_watcher
+        return decorated

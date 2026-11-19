@@ -353,7 +353,6 @@ def test_init_directs_readiness_now_even_before_phase_zero(tmp_path, monkeypatch
     output = capsys.readouterr().out
     assert "Next required readiness" in output
     assert "checklist --release 2026-11 --attest-prompt --json" in output
-    assert "no background worker is required or created" in output
     assert "No phase work or release approval has run" in output
     assert "Until then nothing fires" not in output
     state = ReleaseState.load(str(tmp_path / args.release / "release-state.json"))
@@ -385,9 +384,9 @@ def test_init_json_persists_once_and_hands_off_to_entry_gate(
     assert output["ccd_conflict"] == ("2026-11-18" if override == "2026-11-18" else None)
     assert output["phase0_open"] == "2026-11-04"
     assert not output["readiness_signed"] and not st.readiness_items and not st.steps
-    assert output["status"] == "done" and output["execution_mode"] == "interactive"
+    assert output["status"] == "done" and "execution_mode" not in output
     assert output["next_action"] == "readiness" and output["continue_automatically"]
-    assert output["startup_complete"]
+    assert "startup_complete" not in output
     assert not output["work_dispatch"]["pending_work"]
     assert output["checklist_command"] == "checklist --release 2026-11 --attest-prompt --json"
     assert st.workflow_revision is not None
@@ -658,18 +657,13 @@ def test_notify_digest_reports_gate_and_progress():
 
 def test_automation_prompt_delegates_to_step_module():
     """The planner is generic: a step that declares `automation_prompt` owns its bespoke
-    instruction (localization trigger vs poller), and steps without one get the default
-    send + record-step prompt — no step id is special-cased in automations.py."""
+    instruction (`finalize-orchestrator-poller`), while `morning-step-drain` uses the
+    release-wide 7:00 AM pre-work step drainer prompt."""
     from orchestrator import automations as A
     by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
-    # localization's module owns both bespoke prompts (delegated, not hardcoded here)
-    assert "launch-localization" in by["ccd-noon"]["prompt"]
-    assert "--auto-approve" in by["ccd-noon"]["prompt"]
-    assert "--review-hash" not in by["ccd-noon"]["prompt"]
-    assert "--approved-by" not in by["ccd-noon"]["prompt"]
-    assert "localization poller" in by["ccd-localization-poller"]["prompt"]
-    # a plain multi-step reminder automation uses the generic default prompt
-    assert "For EACH of these steps in order" in by["ccd-morning"]["prompt"]
+    assert "poll-orchestrator-finalization" in by["finalize-orchestrator-poller"]["prompt"]
+    assert "next --release 2026-09 --deliver --json" in by["morning-step-drain"]["prompt"]
+    assert "tick --release 2026-09 --deliver --json" in by["morning-step-drain"]["prompt"]
 
 
 def test_digest_uses_distinct_same_day_hold_ids():
@@ -1007,32 +1001,31 @@ def test_sim_gate_mode_on_gateless_phase_reports_problem():
 
 
 
-def test_timed_step_gated_until_fire_time():
-    """A step with a fire_at_local (the 09:00 CCD comms) is excluded from scout_pending
-    until 09:00 owner-local on its fire day — so the every-hour worker can't drain it
-    early — then becomes pending at/after 09:00."""
-    import yaml as _yaml
+def test_timed_step_gated_until_fire_time(monkeypatch):
+    """CCD steps are runnable immediately at 07:00 on CCD; if a step explicitly declares
+    `fire_at_local`, the engine still gates it until that wall-clock time on its anchor day."""
     from datetime import datetime
-    from orchestrator.state import StepState
     from orchestrator import schedule
+    from steps.ccd import final_reminder
     tz = schedule.get_tz()
+
     def _ccd_active(now_dt):
         st = ReleaseState(
             release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
         _active_phase(st, "ccd")
         return Orchestrator(CONFIG, st, now=now_dt, mocks={})
 
-    # 08:00 on CCD day — phase is due, but the 09:00 comms are NOT yet runnable.
-    r = _ccd_active(datetime(2026, 8, 26, 8, 0, tzinfo=tz)).status_report()
-    assert r["active_phase"]["id"] == "ccd" and r["active_phase"]["due"]
-    assert "final_reminder" not in r["scout_pending"]
+    # By default (state-driven hybrid model), CCD steps are immediately eligible at 07:00 on CCD.
+    r0 = _ccd_active(datetime(2026, 8, 26, 7, 0, tzinfo=tz)).status_report()
+    assert r0["active_phase"]["id"] == "ccd" and r0["active_phase"]["due"]
+    assert "final_reminder" in r0["scout_pending"]
 
-    # 09:00 — the 9am comms are now runnable; the noon localization still isn't.
+    # When a step explicitly configures `fire_at_local`, it remains gated until that time.
+    monkeypatch.setitem(final_reminder.CONFIG, "fire_at_local", "09:00")
+    r = _ccd_active(datetime(2026, 8, 26, 8, 0, tzinfo=tz)).status_report()
+    assert "final_reminder" not in r["scout_pending"]
     r2 = _ccd_active(datetime(2026, 8, 26, 9, 0, tzinfo=tz)).status_report()
     assert "final_reminder" in r2["scout_pending"]
-    assert "localization" not in r2["scout_pending"]           # fires at noon
-
-    # a day LATER (missed) — a timed step runs ASAP (catch-up), no longer gated.
     r3 = _ccd_active(datetime(2026, 8, 27, 1, 0, tzinfo=tz)).status_report()
     assert "final_reminder" in r3["scout_pending"]
 

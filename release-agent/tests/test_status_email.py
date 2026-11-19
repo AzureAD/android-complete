@@ -92,55 +92,15 @@ def test_is_business_day_skips_weekends_and_holidays():
     assert BB.is_business_day(date(2026, 12, 25)) is False      # Christmas (Fri)
 
 
-
-
-def test_status_email_command_gates_and_stamp():
-    import tempfile, argparse, json, io, contextlib
-    from orchestrator import cli_common as _C
-    from orchestrator.commands import status_email_cmd as SEC
+def test_final_status_email_step_composes_closing_snapshot(monkeypatch):
+    from steps.finalize import final_status_email
+    from tests._context import fresh_orchestrator as Orchestrator
     from tools import prs
-    orig = prs.broker_change_list
-    prs.broker_change_list = lambda *a, **k: (True, [], "")     # no network
-    with tempfile.TemporaryDirectory() as d:
-        st = _status_state("build_verify")
-        st.timezone = "America/Los_Angeles"
-        _active_phase(st, "build_verify")
-        _C.save_state(st, d, "2026-08")
-
-        def run(as_of, force=False, send_to=None):
-            A = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
-                                   as_of=as_of, force=force, send_to=send_to)
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                SEC.cmd_status_email(A)
-            return json.loads(buf.getvalue())
-        try:
-            assert run("2026-08-15")["skip"] is True                    # Sat → skip
-            sent = run("2026-08-12", send_to="me@x.com")                # Wed → send
-            assert sent["skip"] is False and sent["to"] == ["me@x.com"]
-            assert sent["permission_to_send"] is False
-            # stamp, then idempotent skip
-            rA = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
-                                    as_of="2026-08-12", final=False)
-            _ack_notifications(d, "2026-08", "2026-08-12T17:00:00", sent["notifications"])
-            assert _C.load_state(d, "2026-08").last_status_email_date == "2026-08-12"
-            assert run("2026-08-12")["reason"] == "already recorded today"
-        finally:
-            prs.broker_change_list = orig
-
-
-def test_final_status_recorder_completes_terminal_step():
-    import argparse
-    import tempfile
-    from orchestrator import cli_common as _C
-    from orchestrator.commands import status_email_cmd as SEC
-    with tempfile.TemporaryDirectory() as d:
-        rid = "2026-08"
-        st = _status_state("finalize")
-        _C.save_state(st, d, rid)
-        args = argparse.Namespace(runs_root=d, release=rid, config=CONFIG,
-                                  as_of="2026-08-12", final=True)
-        assert SEC.cmd_record_status_email(args) == 1
-        saved = _C.load_state(d, rid)
-        assert saved.last_status_email_date is None
-        assert not saved.is_done("finalize", "final_status_email")
+    monkeypatch.setattr(prs, "broker_change_list", lambda *a, **k: (True, [], ""))
+    st = _status_state("finalize")
+    _active_phase(st, "finalize")
+    orch = Orchestrator(CONFIG, st, mocks={"finalize.final_status_email": {"send_to": "me@x.com"}})
+    outcome = final_status_email.build(orch.context("finalize", "final_status_email"))
+    assert outcome.tool == "workiq_send_email"
+    assert outcome.payload["to"] == ["me@x.com"]
+    assert "Final Status" in outcome.payload["subject"]

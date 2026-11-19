@@ -34,7 +34,7 @@ def ensure_reg(registry, worker, observations, *, claim=True, executor="offline-
         registration=worker["registration"], ensure=True, claim=claim, executor=executor)
 
 
-def current_worker(state, slug="push-reminders"):
+def current_worker(state, slug="morning-step-drain"):
     return next(item for item in A.plan(
         CONFIG, RID, state.ccd, owner_timezone=state.timezone)["automations"] if item["slug"] == slug)
 
@@ -73,8 +73,6 @@ def test_deleted_driver_is_recreated_without_owner_reset_and_retains_history(tmp
     code, healthy = ensure_cli(tmp_path, capsys, worker, observed(
         {"id": "replacement-id", "spec": worker["provider_spec"]}))
     assert code == 0 and healthy["status"] == "active" and not healthy["permission_to_create"]
-    _, runtime = C.load_orch(str(tmp_path), RID, CONFIG)
-    assert runtime.status_report()["startup_automation"]["complete"]
     assert path.read_bytes() == before
     raw = (tmp_path / RID / "_automations.json").read_text(encoding="utf-8")
     assert worker["provider_spec"]["prompt"] not in raw
@@ -208,7 +206,9 @@ def test_historical_receipt_stays_startup_complete_without_forced_reconciliation
     path.write_text(json.dumps(document), encoding="utf-8")
     assert not provider_check_fresh(registry.get(key=entry["key"]))
     _, runtime = C.load_orch(str(tmp_path), RID, CONFIG)
-    assert runtime.status_report()["startup_automation"]["complete"]
+    report = runtime.status_report()
+    assert report["work_dispatch"]["next_action"] in ("scheduled", "run_phase_work")
+    assert all(item["kind"] != "automation" for item in report["work_dispatch"]["pending_work"])
     code, result = ensure_cli(tmp_path, capsys, worker, observed(
         {"id": "driver-id", "spec": worker["provider_spec"]}))
     assert code == 0 and not result["permission_to_create"]
@@ -220,8 +220,9 @@ def test_ensure_obeys_release_and_worker_lifecycle(tmp_path, capsys, state_kind)
     state = release(tmp_path)
     worker = current_worker(state)
     if state_kind == "objective_complete":
-        _active_phase(state, "rollout_start")
-        worker = current_worker(state, "daily-status-email")
+        _active_phase(state, "finalize")
+        state.set_step("finalize", "orchestrator_finalization", StepState(status="done"))
+        worker = current_worker(state, "finalize-orchestrator-poller")
     else:
         setattr(state, "halt" if state_kind == "halted" else "cancellation",
                 {"reason": "owner stopped", "at": datetime.now(timezone.utc).isoformat()})
@@ -233,18 +234,19 @@ def test_ensure_obeys_release_and_worker_lifecycle(tmp_path, capsys, state_kind)
 
 def test_on_demand_worker_is_ensured_only_after_its_trigger_and_before_settlement(tmp_path, capsys):
     state = release(tmp_path)
-    worker = current_worker(state, "ccd-localization-poller")
+    _active_phase(state, "build_verify")
+    C.save_state(state, str(tmp_path), RID)
+    worker = current_worker(state, "build-verify-rc-poller")
     code, result = ensure_cli(tmp_path, capsys, worker, observed())
     assert code == 1 and not result["permission_to_create"]
-    state.set_step("ccd", "localization", StepState(status="in_flight",
-                   data={"started_at": datetime.now(timezone.utc).isoformat(), "build_id": "42"}))
+    state.set_step("build_verify", "mrwp_ecs", StepState(status="in_flight"))
     C.save_state(state, str(tmp_path), RID)
     code, result = ensure_cli(tmp_path, capsys, worker, observed())
     assert code == 0 and result["permission_to_create"]
     registry = AutomationRegistry(str(tmp_path), RID)
     registry.create_result(stable_key(RID, worker["slug"]), result["attempt_id"], "created",
                            "synthetic poller", automation_id="poller-id", spec=worker["provider_spec"])
-    state.set_step("ccd", "localization", StepState(status="done"))
+    _active_phase(state, "bug_bash")
     C.save_state(state, str(tmp_path), RID)
     code, result = ensure_cli(tmp_path, capsys, worker, observed())
     assert code == 1 and not result["permission_to_create"]
@@ -290,7 +292,7 @@ def test_obligations_revalidate_registered_driver_not_only_missing_entries(tmp_p
                      "--release", RID, "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["required"] == []
-    assert [worker["slug"] for worker in result["ensure"]] == ["push-reminders"]
+    assert "morning-step-drain" in [worker["slug"] for worker in result["ensure"]]
 
 
 @pytest.mark.parametrize("change", ["none", "unapplied", "reopened", "new-generation", "different-owner"])

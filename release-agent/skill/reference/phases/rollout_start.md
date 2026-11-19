@@ -1,7 +1,7 @@
 # Reference — Phase 5 (Rollout Start)
 
 Use `task` for one requested operation and `next` only for explicit release
-progression. Interactive operation does not require scheduled workers or unrelated
+progression. Release progression does not require background automations or unrelated
 integration setup. Result recording never approves a rollout gate.
 The detailed source/target rules below remain enforced by the checked adapters;
 they are not permission to send or start stages during a status request.

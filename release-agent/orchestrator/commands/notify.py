@@ -84,11 +84,6 @@ def _notify_payload(args, rid, advance):
         # Auto-advance: run every agent step that can run, holding at the first
         # gate / action-needed. Idempotent — a no-op once holding or not due.
         st, orch = C.load_orch(args.runs_root, rid, args.config, as_of)
-        if st.execution_mode != "unattended":
-            return {**_empty_payload(rid, args.config), "status": "waiting",
-                    "summary": "Interactive mode: scheduled progression is disabled.",
-                    "work_dispatch": {"pending_work": [], "continue_automatically": False,
-                                      "may_return_to_user": True}}
         actions = orch.run_until_gate()
         C.save_state(st, args.runs_root, rid)
         C.log_actions(C.elog(args.runs_root, rid), actions, state=st)
@@ -155,16 +150,42 @@ def _notify_payload(args, rid, advance):
 
 def cmd_tick(args):
     """One automation heartbeat: discover the active release, ADVANCE it (run the
-    agent steps that can run, holding at gates/actions), then emit the daily digest
-    payload for the mailer. Safe to run often — advancing is idempotent and the
-    digest is de-duped to once per calendar day. This is what the hourly Scout
-    automation runs so an open phase makes progress even if the 9am tick was missed
-    (machine off) — the next tick after the machine is on picks it up."""
+    agent steps that can run, holding at gates/actions), and optionally deliver
+    eligible auto-notifications + daily digest silently via Agency MCP (`--deliver`)."""
+    if getattr(args, "deliver", False) and getattr(args, "as_of", None):
+        msg = "tick --deliver requires the trusted current clock; --as-of is preview-only"
+        print(_json.dumps({"status": "failed", "error": msg, "permission_to_send": False}))
+        return 1
     rid = C.resolve_release_id(args.runs_root, args.release)
     if not rid:
         print(_json.dumps(_empty_payload(None, getattr(args, "config", None))))
         return 0
     payload = _notify_payload(args, rid, advance=True)
+    if getattr(args, "deliver", False):
+        from orchestrator.commands.deliver_cmd import (
+            deliver_descriptor_items,
+            drain_auto_notifications,
+        )
+        step_deliveries = drain_auto_notifications(
+            args.runs_root, rid, args.config, executor="tick-agency-mcp"
+        )
+        if step_deliveries:
+            # Re-advance in case completed notification steps unlocked Python auto steps,
+            # then recompute the digest snapshot before sending any owner digest.
+            payload = _notify_payload(args, rid, advance=True)
+        digest_deliveries = deliver_descriptor_items(
+            args.runs_root,
+            rid,
+            args.config,
+            payload.get("notifications") or [],
+            executor="tick-agency-mcp",
+        )
+        if digest_deliveries:
+            payload = _notify_payload(args, rid, advance=False)
+        payload["delivered"] = {
+            "steps": step_deliveries,
+            "digest": digest_deliveries,
+        }
     if getattr(args, "json", False):
         print(_json.dumps(payload))
     else:
@@ -191,9 +212,11 @@ def register(sub):
     nt.add_argument("--json", action="store_true", help="Emit {message,subject,owner_email,owner_name,release} for the mailer")
     nt.set_defaults(func=cmd_notify)
 
-    tk = sub.add_parser("tick", help="Automation heartbeat: ADVANCE the active release, then emit the digest payload")
+    tk = sub.add_parser("tick", help="Automation heartbeat: ADVANCE the active release, then emit/deliver the digest")
     tk.add_argument("--release", default=None, help="Target release; if omitted, discover the active one")
     tk.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD) — debug override; default today")
     tk.add_argument("--force", action="store_true", help="Never bypasses acknowledgement or lifecycle guards")
+    tk.add_argument("--deliver", action="store_true",
+                    help="Also deliver eligible auto-notifications and daily digest in Python via Agency MCP")
     tk.add_argument("--json", action="store_true", help="Emit {message,subject,owner_email,owner_name,release} for the mailer")
     tk.set_defaults(func=cmd_tick)

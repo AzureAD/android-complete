@@ -265,19 +265,16 @@ def test_notification_evidence_rejects_corruption_without_finalizing_or_crashing
     assert orch.state == before
 
 
-@pytest.mark.parametrize("field,value", [
-    ("last_status_email_date", []), ("escalation_checkpoints", []),
-])
-def test_notification_evidence_validates_all_destinations_before_writing(tmp_path, field, value):
+def test_notification_evidence_validates_all_destinations_before_writing(tmp_path):
     orch, _ = _public(tmp_path)
     item = D.descriptor(
         orch.state, "evidence", {"kind": "release"}, "workiq_send_email",
         {"to": ["owner@example.com"], "body": "notice"},
-        {"release_field": "last_status_email_date", "date": "2026-09-12", "checkpoint": "notice"})
+        {"checkpoint": "notice"})
     D.offer(orch, item)
     claim = D.claim(orch, item["id"], item["hash"], "worker")
     D.result(orch, item["id"], claim["execution_id"], "sent", "provider receipt")
-    setattr(orch.state, field, value)
+    orch.state.escalation_checkpoints = []
     before = deepcopy(orch.state)
     assert not orch.record_notification_evidence(item["id"]).changed
     assert orch.state == before

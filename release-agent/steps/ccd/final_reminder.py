@@ -25,7 +25,6 @@ KIND = "scout"
 NAME = 'CCD final code-complete reminder (email)'
 REQUIRED_TOOLS = ('workiq',)
 REQUIRES_APPROVAL = False
-AUTOMATION = 'ccd-morning'
 NOTIFICATION = True
 
 
@@ -37,13 +36,12 @@ class BuildParameters:
 PARAMETERS = {"build": BuildParameters}
 
 # Step config (co-located). CCD-day "update" variant of the notice template, to the
-# real Android DL (redirect for tests via send_to). fire_at_local is the intended
-# send time on CCD day — the per-release CCD-morning automation reads it (the engine
-# also enforces the phase and local fire-time eligibility).
+# real Android DL (redirect for tests via send_to). Eligible as soon as Phase 1 opens
+# on Code Complete Day so both interactive sessions and the 7:00 AM morning drain can
+# deliver it silently via Agency MCP.
 CONFIG = {
     "template": "templates/early-code-complete-notice.md",
     "variant": "update",                     # CCD-day reminder ("Today")
-    "fire_at_local": "09:00",                # morning of CCD (automation-driven)
     "recipients": [                          # the real DL (redirect for tests via send_to)
         "androididentity@microsoft.com",     # "Azure Identity Android SDK"
     ],
@@ -143,18 +141,17 @@ def build(context: StepContext[BuildParameters]):
         outbound=True,
     )
 
-KNOWLEDGE = {'summary': 'Email the Android DL that code complete is TODAY (morning of CCD).',
+KNOWLEDGE = {'summary': 'Email the Android DL that code complete is TODAY (Code Complete Day).',
  'what': "The CCD-day final code-complete reminder email — the 'update' variant of the same "
          'notice template Phase 0 sends a week earlier at CCD-7. Tells everyone code complete '
          'is today and that any check-ins after it need the hotfix cherry-pick process + EM '
          'approval. Catch-up sends show the actual CCD instead of incorrectly calling a past '
          'date Today; the initial variant uses the date too.\n',
- 'who': 'Scout sends it automatically (a scout step) on the morning of CCD, driven by the '
-        'per-release CCD-morning automation. The release owner owns the content/recipients.\n',
- 'how': 'Uses notification prepare (source step, phase ccd, step final_reminder), then claim → '
-        'the exact returned email payload → notification result. To test, redirect with the '
-        'send_to mock knob (keeps the send real, points it at you). Sent ~09:00 local on '
-        'CCD.\n',
+ 'who': 'Scout sends it automatically (via the optional 7:00 AM morning drain or the next '
+        'interactive session once CCD arrives). The release owner owns the content/recipients.\n',
+ 'how': 'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`) '
+        'using the exact same template and durable claim/result protocol as Phase 0 `notice`. '
+        'To test, redirect with the send_to mock knob (keeps the send real, points it at you).\n',
  'faqs': [{'q': 'How is this different from the Phase 0 notice?',
-           'a': "Same template, different variant/timing: Phase 0 'notice' sends the 'initial' "
-                "variant at CCD-7; this sends the 'update' variant ('Today') on CCD morning."}]}
+           'a': "Same template and delivery path, different variant/timing: Phase 0 'notice' "
+                "sends the 'initial' variant at CCD-7; this sends the 'update' variant ('Today') on CCD."}]}

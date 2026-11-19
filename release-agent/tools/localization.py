@@ -236,3 +236,65 @@ def receipt_time(build, step, *, now=None):
             or queued > (now or datetime.now(timezone.utc)) + timedelta(minutes=1)):
         raise ValueError("Localization build is outside this execution's launch window")
     return queued.isoformat()
+
+
+def inspect_build(org: str, project: str, build_id, *, oneloc_task: str = "OneLocBuild@3") -> tuple:
+    """Read an ADO OneLoc build status/result and, once succeeded, its complete OneLocBuild@3 log."""
+    try:
+        bid = _positive(build_id, "build id")
+        base = _project_url(org, project)
+    except ValueError as exc:
+        return False, None, str(exc)
+    ok, build, detail = P._ado_rest_get(f"{base}/_apis/build/builds/{bid}?api-version=7.1", 60)
+    if not ok or not isinstance(build, dict):
+        return False, None, f"Failed to read OneLoc build #{bid}: {detail}"
+    status = str(build.get("status") or "").strip()
+    result = str(build.get("result") or "").strip()
+    info = {
+        "build_id": str(bid),
+        "status": status,
+        "result": result,
+        "queue_time": build.get("queueTime"),
+        "logs": None,
+        "logs_complete": False,
+    }
+    if status.lower() != "completed" or result.lower() != "succeeded":
+        return True, info, ""
+    ok_tl, timeline, tl_detail = P._ado_rest_get(
+        f"{base}/_apis/build/builds/{bid}/timeline?api-version=7.1", 60
+    )
+    if not ok_tl or not isinstance(timeline, dict) or not isinstance(timeline.get("records"), list):
+        return True, info, f"Timeline unavailable: {tl_detail}"
+    task_rec = next(
+        (r for r in timeline["records"] if isinstance(r, dict) and r.get("name") == oneloc_task),
+        None,
+    )
+    log_id = ((task_rec or {}).get("log") or {}).get("id")
+    if not log_id:
+        return True, info, f"Task '{oneloc_task}' log id not found in build timeline"
+    ok_log, log_text, log_detail = P._ado_rest_get_text(
+        f"{base}/_apis/build/builds/{bid}/logs/{int(log_id)}?api-version=7.1", 60
+    )
+    if not ok_log or not isinstance(log_text, str):
+        return True, info, f"Task '{oneloc_task}' log unreadable: {log_detail}"
+    info["logs"] = log_text
+    info["logs_complete"] = True
+    return True, info, ""
+
+
+def inspect_pr(org: str, pr_id) -> tuple:
+    """Read an ADO pull request's merge/completion status by numeric PR id."""
+    try:
+        pid = _positive(pr_id, "PR id")
+        org_url = organization(org)
+    except ValueError as exc:
+        return False, None, str(exc)
+    ok, pr, detail = P._ado_rest_get(f"{org_url}/_apis/git/pullrequests/{pid}?api-version=7.1", 60)
+    if not ok or not isinstance(pr, dict):
+        return False, None, f"Failed to read Localization PR #{pid}: {detail}"
+    return True, {
+        "pr_id": str(pid),
+        "status": str(pr.get("status") or "").strip(),
+        "merge_status": str(pr.get("mergeStatus") or "").strip(),
+    }, ""
+

@@ -40,7 +40,6 @@ COMMAND_MODULES = (
         external_writes=(
             "start-release-signoff", "start-upload-whats-new", "start-upload-alpha",
             "start-beta-play-store")),
-    CommandModule("status_email_cmd"),
     CommandModule("sim"),
     CommandModule("logs"),
     CommandModule("automation"),

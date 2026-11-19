@@ -36,7 +36,7 @@ def build_parser():
     p.add_argument("--config", default=C.DEFAULT_CONFIG)
     p.add_argument("--runs-root", default=C.DEFAULT_RUNS_ROOT)
     p.add_argument("--scheduled", action="store_true",
-                   help="Scheduled-worker invocation; interactive mode forbids new scheduled work")
+                   help="Scheduled background invocation; requires an existing pinned release")
     # NOTE: --as-of is defined per-command (status/next/approve/deny/done/resume/notify),
     # where it must appear AFTER the subcommand. It is intentionally NOT a global flag:
     # argparse lets a subparser's own --as-of silently clobber a global one, which is a
@@ -62,58 +62,55 @@ def main(argv=None):
                 release = entry.get("release")
         elif getattr(args, "shared", False):
             release = None
-    with C.state_lock(runs_root, release):
-        if args.scheduled:
-            import json
-            if not release or not os.path.isfile(C.state_path(runs_root, release)):
-                print(json.dumps({"status": "needs_input",
-                                  "error": "A scheduled command requires an existing pinned release.",
-                                  "permission_to_execute": False}))
-                return 1
-            try:
-                scheduled_state = C.load_state(runs_root, release)
-            except (EvidenceError, ValueError, OSError) as exc:
-                print(json.dumps({"status": "failed", "error": str(exc),
-                                  "permission_to_execute": False}))
-                return 1
-            receipt = (
-                args.cmd == "notification" and args.operation in ("result", "finalize")
-                or args.cmd == "automation" and args.action in ("create-result", "delete-result")
-                or bool(getattr(args, "receipt_file", None)))
-            if scheduled_state.execution_mode != "unattended" and not receipt:
-                print(json.dumps({"status": "waiting", "execution_mode": "interactive",
-                                  "summary": "Scheduled progression is paused; interactive tasks remain available.",
-                                  "permission_to_execute": False, "permission_to_send": False}))
-                return 0
-        diagnostics = {
-            "status", "list", "inspect-state", "workflow-adopt", "mock-spec",
-            "step-info", "gate-info", "task-history", "log", "journal", "paths", "preview-release",
-            "bugbash-progress", "m365-capabilities",
-        }
-        pending_deliveries = (
-            args.cmd == "notification" and args.operation == "prepare" and args.source == "pending")
-        automation_inspection = (
-            args.cmd == "automation"
-            and args.action in ("list", "plan", "sync", "obligations", "cleanup"))
-        checklist_inspection = args.cmd == "checklist" and not getattr(args, "verify", False)
-        if (release and (os.path.isfile(C.state_path(runs_root, release)) or args.cmd == "automation")
-                and args.cmd not in diagnostics
-                and not pending_deliveries and not automation_inspection and not checklist_inspection):
-            from orchestrator.revision import assert_current
-            try:
-                _, orch = C.load_orch(runs_root, release, args.config)
-                assert_current(orch)
-            except (ValueError, OSError) as exc:
+    try:
+        with C.state_lock(runs_root, release):
+            if args.scheduled:
                 import json
-                print(json.dumps({"error": str(exc), "permission_to_execute": False}))
+                if not release or not os.path.isfile(C.state_path(runs_root, release)):
+                    print(json.dumps({"status": "needs_input",
+                                      "error": "A scheduled command requires an existing pinned release.",
+                                      "permission_to_execute": False}))
+                    return 1
+                try:
+                    C.load_state(runs_root, release)
+                except (EvidenceError, ValueError, OSError) as exc:
+                    print(json.dumps({"status": "failed", "error": str(exc),
+                                      "permission_to_execute": False}))
+                    return 1
+            diagnostics = {
+                "status", "list", "inspect-state", "workflow-adopt", "mock-spec",
+                "step-info", "gate-info", "task-history", "log", "journal", "paths", "preview-release",
+                "bugbash-progress", "m365-capabilities",
+            }
+            pending_deliveries = (
+                args.cmd == "notification" and args.operation == "prepare" and args.source == "pending")
+            automation_inspection = (
+                args.cmd == "automation"
+                and args.action in ("list", "plan", "sync", "obligations", "cleanup"))
+            checklist_inspection = args.cmd == "checklist" and not getattr(args, "verify", False)
+            if (release and (os.path.isfile(C.state_path(runs_root, release)) or args.cmd == "automation")
+                    and args.cmd not in diagnostics
+                    and not pending_deliveries and not automation_inspection and not checklist_inspection):
+                from orchestrator.revision import assert_current
+                try:
+                    _, orch = C.load_orch(runs_root, release, args.config)
+                    assert_current(orch)
+                except (ValueError, OSError) as exc:
+                    import json
+                    print(json.dumps({"error": str(exc), "permission_to_execute": False}))
+                    return 1
+            try:
+                return args.func(args)
+            except (EvidenceError, ValueError, OSError) as exc:
+                import json
+                print(json.dumps({"status": "failed", "error": str(exc),
+                                  "permission_to_execute": False, "permission_to_send": False}))
                 return 1
-        try:
-            return args.func(args)
-        except (EvidenceError, ValueError, OSError) as exc:
-            import json
-            print(json.dumps({"status": "failed", "error": str(exc),
-                              "permission_to_execute": False, "permission_to_send": False}))
-            return 1
+    except TimeoutError as exc:
+        import json
+        print(json.dumps({"status": "busy", "error": str(exc),
+                          "permission_to_execute": False, "permission_to_send": False}))
+        return 1
 
 
 if __name__ == "__main__":

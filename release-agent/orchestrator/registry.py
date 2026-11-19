@@ -711,9 +711,9 @@ class AutomationRegistry:
             if any(s["kind"] == "step-driving" or s["status"] != "active"
                    for s in siblings):
                 return "Cleanup barrier: child intents or unresolved sibling operations remain"
-            # The release-wide driver is also the recovery worker for other helpers.
-            if entry["slug"] == "push-reminders" and siblings:
-                return "Cleanup barrier: retire release helpers before push-reminders"
+            # Retire the release-wide morning step drainer last after any phase helpers.
+            if entry["slug"] == "morning-step-drain" and siblings:
+                return "Cleanup barrier: retire release helpers before morning-step-drain"
         return ""
 
     def confirm_absent(
@@ -849,6 +849,77 @@ class AutomationRegistry:
         raise ValueError(
             "Direct deregistration is disabled; use claim-delete and delete-result"
         )
+
+    def record_setup(
+        self,
+        *,
+        release: str,
+        slug: str,
+        registration: dict,
+        spec: dict,
+        automation_id: str | None = None,
+        skipped_reason: str | None = None,
+        executor: str = "release-setup",
+    ) -> dict:
+        """One-step integrated release-start setup receipt (active provider ID or non-blocking skip)."""
+        if bool(automation_id) == bool(skipped_reason):
+            raise ValueError("Supply exactly one of automation_id or skipped_reason")
+        if not isinstance(executor, str) or not executor.strip():
+            raise ValueError("Executor identifier is required")
+        base_entry = self._spec(
+            registration["name"],
+            release=release,
+            shared=False,
+            purpose=registration.get("purpose", ""),
+            steps=registration.get("steps") or [],
+            kind=registration.get("kind"),
+            schedule=registration.get("schedule"),
+            slug=slug,
+            cleanup_when=registration.get("cleanup_when"),
+            spec=spec,
+        )
+        with file_lock(self.lock_path, _LOCK_TIMEOUT):
+            _, existing = self._find_unlocked(key=base_entry["key"])
+            if existing is not None:
+                return {"recorded": False, "entry": deepcopy(existing)}
+            now_ts = _now()
+            attempt_id = uuid.uuid4().hex
+            if automation_id:
+                aid = str(automation_id).strip()
+                if not aid:
+                    raise ValueError("Automation provider id must be non-empty")
+                base_entry["id"] = aid
+                base_entry["status"] = "active"
+                base_entry["registered_at"] = now_ts
+                base_entry["attempts"] = [
+                    {
+                        "id": attempt_id,
+                        "owner": executor.strip(),
+                        "started_at": now_ts,
+                        "acknowledged_at": now_ts,
+                        "status": "created",
+                        "provider_id": aid,
+                        "evidence": _evidence_hash(f"release-setup:{aid}"),
+                    }
+                ]
+            else:
+                reason_text = str(skipped_reason).strip()
+                if not reason_text:
+                    raise ValueError("Skipped reason must be non-empty")
+                base_entry["status"] = "missing"
+                base_entry["missing_at"] = now_ts
+                base_entry["attempts"] = [
+                    {
+                        "id": attempt_id,
+                        "owner": executor.strip(),
+                        "started_at": now_ts,
+                        "acknowledged_at": now_ts,
+                        "status": "not_created",
+                        "evidence": _evidence_hash(f"release-setup-skipped:{reason_text}"),
+                    }
+                ]
+            self._upsert_unlocked(base_entry)
+            return {"recorded": True, "entry": deepcopy(base_entry)}
 
     def get(self, *, key: str = None, auto_id: str = None):
         with file_lock(self.lock_path, _LOCK_TIMEOUT):

@@ -81,14 +81,14 @@ def _canonical_policy(args, reg, spec, *, preparing=False):
     if definition.get("on_demand") and args.on_demand != args.slug:
         raise ValueError("On-demand workers require --on-demand <slug>; never provision at startup")
     st = C.load_state(args.runs_root, args.release)
-    if not definition.get("every"):
+    if not definition.get("every") and not definition.get("daily_at"):
         confirmed = (st.readiness_items.get("ccd_confirmed") or {}).get("status") == "pass"
         if st.ccd_conflict or not confirmed:
             raise ValueError("CCD workers require owner-confirmed CCD with no conflict")
     from orchestrator.engine import Orchestrator
     selection = Orchestrator(config, st, mocks={}).scheduling()
-    if definition.get("required_on_start") and selection.suspension in ("halted", "denied"):
-        raise ValueError("Cannot create a mandatory driver while the release has an explicit hold")
+    if selection.suspension in ("halted", "denied"):
+        raise ValueError("Cannot create a worker while the release has an explicit hold")
     if selection.status == "cancelled" or selection.frontier is None:
         raise ValueError("Cannot provision workers for a terminal release")
     planned = auto_plan.plan(config, args.release, st.ccd, owner_timezone=st.timezone)
@@ -136,6 +136,8 @@ def _dispatch_automation(args):
         return _cmd_obligations(args)
     if args.action == "cleanup":
         return _cmd_cleanup(args)
+    if args.action == "record-setup":
+        return _cmd_record_setup(args)
     if args.action == "prepare":
         if not (args.name and args.slug and args.cleanup_when):
             print("prepare needs --name, --slug, and --cleanup-when.")
@@ -287,12 +289,12 @@ def _cmd_plan(args):
             a for a in result["automations"] if a["on_demand"] and a["slug"] == wanted]
         if not result["automations"]:
             result["problems"].append(f"no on-demand automation named '{wanted}'")
+    elif getattr(args, "slug", None):
+        result["automations"] = [a for a in result["automations"] if a["slug"] == args.slug]
+        if not result["automations"]:
+            result["problems"].append(f"Unknown automation slug '{args.slug}'")
     else:
         result["automations"] = [a for a in result["automations"] if not a["on_demand"]]
-        if getattr(args, "slug", None):
-            result["automations"] = [a for a in result["automations"] if a["slug"] == args.slug]
-            if not result["automations"]:
-                result["problems"].append("Unknown startup slug; on-demand workers require --on-demand")
     for entry in result["automations"]:
         result["problems"].extend(f"{entry['slug']}: {p}" for p in entry["problems"])
         if entry["one_shot"] and (
@@ -310,11 +312,16 @@ def _cmd_plan(args):
     if not result["ccd"]:
         print(f"Release {args.release} has no CCD yet — set it before provisioning CCD automations.")
     for a in result["automations"]:
-        sched = a.get("schedule") or "(no CCD → schedule unknown)"
+        sched = a.get("schedule") or "(schedule unknown)"
+        mode_note = (
+            f"(one-shot; fires {a.get('fire_at')} on CCD {a.get('ccd_date')})"
+            if a.get("one_shot")
+            else "(optional recurring accelerator)"
+        )
         print(f"• {a['name']}")
         print(f"    slug:     {a['slug']}")
-        print(f"    schedule: {sched}   (one-shot; fires {a.get('fire_at')} on CCD {a.get('ccd_date')})")
-        print(f"    drives:   {', '.join(a['steps'])}")
+        print(f"    schedule: {sched}   {mode_note}")
+        print(f"    drives:   {', '.join(a['steps']) or '(release-wide)'}")
         print(f"    purpose:  {a['purpose']}")
         print(f"    prepare: automation prepare --name \"{a['name']}\" "
               f"--release {args.release} --purpose \"{a['purpose']}\" "
@@ -379,7 +386,7 @@ def _cmd_sync(args):
 
 
 def _cmd_obligations(args):
-    """Report mandatory startup and state-required workers without claiming or creating."""
+    """Report optional background accelerators and any unresolved registry recoveries."""
     config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
     st = C.load_state(args.runs_root, args.release)
     entries = AutomationRegistry(args.runs_root, args.release).list(
@@ -388,14 +395,14 @@ def _cmd_obligations(args):
     if args.json:
         print(_json.dumps(result, indent=2))
     else:
-        for spec in result["required"]:
-            print(f"CREATE {spec['slug']} — {spec['purpose']}")
+        for spec in result.get("optional", []):
+            print(f"OPTIONAL {spec['slug']} ({spec.get('schedule')}) — {spec['purpose']}")
         for entry in result["recoveries"]:
             print(f"RECOVER {entry['slug']} — lifecycle is {entry['status']}")
         for problem in result["problems"]:
             print(f"PROBLEM: {problem}")
-        if not result["required"] and not result["recoveries"] and not result["problems"]:
-            print("No outstanding startup/on-demand automation obligations.")
+        if not result.get("optional") and not result["recoveries"] and not result["problems"]:
+            print("No optional accelerators pending; no unresolved recoveries.")
     return 1 if result["problems"] else 0
 
 
@@ -428,10 +435,122 @@ def _cmd_cleanup(args):
     return 1 if result["problems"] else 0
 
 
+def morning_drain_setup_hint(runs_root: str, release: str, config_path: str, state) -> dict | None:
+    """Return one-time setup metadata for `morning-step-drain` when Readiness is signed and
+    no registry entry exists yet; returns None once recorded (even if later disabled/deleted)."""
+    if not release or not runs_root:
+        return None
+    reg = AutomationRegistry(runs_root, release)
+    if reg.get(key=stable_key(release, "morning-step-drain")) is not None:
+        return None
+    planned = auto_plan.plan(config_path, release, state.ccd, owner_timezone=state.timezone)
+    worker = next((a for a in planned["automations"] if a["slug"] == "morning-step-drain"), None)
+    if not worker or worker.get("problems") or not worker.get("provider_spec"):
+        return None
+    return {
+        "slug": "morning-step-drain",
+        "name": worker["name"],
+        "schedule": worker["schedule"],
+        "optional": True,
+        "provider_spec": worker["provider_spec"],
+        "plan_command": f"automation plan --release {release} --slug morning-step-drain --json",
+        "record_command": f"automation record-setup --release {release} --slug morning-step-drain --id <created-id> --json",
+        "skip_command": f"automation record-setup --release {release} --slug morning-step-drain --skipped \"<reason>\" --json",
+        "instruction": (
+            "Integrated one-time setup: call `m_list_automations` — if an automation named "
+            f"`{worker['name']}` already exists, record its ID with `record_command`; otherwise "
+            "call `m_create_automation` once with `provider_spec` and record the returned ID with "
+            "`record_command`. If `m_create_automation` is unavailable or fails, run `skip_command` "
+            "and continue immediately into Phase 0 (non-blocking)."
+        ),
+    }
+
+
+def ccd_watcher_setup_hint(entries: list[dict] | None, release: str, config_path: str, state, selection, now=None) -> dict | None:
+    """Return one-time setup metadata for `ccd-localization-watcher` once Phase 1 (`ccd`) is reached
+    and before CCD 10:00 PM; returns None once recorded in the registry."""
+    if not release or entries is None:
+        return None
+    if selection.frontier is None or selection.frontier.id != "ccd" or state.cancellation or state.halt:
+        return None
+    target_key = stable_key(release, "ccd-localization-watcher")
+    if any(item.get("key") == target_key for item in entries):
+        return None
+    planned = auto_plan.plan(config_path, release, state.ccd, owner_timezone=state.timezone, now=now)
+    worker = next((a for a in planned["automations"] if a["slug"] == "ccd-localization-watcher"), None)
+    if not worker or worker.get("problems") or not worker.get("provider_spec"):
+        return None
+    # Do not offer setup if CCD 10:00 PM has already passed or Phase 1 is complete.
+    probe_entry = {**worker["registration"], "id": "probe", "scope": "release", "status": "active"}
+    cleanup = auto_plan.cleanup_plan(state, [probe_entry], config_path, now=now)
+    if cleanup["removals"] or cleanup["problems"]:
+        return None
+    return {
+        "slug": "ccd-localization-watcher",
+        "name": worker["name"],
+        "schedule": worker["schedule"],
+        "optional": True,
+        "plan_command": f"automation plan --release {release} --slug ccd-localization-watcher --json",
+        "record_command": f"automation record-setup --release {release} --slug ccd-localization-watcher --id <created-id> --json",
+        "skip_command": f"automation record-setup --release {release} --slug ccd-localization-watcher --skipped \"<reason>\" --json",
+        "instruction": (
+            "SILENT ONE-TIME PHASE 1 SETUP (`requires_approval: false`): Run `command` "
+            f"(`automation plan --release {release} --slug ccd-localization-watcher --json`) to read "
+            "`automations[0].provider_spec`, call `m_list_automations` (reuse ID if "
+            f"`{worker['name']}` already exists, else call `m_create_automation` once with that exact "
+            "`provider_spec`), then record via "
+            f"`automation record-setup --release {release} --slug ccd-localization-watcher --id <created-id> --json` "
+            f"(or `--skipped \"<reason>\"` if `m_create_automation` is unavailable — non-blocking!). "
+            "Do NOT call `m_ask_user`!"
+        ),
+    }
+
+
+def _cmd_record_setup(args):
+    """Record the one-time release-start setup outcome for a canonical optional accelerator."""
+    if not args.release or not args.slug:
+        raise ValueError("record-setup requires --release and --slug")
+    if bool(args.id) == bool(args.skipped):
+        raise ValueError("record-setup requires exactly one of --id <provider-id> or --skipped <reason>")
+    config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
+    st = C.load_state(args.runs_root, args.release)
+    planned = auto_plan.plan(config_path, args.release, st.ccd, owner_timezone=st.timezone)
+    worker = next((a for a in planned["automations"] if a["slug"] == args.slug), None)
+    if worker is None:
+        raise ValueError(f"Unknown canonical automation slug: {args.slug!r}")
+    if planned["problems"] or worker["problems"] or not worker.get("provider_spec"):
+        raise ValueError("; ".join(planned["problems"] + worker["problems"]) or "Invalid provider spec")
+    reg = AutomationRegistry(args.runs_root, args.release)
+    out = reg.record_setup(
+        release=args.release,
+        slug=args.slug,
+        registration=worker["registration"],
+        spec=worker["provider_spec"],
+        automation_id=args.id,
+        skipped_reason=args.skipped,
+        executor=args.executor or "release-setup",
+    )
+    C.elog(args.runs_root, args.release).log(
+        "automation_setup_recorded",
+        slug=args.slug,
+        status=out["entry"]["status"],
+        automation_id=out["entry"].get("id"),
+    )
+    if args.json:
+        print(_json.dumps(out, indent=2))
+    else:
+        entry = out["entry"]
+        if entry["status"] == "active":
+            print(f"Recorded {entry['name']} ({entry['id']}) — runs {entry['schedule']}.")
+        else:
+            print(f"Recorded non-blocking setup skip for {entry['name']}; workflow continues normally.")
+    return 0
+
+
 def register(sub):
     au = sub.add_parser("automation", help="Track provisioned automations and reconcile lifecycle cleanup")
     au.add_argument("action", choices=[
-        "plan", "prepare", "reconcile-create", "create-result",
+        "plan", "prepare", "reconcile-create", "create-result", "record-setup",
         "confirm-absent", "abandon-prepared", "claim-delete", "delete-result",
         "register", "list", "deregister", "sync", "obligations", "cleanup",
     ])
@@ -483,6 +602,8 @@ def register(sub):
         "created", "not_created", "uncertain", "deleted", "not_deleted"])
     au.add_argument("--evidence", default=None)
     au.add_argument("--reason", default=None)
+    au.add_argument("--skipped", default=None,
+                    help="For record-setup: non-blocking reason when optional accelerator setup is skipped")
     au.add_argument("--confirm-absent", action="store_true")
     au.add_argument("--confirm-no-inflight", action="store_true",
                     help="Owner verified original runner AND provider operation have terminated")

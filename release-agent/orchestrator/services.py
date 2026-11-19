@@ -29,6 +29,8 @@ class PipelineReads:
     latest_scheduled_build: Callable[..., tuple]
     local_flights: Callable[..., tuple]
     get_pipeline_approval: Callable[..., tuple]
+    inspect_localization_build: Callable[..., tuple] | None = None
+    inspect_localization_pr: Callable[..., tuple] | None = None
 
 
 @dataclass(frozen=True)

@@ -28,9 +28,19 @@ def cmd_checklist(args):
             payload = render.attest_prompt_payload(chk, args.release)
             payload["progression_policy"] = runtime_report["progression_policy"]
             payload["display_before_prompt"] = runtime_report["handoff_ready"]
-            print(_json.dumps(payload, indent=2))
+            if chk.get("signed"):
+                from orchestrator.commands.automation import morning_drain_setup_hint
+                hint = morning_drain_setup_hint(args.runs_root, args.release, args.config, st)
+                if hint is not None:
+                    payload["morning_drain_setup"] = hint
+            print(_json.dumps(payload))
         else:
-            print(_json.dumps(chk, indent=2))
+            if chk.get("signed"):
+                from orchestrator.commands.automation import morning_drain_setup_hint
+                hint = morning_drain_setup_hint(args.runs_root, args.release, args.config, st)
+                if hint is not None:
+                    chk = {**chk, "morning_drain_setup": hint}
+            print(_json.dumps(chk))
         return code
     if attest:
         C.emit(args.runs_root, args.release,
@@ -88,6 +98,15 @@ def cmd_sign(args):
            items=ids, signed=chk["signed"])
     if chk["signed"]:
         print(f"Readiness signed at {chk['signed_at']}. Entry gate cleared — you can now start Phase 0.")
+        from orchestrator.commands.automation import morning_drain_setup_hint
+        hint = morning_drain_setup_hint(args.runs_root, args.release, args.config, st)
+        if hint is not None:
+            print(
+                f"  Optional 7:00 AM accelerator setup: run `{hint['plan_command']}`, create "
+                f"`{hint['name']}` ({hint['schedule']}) via `m_create_automation` (or reuse if present), "
+                f"and record with `{hint['record_command']}` (or `{hint['skip_command']}` if unavailable), "
+                "then proceed immediately to `next --deliver`."
+            )
     else:
         pending = [i["id"] for i in chk["items"] if not i["satisfied"]]
         print(f"Recorded {', '.join(ids)}. Still pending: {', '.join(pending)}")

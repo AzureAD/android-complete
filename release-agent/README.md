@@ -69,10 +69,11 @@ and `work_dispatch`. Task/result JSON exposes the automatic-progression policy,
 continuation queue and handoff cues; a settled report contains `display_markdown`
 for the full table. Tool output alone is not proof the owner saw it.
 
-Guided foreground operation retains the stored `interactive` execution mode.
-It does not create background workers or bypass real approvals/consent.
-Scheduled unattended workers remain a separate opt-in. Initialization records
-context, not proof a release executed. Status remains local/read-only.
+The pipeline runs as a single **unified state-driven hybrid model**: interactive
+sessions and optional background accelerators (like the daily 7:00 AM
+`morning-step-drain`) share one `.state.lock`-serialized, claim-fenced state machine.
+Disabling or deleting background automations never blocks or breaks progression.
+Initialization records context, not proof a release executed. Status remains local/read-only.
 
 | Intent | Command | Scope |
 |---|---|---|
@@ -276,24 +277,24 @@ Physical readiness, on-call policy, relevant source identity, actual scheduling,
 halt/cancellation, and human release gates remain enforced. No generic "continue"
 message approves quality, publication, Remove RC Tags, or Beta Play Store start.
 
-## Optional unattended mode
+## Optional 7:00 AM background accelerator (`morning-step-drain`)
 
 ```powershell
-python -m orchestrator.cli set-mode --release 2026-12 --mode unattended
+python -m orchestrator.cli automation plan --release 2026-12 --json
 python -m orchestrator.cli automation obligations --release 2026-12 --json
 ```
 
-`init --unattended` also opts in. Only this mode requires the canonical driver's
-creation/adoption receipt and healthy provider state before scheduled progression.
-Use exact plan/reconcile/create-result/cleanup protocols; uncertain workers are not
-duplicated or silently replaced. `tick` does nothing in interactive mode.
-
-Selecting interactive mode does not delete cloud workers or their audit records.
-Worker cleanup is a separate checked action. Source edits do not update a user's
-installed skill or live workers automatically.
-Generated workers pass the global `--scheduled` flag on release commands, so even
-direct worker tasks stop new work after a mode change. Owning receipt/result
-acknowledgements remain permitted.
+Automations in `config/automations.yaml` act purely as non-blocking convenience
+accelerators rather than hard dependencies:
+- **`morning-step-drain`** runs once daily at **7:00 AM** (`every day at 7am`) to
+  execute and drain all eligible non-blocking steps (`next --deliver`), reconcile
+  in-flight async pipelines once, deliver any due morning owner digest (`tick --deliver`),
+  and park cleanly at the next human-in-the-loop gate before the workday starts.
+- Disabling or deleting any automation in Scout never blocks readiness, `status`,
+  or interactive progression, and background runs never auto-resurrect deleted workers.
+- Interactive sessions and `--scheduled` background runs serialize through
+  `<runs-root>/<release>/.state.lock` and durable pre-IO claims (`D.claim` /
+  `write_review.authorize`), preventing race conditions or duplicate execution.
 
 ## Connector routing and compact state
 

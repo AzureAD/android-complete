@@ -35,7 +35,9 @@ No blanket write authority follows from readiness. Every owning write step needs
    - Run `python -m orchestrator.cli checklist --release <id> --attest-prompt --handoff --json`.
    - `ready:false` while `continue_automatically:true` (exit code `2`) means runnable `[auto]` checks still remain — finish them first without retrying `failed_auto_checks`.
    - Once all runnable `[auto]` checks have finished, **paste `display_markdown` verbatim as live Markdown** before prompting so the user sees every check's result (`PASS` / `FAIL`) and specific failure reason.
-   - If any `[auto]` check failed due to a missing/broken tool, present an `m_ask_user` card alongside the outstanding attestations allowing the owner to **Fix & retry failed check(s)**, **Complete manually (`complete-readiness-manually`)**, **Skip/waive failed check (`skip-readiness --reason ...`)**, and **Confirm human `[attest]` items (`sign --item ...`)**. Once all items are satisfied, immediately run `python -m orchestrator.cli next --release <id> --deliver --json` **ONCE** (never in a loop — it drains all Phase 0 Python checks AND delivers `requires_approval: false` preflight notifications directly in Python via Agency MCP), then execute any remaining `work_dispatch.pending_work` items (such as `preflight.lockdown`)!
+   - If any `[auto]` check failed due to a missing/broken tool, present an `m_ask_user` card alongside the outstanding attestations allowing the owner to **Fix & retry failed check(s)**, **Complete manually (`complete-readiness-manually`)**, **Skip/waive failed check (`skip-readiness --reason ...`)**, and **Confirm human `[attest]` items (`sign --item ...`)**.
+   - **Integrated 7:00 AM accelerator setup right when Readiness signs:** As soon as all Readiness items are satisfied (`signed: true`), if `morning_drain_setup` is returned (no registry entry yet for `morning-step-drain`), run `python -m orchestrator.cli automation plan --release <id> --slug morning-step-drain --json`, check `m_list_automations` (reuse existing ID if `<id> · Release-wide — morning step drain` is already present, else call `m_create_automation` once with `provider_spec`), and record with `python -m orchestrator.cli automation record-setup --release <id> --slug morning-step-drain --id <id> --json` (or `--skipped "<reason>"` if `m_create_automation` is unavailable — non-blocking!).
+   - Immediately run `python -m orchestrator.cli next --release <id> --deliver --json` **ONCE** (never in a loop — it drains all Phase 0 Python checks AND delivers `requires_approval: false` preflight notifications directly in Python via Agency MCP), then execute any remaining `work_dispatch.pending_work` items (such as `preflight.lockdown`)!
 
 ## Structured connector reads
 
@@ -49,7 +51,7 @@ The adapter verifies the launcher/wrapper and keeps arguments literal. Reuse its
 
 The agent, not the owner, constructs temporary observation envelopes: `{version:1, tool, arguments, account, observed_at, result}`. Bind the exact requested account/resource, complete every pagination page, and preserve provider errors. Tool discovery/help is not access proof; WorkIQ Ask/people search is never roster or identity evidence; never acquire raw Graph tokens or switch transports after denial. Keep private responses outside the repository and delete temporary files when done.
 
-## Optional unattended mode
+## Unified state-driven hybrid model
 
-Unattended startup (`--unattended` / `set-mode --mode unattended`) additionally requires its canonical driver's creation/adoption receipt (`push-reminders`) and actual provider health. Missing or uncertain startup is not success; honor host consent and the owning worker result. Interactive mode is the default and has no mandatory driver.
+Readiness and workflow progression never block on background Scout automations. Optional accelerators (such as the 7:00 AM `morning-step-drain`) share the exact same `.state.lock` and durable claim-before-IO state machine as chat sessions and can be disabled or deleted at any time without affecting the workflow.
 

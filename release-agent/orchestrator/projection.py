@@ -106,7 +106,6 @@ class StateProjection:
         is_mocked: Optional[Callable[[StepDefinition], bool]] = None,
         fire_at: Optional[Callable[[StepDefinition], Optional[str]]] = None,
         revision_problem: Optional[str] = None,
-        startup_ready: bool = True,
     ):
         self.state = state
         self.workflow = workflow
@@ -116,7 +115,6 @@ class StateProjection:
         self.readiness_blocked = readiness_blocked
         self.is_mocked = is_mocked or (lambda _step: False)
         self.fire_at = fire_at or (lambda _step: None)
-        self.startup_ready = startup_ready
         self.revision_problem = revision_problem or (
             "Workflow revision is unbound" if state.workflow_revision is None else "")
 

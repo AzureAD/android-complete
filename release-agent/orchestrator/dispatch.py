@@ -106,12 +106,18 @@ def phase_plan(orch, selection, readiness):
                 continue
             if item.status in ("blocked", "running", "in_flight") or item.reserved:
                 execution = orch.step_execution(step.phase_id, step.id)
+                pollable = bool(item.status == "in_flight" and (step.pollable or step.kind.value == "auto"))
                 held.append({
                     "key": step.key, "phase": step.phase_id, "step": step.id,
                     "status": item.status, "owned": item.reserved,
+                    "pollable": pollable,
                     "execution_id": execution.get("id") if execution else None,
                     "resume_command": _held_resume_command(release, step, execution),
-                    "instruction": "Preserve ownership and use the owning recovery/poll/input protocol; no automatic replay.",
+                    "instruction": (
+                        "In-flight async work: reconcile once via `resume_command` (never trigger a duplicate run)."
+                        if pollable else
+                        "Preserve ownership and use the owning recovery/poll/input protocol; no automatic replay."
+                    ),
                 })
     action = (
         DispatchAction.RUN_PHASE_WORK.value if pending else
@@ -136,18 +142,15 @@ def phase_plan(orch, selection, readiness):
 
 def handoff_plan(plan, holds):
     """Transient host-reported input boundaries, never completion or provider proof."""
-    if holds and plan["next_action"] not in (
-        DispatchAction.RUN_PHASE_WORK.value,
-        DispatchAction.PROVISION_STARTUP_AUTOMATION.value,
-    ):
+    if holds and plan["next_action"] != DispatchAction.RUN_PHASE_WORK.value:
         raise ValueError("--hold-step only applies to currently queued phase tasks")
     reasons = {}
     queued = {item["key"]: item for item in plan["pending_work"]}
     for value in holds or ():
         key, sep, reason = value.partition("=")
-        if (not sep or key not in queued or queued[key]["kind"] not in ("scout", "automation")
+        if (not sep or key not in queued or queued[key]["kind"] != "scout"
                 or key in reasons or not reason.strip()):
-            raise ValueError("--hold-step requires a unique queued Scout/automation key=actual input/consent/recovery reason")
+            raise ValueError("--hold-step requires a unique queued Scout key=actual input/consent/recovery reason")
         reasons[key] = reason.strip()
     if not reasons:
         return plan
@@ -314,119 +317,11 @@ def decorate_handoff_contract(report: dict) -> dict:
     if report["handoff_ready"]:
         from orchestrator.render import status_view
         report["display_markdown"] = status_view(report)
+        report["render_instruction"] = (
+            "Emit display_markdown directly as raw live Markdown in your reply "
+            "(starting directly with ## or ###) — NEVER wrap it in ```markdown or ``` code fences!"
+        )
     else:
         report.pop("display_markdown", None)
+        report.pop("render_instruction", None)
     return report
-
-
-def startup_plan(orch, selection):
-    """Registry-backed startup bookkeeping, not a live provider availability claim."""
-    reader = orch.automation_entries
-    if reader is None or orch.state.execution_mode != "unattended":
-        return None
-    from orchestrator.automations import load_defs, _provider_defaults
-    from orchestrator.registry import has_creation_receipt
-    definitions = [item for item in load_defs(orch.config_path) if item.get("required_on_start")]
-    entries = reader()
-    required, recoveries, active, problems = [], [], [], []
-    if selection.frontier is None or orch.state.cancellation:
-        definitions = []
-    for definition in definitions:
-        slug = definition["slug"]
-        if _provider_defaults(orch.config_path).get("enabled") is not True:
-            problems.append(f"{slug}: mandatory driver cannot be disabled")
-            continue
-        if (definition.get("required_on_start") is not True
-                or definition.get("on_demand") or not definition.get("every")):
-            problems.append(f"{slug}: invalid mandatory startup worker configuration")
-            continue
-        matches = [item for item in entries if item.get("slug") == slug
-                   and item.get("scope") == "release" and item.get("release") == orch.state.release_id]
-        if len(matches) > 1:
-            problems.append(f"{slug}: duplicate startup registry identities; reconcile before creating")
-            continue
-        existing = matches[0] if matches else None
-        if existing is None or existing["status"] in ("prepared", "missing"):
-            required.append({"slug": slug, "name": existing["name"] if existing else slug})
-        elif has_creation_receipt(existing):
-            active.append(slug)
-        else:
-            recoveries.append({
-                "slug": slug,
-                "key": existing.get("key"),
-                "id": existing.get("id"),
-                "name": existing.get("name") or slug,
-                "status": existing.get("status"),
-                "command": f"automation plan --release {orch.state.release_id} --slug {slug} --json",
-            })
-    return {
-        "required": [{"slug": item["slug"], "name": item["name"],
-                      "command": f"automation plan --release {orch.state.release_id} --slug {item['slug']} --json"}
-                     for item in required],
-        "recoveries": recoveries,
-        "active": active,
-        "complete": not required and not recoveries and not problems,
-        "problems": problems,
-        "permission_to_create": False,
-        "verification": "registry_receipts_not_live_provider_check",
-    }
-
-
-def with_startup(plan, startup):
-    if startup is None:
-        return plan
-    base = {**plan, "startup_automation": startup}
-    if plan["next_action"] == DispatchAction.RESOLVE_RELEASE_HOLD.value or startup["complete"]:
-        return base
-    tasks = [{
-        "key": f"automation:{item['slug']}", "kind": "automation", "name": item["name"],
-        "command": item["command"],
-        "instruction": (
-            "Ensure the required release-wide driver. Obtain its canonical plan and fresh exhaustive Scout "
-            "list/details, then use automation reconcile-create --ensure --claim with that exact spec. "
-            "An exact existing worker is adopted; a proven-absent settled worker is safely recreated. "
-            "Acknowledge the owning create-result. Only permission_to_create:true permits creation; "
-            "unknown operations are never repeated."),
-    } for item in startup["required"]]
-    for item in startup["recoveries"]:
-        tasks.append({
-            "key": f"automation:{item['slug']}", "kind": "automation", "name": item["name"],
-            "command": item["command"],
-            "instruction": (
-                "Recover the existing startup driver without creating duplicates. Obtain its canonical plan and "
-                "fresh exhaustive Scout list/details, then reconcile-create --ensure --claim with the exact spec. "
-                "Preserve existing ownership for unknown create/delete outcomes and acknowledge only the owning result."),
-        })
-    entry = plan["next_action"] == DispatchAction.READINESS.value
-    queued = tasks
-    entry_checks = entry and plan["continue_automatically"]
-    return {
-        **base, "pending_work": queued, "phase_work_waiting": plan["pending_work"],
-        "next_action": (
-            DispatchAction.PROVISION_STARTUP_AUTOMATION.value if tasks else
-            DispatchAction.READINESS.value if entry_checks else
-            DispatchAction.RECOVER_STARTUP_AUTOMATION.value
-        ),
-        "continue_automatically": bool(queued) or entry_checks,
-        "may_return_to_user": not queued and (plan["may_return_to_user"] if entry else True),
-        "instruction": (
-            "Startup is incomplete: the required release-wide automation needs provisioning/reconciliation. "
-            "Do not claim the release is running unattended. Exhaust independent readiness/phase work before "
-            "a real input/recovery question. Unknown create/delete outcomes retain their original ownership; "
-            "never create a duplicate or silently replace an existing worker."),
-    }
-
-
-def startup_checklist(chk, work):
-    startup = work.get("startup_automation")
-    if startup is None:
-        return chk
-    dispatch = chk["dispatch"]
-    if not startup["complete"]:
-        dispatch = {
-            **dispatch,
-            **{key: work[key] for key in (
-                "next_action", "continue_automatically", "may_return_to_user", "instruction")},
-            "pending_work": work["pending_work"], "startup_automation": startup,
-        }
-    return {**chk, "dispatch": dispatch, "startup_automation": startup, "work_dispatch": work}

@@ -183,8 +183,11 @@ def test_all_readiness_and_workflow_steps_are_mandatory_with_explicit_dependenci
         assert "when used" not in text
         assert "mandatory" in text.lower()
         assert "consent" in text
+    from dataclasses import fields
     from orchestrator.state import ReleaseState
-    assert ReleaseState().execution_mode == "interactive"
+    field_names = {f.name for f in fields(ReleaseState)}
+    assert "execution_mode" not in field_names
+    assert "last_status_email_date" not in field_names
     assert "Do not loop/retry" in documents[0] and "failed_auto_checks" in documents[0]
     assert "fail-step" in documents[0]
 
@@ -192,7 +195,7 @@ def test_all_readiness_and_workflow_steps_are_mandatory_with_explicit_dependenci
 def test_init_json_and_per_write_authorization_match_the_skill():
     from orchestrator.cli import build_parser
     args = build_parser().parse_args(["init", "--release", "2026-11", "--json"])
-    assert args.json and args.release == "2026-11" and not args.unattended
+    assert args.json and args.release == "2026-11" and not hasattr(args, "unattended")
     documents = [
         open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
         for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
@@ -202,7 +205,7 @@ def test_init_json_and_per_write_authorization_match_the_skill():
         assert "blanket" in text and "owning write step" in text
     for text in documents[:2]:
         assert "init --release <id> --json" in text
-        assert "guided" in text.lower() and "--unattended" in text
+        assert "hybrid" in text.lower()
         assert "--help" in text
 
 
@@ -219,42 +222,68 @@ def test_status_only_is_scoped_but_recorded_results_resume_guided_progression():
     assert "No blanket write authority" in documents[2]
 
 
-def test_default_guided_dispatch_is_separate_from_opted_in_worker_execution():
+def test_unified_hybrid_dispatch_shares_locked_state_machine_with_optional_accelerators():
     from orchestrator import automations
     skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
     assert "By default, use `work_dispatch`" in skill
-    assert "For explicitly requested unattended execution" in skill
+    assert "morning-step-drain" in skill and "optional, non-blocking accelerators" in skill
     assert "Status-only" in skill and "explicitly one-task" in skill
     for spec in automations.plan(CONFIG, "2026-09", "2026-09-09")["automations"]:
-        assert "work_dispatch" in spec["prompt"] and "may_return_to_user:false" in spec["prompt"]
-        assert "Notification-only/poll workers retain their" in spec["prompt"]
+        assert "work_dispatch" in spec["prompt"] and ".state.lock" in spec["prompt"]
+        assert "never recreate or re-enable" in spec["prompt"]
 
 
-def test_required_driver_is_only_an_opted_in_unattended_obligation():
+def test_all_automations_are_optional_accelerators_without_mandatory_startup_blockers():
     from orchestrator import automations
-    required = [item for item in automations.load_defs(CONFIG) if item.get("required_on_start")]
-    assert [item["slug"] for item in required] == ["push-reminders"]
+    defs = automations.load_defs(CONFIG)
+    assert all(not item.get("required_on_start") for item in defs)
+    slugs = {item["slug"] for item in defs}
+    assert "morning-step-drain" in slugs
+    assert not ({"push-reminders", "daily-status-email", "ccd-morning", "ccd-noon", "ccd-localization-poller"} & slugs)
     for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
                  os.path.join("reference", "readiness-gate.md"),
                  os.path.join("reference", "presenting-status.md")):
         text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
-        assert ("driver" in text or "worker" in text) and ("receipt" in text or "acknowledged" in text)
-        assert "unattended" in text.lower() and "consent" in text
-    entry = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
-    assert "foreground `interactive` mode" in entry and "Do not create reminder workers" in entry
+        assert "optional" in text.lower() and "set-mode" not in text
 
 
-def test_worker_prompts_and_skill_ensure_desired_state_instead_of_owner_reset():
+def test_worker_prompts_never_auto_resurrect_deleted_automations():
     from orchestrator import automations
     for worker in automations.plan(CONFIG, "2026-12", "2026-12-09")["automations"]:
-        assert "At each operational run first" in worker["prompt"]
-        assert "reconcile-create --ensure --claim" in worker["prompt"]
-        assert "proven-absent settled worker" in worker["prompt"]
+        assert "reconcile-create --ensure" not in worker["prompt"]
+        assert "never recreate or re-enable" in worker["prompt"]
     for path in (os.path.join("reference", "starting-and-scheduling.md"),
                  os.path.join("reference", "commands.md")):
         text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
-        assert "--ensure" in text
-        assert "absen" in text.lower() and "unknown" in text.lower()
+        assert "morning-step-drain" in text or "tick --release" in text
+
+
+def test_skill_and_handoff_json_fit_within_inline_tool_output_budget(tmp_path, capsys):
+    """Copilot CLI offloads tool outputs >20 KB to temp files (truncating `m_get_skill` and
+    `status --handoff --json`, which hides table formatting rules). Keep both under budget."""
+    import json
+    from orchestrator import cli, cli_common as C
+    from orchestrator.engine import Orchestrator
+    from orchestrator.revision import bind_initial
+    from orchestrator.state import ReleaseState
+
+    skill_bytes = len(open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read().encode("utf-8"))
+    assert skill_bytes <= 17_500, f"SKILL.md is {skill_bytes} bytes (>17.5 KB risks m_get_skill truncation)"
+
+    st = ReleaseState(release_id="2026-11", ccd="2026-11-18", ccd_source="manual", owner_email="owner@example.test")
+    bind_initial(Orchestrator(CONFIG, st, mocks={}))
+    _active_phase(st, "preflight")
+    orch = Orchestrator(CONFIG, st, mocks={})
+    for step_def in orch.workflow.phase("preflight").steps:
+        if step_def.id != "vitals":
+            st.set_step("preflight", step_def.id, StepState(status="done", note="ok"))
+    C.save_state(st, str(tmp_path), st.release_id)
+    assert cli.main(["--runs-root", str(tmp_path), "status", "--release", "2026-11",
+                     "--as-of", "2026-11-17", "--details", "--handoff", "--json", "--no-pipeline-check"]) == 0
+    raw = capsys.readouterr().out
+    assert len(raw.encode("utf-8")) < 20_000, f"status --json is {len(raw.encode('utf-8'))} bytes (>20 KB)"
+    parsed = json.loads(raw)
+    assert "NEVER wrap" in parsed.get("render_instruction", "")
 
 
 def test_start_release_requires_explicit_folder_and_date_confirmation_before_init():

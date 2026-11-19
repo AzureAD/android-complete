@@ -5,9 +5,110 @@ import json
 from types import SimpleNamespace
 
 from orchestrator import cli_common as C, delivery as D
-from orchestrator.agency_mcp import MCPCaller, call_mcp_tool, send_notification
+from orchestrator.agency_mcp import (
+    AgencyAmbiguousDeliveryError,
+    MCPCaller,
+    call_mcp_tool,
+    send_notification,
+)
 from orchestrator.commands.delivery_cmd import finish
 from orchestrator.commands.step_action import prepare_step
+
+
+def deliver_descriptor_items(
+    runs_root: str,
+    release: str,
+    config: str,
+    items: list[dict],
+    *,
+    executor: str = "engine-agency-mcp",
+    mcp_caller: MCPCaller | None = None,
+) -> list[dict]:
+    """Durably offer, claim-before-IO, send via Agency MCP, and finalize notification descriptors."""
+    if mcp_caller is None:
+        mcp_caller = call_mcp_tool
+    results: list[dict] = []
+    if not items:
+        return results
+    st, orch = C.load_orch(runs_root, release, config)
+    for item in items:
+        D.offer(orch, item)
+        try:
+            claimed = D.claim(orch, item["id"], item["hash"], executor)
+        except ValueError as exc:
+            results.append({
+                "status": "skipped",
+                "notification_id": item["id"],
+                "reason": str(exc),
+            })
+            continue
+        C.save_state(st, runs_root, release)
+        if claimed.get("status") == "already_sent":
+            results.append({"status": "already_sent", "notification_id": item["id"]})
+            continue
+        tool_name = claimed["tool"]
+        try:
+            sent_info = send_notification(
+                tool_name,
+                claimed["payload"],
+                owner_email=st.owner_email,
+                mcp_caller=mcp_caller,
+            )
+        except AgencyAmbiguousDeliveryError as exc:
+            err_text = str(exc).strip() or exc.__class__.__name__
+            D.result(
+                orch,
+                item["id"],
+                claimed["execution_id"],
+                "uncertain",
+                f"Agency MCP outcome uncertain after dispatch (fenced against resend): {err_text}",
+            )
+            C.save_state(st, runs_root, release)
+            results.append({
+                "status": "uncertain",
+                "notification_id": item["id"],
+                "tool": tool_name,
+                "error": err_text,
+            })
+            continue
+        except Exception as exc:
+            err_text = str(exc).strip() or exc.__class__.__name__
+            D.result(
+                orch,
+                item["id"],
+                claimed["execution_id"],
+                "not_sent",
+                f"Agency MCP transport failed before confirmation: {err_text}",
+            )
+            C.save_state(st, runs_root, release)
+            results.append({
+                "status": "failed",
+                "notification_id": item["id"],
+                "tool": tool_name,
+                "error": err_text,
+            })
+            continue
+
+        via = f"agency:{sent_info['server']}.{sent_info['mcp_tool']}"
+        resp_obj = sent_info.get("response") if isinstance(sent_info.get("response"), dict) else {}
+        if tool_name in D.EXACT_PAYLOAD_RECEIPT_TOOLS:
+            receipt = D.exact_payload_receipt(claimed, {"via": via, **resp_obj})
+        else:
+            receipt = {"via": via, **resp_obj}
+        evidence = f"Delivered silently via {via}"
+        D.result(orch, item["id"], claimed["execution_id"], "sent", evidence, receipt=receipt)
+        C.save_state(st, runs_root, release)
+        finish(orch, item["id"])
+        D.prune_progress(orch)
+        C.save_state(st, runs_root, release)
+        results.append({
+            "status": "done",
+            "notification_id": item["id"],
+            "tool": tool_name,
+            "via": via,
+            "target": claimed.get("target"),
+        })
+    return results
 
 
 def deliver_one_step(
@@ -20,9 +121,11 @@ def deliver_one_step(
     approved: bool = False,
     param: list[str] | None = None,
     executor: str = "engine-agency-mcp",
-    mcp_caller: MCPCaller = call_mcp_tool,
+    mcp_caller: MCPCaller | None = None,
 ) -> dict:
     """Prepare, claim, send via Agency MCP, and finalize a single notification step."""
+    if mcp_caller is None:
+        mcp_caller = call_mcp_tool
     st, orch = C.load_orch(runs_root, release, config)
     definition = orch.workflow.step(phase, step)
     if definition is None:
@@ -129,6 +232,31 @@ def deliver_one_step(
             owner_email=st.owner_email,
             mcp_caller=mcp_caller,
         )
+    except AgencyAmbiguousDeliveryError as exc:
+        err_text = str(exc).strip() or exc.__class__.__name__
+        D.result(
+            orch,
+            item["id"],
+            claimed["execution_id"],
+            "uncertain",
+            f"Agency MCP outcome uncertain after dispatch (fenced against resend): {err_text}",
+        )
+        C.save_state(st, runs_root, release)
+        C.elog(runs_root, release).log(
+            "step_failed", phase=phase, step=step, tool=connector, detail=f"uncertain: {err_text}"
+        )
+        return {
+            "status": "uncertain",
+            "release": release,
+            "phase": phase,
+            "step": step,
+            "tool": tool_name,
+            "notification_id": item["id"],
+            "error": (
+                f"Agency MCP outcome uncertain after dispatch ({err_text}); "
+                "delivery is fenced against automatic resend until owner review."
+            ),
+        }
     except Exception as exc:
         err_text = str(exc).strip() or exc.__class__.__name__
         D.result(
@@ -193,9 +321,11 @@ def drain_auto_notifications(
     config: str,
     *,
     executor: str = "engine-agency-mcp",
-    mcp_caller: MCPCaller = call_mcp_tool,
+    mcp_caller: MCPCaller | None = None,
 ) -> list[dict]:
     """Deliver all currently eligible `requires_approval: false` notification steps."""
+    if mcp_caller is None:
+        mcp_caller = call_mcp_tool
     delivered: list[dict] = []
     attempted: set[str] = set()
     while True:

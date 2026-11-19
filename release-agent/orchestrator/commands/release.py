@@ -52,8 +52,7 @@ def cmd_init(args):
         else:
             print(message)
         return 1
-    st = ReleaseState(release_id=args.release,
-                      execution_mode="unattended" if getattr(args, "unattended", False) else "interactive")
+    st = ReleaseState(release_id=args.release)
 
     # Release owner (the engineer running this release) — release metadata.
     # Priority: explicit --owner-email (skill can pass the richer profile) then
@@ -110,7 +109,6 @@ def cmd_init(args):
         print(_json.dumps({
             "status": "done", "summary": "Release context initialized; no phase work or approval has run.",
             "initialized": True, "release_id": st.release_id, "state_path": sp,
-            "execution_mode": st.execution_mode,
             "owner_email": st.owner_email, "owner_name": st.owner_name,
             "timezone": st.timezone or schedule.DEFAULT_TZ,
             "ccd": st.ccd, "ccd_source": st.ccd_source, "ccd_conflict": st.ccd_conflict,
@@ -120,8 +118,6 @@ def cmd_init(args):
             "readiness_signed": orch.gate.signed,
             "readiness_dispatch": orch.gate.checklist()["dispatch"],
             "work_dispatch": initialized_report["work_dispatch"],
-            "startup_complete": (initialized_report["startup_automation"] is None
-                                 or initialized_report["startup_automation"]["complete"]),
             "next_action": initialized_report["work_dispatch"]["next_action"],
             "continue_automatically": initialized_report["work_dispatch"]["continue_automatically"],
             "checklist_command": checklist_command,
@@ -145,20 +141,10 @@ def cmd_init(args):
         print("\n".join(lines))
     else:
         print(f"Initialized release {args.release}.\n  state: {sp}\n{owner_line}\n{tz_line}\n{note}")
-    if (initialized_report["startup_automation"] is not None
-            and not initialized_report["startup_automation"]["complete"]):
-        print("  Required startup: provision/reconcile the configured release-wide driver "
-              "through the work queue below and save its owning provider receipt before "
-              "claiming unattended startup is complete.")
     print(
         f"  Next required readiness: `{checklist_command}`. "
         "No phase work or release approval has run.")
-    if st.execution_mode == "interactive":
-        print("  Guided progression is automatic while the agent is present; "
-              "no background worker is required or created.")
-        print(render.work_followup(initialized_report["work_dispatch"]))
-    else:
-        print(render.work_followup(initialized_report["work_dispatch"]))
+    print(render.work_followup(initialized_report["work_dispatch"]))
     return 0
 
 
@@ -186,6 +172,24 @@ def cmd_list(args):
     return 0
 
 
+def _compact_signed_readiness(report: dict) -> dict:
+    """Drop 18 KB of already-signed static readiness item prose from phase JSON snapshots
+    so `status --handoff --json` and `next --deliver --json` stay under 20 KB inline tool limits."""
+    if not report.get("readiness_signed") or not isinstance(report.get("readiness"), dict):
+        return report
+    r = report["readiness"]
+    out = dict(report)
+    out["readiness"] = {
+        "signed": True,
+        "signed_at": r.get("signed_at"),
+        "blocked": r.get("blocked", False),
+        "blocked_items": r.get("blocked_items", []),
+        "all_satisfied": r.get("all_satisfied", True),
+        "dispatch": r.get("dispatch"),
+    }
+    return out
+
+
 def cmd_status(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     rep = orch.status_report()
@@ -198,7 +202,7 @@ def cmd_status(args):
     rep = decorate_handoff_contract(rep)
     code = 2 if getattr(args, "handoff", False) and not rep["work_dispatch"]["may_return_to_user"] else 0
     if getattr(args, "json", False):
-        print(_json.dumps(rep))
+        print(_json.dumps(_compact_signed_readiness(rep)))
         return code
     display = render.status_view(rep) if getattr(args, "details", False) else render.status_brief(rep)
     print(display)
@@ -232,7 +236,7 @@ def cmd_next(args):
     if getattr(args, "json", False):
         # Advance, then emit the same report as `status --json` (carries scout_pending) so a
         # caller can advance + read the pending scout steps in ONE call.
-        report = decorate_handoff_contract(orch.status_report())
+        report = _compact_signed_readiness(decorate_handoff_contract(orch.status_report()))
         if delivered:
             report["delivered_notifications"] = delivered
         print(_json.dumps(report))
@@ -475,8 +479,6 @@ def register(sub):
     i.add_argument("--json", action="store_true",
                    help="Print initialization metadata and the immediate readiness handoff as JSON")
     i.add_argument("--force", action="store_true")
-    i.add_argument("--unattended", action="store_true",
-                   help="Opt in to scheduled progression; interactive execution is the default")
     i.add_argument("--owner-email", default=None, help="Release owner email (default: signed-in az user)")
     i.add_argument("--owner-name", default=None, help="Release owner display name (optional)")
     i.add_argument("--timezone", default=None,
@@ -599,22 +601,6 @@ def register(sub):
     ac.add_argument("--phase", required=True)
     ac.set_defaults(func=cmd_activate)
 
-    mode = sub.add_parser("set-mode", help="Explicitly select interactive or unattended execution")
-    mode.add_argument("--release", required=True)
-    mode.add_argument("--mode", required=True, choices=("interactive", "unattended"))
-    mode.set_defaults(func=cmd_set_mode)
-
-
-def cmd_set_mode(args):
-    state, _ = C.load_orch(args.runs_root, args.release, args.config)
-    state.execution_mode = args.mode
-    C.save_state(state, args.runs_root, args.release)
-    C.elog(args.runs_root, args.release).log("execution_mode_changed", mode=args.mode)
-    print(_json.dumps({"status": "done", "execution_mode": args.mode,
-                       "permission_to_create": False, "permission_to_delete": False,
-                       "summary": "Mode recorded. Existing worker identities and receipts are unchanged."}))
-    return 0
-
 
 def cmd_inspect_state(args):
     from orchestrator.revision import CURRENT_EXECUTION_CONTRACT
@@ -633,7 +619,6 @@ def cmd_inspect_state(args):
         "execution_contract": contract, "supported": supported,
         "required_schema": SCHEMA_VERSION, "required_execution_contract": CURRENT_EXECUTION_CONTRACT,
         "step_count": len(data["steps"]) if isinstance(data.get("steps"), dict) else None,
-        "execution_mode": data.get("execution_mode"),
         "permission_to_execute": False, "permission_to_send": False,
         "summary": ("Metadata inspected; no state or provider changes."
                     if supported else "Unsupported run. This standard does not migrate old releases; retain the original bundle."),

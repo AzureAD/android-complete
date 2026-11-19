@@ -76,9 +76,6 @@ def cmd_record_step(args):
             except ValueError as exc:
                 print(str(exc))
                 return 1
-            field = completion.get("release_field")
-            if field and completion.get("date") and (getattr(orch.state, field, None) or "") < completion["date"]:
-                setattr(orch.state, field, completion["date"])
             C.save_state(orch.state, args.runs_root, args.release)
             C.emit(
                 args.runs_root, args.release,

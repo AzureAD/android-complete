@@ -72,7 +72,7 @@ def finish(orch, notification_id):
                 data=data,
                 links=completion.get("links") if "links" in completion else None,
             )
-    if completion.get("release_field") or completion.get("checkpoint"):
+    if completion.get("checkpoint"):
         transition = orch.record_notification_evidence(notification_id)
         if transition.kind != "annotated":
             raise ValueError(transition.message)
@@ -94,10 +94,6 @@ def prepare(args):
     elif args.source == "digest":
         from orchestrator.commands.notify import _notify_payload
         out = _notify_payload(args, args.release, advance=False)
-        items = out.get("notifications", [])
-    elif args.source == "status-email":
-        from orchestrator.commands.status_email_cmd import prepare_status_email
-        out = prepare_status_email(args, st, orch)
         items = out.get("notifications", [])
     else:
         out, items = {}, []
@@ -165,7 +161,7 @@ def register(sub):
         p.add_argument("--id", required=op != "prepare")
         if op == "prepare":
             p.add_argument("--as-of", default=None, help="Preview clock only; cannot authorize a send")
-            p.add_argument("--source", choices=("pending", "digest", "status-email", "step"),
+            p.add_argument("--source", choices=("pending", "digest", "step"),
                            default="pending")
             p.add_argument("--phase", default="preflight")
             p.add_argument("--step")
