@@ -11,13 +11,27 @@ Detailed engineering standards for authoring code and pull requests across `comm
    `CommonFlight`, `BrokerFlight`, or `EcsFlight`.
 2. **Strict off-path isolation**:
    - Audit the entire diff for any code that executes when the flight is `false`.
-   - Do **not** run new state-restoration markers, new ViewModel allocations, altered
+   - Do **not** run eager field allocations (`= new Object()`, `= new HashMap<>()`), new
+     collaborator callbacks, new state-restoration markers, new ViewModel allocations, altered
      navigation routes, or extra log statements when the flight is disabled.
-3. **Centralized flight evaluation**:
+   - Gate once at the call boundary, extract non-trivial flight-on logic into a dedicated
+     method with flat early returns, and avoid redundant nested `isFlightEnabled(...)` checks
+     inside helpers only invoked from flight-gated callers.
+3. **Minimal diff & native primitives first**:
+   - Prefer native Android, `WebView`, Kotlin/JDK, and existing repo primitives/locks over
+     custom state machines, single-caller `*Tracker`/`*Helper` classes, or parallel token maps.
+   - Extend central data registries (`AppRegistry` with `buildSet`, not Java-mutable `setOf` on
+     `@JvmField` collections) rather than adding duplicate caller prechecks or test-only
+     constructor overloads, and never add dead `SDK_INT >= N` / `Api24Impl` wrappers for APIs <=
+     `minSdkVersion` (`24`—use `@Config(sdk = [Build.VERSION_CODES.P])` in Robolectric tests).
+   - Keep shared legacy test helpers untouched when possible and write focused behavioral
+     boundary tests rather than copied-constant checks or $2^N$ boolean flag loops (see
+     `../code-simplifier/SKILL.md`).
+4. **Centralized flight evaluation**:
    - When a shared list or policy in `Common` is conditionally extended by a flight (e.g.,
      `getBrowserSsoAuthorizedApps()`), evaluate the flight centrally inside the no-arg
      helper rather than requiring every caller to pass flight flags manually.
-4. **Dual-state testing**:
+5. **Dual-state testing**:
    - Every test suite for flighted code must test both the flight-enabled and flight-disabled
      paths.
 

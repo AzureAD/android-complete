@@ -14,7 +14,7 @@ Implement approved Android Auth changes and comprehensive unit tests in the targ
 
 ## Core Implementation Rules
 
-- Read and follow `.github/skills/code-author/SKILL.md` and `.github/skills/code-author/references/implementation-standards.md`.
+- Read and follow `.github/skills/code-author/SKILL.md`, `.github/skills/code-author/references/implementation-standards.md`, and `.github/skills/code-simplifier/SKILL.md` (prefer native platform/repo primitives, zero unnecessary helper classes or unflighted allocations, single-boundary flight checks with flat helpers, and minimal focused diffs).
 - Write new files and new code in Kotlin; maintain Java style when editing existing Java files. Use LF (`\n`) line endings on new files so `git diff --check` stays clean.
 - Include the full repository license/copyright header at the top of every new file (full MIT header in `common`/`common4j`/`msal`/`adal`; Microsoft copyright header in `broker`/`authenticator`).
 - Gate behavioral changes behind a default-off flight (`CommonFlight`, `BrokerFlight`, or `EcsFlight`) with ZERO unintended off-path side effects, and test both `flight = true` and `flight = false`. If the approved design doc or reviewer finding explicitly specifies entry-tap admission, duplicate-tap suppression, or lifecycle callback invalidation across branches, implement that lifecycle/admission guard as part of the approved contract without blocking.
