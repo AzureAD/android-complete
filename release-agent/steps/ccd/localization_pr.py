@@ -56,40 +56,49 @@ def _check_pr_merge(
     pr_id: str,
     pr_url: str,
 ):
-    links = [{"name": f"Localization PR #{pr_id}", "url": pr_url}]
-    if bid and run_url:
-        links.append({"name": f"Localization build #{bid}", "url": run_url})
-
+    effective_pr_url = pr_url
     mock_pr_status = context.input("pr_status", MISSING)
     if mock_pr_status is not MISSING:
         pr_status = str(mock_pr_status or "").strip().lower()
     else:
         pr_inspector = context.services.pipelines.inspect_localization_pr
         if pr_inspector is None:
-            return Blocked("Localization PR inspector service is not configured.", links=links)
+            fallback_links = [{"name": f"Localization PR #{pr_id}", "url": effective_pr_url}]
+            return Blocked(
+                f"Localization PR inspector service is not configured (PR #{pr_id}: {effective_pr_url}).",
+                links=fallback_links,
+            )
         ok, pr_info, pr_detail = pr_inspector(cfg["org"], pr_id)
         if not ok or not isinstance(pr_info, dict):
-            return Blocked(pr_detail or f"Unable to read Localization PR #{pr_id} status.", links=links)
+            fallback_links = [{"name": f"Localization PR #{pr_id}", "url": effective_pr_url}]
+            return Blocked(
+                (pr_detail or f"Unable to read Localization PR #{pr_id} status") + f" ({effective_pr_url}).",
+                links=fallback_links,
+            )
+        if isinstance(pr_info.get("web_url"), str) and pr_info["web_url"].strip():
+            effective_pr_url = pr_info["web_url"].strip()
         pr_status = str(pr_info.get("status") or "").strip().lower()
 
+    # Link directly to the PR that needs to be merged (`ccd.localization` already carries the build link).
+    links = [{"name": f"Localization PR #{pr_id}", "url": effective_pr_url}]
     payload = {
         "build_id": bid,
         "run_url": run_url,
         "pr_id": str(pr_id),
-        "pr_url": pr_url,
+        "pr_url": effective_pr_url,
         "pr_status": pr_status or "active",
         "no_strings": False,
     }
     if pr_status == "completed":
         return Done(
-            f"Localization PR #{pr_id} is merged.",
+            f"Localization PR #{pr_id} is merged: {effective_pr_url}",
             links=links,
             updates=(StepData(payload),),
         )
     status_label = pr_status or "active"
     return Blocked(
         f"Localization PR #{pr_id} is open and not yet merged (ADO status: {status_label}). "
-        "Please merge the PR in Azure DevOps and re-run this check (Fixed — retry).",
+        f"Please merge the PR in Azure DevOps and re-run this check (Fixed — retry): {effective_pr_url}",
         links=links,
         updates=(StepData(payload),),
     )

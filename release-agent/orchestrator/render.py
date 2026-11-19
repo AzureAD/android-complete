@@ -567,10 +567,17 @@ def status_view(r: dict) -> str:
         rid = r.get("release_id") or "<YYYY-MM>"
         for fs in failed_steps:
             sid = fs.get("id", "<step>")
+            sname = fs.get("name") or f"{cur_phase}.{sid}"
             detail = step_detail(fs, limit=240) or "Step failed; see details."
             rem = step_remediation(rid, cur_phase, sid, fs.get("note") or detail)
+            links_md = " · ".join(
+                f"[{lnk.get('name', 'link')}]({_markdown_url(lnk['url'])})"
+                for lnk in (fs.get("links") or [])
+                if lnk.get("url")
+            )
+            links_suffix = f" · {links_md}" if links_md else ""
             lines.append(
-                f"- `{cur_phase}.{sid}` — *System:* {rem['system']} · *Fix:* {rem['how_to_fix']}\n"
+                f"- **{sname}** — *System:* {rem['system']} · *Fix:* {rem['how_to_fix']}{links_suffix}\n"
                 f"  - *Escape hatch:* `{rem['complete_manually_command']}` or `{rem['skip_command']}`"
             )
 

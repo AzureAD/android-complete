@@ -350,19 +350,42 @@ def test_cta_pacing_immediate_then_cooldown_then_escalates_and_resets_on_ack_hol
     assert d1["notification"]["reason"] == "immediate_new_hold"
     assert d1["risk"]["level"] == "normal"
     assert len(sent_emails) == 1
-    assert d1["scout_bot_cta"] is not None
-    assert "preflight.vitals" in d1["scout_bot_cta"]["message"]
-    assert "/release-agent" in d1["scout_bot_cta"]["message"]
+    bot1 = d1["scout_bot_cta"]
+    assert bot1 is not None and bot1["action_required"] is True
+    # Friendly step name + phase-scoped progress (`7 of 8 phase steps complete`), NEVER raw `preflight.vitals` ID!
+    assert "Confirm Play Console vitals & policy status reviewed" in bot1["message"]
+    assert "preflight.vitals" not in bot1["message"]
+    assert "7 of 8 phase steps complete" in bot1["message"]
+    assert "Pre-flight & Code Complete Checklist (7/8)" in bot1["message"]
+    assert "/release-agent" in bot1["message"]
 
-    # 2. Wed 11:00 AM (+2h business time) — Same hold -> suppressed (`paced_normal_cooldown`)!
-    d2 = D.run_drain(
+    # 2a. Wed 11:00 AM before Scout bot DM is acknowledged -> email NOT resent, unsent `scout_bot_cta` re-surfaced!
+    d2_unacked = D.run_drain(
         str(tmp_path), rid, CONFIG,
         now=datetime(2026, 9, 9, 11, 0, tzinfo=LA),
         deliver=True,
         mcp_caller=fake_mcp,
     )
+    assert len(sent_emails) == 1
+    assert d2_unacked["notification"]["reason"] == "retry_unsent_scout_bot_cta"
+    assert d2_unacked["scout_bot_cta"]["notification_id"] == bot1["notification_id"]
+
+    # Acknowledge Scout bot DM as sent, then re-check at 11:05 AM -> suppressed (`paced_normal_cooldown`)!
+    from orchestrator import delivery as deliv
+    st_ack, orch_ack = C.load_orch(str(tmp_path), rid, CONFIG, datetime(2026, 9, 9, 11, 1, tzinfo=LA))
+    claim = deliv.claim(orch_ack, bot1["notification_id"], bot1["hash"], "release-drainer")
+    deliv.result(orch_ack, bot1["notification_id"], claim["execution_id"], "sent", "Scout bot DM sent")
+    C.save_state(st_ack, str(tmp_path), rid)
+
+    d2 = D.run_drain(
+        str(tmp_path), rid, CONFIG,
+        now=datetime(2026, 9, 9, 11, 5, tzinfo=LA),
+        deliver=True,
+        mcp_caller=fake_mcp,
+    )
     assert d2["notification"]["sent"] is False
     assert d2["notification"]["reason"] == "paced_normal_cooldown"
+    assert d2["scout_bot_cta"] is None
     assert len(sent_emails) == 1
 
     # 3. Thu 07:00 AM (+10h business time: Wed 09:00->19:00 = 10h) -> `attention` (`8-24h`), sends morning CTA!
@@ -620,5 +643,27 @@ def test_lockdown_overlap_renders_untruncated_details_and_ccoa_specific_owner_pr
     assert [a["action"] for a in prompt["answers"]] == [
         "retry", "rerun", "complete-manually", "override", "hold",
     ]
+
+
+def test_release_state_save_retries_transient_windows_permission_error(tmp_path, monkeypatch):
+    """Regression test for Windows AV/file-watcher transient `PermissionError` on `os.replace`."""
+    import os as _os
+    real_replace = _os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(5, "Access is denied", src, 5, dst)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("orchestrator.state.os.replace", flaky_replace)
+    st = ReleaseState(release_id="2026-11", ccd="2026-11-19")
+    target = tmp_path / "release-state.json"
+    st.save(str(target))
+    assert calls["n"] == 3
+    assert ReleaseState.load(str(target)).release_id == "2026-11"
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
 
 

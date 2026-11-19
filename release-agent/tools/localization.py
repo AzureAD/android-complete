@@ -283,7 +283,7 @@ def inspect_build(org: str, project: str, build_id, *, oneloc_task: str = "OneLo
 
 
 def inspect_pr(org: str, pr_id) -> tuple:
-    """Read an ADO pull request's merge/completion status by numeric PR id."""
+    """Read an ADO pull request's merge/completion status and canonical web URL by numeric PR id."""
     try:
         pid = _positive(pr_id, "PR id")
         org_url = organization(org)
@@ -292,9 +292,12 @@ def inspect_pr(org: str, pr_id) -> tuple:
     ok, pr, detail = P._ado_rest_get(f"{org_url}/_apis/git/pullrequests/{pid}?api-version=7.1", 60)
     if not ok or not isinstance(pr, dict):
         return False, None, f"Failed to read Localization PR #{pid}: {detail}"
+    repo_web_url = str(((pr.get("repository") or {}).get("webUrl")) or "").strip().rstrip("/")
+    web_url = f"{repo_web_url}/pullrequest/{pid}" if repo_web_url.startswith("https://") else None
     return True, {
         "pr_id": str(pid),
         "status": str(pr.get("status") or "").strip(),
         "merge_status": str(pr.get("mergeStatus") or "").strip(),
+        **({"web_url": web_url} if web_url else {}),
     }, ""
 

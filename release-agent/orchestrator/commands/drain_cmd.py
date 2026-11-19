@@ -47,15 +47,17 @@ def cmd_drain(args) -> int:
         return 0
     snap = out.get("exited") or out.get("current") or {}
     waiting = out.get("waiting") or {}
+    p_done = snap.get("phase_done", snap.get("done", 0))
+    p_total = snap.get("phase_total", snap.get("total", 0))
     lines = [
         f"Drain [{out['status']}] — release {rid} ({snap.get('phase_name')}: "
-        f"{snap.get('done', 0)}/{snap.get('total', 0)} steps)",
+        f"{p_done}/{p_total} phase steps)",
         f"  Run ID: {out['run_id']}  |  Missed slots: {out.get('missed_slot_count', 0)}",
     ]
     if out.get("executed_steps"):
         lines.append(
             "  Executed: "
-            + ", ".join(f"{s['step']}->{s['to_status']}" for s in out["executed_steps"])
+            + ", ".join(f"{s.get('name') or s['step']} -> {s['to_status']}" for s in out["executed_steps"])
         )
     if waiting:
         lines.append(

@@ -279,9 +279,18 @@ def owner_prompt_payload(report: dict) -> dict | None:
                 ],
                 "recommendedIndex": 4,
             }
+        primary_url = next(
+            (str(lnk["url"]).strip() for lnk in (step_row.get("links") or []) if lnk.get("url")),
+            "",
+        )
+        note_with_link = (
+            f"{step_note} ({primary_url})"
+            if (step_note and primary_url and primary_url not in step_note)
+            else (step_note or primary_url)
+        )
         question = (
-            f"Blocked step '{action.get('step_name')}' on release {rid}: {step_note} — how should Scout proceed?"
-            if step_note
+            f"Blocked step '{action.get('step_name')}' on release {rid}: {note_with_link} — how should Scout proceed?"
+            if note_with_link
             else f"How should Scout handle blocked step '{action.get('step_name')}' for release {rid}?"
         )
         return {

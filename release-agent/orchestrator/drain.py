@@ -175,6 +175,18 @@ def _status_map(orch) -> dict[str, tuple[str, str]]:
     return out
 
 
+def _step_friendly_names(orch) -> dict[str, str]:
+    """Map `<phase>.<step>` and `readiness.<id>` keys to human-friendly titles."""
+    names: dict[str, str] = {}
+    chk = orch.gate.checklist()
+    for it in chk.get("items", []):
+        names[f"readiness.{it['id']}"] = it.get("label") or it.get("text") or it["id"]
+    for phase in orch.workflow.phases:
+        for step in phase.steps:
+            names[step.key] = step.name
+    return names
+
+
 def capture_snapshot(orch) -> dict[str, Any]:
     selection = orch.scheduling()
     frontier = selection.frontier
@@ -186,31 +198,82 @@ def capture_snapshot(orch) -> dict[str, Any]:
     total = len(included_steps)
     if not orch.gate.signed:
         chk = orch.gate.checklist()
+        r_items = chk.get("items", [])
         active_steps = [
             f"readiness.{it['id']}"
-            for it in chk.get("items", [])
+            for it in r_items
             if not it.get("satisfied")
         ]
         phase_id: Optional[str] = "readiness"
         phase_name = "Entry Gate (Readiness)"
+        phase_done = sum(1 for it in r_items if it.get("satisfied"))
+        phase_total = len(r_items)
+        phase_steps = [
+            {
+                "step": f"readiness.{it['id']}",
+                "name": it.get("label") or it.get("text") or it["id"],
+                "status": (
+                    "done" if it.get("satisfied")
+                    else "blocked" if it.get("status") in ("fail", "unable", "needs_input")
+                    else "human_input" if it.get("verify") != "auto"
+                    else "pending"
+                ),
+            }
+            for it in r_items
+        ]
     elif frontier is not None:
+        f_steps = [
+            item for item in selection.steps
+            if item.definition.phase_id == frontier.id
+        ]
         active_steps = [
             item.definition.key
-            for item in selection.steps
-            if item.definition.phase_id == frontier.id
-            and not item.complete
-            and item.prerequisites_met
+            for item in f_steps
+            if not item.complete and item.prerequisites_met
         ]
         phase_id = frontier.id
         phase_name = frontier.name
+        phase_done = sum(1 for item in f_steps if item.complete)
+        phase_total = len(f_steps)
+        phase_steps = []
+        for item in f_steps:
+            step_def = item.definition
+            rec = orch.state.get_step(step_def.phase_id, step_def.id)
+            if item.complete:
+                st_label = "skipped" if rec.status == "skipped" else "done"
+            elif rec.status == "blocked":
+                st_label = "blocked"
+            elif rec.status == "in_flight":
+                st_label = "in_flight"
+            elif item.prerequisites_met and not item.time_ready:
+                st_label = "scheduled"
+            elif item.prerequisites_met and (
+                step_def.is_gate
+                or step_def.is_human_action
+                or (step_def.kind == StepKind.EXTERNAL and step_def.requires_approval)
+            ):
+                st_label = "human_input"
+            else:
+                st_label = "pending"
+            phase_steps.append({
+                "step": step_def.key,
+                "name": step_def.name,
+                "status": st_label,
+            })
     else:
         active_steps = []
         phase_id = None
         phase_name = "Complete"
+        phase_done = total
+        phase_total = total
+        phase_steps = []
     return {
         "lifecycle": selection.status,
         "phase": phase_id,
         "phase_name": phase_name,
+        "phase_done": phase_done,
+        "phase_total": phase_total,
+        "phase_steps": phase_steps,
         "active_steps": active_steps,
         "done": done,
         "total": total,
@@ -220,13 +283,16 @@ def capture_snapshot(orch) -> dict[str, Any]:
 def _diff_executed_steps(
     before: dict[str, tuple[str, str]],
     after: dict[str, tuple[str, str]],
+    names: Optional[dict[str, str]] = None,
 ) -> list[dict[str, str]]:
     changed: list[dict[str, str]] = []
+    name_map = names or {}
     for key, (after_status, after_note) in after.items():
         before_status, before_note = before.get(key, ("pending", ""))
         if (before_status, before_note) != (after_status, after_note):
             changed.append({
                 "step": key,
+                "name": name_map.get(key) or key,
                 "from_status": before_status,
                 "to_status": after_status,
                 "note": after_note,
@@ -500,7 +566,11 @@ def render_cta_messages(
     actionable: list[dict[str, Any]],
     risk: dict[str, Any],
 ) -> tuple[str, str, str]:
-    """Return `(subject, scout_markdown, email_html)` for a Release Drainer Call-to-Action."""
+    """Return `(subject, scout_markdown, email_html)` for a Release Drainer Call-to-Action.
+
+    Uses phase-scoped progress (`3 of 4 phase steps complete` + current-phase checklist)
+    and human-friendly step names everywhere (never raw `<phase>.<step>` IDs).
+    """
     level = risk["level"]
     badge_map = {
         "cutoff_at_risk": "🔴 Cutoff At Risk",
@@ -510,15 +580,32 @@ def render_cta_messages(
     }
     badge = badge_map.get(level, "🔵 Action Needed")
     phase_label = snapshot.get("phase_name") or snapshot.get("phase") or "Release"
-    progress = f"{snapshot.get('done', 0)}/{snapshot.get('total', 0)} steps"
-    subject = f"[{badge}] Release {state.release_id} — {phase_label} ({len(actionable)} pending)"
+    p_done = snapshot.get("phase_done", snapshot.get("done", 0))
+    p_total = snapshot.get("phase_total", snapshot.get("total", 0))
+    phase_progress = f"{p_done} of {p_total} phase steps complete"
+    subject = f"[{badge}] Release {state.release_id} — {phase_label} ({p_done}/{p_total} done · {len(actionable)} pending)"
 
     blocked_items = [i for i in actionable if i["category"] == "blocked"]
     human_items = [i for i in actionable if i["category"] == "human_input"]
+    completed_this_run = [
+        s for s in executed_steps
+        if s.get("to_status") in ("done", "skipped", "pass", "attested")
+    ]
+    phase_steps = snapshot.get("phase_steps") or []
+
+    status_icon_map = {
+        "done": ("✅", "Done"),
+        "skipped": ("⏭️", "Skipped"),
+        "blocked": ("⛔", "Blocked"),
+        "human_input": ("👤", "Needs your input"),
+        "in_flight": ("⏳", "Running"),
+        "scheduled": ("📅", "Scheduled"),
+        "pending": ("⬜", "Pending"),
+    }
 
     md_lines = [
         f"**{badge} · Android Release {state.release_id}**",
-        f"Phase: **{phase_label}** ({progress})",
+        f"Current Phase: **{phase_label}** (**{phase_progress}**)",
     ]
     if risk.get("external_cutoff"):
         md_lines.append(f"⚠️ **External cutoff:** {risk['external_cutoff']}")
@@ -527,31 +614,40 @@ def render_cta_messages(
             f"⏱️ **Unattended business time:** {risk['unattended_business_hours']:.1f}h without owner progress"
         )
 
-    if executed_steps:
-        done_list = ", ".join(f"`{s['step']}` → {s['to_status']}" for s in executed_steps[:6])
-        md_lines.append(f"\n✅ **Drained automatically this run:** {done_list}")
+    if completed_this_run:
+        done_names = ", ".join(f"**{s.get('name') or s['step']}**" for s in completed_this_run[:6])
+        md_lines.append(f"\n✅ **Completed automatically in this run:** {done_names}")
+
+    if phase_steps:
+        md_lines.append(f"\n📋 **{phase_label} Checklist ({p_done}/{p_total}):**")
+        for ps in phase_steps:
+            icon, st_word = status_icon_map.get(ps.get("status", "pending"), ("⬜", "Pending"))
+            md_lines.append(f"- {icon} **{ps['name']}** — {st_word}")
 
     if blocked_items:
-        md_lines.append(f"\n⛔ **Blocked ({len(blocked_items)}):**")
+        md_lines.append(f"\n⛔ **Blocked — Action Required ({len(blocked_items)}):**")
         for item in blocked_items:
+            friendly = item.get("name") or item["step"]
             wait_txt = _format_duration_minutes(item.get("waiting_minutes"))
-            links_md = " ".join(
+            links_md = " · ".join(
                 f"[{lnk['name']}]({lnk['url']})"
                 for lnk in (item.get("links") or [])
                 if lnk.get("name") and lnk.get("url")
             )
             suffix = f" — {links_md}" if links_md else ""
-            md_lines.append(f"- **`{item['step']}`** ({item['name']}, {wait_txt}): {item['reason']}{suffix}")
+            md_lines.append(f"- **{friendly}** *(waiting {wait_txt})*: {item['reason']}{suffix}")
 
     if human_items:
         md_lines.append(f"\n👤 **Needs Your Input ({len(human_items)}):**")
         for item in human_items:
+            friendly = item.get("name") or item["step"]
             wait_txt = _format_duration_minutes(item.get("waiting_minutes"))
-            md_lines.append(f"- **`{item['step']}`** ({item['name']}, {wait_txt}): {item['reason']}")
+            md_lines.append(f"- **{friendly}** *(waiting {wait_txt})*: {item['reason']}")
 
+    focus_names = ", ".join(f"**{i.get('name') or i['step']}**" for i in actionable[:2])
     md_lines.append(
         f"\n👉 **Next step:** Open **Scout** and run `/release-agent` (`continue` for release `{state.release_id}`) "
-        "to resolve the pending item(s)."
+        f"to resolve {focus_names or 'the pending step(s)'}."
     )
     markdown_body = "\n".join(md_lines)
 
@@ -565,16 +661,17 @@ def render_cta_messages(
     def _html_items(rows: list[dict[str, Any]]) -> str:
         parts = []
         for item in rows:
+            friendly = item.get("name") or item["step"]
             wait_txt = _format_duration_minutes(item.get("waiting_minutes"))
-            links_html = " ".join(
+            links_html = " &middot; ".join(
                 f'<a href="{escape(str(lnk["url"]), quote=True)}">{escape(str(lnk["name"]))}</a>'
                 for lnk in (item.get("links") or [])
                 if lnk.get("name") and lnk.get("url")
             )
             link_part = f" &mdash; {links_html}" if links_html else ""
             parts.append(
-                f"<li><code>{escape(str(item['step']))}</code> "
-                f"(<b>{escape(str(item['name']))}</b>, {escape(wait_txt)}): "
+                f"<li style=\"margin-bottom:6px;\"><b>{escape(str(friendly))}</b> "
+                f"<span style=\"color:#475467;\">(waiting {escape(wait_txt)})</span>: "
                 f"{escape(str(item['reason']))}{link_part}</li>"
             )
         return "".join(parts)
@@ -589,15 +686,28 @@ def render_cta_messages(
         )
 
     drained_html = ""
-    if executed_steps:
+    if completed_this_run:
         drained_items = "".join(
-            f"<li><code>{escape(s['step'])}</code> &rarr; <b>{escape(s['to_status'])}</b></li>"
-            for s in executed_steps[:8]
+            f"<li><b>{escape(str(s.get('name') or s['step']))}</b></li>"
+            for s in completed_this_run[:8]
         )
-        drained_html = f"<p><b>Drained automatically in this run:</b></p><ul>{drained_items}</ul>"
+        drained_html = f"<p><b>Completed automatically in this run:</b></p><ul>{drained_items}</ul>"
+
+    checklist_html = ""
+    if phase_steps:
+        checklist_rows = "".join(
+            f"<li>{status_icon_map.get(ps.get('status', 'pending'), ('⬜', 'Pending'))[0]} "
+            f"<b>{escape(str(ps['name']))}</b> &mdash; "
+            f"<span style=\"color:#475467;\">{escape(status_icon_map.get(ps.get('status', 'pending'), ('⬜', 'Pending'))[1])}</span></li>"
+            for ps in phase_steps
+        )
+        checklist_html = (
+            f"<p><b>{escape(str(phase_label))} Checklist ({p_done}/{p_total}):</b></p>"
+            f"<ul style=\"list-style:none;padding-left:4px;\">{checklist_rows}</ul>"
+        )
 
     blocked_html = (
-        f"<p><b>Blocked ({len(blocked_items)}):</b></p><ul>{_html_items(blocked_items)}</ul>"
+        f"<p><b>Blocked &mdash; Action Required ({len(blocked_items)}):</b></p><ul>{_html_items(blocked_items)}</ul>"
         if blocked_items else ""
     )
     human_html = (
@@ -609,14 +719,54 @@ def render_cta_messages(
         "<div style=\"font-family:-apple-system,Segoe UI,sans-serif;font-size:14px;color:#101828;\">"
         f"<div style=\"background:{banner_bg};border-left:4px solid {banner_border};padding:12px 14px;margin-bottom:14px;\">"
         f"<div><b>{escape(badge)} &middot; Android Release {escape(str(state.release_id))}</b></div>"
-        f"<div style=\"margin-top:4px;\">Phase: <b>{escape(str(phase_label))}</b> ({escape(progress)})</div>"
+        f"<div style=\"margin-top:4px;\">Current Phase: <b>{escape(str(phase_label))}</b> "
+        f"(<b>{escape(phase_progress)}</b>)</div>"
         f"{risk_html}</div>"
-        f"{drained_html}{blocked_html}{human_html}"
+        f"{drained_html}{checklist_html}{blocked_html}{human_html}"
         "<p style=\"margin-top:16px;\"><b>Call to Action:</b> Open <b>Scout</b> and run "
         f"<code>/release-agent</code> (<code>continue</code> for release <code>{escape(str(state.release_id))}</code>) "
         "to resolve the pending step(s).</p></div>"
     )
     return subject, markdown_body, email_html
+
+
+def _build_scout_bot_cta(release_id: str, offered_bot: dict[str, Any], subject: str) -> dict[str, Any]:
+    nid = offered_bot["id"]
+    nhash = offered_bot["hash"]
+    msg = (offered_bot.get("payload") or {}).get("message") or ""
+    return {
+        "action_required": True,
+        "notification_id": nid,
+        "hash": nhash,
+        "tool": "m_send_teams_message",
+        "message": msg,
+        "subject": subject,
+        "claim_command": (
+            f"python -m orchestrator.cli --scheduled notification claim --release {release_id} "
+            f"--id \"{nid}\" --hash \"{nhash}\" --executor release-drainer --json"
+        ),
+        "ack_sent_command": (
+            f"python -m orchestrator.cli --scheduled notification result --release {release_id} "
+            f"--id \"{nid}\" --execution-id <execution_id> --outcome sent "
+            f"--evidence \"Scout bot DM sent via m_send_teams_message\""
+        ),
+    }
+
+
+def _pending_scout_bot_cta(orch, sig: str) -> Optional[dict[str, Any]]:
+    """Find any already-prepared but still-unsent Scout bot CTA for the active hold signature."""
+    prefix = f"drain-cta:{orch.state.release_id}:{sig[:19]}:"
+    for nid, rec in reversed(list((orch.state.notification_deliveries or {}).items())):
+        if not nid.startswith(prefix) or not isinstance(rec, dict):
+            continue
+        desc = rec.get("descriptor") or {}
+        if desc.get("tool") != "m_send_teams_message":
+            continue
+        if rec.get("status") in ("prepared", "not_sent") and D.available(orch, desc):
+            return _build_scout_bot_cta(
+                orch.state.release_id, desc, "Pending Scout Bot Call-to-Action"
+            )
+    return None
 
 
 def _cta_channels(config_path: str) -> dict[str, bool]:
@@ -763,6 +913,19 @@ def evaluate_risk_and_cta(
 
     if not due:
         state.drain_tracker = tracker
+        pending_bot = _pending_scout_bot_cta(orch, sig) if deliver else None
+        if pending_bot is not None:
+            C.save_state(state, runs_root, state.release_id)
+            return (
+                risk,
+                {
+                    "sent": False,
+                    "due": True,
+                    "reason": "retry_unsent_scout_bot_cta",
+                    "channels": ["teams:scout_bot_staged"],
+                },
+                pending_bot,
+            )
         return risk, {"sent": False, "due": False, "reason": cta_reason, "channels": []}, None
 
     ch = _cta_channels(config_path)
@@ -822,13 +985,7 @@ def evaluate_risk_and_cta(
                 )
                 if D.available(orch, bot_desc):
                     offered_bot = D.offer(orch, bot_desc)
-                    scout_bot_cta = {
-                        "notification_id": offered_bot["id"],
-                        "hash": offered_bot["hash"],
-                        "tool": "m_send_teams_message",
-                        "message": t_block["text"],
-                        "subject": subject,
-                    }
+                    scout_bot_cta = _build_scout_bot_cta(state.release_id, offered_bot, subject)
                     sent_channels.append("teams:scout_bot_staged")
             else:
                 python_descriptors.append(
@@ -1064,6 +1221,7 @@ def run_drain(
     elapsed_ms = prior_ms + max(1, int((_monotonic.monotonic() - t_mono_start) * 1000))
     pending_host_work = [] if finalize_run else _collect_pending_host_work(orch)
 
+    friendly_names = _step_friendly_names(orch)
     if pending_host_work:
         _write_active_run(runs_root, release, {
             "run_id": run_id,
@@ -1087,7 +1245,7 @@ def run_drain(
             "missed_slot_count": len(missed_slots),
             "entered": entered,
             "current": capture_snapshot(orch),
-            "executed_steps": _diff_executed_steps(before_statuses, _status_map(orch)),
+            "executed_steps": _diff_executed_steps(before_statuses, _status_map(orch), friendly_names),
             "pending_host_work": pending_host_work,
             "finalize_command": (
                 f"drain --release {release} --finalize-run {run_id}"
@@ -1098,7 +1256,7 @@ def run_drain(
         }
 
     after_statuses = _status_map(orch)
-    executed_steps = _diff_executed_steps(before_statuses, after_statuses)
+    executed_steps = _diff_executed_steps(before_statuses, after_statuses, friendly_names)
     exited = capture_snapshot(orch)
     waiting = classify_waiting(orch, now_utc)
     risk, notif_summary, scout_bot_cta = evaluate_risk_and_cta(

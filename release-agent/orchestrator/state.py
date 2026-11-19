@@ -2,6 +2,8 @@
 from __future__ import annotations
 import json
 import os
+import time
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime
@@ -272,16 +274,28 @@ class ReleaseState:
         self.updated_at = _now()
         data["updated_at"] = self.updated_at
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
                 fh.flush()
                 os.fsync(fh.fileno())
-            os.replace(tmp, path)
+            delay = 0.01
+            for attempt in range(6):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    if attempt == 5:
+                        raise
+                    time.sleep(delay)
+                    delay *= 2
         finally:
             if os.path.exists(tmp):
-                os.unlink(tmp)
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
     def checkpoint(self) -> None:
         """Persist an external-action boundary through the active CLI transaction."""
