@@ -41,15 +41,40 @@ review or CI round-trips.
     ADFS/federated redirects): Split **shadow/telemetry mode** (emitting telemetry on mismatch
     without blocking) from **enforcement mode** (`Enforce*` flight, `default = false`).
 - **When the flight is `false`, the legacy path must execute with zero new side effects**:
-  - Do not initialize new ViewModels/coordinators, alter navigation graphs, write new
-    saved-state markers, apply new tap-admission/debounce ownership guards, or emit new
+  - Do not initialize new ViewModels/coordinators, allocate eager fields (`= new Object()`,
+    `= new HashMap<>()`), add unflighted collaborator callbacks, alter navigation graphs, write
+    new saved-state markers, apply new tap-admission/debounce ownership guards, or emit new
     diagnostic logs on the flight-off path (disabled branches should use pass-through/no-op
     admission so legacy flight-off behavior is 100% untouched).
-  - Keep only the minimal flight-read check needed to select between the legacy path and the
-    flighted path.
+  - **Gate once at the call boundary for readability**: Check `isFlightEnabled(...)` at the
+    caller, extract non-trivial flight-enabled logic into its own clearly named helper method
+    with flat early returns, and do not re-check the same flight inside helpers called
+    exclusively from that flight-gated branch.
 - Write unit tests for **both** `flight = true` and `flight = false`.
 
-### 2. Regression-Attribution Telemetry & Sampler Synchronization
+### 2. Minimal Diff & Simplicity First (Avoid Over-Engineering)
+- **Check native platform & repo primitives first (and verify exact semantics)**: Before building
+  custom state machines, history/lifecycle trackers, or multi-callback bookkeeping, check whether
+  Android, `WebView`, Kotlin/JDK, or existing repository classes and locks already solve the
+  problem directly—and verify edge-case semantics (e.g., `WebView.clearHistory()` wipes all prior
+  pages) before adopting coarse platform calls.
+- **Extend central data registries, not cross-repo plumbing**: When adding partner allowlist
+  entries or policy variants, extend the central data set and no-arg provider (such as
+  `AppRegistry.getBrowserSsoAuthorizedApps()`, using `buildSet` rather than Java-mutable `setOf` on
+  `@JvmField` sets) instead of adding parallel validators, caller package prechecks, boolean
+  plumbing parameters, or test-only nullable constructor `@JvmOverloads`.
+- **No unnecessary classes, dead `ApiXXImpl` wrappers, or cross-file plumbing**: Do not introduce
+  single-caller `*Tracker` / `*Helper` classes, constructor callbacks on collaborators,
+  `@VisibleForTesting` setters, or dead `SDK_INT >= N` / `Api24Impl` wrappers for APIs already
+  covered by `minSdkVersion = 24` (put `@Config(sdk = [Build.VERSION_CODES.P])` on Robolectric
+  tests instead). Leave unrelated files, overview docs, and shared legacy test helpers untouched.
+- **Smallest state & proportional review fixes**: Prefer a single primitive (`boolean`, `int`)
+  under an existing lock or a lazy nullable `HashMap` over `TreeMap`s or token maps. Audit your
+  diff with [code-simplifier](../code-simplifier/SKILL.md) before publishing, and do not add
+  disproportionate multi-callback state machines just to appease theoretical automated-reviewer
+  scenarios—push back with technical rationale or surface the tradeoff first.
+
+### 3. Regression-Attribution Telemetry & Sampler Synchronization
 - Emit flight-gated, privacy-safe telemetry (health spans or bounded `SystemMetadata` /
   `AttributeName` keys) so new behavior, reuse/wait paths, and guard rejections can be
   attributed in Kusto.
@@ -61,7 +86,7 @@ review or CI round-trips.
   forwarded in `Broker` (or vice versa), check whether a matching `AttributeName` entry is
   needed in the companion repo.
 
-### 3. Central & Cross-Layer Placement (Common vs. Broker vs. Client App)
+### 4. Central & Cross-Layer Placement (Common vs. Broker vs. Client App)
 - Trace all converging entry points before choosing where a fix or feature lives (e.g.,
   pre-created join, manual admin SDM join, ordinary non-SDM WPJ, silent vs. interactive token
   flows).
@@ -73,7 +98,7 @@ review or CI round-trips.
   defensive guard in `Broker` as well—tied to the actual worker completion, not just caller
   timeout.
 
-### 4. Java/Kotlin ABI, Input Normalization & License Headers
+### 5. Java/Kotlin ABI, Input Normalization & License Headers
 - **Binary & source compatibility**:
   - Preserve existing Java-callable constructors and method signatures. Use `@JvmOverloads`
     and `@JvmStatic` when adding default parameters or companion helpers consumed from Java.
@@ -104,7 +129,7 @@ review or CI round-trips.
     pre-initialized constants). Ensure all new branches and overloads are covered so CI diff
     coverage (>= 80%) passes on the first run.
 
-### 5. Pull Request & Branch Hygiene
+### 6. Pull Request & Branch Hygiene
 - **Branch naming**: Use `<alias>/<feature-or-fix-slug>` (e.g.,
   `shjameel/island-browser-sso-identities`, or `users/<alias>/<slug>` in ADO repos)—never
   leave random worktree-generated branch names on published PRs.

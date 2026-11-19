@@ -144,6 +144,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **design-author** | `.github/skills/design-author/SKILL.md` | "design this feature", "create a design spec", "write a design doc", "create an implementation plan" |
 | **design-reviewer** | `.github/skills/design-reviewer/SKILL.md` | "address review comments", "handle my review", "review comments on" |
 | **code-author** | `.github/skills/code-author/SKILL.md` | Ordinary implementation, bug fixes, PBIs, tests and PR authoring; coding standards, not an automatic dynamic-workflow launch |
+| **code-simplifier** | `.github/skills/code-simplifier/SKILL.md` | "simplify", "any opportunity to simplify", "lots of code changes", "make this simpler and smaller", shrink bloated diffs/PRs and enforce 100% flight isolation |
 | **code-feature** | `.github/skills/code-feature/SKILL.md` | Experimental opt-in only: `/code-feature` or an explicit request to use the coding/dynamic/coding-and-PR workflow; not normal coding prompts, questions or quoted examples |
 | **pbi-dispatcher** | `.github/skills/pbi-dispatcher/SKILL.md` | "dispatch PBIs to agent", "assign to Copilot", "send work items to coding agent" |
 | **test-planner** | `.github/skills/test-planner/SKILL.md` | "create test plan", "write test cases", "add tests to ADO", "export test plan", "E2E tests for" |
