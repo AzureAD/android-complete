@@ -209,6 +209,28 @@ function uniqueManifestPin(sourceManifest, repository) {
     return ci.length === 1 ? ci[0] : null;
 }
 
+function matchFenceOpen(line) {
+    const backtick = line.match(/^\s*(`{3,})([^`]*)$/);
+    if (backtick) {
+        const rawInfo = backtick[2].trim();
+        const firstToken = rawInfo.split(/\s+/)[0] || "";
+        const language = firstToken.replace(/\{.*$/, "").toLowerCase();
+        return { marker: "`", length: backtick[1].length, rawInfo, language };
+    }
+    const tilde = line.match(/^\s*(~{3,})(.*)$/);
+    if (tilde) {
+        const rawInfo = tilde[2].trim();
+        const firstToken = rawInfo.split(/\s+/)[0] || "";
+        const language = firstToken.replace(/\{.*$/, "").toLowerCase();
+        return { marker: "~", length: tilde[1].length, rawInfo, language };
+    }
+    return null;
+}
+
+function isFenceClose(line, openFence) {
+    return new RegExp(`^\\s*${openFence.marker}{${openFence.length},}\\s*$`).test(line);
+}
+
 export function extractTrailingJsonBlock(rawText) {
     const normalized = String(rawText || "").replace(/\r\n/g, "\n");
     const lines = normalized.split("\n");
@@ -217,19 +239,16 @@ export function extractTrailingJsonBlock(rawText) {
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (!openFence) {
-            const m = line.match(/^\s*(`{3,}|~{3,})\s*([^\s`~]*)\s*$/);
-            if (m) openFence = { marker: m[1][0], length: m[1].length, info: (m[2] || "").toLowerCase(), startLine: i };
-        } else {
-            const closeRe = new RegExp(`^\\s*${openFence.marker}{${openFence.length},}\\s*$`);
-            if (closeRe.test(line)) {
-                fences.push({ ...openFence, endLine: i, body: lines.slice(openFence.startLine + 1, i).join("\n") });
-                openFence = null;
-            }
+            const m = matchFenceOpen(line);
+            if (m) openFence = { ...m, startLine: i };
+        } else if (isFenceClose(line, openFence)) {
+            fences.push({ ...openFence, endLine: i, body: lines.slice(openFence.startLine + 1, i).join("\n") });
+            openFence = null;
         }
     }
     for (let idx = fences.length - 1; idx >= 0; idx--) {
         const fence = fences[idx];
-        if (fence.info && !["json", "jsonc"].includes(fence.info)) continue;
+        if (fence.rawInfo && !["json", "jsonc"].includes(fence.language)) continue;
         const candidate = fence.body.trim();
         if (!candidate.startsWith("{")) continue;
         try {
@@ -269,13 +288,12 @@ export function parseDesignSections(markdownBody) {
     let activeFence = null;
     for (const line of lines) {
         if (!activeFence) {
-            const m = line.match(/^\s*(`{3,}|~{3,})/);
-            if (m) activeFence = { char: m[1][0], len: m[1].length };
-        } else if (new RegExp(`^\\s*${activeFence.char}{${activeFence.len},}\\s*$`).test(line)) {
+            activeFence = matchFenceOpen(line);
+        } else if (isFenceClose(line, activeFence)) {
             activeFence = null;
         }
         if (!activeFence) {
-            const headingMatch = line.match(/^#{1,3}\s+(.+?)\s*$/);
+            const headingMatch = line.match(/^\s{0,3}##(?!#)\s+(.+?)(?:\s+#+\s*)?$/);
             if (headingMatch) {
                 const matchedKey = matchDesignSectionKey(headingMatch[1]);
                 if (matchedKey) {
@@ -294,19 +312,9 @@ export function parseDesignSections(markdownBody) {
     );
 }
 
-function stampEvidenceDefaults(rawObj, stage0, sourceManifest, priorHumanReview) {
+function stampEvidenceDefaults(rawObj, _stage0, sourceManifest, priorHumanReview) {
     if (!record(rawObj)) return rawObj;
     const out = { ...rawObj };
-    if (out.approvalVerification === undefined && record(stage0?.approval) &&
-        stage0.approval.approvedRevision === stage0.revision &&
-        nonempty(stage0.approval.reference)) {
-        out.approvalVerification = {
-            verified: true,
-            revision: stage0.revision,
-            reference: stage0.approval.reference,
-            rationale: "Host-verified Stage 0 approval record bound to this exact revision.",
-        };
-    }
     if (out.priorReviewVerification === undefined && priorHumanReview === undefined) {
         out.priorReviewVerification = null;
     }

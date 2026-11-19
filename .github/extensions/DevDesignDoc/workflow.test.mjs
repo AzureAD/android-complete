@@ -9,6 +9,7 @@ import {
     validateEvidence, validateReview, workflowDefinition, digest,
     pairRevision, renderHumanReviewBrief, renderPairedDocuments, briefWordBudget, briefCharacterBudget, riskCategories,
     validatePairedDocuments, formatDesignMarkdown, buildDesignReviewDelta,
+    extractTrailingJsonBlock, parseDesignSections, parseDesignOutput, parseEvidenceOutput,
 } from "./workflow.mjs";
 
 const stage0 = () => ({
@@ -1606,6 +1607,12 @@ Common already preserves compatibility via Contract.java.
 
 \`\`\`json
 {
+  "approvalVerification": {
+    "verified": true,
+    "revision": "requirements-v3",
+    "reference": "review/123",
+    "rationale": "Inspected approval record review/123 bound to requirements-v3."
+  },
   "references": [{ "id": "E1", "repository": "Common", "path": "Contract.java", "locator": "lines 10-20" }],
   "facts": [{ "statement": "Contract exists.", "referenceIds": ["E1"] }],
   "sourceVerification": [{ "repository": "Common", "verified": true, "rationale": "Verified at pinned commit." }],
@@ -1724,4 +1731,82 @@ test("round 2+ independent design review supplies deterministic reviewDelta and 
     const round2Data = JSON.parse(ctx.calls[6].prompt.split("\nDATA:\n")[1]);
     assert.deepEqual(round2Data.reviewDelta.changedSections.map((s) => s.sectionId), ["telemetryAndSuccessCriteria"]);
     assert.equal(round2Data.reviewDelta.priorOpenFindings[0].id, "F-TEL-2");
+});
+
+test("omitted approvalVerification in Markdown or object evidence stays fail-closed without synthesizing verification", async () => {
+    const unverifiedMarkdown = `# Baseline Research Summary
+
+## Evidence Metadata
+
+\`\`\`json
+{
+  "references": [{ "id": "E1", "repository": "Common", "path": "Contract.java", "locator": "lines 10-20" }],
+  "facts": [{ "statement": "Contract exists.", "referenceIds": ["E1"] }],
+  "sourceVerification": [{ "repository": "Common", "verified": true, "rationale": "Verified at pinned commit." }],
+  "scenarioTraces": [{
+    "id": "T1", "requirementIds": ["R1"], "scenario": "Existing caller invokes Contract",
+    "trigger": "Contract.call()", "conditions": "Default configuration",
+    "steps": [{ "behavior": "Validates input and executes existing flow", "referenceIds": ["E1"] }],
+    "terminalOutcome": { "behavior": "Returns compatible result to caller", "referenceIds": ["E1"] },
+    "status": "verified"
+  }]
+}
+\`\`\``;
+    const s0 = stage0();
+    s0.approval.reference = "unread/nonexistent-approval-ref";
+    const parsed = parseEvidenceOutput(unverifiedMarkdown, s0, sourceManifest(), undefined);
+    assert.equal(parsed.approvalVerification, undefined);
+    assert.deepEqual(
+        validateEvidence(parsed, s0, sourceManifest(), undefined),
+        ["Evidence worker could not verify the approval record for the exact Stage 0 revision."],
+    );
+
+    const ctx = context([unverifiedMarkdown], s0);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "needs clarification");
+    assert.deepEqual(packet.reasons, ["Evidence worker could not verify the approval record for the exact Stage 0 revision."]);
+    assert.equal(ctx.calls.length, 1);
+});
+
+test("parseDesignSections keeps ### and #### subsections inside their parent ## section even when titled like another section", () => {
+    const sample = runtimeDesign();
+    sample.sections.accessibility = "TalkBack announces state transitions and keeps 48dp touch targets.";
+    sample.sections.testsAndEvals = [
+        "### Accessibility",
+        "Verify TalkBack announcements and focus order with Espresso.",
+        "",
+        "#### Feature Flags and Isolation",
+        "Verify default-off flag F1 returns baseline response when disabled.",
+    ].join("\n");
+    const rawMarkdown = formatDesignMarkdown(sample);
+    const { markdownBody } = extractTrailingJsonBlock(rawMarkdown);
+    const parsedSections = parseDesignSections(markdownBody);
+
+    assert.equal(parsedSections.accessibility, sample.sections.accessibility);
+    assert.equal(parsedSections.testsAndEvals, sample.sections.testsAndEvals);
+    assert.equal(parsedSections.featureFlagsAndIsolation, sample.sections.featureFlagsAndIsolation);
+});
+
+test("extractTrailingJsonBlock and parseDesignOutput preserve fenced code blocks with multi-token info strings before trailing metadata", () => {
+    const sample = runtimeDesign();
+    sample.sections.componentsInterfacesCompatibility = [
+        "Updated adapter contract:",
+        "",
+        '```kotlin title="Example.kt" {linenos=true}',
+        "fun execute(): Boolean = false",
+        "```",
+        "",
+        "~~~kql role=\"query\" window=\"7d\"",
+        "android_spans | take 5",
+        "~~~",
+    ].join("\n");
+    const rawMarkdown = formatDesignMarkdown(sample);
+    const extracted = extractTrailingJsonBlock(rawMarkdown);
+    assert.ok(extracted.metadata);
+    assert.deepEqual(extracted.metadata.featureFlags, sample.featureFlags);
+    assert.match(extracted.markdownBody, /```kotlin title="Example\.kt" \{linenos=true\}/);
+
+    const parsedDesign = parseDesignOutput(rawMarkdown, stage0(), evidence());
+    assert.equal(parsedDesign.sections.componentsInterfacesCompatibility, sample.sections.componentsInterfacesCompatibility);
+    assert.equal(validateDesign(parsedDesign, stage0(), evidence(), undefined).length, 0);
 });

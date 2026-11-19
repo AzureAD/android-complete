@@ -18,7 +18,9 @@ this workflow does **not** execute `.github/skills/design-author/SKILL.md`'s ADO
 The executable template is the `sections`/`designSchema`, author/revision prompts
 and independent-review rubric in `workflow.mjs`. Evidence and design-authoring turns
 emit native Markdown sections plus a compact trailing ```` ```json ```` metadata fence
-(parsed and host-stamped into the canonical `evidence` and `design` snapshots) so
+(parsed into the canonical `evidence` and `design` snapshots with host-stamped digests
+and single-pin commit revisions, while keeping explicit worker `approvalVerification`
+and `sourceVerification` fail-closed) so
 long architectural designs and KQL/Mermaid blocks never hit JSON-string output truncation.
 Round 2+ independent review turns receive a deterministic `reviewDelta` packet
 (`changedSections`, `unchangedPassingSections` SHA-256 hashes, `changedRegisters`,
