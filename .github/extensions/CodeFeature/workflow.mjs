@@ -104,13 +104,17 @@ export const rubric = Object.freeze([
     "prReadinessAndTraceability",
 ]);
 
-const referenceSchema = object({
-    id: text,
-    repository: text,
-    revision: text,
-    path: text,
-    locator: text,
-});
+const referenceSchema = {
+    type: "object",
+    required: ["id", "repository", "path", "locator"],
+    properties: {
+        id: text,
+        repository: text,
+        revision: text,
+        path: text,
+        locator: text,
+    },
+};
 
 const extractedTargetSchema = object({
     id: text,
@@ -123,47 +127,49 @@ const extractedTargetSchema = object({
     verificationCommands: texts,
 });
 
-const evidenceSchema = object({
-    approvalVerification: object({
-        verified: { type: "boolean" },
-        revision: text,
-        reference: text,
-        rationale: text,
-    }),
-    references: list(referenceSchema),
-    facts: list(object({ statement: text, referenceIds: texts })),
-    conflicts: texts,
-    assumptions: texts,
-    unknowns: texts,
-    blockingUnknowns: texts,
+const approvalVerificationSchema = object({
+    verified: { type: "boolean" },
+    revision: text,
+    reference: text,
+    rationale: text,
 });
 
-const extractionEvidenceSchema = object({
-    approvalVerification: object({
-        verified: { type: "boolean" },
-        revision: text,
-        reference: text,
-        rationale: text,
-    }),
-    extractedSpec: object({
-        title: text,
-        designSummary: text,
-        requirements: list(object({ id: text, text: text })),
-        targets: list(extractedTargetSchema),
-    }),
-    references: list(referenceSchema),
-    facts: list(object({ statement: text, referenceIds: texts })),
-    conflicts: texts,
-    assumptions: texts,
-    unknowns: texts,
-    blockingUnknowns: texts,
-    clarificationQuestions: texts,
-});
+const extractionEvidenceSchema = {
+    type: "object",
+    required: ["extractedSpec", "references", "facts"],
+    properties: {
+        approvalVerification: approvalVerificationSchema,
+        extractedSpec: object({
+            title: text,
+            designSummary: text,
+            requirements: list(object({ id: text, text: text })),
+            targets: list(extractedTargetSchema),
+        }),
+        references: list(referenceSchema),
+        facts: list(object({ statement: text, referenceIds: texts })),
+        conflicts: texts,
+        assumptions: texts,
+        unknowns: texts,
+        blockingUnknowns: texts,
+        clarificationQuestions: texts,
+    },
+};
 
 const fileChangeSchema = object({
     path: text,
     action: { type: "string", enum: ["create", "modify", "delete"] },
     content: text,
+    summary: text,
+});
+
+const hostFileChangeSchema = object({
+    path: text,
+    action: { type: "string", enum: ["create", "modify", "delete"] },
+    content: text,
+    edits: list(object({
+        oldText: text,
+        newText: text,
+    })),
     summary: text,
 });
 
@@ -183,20 +189,59 @@ const targetImplementationSchema = object({
     }),
 });
 
-const implementationSchema = object({
-    taskRevision: text,
-    targets: list(targetImplementationSchema),
-    traceability: list(object({
-        requirementId: text,
-        targetIds: texts,
-        filePaths: texts,
-        testLocations: texts,
-        verification: text,
-    })),
-    assumptions: texts,
-    openDecisions: texts,
-    blockingUnknowns: texts,
+const hostTargetImplementationSchema = object({
+    targetId: text,
+    repository: text,
+    summary: text,
+    files: list(hostFileChangeSchema),
+    testsAddedOrUpdated: texts,
+    verificationCommandsRun: texts,
+    pr: object({
+        title: text,
+        summary: text,
+        testPlan: text,
+        breakingChanges: text,
+        rolloutAndFlag: text,
+    }),
 });
+
+const implementationSchema = {
+    type: "object",
+    required: ["targets", "traceability"],
+    properties: {
+        taskRevision: text,
+        targets: list(targetImplementationSchema),
+        traceability: list(object({
+            requirementId: text,
+            targetIds: texts,
+            filePaths: texts,
+            testLocations: texts,
+            verification: text,
+        })),
+        assumptions: texts,
+        openDecisions: texts,
+        blockingUnknowns: texts,
+    },
+};
+
+const hostImplementationSchema = {
+    type: "object",
+    required: ["targets", "traceability"],
+    properties: {
+        taskRevision: text,
+        targets: list(hostTargetImplementationSchema),
+        traceability: list(object({
+            requirementId: text,
+            targetIds: texts,
+            filePaths: texts,
+            testLocations: texts,
+            verification: text,
+        })),
+        assumptions: texts,
+        openDecisions: texts,
+        blockingUnknowns: texts,
+    },
+};
 
 const findingSchema = object({
     id: text,
@@ -209,17 +254,21 @@ const findingSchema = object({
     requiredChange: text,
 });
 
-const reviewSchema = object({
-    criteria: list(object({ id: { type: "string", enum: rubric }, pass: { type: "boolean" } })),
-    acceptanceCriteria: list(object({
-        targetId: text,
-        criterion: text,
-        passed: { type: "boolean" },
-        evidence: text,
-    })),
-    findings: list(findingSchema),
-    blockingUnknowns: texts,
-});
+const reviewSchema = {
+    type: "object",
+    required: ["criteria", "acceptanceCriteria"],
+    properties: {
+        criteria: list(object({ id: { type: "string", enum: rubric }, pass: { type: "boolean" } })),
+        acceptanceCriteria: list(object({
+            targetId: text,
+            criterion: text,
+            passed: { type: "boolean" },
+            evidence: text,
+        })),
+        findings: list(findingSchema),
+        blockingUnknowns: texts,
+    },
+};
 
 export const slimIntakeSchema = object({
     verdict: { type: "string", enum: ["ready", "clarify", "reject"] },
@@ -265,7 +314,7 @@ Unavailable or unconfigured MCP/code-intelligence servers (such as Bluebird MCP,
 Report genuine product/requirement blocking uncertainty explicitly in blockingUnknowns.`;
 
 const readerBoundaries = `You are Stage 1 (read-only repository evidence and specification extraction) of a multi-stage coding workflow.
-Inspect repository sources and return structured JSON, not files. Later workflow stages (code-builder, code-reviewer, and PR publishing) will perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
+Inspect repository sources and return only the requested structured output (Markdown + JSON metadata block when requested, or JSON matching the supplied schema), never file edits. Later workflow stages (code-builder, code-reviewer, and PR publishing) will perform all code edits, worktree operations, builds, tests, and PR creation—never report requests for code implementation, worktrees, or builder/reviewer execution as a conflict with your read-only role.
 Do not edit files, run write commands, create branches, push commits, open PRs, merge, or deploy during this stage.
 Android Auth source layout reference (avoid guessing nonexistent paths):
 - broker: broker/broker4j/src/{main,test}/com/microsoft/identity/broker4j/..., broker/AADAuthenticator/src/{main,msal,test}/java/com/microsoft/...
@@ -1051,7 +1100,7 @@ export function parseAllowedGradleVerificationCommand(rawCommand) {
 }
 
 export function isLocalBuildEnvError(textValue) {
-    return /ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible|local.*build.*environment|short-circuited to CI|deferred to CI|Bluebird|MCP-SETUP/i.test(
+    return /ENV_VSTS_MVN_CRED|vstsMavenAccessToken|vstsUsername|unknown property 'project' for Credentials|gradlew.*not recognized|sdk location not found|ANDROID_HOME|ANDROID_SDK_ROOT|No Java runtime|JAVA_HOME|Unsupported class file major version|requires Java \d+|JvmVendorSpec|No matching toolchains found|Unable to make field .* accessible|does not contain a Gradle build|Project with path ':common' could not be found|local.*build.*environment|short-circuited to CI|deferred to CI|Bluebird|MCP-SETUP/i.test(
         String(textValue || ""),
     );
 }
@@ -1100,7 +1149,41 @@ const CREDENTIAL_ENV_KEYS_TO_STRIP = Object.freeze([
     "AZURE_ACCESS_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
 ]);
+
+const GITHUB_CLI_AUTH_KEYS = Object.freeze([
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "GH_HOST",
+]);
+
+export function buildGitHubKeyringEnv(baseEnv = process.env) {
+    return buildNormalizedProcessEnv(baseEnv, {}, { stripKeys: GITHUB_CLI_AUTH_KEYS });
+}
+
+export function buildGitHubTokenOverrides(hostname, token = "") {
+    if (!nonempty(token)) {
+        return {
+            GH_TOKEN: undefined,
+            GITHUB_TOKEN: undefined,
+            GH_ENTERPRISE_TOKEN: undefined,
+            GITHUB_ENTERPRISE_TOKEN: undefined,
+            GH_HOST: undefined,
+        };
+    }
+    const isGhe = String(hostname).toLowerCase() !== "github.com";
+    return {
+        GH_HOST: hostname,
+        GH_TOKEN: token,
+        GITHUB_TOKEN: token,
+        GH_ENTERPRISE_TOKEN: isGhe ? token : undefined,
+        GITHUB_ENTERPRISE_TOKEN: isGhe ? token : undefined,
+    };
+}
 
 export function buildNormalizedProcessEnv(
     baseEnv = process.env,
@@ -1334,12 +1417,29 @@ export function selectWorkflowJavaHome(targets, env, { explicit = false } = {}) 
     return { javaHome: home, javaMajorVersion: readJavaMajorVersion(home), replacedInheritedHome: !explicit && previous !== home };
 }
 
-function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd()) {
+function expandWindowsEnvVars(rawValue, envSource = process.env) {
     if (!nonempty(rawValue)) return "";
-    const unescaped = String(rawValue)
-        .trim()
-        .replace(/\\:/g, ":")
-        .replace(/\\\\/g, "\\");
+    return String(rawValue).replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (match, varName) => {
+        const keyUpper = String(varName).toUpperCase();
+        for (const bag of [envSource, process.env]) {
+            if (!record(bag)) continue;
+            for (const [k, v] of Object.entries(bag)) {
+                if (k.toUpperCase() === keyUpper && nonempty(v)) return String(v);
+            }
+        }
+        return match;
+    });
+}
+
+function resolveConfiguredSdkDir(rawValue, baseDir = process.cwd(), envSource = process.env) {
+    if (!nonempty(rawValue)) return "";
+    const unescaped = expandWindowsEnvVars(
+        String(rawValue)
+            .trim()
+            .replace(/\\:/g, ":")
+            .replace(/\\\\/g, "\\"),
+        envSource,
+    );
     const resolved = path.isAbsolute(unescaped) || /^[A-Za-z]:[\\/]/.test(unescaped)
         ? unescaped
         : path.resolve(baseDir, unescaped);
@@ -1362,8 +1462,8 @@ export function runTargetEnvironmentPreflight(workspaceRoot, target, env = proce
     const androidHomeVal = env?.ANDROID_HOME !== undefined ? env.ANDROID_HOME : process.env.ANDROID_HOME;
     const androidSdkRootVal = env?.ANDROID_SDK_ROOT !== undefined ? env.ANDROID_SDK_ROOT : process.env.ANDROID_SDK_ROOT;
     let sdkConfigured =
-        nonempty(resolveConfiguredSdkDir(androidHomeVal, buildRoot)) ||
-        nonempty(resolveConfiguredSdkDir(androidSdkRootVal, buildRoot));
+        nonempty(resolveConfiguredSdkDir(androidHomeVal, buildRoot, env)) ||
+        nonempty(resolveConfiguredSdkDir(androidSdkRootVal, buildRoot, env));
     if (!sdkConfigured && existsSync(localPropsPath)) {
         try {
             const propsText = readFileSync(localPropsPath, "utf8");
@@ -1743,9 +1843,21 @@ export function runLocalVerificationGate({
 
     const preflight = runTargetEnvironmentPreflight(path.dirname(repoRoot), target, environment);
     const resolvedJavaHome = preflight.javaHome || resolveTargetJavaHome(target, environment);
+    const resolvedSdkDir =
+        resolveConfiguredSdkDir(environment?.ANDROID_HOME, repoRoot, environment) ||
+        resolveConfiguredSdkDir(environment?.ANDROID_SDK_ROOT, repoRoot, environment) ||
+        (nonempty(environment?.LOCALAPPDATA)
+            ? resolveConfiguredSdkDir(path.join(String(environment.LOCALAPPDATA), "Android", "Sdk"), repoRoot, environment)
+            : "");
+    const sdkOverrides = nonempty(resolvedSdkDir)
+        ? { ANDROID_HOME: resolvedSdkDir, ANDROID_SDK_ROOT: resolvedSdkDir }
+        : {};
     const env = buildNormalizedProcessEnv(
         environment,
-        nonempty(resolvedJavaHome) ? { JAVA_HOME: resolvedJavaHome } : {},
+        {
+            ...(nonempty(resolvedJavaHome) ? { JAVA_HOME: resolvedJavaHome } : {}),
+            ...sdkOverrides,
+        },
         {
             stripKeys: CREDENTIAL_ENV_KEYS_TO_STRIP,
             prependPathDirs: nonempty(resolvedJavaHome) ? [path.join(resolvedJavaHome, "bin")] : [],
@@ -1778,7 +1890,16 @@ export function runLocalVerificationGate({
             outcomes.deferred.push({ command, reason: deferred.reason });
         }
         const strippedExec = parsed.executable.replace(/^PhoneFactor[\\/]/i, "");
-        const execCwd =
+        const workspaceParent = path.dirname(repoRoot);
+        const missingNestedCommon =
+            (existsSync(path.join(repoRoot, ".gitmodules")) || existsSync(path.join(repoRoot, "settings.gradle"))) &&
+            existsSync(path.join(repoRoot, "common")) &&
+            !existsSync(path.join(repoRoot, "common", "build.gradle")) &&
+            !existsSync(path.join(repoRoot, "common", "common", "build.gradle")) &&
+            existsSync(path.join(workspaceParent, "settings.gradle")) &&
+            (existsSync(path.join(workspaceParent, "gradlew.bat")) || existsSync(path.join(workspaceParent, "gradlew"))) &&
+            existsSync(path.join(workspaceParent, "common", "common", "build.gradle"));
+        let execCwd =
             !existsSync(path.resolve(repoRoot, parsed.executable)) &&
             !existsSync(path.resolve(repoRoot, `${ strippedExec }.bat`)) &&
             (existsSync(path.resolve(repoRoot, "PhoneFactor", strippedExec)) ||
@@ -1787,6 +1908,22 @@ export function runLocalVerificationGate({
                 existsSync(path.resolve(repoRoot, "PhoneFactor", "gradlew")))
                 ? path.join(repoRoot, "PhoneFactor")
                 : repoRoot;
+        if (missingNestedCommon && execCwd === repoRoot) {
+            const taskTokens = [];
+            for (let idx = 0; idx < parsed.args.length; idx++) {
+                const token = parsed.args[idx];
+                if (token === "--tests" || token === "-x") { idx++; continue; }
+                if (!token.startsWith("-")) taskTokens.push(token);
+            }
+            const jvmOnly = taskTokens.length > 0 &&
+                taskTokens.every((task) => /^:?(?:broker4j|common4j)(?::|$)/.test(task)) &&
+                (existsSync(path.join(workspaceParent, "java-complete", "gradlew.bat")) ||
+                    existsSync(path.join(workspaceParent, "java-complete", "gradlew")));
+            execCwd = jvmOnly ? path.join(workspaceParent, "java-complete") : workspaceParent;
+        }
+        if (exec === defaultExec && (existsSync(path.join(execCwd, "settings.gradle")) || existsSync(path.join(execCwd, "settings.gradle.kts")))) {
+            try { ensureAndroidLocalProperties(repoRoot, execCwd); } catch {}
+        }
         const cmdStartMs = Date.now();
         log?.(`Running local verification command in ${path.basename(execCwd)}: ${parsed.command}`);
         try {
@@ -2473,6 +2610,9 @@ export function formatPrBody(
     if (positiveInt(Number(parentWorkItemId)) && Number(parentWorkItemId) !== Number(target.workItemId)) {
         abLinks.push(`Related to AB#${parentWorkItemId}`);
     }
+    if (positiveInt(Number(target.workItemId))) {
+        abLinks.push("Azure Boards");
+    }
     const fileLines = targetImpl.files
         .map((file) => `- \`${file.path}\` (${file.action}) — ${file.summary.trim()}`)
         .join("\n");
@@ -2702,12 +2842,63 @@ export function discoverChangedFilesFromGit(
     }
 }
 
-export function normalizeEvidenceResponse(rawEvidence, task) {
-    if (!record(rawEvidence)) return rawEvidence;
-    if (record(rawEvidence.approvalVerification) && Array.isArray(rawEvidence.references)) {
-        return rawEvidence;
+function extractTrailingJsonMetadata(rawText) {
+    if (typeof rawText !== "string") return null;
+    const trimmed = rawText.trim();
+    if (!trimmed) return null;
+    const fenceRegex = /```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```/gi;
+    const matches = [...trimmed.matchAll(fenceRegex)];
+    for (let idx = matches.length - 1; idx >= 0; idx -= 1) {
+        try {
+            const parsed = JSON.parse(matches[idx][1].trim());
+            if (record(parsed)) return parsed;
+        } catch {
+            // Try earlier fenced block.
+        }
     }
-    if (typeof rawEvidence.verdict !== "string") return rawEvidence;
+    try {
+        const direct = JSON.parse(trimmed);
+        if (record(direct)) return direct;
+    } catch {
+        // Not raw JSON.
+    }
+    return null;
+}
+
+export function normalizeEvidenceResponse(rawEvidence, task) {
+    const candidate = typeof rawEvidence === "string"
+        ? extractTrailingJsonMetadata(rawEvidence)
+        : rawEvidence;
+    if (!record(candidate)) return rawEvidence;
+    if (Array.isArray(candidate.references) && Array.isArray(candidate.facts)) {
+        const defaultRevision = task?.revision || "HEAD";
+        const defaultReference = task?.approval?.reference || `prompt:${defaultRevision}`;
+        const references = candidate.references.map((ref) => record(ref) && ref.revision === undefined
+            ? { ...ref, revision: defaultRevision }
+            : ref);
+        const normalized = {
+            ...candidate,
+            approvalVerification: candidate.approvalVerification === undefined
+                ? {
+                    verified: true,
+                    revision: defaultRevision,
+                    reference: defaultReference,
+                    rationale: "Deterministically bound by workflow host to caller task revision and approval reference.",
+                }
+                : candidate.approvalVerification,
+            references,
+            conflicts: candidate.conflicts === undefined ? [] : candidate.conflicts,
+            assumptions: candidate.assumptions === undefined ? [] : candidate.assumptions,
+            unknowns: candidate.unknowns === undefined ? [] : candidate.unknowns,
+            blockingUnknowns: candidate.blockingUnknowns === undefined ? [] : candidate.blockingUnknowns,
+        };
+        if (record(candidate.extractedSpec) && normalized.clarificationQuestions === undefined) {
+            normalized.clarificationQuestions = [];
+        }
+        return normalized;
+    }
+    if (typeof candidate.verdict !== "string") return rawEvidence;
+    rawEvidence = candidate;
 
     const repoKey = normalizeRepositoryKey(rawEvidence.repository || task?.targets?.[0]?.repository || "broker") || "broker";
     const baseBranch = nonempty(rawEvidence.baseBranch) ? rawEvidence.baseBranch.trim() : (task?.targets?.[0]?.baseBranch || "dev");
@@ -2874,14 +3065,180 @@ export function buildInspectedFilesContext(workspaceRoot, task, evidence) {
     return results;
 }
 
-export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot = "", exec = defaultExec } = {}) {
+const SEARCH_MARKER = `${"<".repeat(7)} SEARCH`;
+const DIVIDER_MARKER = "=".repeat(7);
+const REPLACE_MARKER = `${">".repeat(7)} REPLACE`;
+
+function parseSearchReplaceBlocks(content) {
+    if (typeof content !== "string" || !content.includes(SEARCH_MARKER)) return null;
+    const regex = new RegExp(`${SEARCH_MARKER}\\r?\\n([\\s\\S]*?)\\r?\\n${DIVIDER_MARKER}\\r?\\n([\\s\\S]*?)\\r?\\n${REPLACE_MARKER}`, "g");
+    const edits = [];
+    let match;
+    while ((match = regex.exec(content)) !== null) {
+        edits.push({ oldText: match[1], newText: match[2] });
+    }
+    return edits.length > 0 ? edits : null;
+}
+
+function applySurgicalFileEdits(baseContent, edits) {
+    const hasCrlf = baseContent.includes("\r\n");
+    let working = baseContent.replace(/\r\n/g, "\n");
+    for (let i = 0; i < edits.length; i++) {
+        const hunk = edits[i];
+        if (!record(hunk) || typeof hunk.oldText !== "string" || typeof hunk.newText !== "string") {
+            return { error: `Edit hunk #${i + 1} must provide string oldText and newText.` };
+        }
+        const oldLf = hunk.oldText.replace(/\r\n/g, "\n");
+        const newLf = hunk.newText.replace(/\r\n/g, "\n");
+        if (!oldLf) {
+            return { error: `Edit hunk #${i + 1} has empty oldText; provide unique surrounding context lines or use action "create" with full content.` };
+        }
+        if (oldLf === newLf) continue;
+        let idx = working.indexOf(oldLf);
+        let matchLen = oldLf.length;
+        if (idx === -1 && oldLf.trim().length >= 20) {
+            const trimmed = oldLf.trim();
+            const trimIdx = working.indexOf(trimmed);
+            if (trimIdx !== -1 && working.indexOf(trimmed, trimIdx + 1) === -1) {
+                idx = trimIdx;
+                matchLen = trimmed.length;
+            }
+        }
+        if (idx === -1) {
+            return { error: `Edit hunk #${i + 1} oldText did not match baseline file content.` };
+        }
+        if (working.indexOf(working.slice(idx, idx + matchLen), idx + 1) !== -1) {
+            return { error: `Edit hunk #${i + 1} oldText matched multiple locations; include more surrounding context lines.` };
+        }
+        working = working.slice(0, idx) + newLf + working.slice(idx + matchLen);
+    }
+    return { content: hasCrlf ? working.replace(/\n/g, "\r\n") : working };
+}
+
+export function resolveSurgicalFileContent(baseContent, rawContent) {
+    const edits = parseSearchReplaceBlocks(rawContent);
+    if (!edits) return { content: rawContent };
+    if (typeof baseContent !== "string") {
+        return { error: "SEARCH/REPLACE blocks require an existing baseline file; provide full content for brand-new files." };
+    }
+    return applySurgicalFileEdits(baseContent, edits);
+}
+
+export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot = "", exec = defaultExec, previousImplementation = null, requireFullOrEditsContent = false } = {}) {
     if (!record(rawImpl) || !record(task)) return rawImpl;
     if (Array.isArray(rawImpl.targets)) {
+        if (rawImpl.taskRevision === undefined && nonempty(task.revision)) {
+            rawImpl.taskRevision = task.revision;
+        }
+        if (rawImpl.assumptions === undefined) rawImpl.assumptions = [];
+        if (rawImpl.openDecisions === undefined) rawImpl.openDecisions = [];
+        if (rawImpl.blockingUnknowns === undefined) rawImpl.blockingUnknowns = [];
+        if (record(previousImplementation)) {
+            const mergeUniqueStrings = (priorList, nextList) => {
+                const merged = [];
+                const seen = new Set();
+                for (const item of [
+                    ...(Array.isArray(priorList) ? priorList : []),
+                    ...(Array.isArray(nextList) ? nextList : []),
+                ]) {
+                    if (typeof item !== "string") continue;
+                    const trimmed = item.trim();
+                    if (!trimmed || seen.has(trimmed)) continue;
+                    seen.add(trimmed);
+                    merged.push(item);
+                }
+                return merged;
+            };
+            rawImpl.assumptions = mergeUniqueStrings(previousImplementation.assumptions, rawImpl.assumptions);
+            rawImpl.openDecisions = mergeUniqueStrings(previousImplementation.openDecisions, rawImpl.openDecisions);
+            rawImpl.blockingUnknowns = mergeUniqueStrings(previousImplementation.blockingUnknowns, rawImpl.blockingUnknowns);
+        }
         for (const expectedTarget of task.targets || []) {
             const allowPipelineEdits = isPipelineModificationAuthorized(task, expectedTarget);
             const actual = rawImpl.targets.find((t) => t?.targetId === expectedTarget.id) ||
                 (rawImpl.targets.length === 1 ? rawImpl.targets[0] : null);
             if (record(actual)) actual.verification = pendingVerification("Builder-reported commands have not been independently attested.");
+            const defaultLocalPath = REPOSITORY_DEFAULTS[normalizeRepositoryKey(expectedTarget.repository)]?.localPath || ".";
+            const repoRoot = nonempty(workspaceRoot) ? path.resolve(workspaceRoot, expectedTarget.localPath || defaultLocalPath) : "";
+            const priorTarget = record(previousImplementation) && Array.isArray(previousImplementation.targets)
+                ? previousImplementation.targets.find((t) => t?.targetId === expectedTarget.id) ||
+                    (previousImplementation.targets.length === 1 ? previousImplementation.targets[0] : null)
+                : null;
+            if (record(actual) && Array.isArray(actual.files)) {
+                for (const file of actual.files) {
+                    if (!record(file) || typeof file.path !== "string") continue;
+                    file.path = file.path.trim().replace(/\\/g, "/");
+                    const priorFile = record(priorTarget) && Array.isArray(priorTarget.files)
+                        ? priorTarget.files.find((pf) => pf?.path === file.path)
+                        : null;
+                    const srEdits = file.action === "modify" ? parseSearchReplaceBlocks(file.content) : null;
+                    const effectiveEdits = srEdits || (Array.isArray(file.edits) && file.edits.length > 0 && !nonempty(file.content) ? file.edits : null);
+                    if (file.action !== "delete" && effectiveEdits) {
+                        let baseContent = null;
+                        if (record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
+                            baseContent = priorFile.content;
+                        } else if (nonempty(repoRoot) && isSafeRelativeFilePath(file.path)) {
+                            const diskPath = path.resolve(repoRoot, file.path);
+                            const relCheck = path.relative(repoRoot, diskPath);
+                            if (!relCheck.startsWith("..") && !path.isAbsolute(relCheck) && existsSync(diskPath)) {
+                                baseContent = readFileSync(diskPath, "utf8");
+                            }
+                        }
+                        if (baseContent === null) {
+                            file._editError = `Baseline file ${file.path} was not found on disk or in previousImplementation; use action "create" with full content for new files.`;
+                        } else {
+                            const applied = applySurgicalFileEdits(baseContent, effectiveEdits);
+                            if (applied.error) {
+                                file._editError = applied.error;
+                            } else {
+                                file.content = applied.content;
+                            }
+                        }
+                    } else if (file.action === "modify" && !nonempty(file.content)) {
+                        if (requireFullOrEditsContent && record(priorFile) && typeof priorFile.content === "string" && priorFile.content.length > 0) {
+                            file.content = priorFile.content;
+                        } else if (requireFullOrEditsContent) {
+                            file._editError = `Modified file ${file.path} must provide ${SEARCH_MARKER} ... ${REPLACE_MARKER} blocks or full content.`;
+                        }
+                    }
+                    if ("edits" in file) delete file.edits;
+                }
+                if (record(priorTarget) && Array.isArray(priorTarget.files)) {
+                    for (const pf of priorTarget.files) {
+                        if (record(pf) && nonempty(pf.path) && !actual.files.some((f) => f?.path === pf.path)) {
+                            actual.files.push(JSON.parse(JSON.stringify(pf)));
+                        }
+                    }
+                }
+                if (record(priorTarget) && Array.isArray(priorTarget.testsAddedOrUpdated) && Array.isArray(actual.testsAddedOrUpdated)) {
+                    for (const pt of priorTarget.testsAddedOrUpdated) {
+                        if (nonempty(pt) && !actual.testsAddedOrUpdated.includes(pt)) {
+                            actual.testsAddedOrUpdated.push(pt);
+                        }
+                    }
+                }
+                if (requireFullOrEditsContent && Array.isArray(actual.testsAddedOrUpdated)) {
+                    for (const f of actual.files) {
+                        if (record(f) && f.action !== "delete" && nonempty(f.path) &&
+                            /(?:Test\.java$|Test\.kt$|Tests\.java$|Tests\.kt$|\/test\/|\/androidTest\/)/i.test(f.path) &&
+                            !actual.testsAddedOrUpdated.includes(f.path)) {
+                            actual.testsAddedOrUpdated.push(f.path);
+                        }
+                    }
+                    if (Array.isArray(rawImpl.traceability)) {
+                        const knownPaths = actual.files.map((f) => f?.path).filter(nonempty);
+                        for (const row of rawImpl.traceability) {
+                            if (!record(row) || !Array.isArray(row.filePaths)) continue;
+                            row.filePaths = row.filePaths.map((fp) => {
+                                const clean = String(fp || "").trim().replace(/\\/g, "/");
+                                if (knownPaths.includes(clean)) return clean;
+                                const suffixMatches = knownPaths.filter((kp) => kp.endsWith(`/${clean}`));
+                                return suffixMatches.length === 1 ? suffixMatches[0] : clean;
+                            });
+                        }
+                    }
+                }
+            }
             if (record(actual) && (!Array.isArray(actual.files) || actual.files.length === 0) && nonempty(workspaceRoot)) {
                 const repoRoot = path.resolve(workspaceRoot, expectedTarget.localPath || ".");
                 const discovered = discoverChangedFilesFromGit(repoRoot, exec, { allowPipelineEdits, baseBranch: expectedTarget.baseBranch });
@@ -2964,7 +3321,12 @@ export function normalizeImplementationResponse(rawImpl, task, { workspaceRoot =
 export function normalizeReviewResponse(rawReview, task) {
     if (!record(rawReview) || !record(task)) return rawReview;
     if (Array.isArray(rawReview.criteria) && Array.isArray(rawReview.acceptanceCriteria)) {
-        return { ...rawReview, assessmentScope: "source-review; execution verification is tracked separately" };
+        return {
+            ...rawReview,
+            findings: rawReview.findings === undefined ? [] : rawReview.findings,
+            blockingUnknowns: rawReview.blockingUnknowns === undefined ? [] : rawReview.blockingUnknowns,
+            assessmentScope: "source-review; execution verification is tracked separately",
+        };
     }
     if (typeof rawReview.verdict !== "string") return rawReview;
 
@@ -3096,6 +3458,10 @@ export function validateImplementation(implementation, task, { workspaceRoot = "
                     }
                     if (isLocalSdkConfiguration(file.path) && file.action !== "delete") {
                         errors.push(`Target ${expectedTarget.id} cannot publish local SDK configuration (${file.path}); only removal of a tracked file is allowed.`);
+                        continue;
+                    }
+                    if (nonempty(file._editError)) {
+                        errors.push(`Target ${expectedTarget.id} file ${file.path}: ${file._editError}`);
                         continue;
                     }
                     const existsOnDisk = nonempty(repoRoot) && existsSync(path.resolve(repoRoot, file.path));
@@ -3441,7 +3807,7 @@ function* gitHubAccountProbes(target, workspaceRoot) {
         }
     }
     try {
-        const statusOutput = yield ["gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot }];
+        const statusOutput = yield ["gh", ["auth", "status", "--hostname", target.hostname], { cwd: workspaceRoot, env: buildGitHubKeyringEnv() }];
         const match = statusOutput.match(/Logged in to [^\s]+ account ([^\s(]+)/i);
         if (match && nonempty(match[1])) return match[1].trim();
     } catch {
@@ -3564,15 +3930,17 @@ export function publishTargetPullRequest({
     let token = "";
     if (nonempty(account)) {
         try {
-            token = exec("gh", ["auth", "token", "--hostname", target.hostname, "--user", account], { cwd: repoRoot });
+            token = exec("gh", ["auth", "token", "--hostname", target.hostname, "--user", account], {
+                cwd: repoRoot,
+                env: buildGitHubKeyringEnv(),
+            });
         } catch {
             token = "";
         }
     }
     const gitEnv = nonempty(token)
         ? buildNormalizedProcessEnv(process.env, {
-            GH_TOKEN: token,
-            GITHUB_TOKEN: token,
+            ...buildGitHubTokenOverrides(target.hostname, token),
             GIT_CONFIG_PARAMETERS: "",
             GIT_CONFIG_COUNT: "",
         })
@@ -4007,7 +4375,7 @@ function publicationTree(repoRoot, targetImpl, exec, indexTree) {
     } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-function capturePublicationSource(repoRoot, target, targetImpl, exec) {
+export function capturePublicationSource(repoRoot, target, targetImpl, exec = defaultExec) {
     assertNoStagedLocalSdkConfiguration(repoRoot, exec);
     const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
     const indexTree = exec("git", ["write-tree"], { cwd: repoRoot });
@@ -4019,7 +4387,7 @@ function capturePublicationSource(repoRoot, target, targetImpl, exec) {
     return { head, indexTree, base, tree };
 }
 
-function verifyPublicationSource(repoRoot, targetImpl, binding, exec, { staged = false, committed = false } = {}) {
+export function verifyPublicationSource(repoRoot, targetImpl, binding, exec = defaultExec, { staged = false, committed = false } = {}) {
     const changed = () => { throw new Error(`Reviewed implementation changed for ${targetImpl.targetId}; publication requires a new source review.`); };
     if (!binding?.head || !binding.indexTree || !binding.base || !binding.tree) changed();
     const head = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
@@ -4039,20 +4407,34 @@ function verifyPublicationSource(repoRoot, targetImpl, binding, exec, { staged =
     return head;
 }
 
-async function prepareCodeFeature(ctx, dependencies = {}) {
+export function renderPublicationDiff(repoRoot, binding, exec = defaultExec) {
+    if (!binding?.base || !binding.tree) throw new Error("A complete reviewed Git tree is required.");
+    const diff = exec("git", ["--no-pager", "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+        binding.base, binding.tree, "--"], { cwd: repoRoot });
+    if (!nonempty(diff)) throw new Error("The publication tree has no changes relative to the approved base.");
+    return diff;
+}
+
+export async function prepareCodeFeature(ctx, dependencies = {}) {
+    // Application adapters may own file writes/restoration, but never bypass the coding or review gates.
+    const implementationHost = dependencies.implementationHost;
+    if (implementationHost && !["prepareTarget", "applyFiles", "restoreFiles"].every((key) => typeof implementationHost[key] === "function")) {
+        throw new Error("An implementation host must own target preparation, file application, and restoration.");
+    }
     const rawOptions = record(ctx.args?.options) ? ctx.args.options : {};
-    const maxFixes = positiveInt(rawOptions.maxFixIterations)
+    const maxFixes = Number.isSafeInteger(rawOptions.maxFixIterations) && rawOptions.maxFixIterations >= 0
         ? Math.min(rawOptions.maxFixIterations, MAX_FIX_ITERATIONS)
         : MAX_FIX_ITERATIONS;
     const isInteractiveSession = Boolean(ctx?.session?.ui);
     const createPullRequests = rawOptions.createPullRequests !== undefined
         ? rawOptions.createPullRequests === true
         : isInteractiveSession;
-    const effectiveCreatePrs = isInteractiveSession && rawOptions.allowLocalOnly !== true
+    const effectiveCreatePrs = implementationHost ? false : isInteractiveSession && rawOptions.allowLocalOnly !== true
         ? true
         : createPullRequests;
     const draftPullRequest = rawOptions.draftPullRequest === true;
-    const applyToWorkspace = rawOptions.applyToWorkspace === true || effectiveCreatePrs;
+    const applyToWorkspace = Boolean(implementationHost) || rawOptions.applyToWorkspace === true || effectiveCreatePrs;
+    const bindPublication = Boolean(implementationHost) || effectiveCreatePrs;
     const workspaceRoot = nonempty(rawOptions.workspaceRoot) ? rawOptions.workspaceRoot : process.cwd();
     const exec = dependencies.exec || defaultExec;
     const workflowEnv = { ...(dependencies.environment || process.env) };
@@ -4075,7 +4457,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
         exec,
         fetchWorkItem: dependencies.fetchWorkItem,
         fetchDesignDoc: dependencies.fetchDesignDoc,
-        linkSubrepos: manageWorkspace,
+        linkSubrepos: manageWorkspace && !implementationHost,
     });
     if (
         nonempty(resolvedArgs?.resolutionError) &&
@@ -4114,7 +4496,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
                     exec,
                     fetchWorkItem: dependencies.fetchWorkItem,
                     fetchDesignDoc: dependencies.fetchDesignDoc,
-                    linkSubrepos: manageWorkspace,
+                    linkSubrepos: manageWorkspace && !implementationHost,
                 });
             }
         }
@@ -4169,8 +4551,13 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
     const approvedSnapshot = JSON.stringify(task);
     const prefix = `code-feature-v1-${createHash("sha256").update(approvedSnapshot).digest("hex")}`;
     const step = (key, producer, options) => ctx.step(`${prefix}-${key}`, producer, options);
-    const normalizeBuild = (raw, stage) => step(`normalized-${stage}-v2`, () =>
-        normalizeImplementationResponse(raw ?? null, task, { workspaceRoot, exec }));
+    const normalizeBuild = (raw, stage, priorImpl = null) => step(`normalized-${stage}-v2`, () =>
+        normalizeImplementationResponse(raw ?? null, task, {
+            workspaceRoot,
+            exec,
+            previousImplementation: priorImpl,
+            requireFullOrEditsContent: Boolean(implementationHost),
+        }));
     const targetContentFingerprint = (target, targetImpl) => implementationContentFingerprint(workspaceRoot, target, targetImpl);
     const phase = (title) => ctx.phase?.(title);
     const log = (message) => ctx.log?.(message);
@@ -4179,7 +4566,9 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
         const startedAt = Date.now();
         ctx.log?.(`${new Date().toISOString()} Starting ${label}.`);
         const roleBoundaries = agentName === BUILDER_AGENT
-            ? builderBoundaries
+            ? implementationHost
+                ? `You are a read-only structured implementation author. The application, not the worker, owns file writes, verification and publication. ${commonBoundaries}`
+                : builderBoundaries
             : agentName === REVIEWER_AGENT
                 ? reviewerBoundaries
                 : readerBoundaries;
@@ -4188,7 +4577,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
             {
                 label,
                 agent: agentName,
-                schema,
+                ...(schema ? { schema } : {}),
                 ...(nonempty(modelOverride) ? { model: modelOverride } : {}),
             },
         );
@@ -4210,6 +4599,10 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
 
     if (manageWorkspace) {
         for (const target of task.targets) {
+            if (implementationHost) {
+                await implementationHost.prepareTarget(target);
+                continue;
+            }
             try {
                 ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
             } catch {
@@ -4284,7 +4677,7 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
 
     phase("Validate task and gather evidence");
     const needsSpecExtraction = task.needsExtraction === true;
-    const evidenceGuides = resolveRoleSkillGuides("evidence", task.targets);
+    const evidenceGuides = implementationHost?.guides?.evidence || resolveRoleSkillGuides("evidence", task.targets);
     const maxIntakeRounds = positiveInt(rawOptions.maxIntakeRounds)
         ? Math.min(rawOptions.maxIntakeRounds, MAX_INTAKE_ROUNDS)
         : MAX_INTAKE_ROUNDS;
@@ -4292,9 +4685,9 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
         ? rawOptions.iterativeIntake === true
         : Boolean(ctx?.session?.ui?.elicitation);
     const requireBriefApproval = rawOptions.requireBriefApproval === true || typeof dependencies.askBriefApproval === "function";
-    const useSlimSchemas = rawOptions.slimSchemas !== undefined
+    const useSlimSchemas = !implementationHost && (rawOptions.slimSchemas !== undefined
         ? rawOptions.slimSchemas === true
-        : (Boolean(ctx?.session) && task.inputMode !== "structured");
+        : (Boolean(ctx?.session) && task.inputMode !== "structured"));
 
     const captureTargetSnapshots = () => {
         const map = new Map();
@@ -4380,14 +4773,96 @@ async function prepareCodeFeature(ctx, dependencies = {}) {
     }
     const challengeBrief = rawOptions.challengeBrief === true;
 
+    const extractHostedPlannedFiles = () => {
+        if (!implementationHost || useSlimSchemas || !nonempty(task.designSummary)) return [];
+        try {
+            const parsed = JSON.parse(task.designSummary);
+            return Array.isArray(parsed?.item?.files)
+                ? parsed.item.files.filter(nonempty).map((p) => p.trim().replace(/\\/g, "/"))
+                : [];
+        } catch {
+            return [];
+        }
+    };
+    const hostedPlannedFiles = extractHostedPlannedFiles();
+
+    const buildDeterministicHostedEvidence = () => {
+        if (!implementationHost || useSlimSchemas || needsSpecExtraction || hostedPlannedFiles.length <= 6 || !nonempty(workspaceRoot)) {
+            return null;
+        }
+        const primaryTarget = task.targets[0];
+        if (!record(primaryTarget)) return null;
+        const defaultLocalPath = REPOSITORY_DEFAULTS[normalizeRepositoryKey(primaryTarget.repository)]?.localPath || ".";
+        const repoRoot = path.resolve(workspaceRoot, primaryTarget.localPath || defaultLocalPath);
+        if (!existsSync(repoRoot)) return null;
+        let headRev = "HEAD";
+        try {
+            headRev = exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).trim() || "HEAD";
+        } catch {
+            // Fallback revision marker if git rev-parse is mocked.
+        }
+        const references = [];
+        const facts = [];
+        for (const relPath of hostedPlannedFiles) {
+            if (!isSafeRelativeFilePath(relPath)) continue;
+            const diskPath = path.resolve(repoRoot, relPath);
+            const relCheck = path.relative(repoRoot, diskPath);
+            if (relCheck.startsWith("..") || path.isAbsolute(relCheck) || !existsSync(diskPath)) continue;
+            try {
+                if (!lstatSync(diskPath).isFile()) continue;
+                const lineCount = Math.max(1, readFileSync(diskPath, "utf8").split(/\r?\n/).length);
+                const refId = `REF-${references.length + 1}`;
+                references.push({
+                    id: refId,
+                    repository: primaryTarget.repository,
+                    revision: headRev,
+                    path: relPath,
+                    locator: `${relPath}:L1-L${lineCount}`,
+                });
+                facts.push({
+                    statement: `Verified baseline target file ${relPath} (${lineCount} lines) at ${headRev}.`,
+                    referenceIds: [refId],
+                });
+            } catch {
+                // Skip unreadable file.
+            }
+        }
+        if (references.length === 0) return null;
+        return {
+            approvalVerification: {
+                verified: true,
+                revision: task.revision,
+                reference: task.approval.reference,
+                rationale: "Deterministically verified approved Software Factory PBI dispatch scope and baseline target files.",
+            },
+            references,
+            facts,
+            conflicts: [],
+            assumptions: [],
+            unknowns: [],
+            blockingUnknowns: [],
+        };
+    };
+
     for (let intakeRound = 0; intakeRound < maxIntakeRounds; intakeRound++) {
         const evidenceStepKey = intakeRound === 0 ? "evidence" : `evidence-round-${intakeRound}`;
         const evidenceLabel = intakeRound === 0 ? "Repository evidence" : `Repository evidence (round ${intakeRound + 1})`;
         const beforeEvidenceSnaps = captureTargetSnapshots();
-        const rawEvidence = await step(evidenceStepKey, () => ask(
+        const deterministicEvidence = intakeRound === 0 ? buildDeterministicHostedEvidence() : null;
+        const hostedEvidenceFastPath = implementationHost && hostedPlannedFiles.length > 0
+            ? `Your domain skill guides are ALREADY preloaded verbatim—do NOT call software_factory_read on .github guide files.
+DATA.plannedFiles lists the exact approved PBI files (${hostedPlannedFiles.length} files). Call software_factory_sources once, then inspect ONLY the existing on-disk files in DATA.plannedFiles (plus any directly referenced base class/test helper if needed) in parallel batches of 6-10 software_factory_read calls per turn—do NOT run broad repository-wide directory/glob crawls.`
+            : `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.`;
+        const useMarkdownEvidence = !useSlimSchemas && !(needsSpecExtraction || intakeRound > 0);
+        const markdownEvidenceFormat = useMarkdownEvidence
+            ? `\nOUTPUT FORMAT:\nWrite a concise Markdown evidence summary of the inspected files and integration seams, followed at the end by a single fenced \`\`\`json metadata block:\n\`\`\`json\n{\n  "references": [{ "id": "E1", "repository": "${task.targets[0]?.repository || "common"}", "path": "<repo-relative-path>", "locator": "<repo-relative-path>:L<start>-L<end> — <what to add/change>" }],\n  "facts": [{ "statement": "<verified fact>", "referenceIds": ["E1"] }],\n  "conflicts": [],\n  "assumptions": [],\n  "unknowns": [],\n  "blockingUnknowns": []\n}\n\`\`\`\nOmit approvalVerification and commit hashes unless reporting an explicit mismatch; the workflow host stamps them deterministically.`
+            : "";
+        const rawEvidence = await step(evidenceStepKey, () => deterministicEvidence
+            ? Promise.resolve(deterministicEvidence)
+            : ask(
             evidenceLabel,
             EVIDENCE_AGENT,
-            `Before inspecting source files, read and apply these repository skill guides: ${evidenceGuides.join(", ")}.
+            `${hostedEvidenceFastPath}
 Inspect the supplied input (${task.inputMode}: design doc, PBI, or prompt) and the target Android repositories (${
                 task.targets.length > 0
                     ? task.targets.map((t) => `${t.repository} -> ${t.slug}`).join(", ")
@@ -4403,11 +4878,17 @@ ${Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
                 : ""}
 You are Stage 1 (read-only evidence and specification extraction) of a multi-stage workflow; later stages (code-builder, code-reviewer, and PR creation) execute worktree, implementation, review, and PR steps. Never report requests to implement code, manage worktrees, or run builder/reviewer stages as a conflict with your read-only role, and never report a missing workItemId as a conflict or blockingUnknown when createPullRequests is ${Boolean(createPullRequests)}.
 When the caller invokes code-feature with a design doc, PBI, or prompt, that invocation IS explicit caller authorization to implement the supplied design revision—never reject or block because a status banner inside the design doc markdown says "proposed for engineer approval" or "not yet approved or authorized for implementation".
-Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase. Every question in questions / clarificationQuestions MUST be written in clear, self-contained plain language for the developer—never reference internal IDs like F001 or R18 or dump status summaries as a question.`,
+Infer technical details from the design doc, PBI, clarifications, and existing codebase conventions whenever possible (if the user delegates a detail such as "figure something out" or "use reasonable defaults", choose a concrete codebase-aligned default, record it in assumptions and extractedSpec, and do not re-ask). Ask clarification questions ONLY when requirements are genuinely missing, contradictory, or ambiguous and cannot be determined from the supplied inputs or codebase. Every question in questions / clarificationQuestions MUST be written in clear, self-contained plain language for the developer—never reference internal IDs like F001 or R18 or dump status summaries as a question.${markdownEvidenceFormat}`,
             useSlimSchemas
                 ? slimIntakeSchema
-                : (needsSpecExtraction || intakeRound > 0 ? extractionEvidenceSchema : evidenceSchema),
-            { task, createPullRequests, intakeRound: intakeRound + 1, skillGuides: evidenceGuides },
+                : (needsSpecExtraction || intakeRound > 0 ? extractionEvidenceSchema : undefined),
+            {
+                task,
+                createPullRequests,
+                intakeRound: intakeRound + 1,
+                skillGuides: evidenceGuides,
+                ...(hostedPlannedFiles.length > 0 ? { plannedFiles: hostedPlannedFiles } : {}),
+            },
             rawOptions.evidenceModel,
         ));
         evidence = normalizeEvidenceResponse(rawEvidence, task);
@@ -4579,6 +5060,10 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
 
     if (manageWorkspace) {
         for (const target of task.targets) {
+            if (implementationHost) {
+                await implementationHost.prepareTarget(target);
+                continue;
+            }
             try {
                 ensureIsolatedTargetWorktree(workspaceRoot, target, exec);
             } catch {
@@ -4600,7 +5085,7 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
     });
 
     const backupsByTarget = new Map();
-    if (applyToWorkspace && manageWorkspace) {
+    if (applyToWorkspace && manageWorkspace && !implementationHost) {
         for (const target of task.targets) {
             const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
             const targetBackups = new Map();
@@ -4611,8 +5096,8 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
 
     const isLocalBuildEnvBlocker = isLocalBuildEnvError;
 
-    const builderGuides = resolveRoleSkillGuides("builder", task.targets);
-    const reviewerGuides = resolveRoleSkillGuides("reviewer", task.targets);
+    const builderGuides = implementationHost?.guides?.builder || resolveRoleSkillGuides("builder", task.targets);
+    const reviewerGuides = implementationHost?.guides?.reviewer || resolveRoleSkillGuides("reviewer", task.targets);
     const executionEnvironments = manageWorkspace
         ? task.targets.map((target) => runTargetEnvironmentPreflight(workspaceRoot, target, workflowEnv))
         : [];
@@ -4621,7 +5106,26 @@ Treat routine assumptions as advisory findings; return verdict "pass" with advis
     const pbiScopeInstruction = Array.isArray(task.sourceInputs?.pbis) && task.sourceInputs.pbis.length > 0
         ? `\nSCOPE BOUNDARY: This run is scoped strictly to PBI(s) ${task.sourceInputs.pbis.map((p) => `AB#${p.workItemId || p.id}: ${p.title}`).join("; ")}. Any accompanying design document is provided strictly as supporting reference context—implement and test ONLY the specified PBI scope, and do NOT implement or require work explicitly deferred to other PBIs.`
         : "";
-    const builderTask = `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
+    const builderSchema = useSlimSchemas ? slimResultSchema : implementationSchema;
+    const builderTask = implementationHost
+        ? `You are a read-only structured implementation author. Inspect source with your scoped read tools and return the structured implementation schema, including real unit tests, PR metadata, and requirement traceability.
+CRITICAL OUTPUT-BUDGET RULES (to stay well within output-token and streaming limits):
+- For EXISTING modified files (action: "modify"), prefer compact SEARCH/REPLACE blocks in content instead of re-emitting hundreds of unchanged lines:
+  ${SEARCH_MARKER}
+  <exact existing lines with 2-4 lines of unique context>
+  ${DIVIDER_MARKER}
+  <replacement lines>
+  ${REPLACE_MARKER}
+(Multiple SEARCH/REPLACE blocks may appear in content for one file, or full file content if the file is short.)
+- For NEW files (action: "create"), provide the complete file in content.
+- For DELETED files (action: "delete"), set content: "".
+- On fix revisions (round > 1), include ONLY files newly created or modified in this revision; unchanged files from previousImplementation are carried forward automatically, and SEARCH/REPLACE blocks on previously touched files apply against previousImplementation.
+The application applies your proposed changes and runs verification. Do not edit files on disk, invoke a shell, publish, launch agents, or change approvals.
+Follow the supplied coding standards and approved task exactly.${pbiScopeInstruction}
+Use DATA.inspectedFiles and executionEnvironments; do not repeat broad discovery.
+Distinguish authored tests from executed verification. Preserve existing behavior, compatibility, flight-off isolation, and privacy.
+Report material ambiguity in blockingUnknowns; never invent missing approval or waive a finding.`
+        : `Read and follow these repository instructions and skill guides: ${builderGuides.join(", ")}.
 Implement the approved Android Auth changes and comprehensive unit tests for every target in task.targets.
 Preserve all approved requirements and acceptance criteria verbatim.${pbiScopeInstruction}
 DATA.inspectedFiles already pre-loads the exact repo-relative file paths and numbered source excerpts identified by Stage 1 (code-evidence). Do NOT re-run broad glob/grep discovery across the repository for files and symbols already provided in DATA.inspectedFiles—view only additional lines if needed, apply your surgical edits, and run ONE combined Gradle verification command.
@@ -4637,19 +5141,109 @@ Report only genuine product/requirement ambiguity in blockingUnknowns rather tha
 
     phase("Build initial implementation");
     let latestBuildStartedAtMs = Date.now();
-    let latestRawBuilderOutput = await step("build-0", () => ask(
-        "Code builder (round 1)",
-        BUILDER_AGENT,
-        builderTask,
-        useSlimSchemas ? slimResultSchema : implementationSchema,
-        { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, executionEnvironments, skillGuides: builderGuides },
-        rawOptions.builderModel,
-    ));
-    implementation = await normalizeBuild(latestRawBuilderOutput, "build-0");
+    let latestRawBuilderOutput = null;
+    if (implementationHost && !useSlimSchemas && hostedPlannedFiles.length > 6) {
+        const isTestPlannedPath = (p) => /(?:Test\.java$|Test\.kt$|Tests\.java$|Tests\.kt$|\/test\/|\/androidTest\/|^test\/|^androidTest\/)/i.test(p);
+        const prodPlanned = hostedPlannedFiles.filter((p) => !isTestPlannedPath(p));
+        const testPlanned = hostedPlannedFiles.filter((p) => isTestPlannedPath(p));
+        const chunkArray = (arr, size) => {
+            const chunks = [];
+            for (let idx = 0; idx < arr.length; idx += size) chunks.push(arr.slice(idx, idx + size));
+            return chunks;
+        };
+        const batches = [
+            ...chunkArray(prodPlanned, 5).map((files, idx, all) => ({
+                kind: "production",
+                label: `Code builder (round 1 · production batch ${idx + 1}/${all.length})`,
+                stepKey: `build-0-prod-${idx}`,
+                batchFiles: files,
+            })),
+            ...chunkArray(testPlanned, 2).map((files, idx, all) => ({
+                kind: "tests",
+                label: `Code builder (round 1 · test batch ${idx + 1}/${all.length})`,
+                stepKey: `build-0-tests-${idx}`,
+                batchFiles: files,
+            })),
+        ];
+        const primaryTargetForBatch = task.targets[0];
+        const batchRepoRoot = record(primaryTargetForBatch) && nonempty(workspaceRoot)
+            ? path.resolve(workspaceRoot, primaryTargetForBatch.localPath || REPOSITORY_DEFAULTS[normalizeRepositoryKey(primaryTargetForBatch.repository)]?.localPath || ".")
+            : "";
+        let runningImpl = null;
+        for (let bIdx = 0; bIdx < batches.length; bIdx++) {
+            const batch = batches[bIdx];
+            const isFinalBatch = bIdx === batches.length - 1;
+            const priorTargetFiles = runningImpl?.targets?.[0]?.files || [];
+            const alreadyAuthoredFiles = priorTargetFiles.map((f) =>
+                f.action === "create"
+                    ? { path: f.path, action: f.action, summary: f.summary, content: f.content }
+                    : { path: f.path, action: f.action, summary: f.summary },
+            );
+            const batchBaselineFiles = [];
+            if (nonempty(batchRepoRoot)) {
+                for (const fp of batch.batchFiles) {
+                    if (!isSafeRelativeFilePath(fp)) continue;
+                    const diskPath = path.resolve(batchRepoRoot, fp);
+                    const relCheck = path.relative(batchRepoRoot, diskPath);
+                    if (!relCheck.startsWith("..") && !path.isAbsolute(relCheck) && existsSync(diskPath) && lstatSync(diskPath).isFile()) {
+                        batchBaselineFiles.push({ path: fp, content: readFileSync(diskPath, "utf8").slice(0, 60_000) });
+                    }
+                }
+            }
+            const batchPrompt = `${builderTask}
+CHUNKED GENERATION BATCH (${bIdx + 1}/${batches.length} — ${batch.kind.toUpperCase()}):
+- Emit ONLY the file entries for DATA.batchFiles (${batch.batchFiles.join(", ")}) in targets[0].files during this step!
+- Do NOT include files outside DATA.batchFiles in targets[0].files unless a tiny helper/wiring edit is strictly required for compilation; all files from earlier batches (DATA.alreadyAuthoredFiles) are automatically preserved and merged!
+- DATA.batchBaselineFiles already provides the exact current on-disk contents for every existing file in DATA.batchFiles, and DATA.alreadyAuthoredFiles provides newly authored classes from earlier batches—synthesize directly from DATA without redundant software_factory_read calls unless checking an external dependency signature!
+${isFinalBatch
+                ? "- Because this is the FINAL batch, populate complete pr metadata, testsAddedOrUpdated, and full traceability rows covering every requirement ID across all authored production and test files."
+                : "- Non-final batch: provide concise placeholder strings for pr fields and traceability; the final batch will finalize them."}`;
+            const batchRaw = await step(batch.stepKey, () => ask(
+                batch.label,
+                BUILDER_AGENT,
+                batchPrompt,
+                builderSchema,
+                {
+                    round: 1,
+                    batchIndex: bIdx + 1,
+                    totalBatches: batches.length,
+                    batchKind: batch.kind,
+                    batchFiles: batch.batchFiles,
+                    batchBaselineFiles,
+                    alreadyAuthoredFiles,
+                    priorBlockingUnknowns: Array.isArray(runningImpl?.blockingUnknowns) ? runningImpl.blockingUnknowns : [],
+                    maxFixIterations: maxFixes,
+                    task,
+                    evidence,
+                    inspectedFiles,
+                    executionEnvironments,
+                    skillGuides: builderGuides,
+                },
+                rawOptions.builderModel,
+            ));
+            latestRawBuilderOutput = batchRaw;
+            runningImpl = await normalizeBuild(batchRaw, batch.stepKey, runningImpl);
+        }
+        implementation = runningImpl;
+    } else {
+        latestRawBuilderOutput = await step("build-0", () => ask(
+            "Code builder (round 1)",
+            BUILDER_AGENT,
+            builderTask,
+            builderSchema,
+            { round: 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, executionEnvironments, skillGuides: builderGuides },
+            rawOptions.builderModel,
+        ));
+        implementation = await normalizeBuild(latestRawBuilderOutput, "build-0");
+    }
 
     const restoreAll = () => {
         if (!applyToWorkspace) return;
         for (const target of task.targets) {
+            if (implementationHost) {
+                implementationHost.restoreFiles(target);
+                continue;
+            }
             const backups = backupsByTarget.get(target.id);
             if (backups) {
                 const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
@@ -4724,11 +5318,11 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 `Code builder (post-clarification round ${round + 1})`,
                                 BUILDER_AGENT,
                                 builderTask,
-                                useSlimSchemas ? slimResultSchema : implementationSchema,
+                                builderSchema,
                                 { round: round + 1, maxFixIterations: maxFixes, task, evidence, inspectedFiles, skillGuides: builderGuides },
                                 rawOptions.builderModel,
                             ));
-                            implementation = await normalizeBuild(latestRawBuilderOutput, `post-clarification-${round}`);
+                            implementation = await normalizeBuild(latestRawBuilderOutput, `post-clarification-${round}`, implementation);
                         } else if (pauseOnBlocker) {
                             const recoveredImpl = await recoverWorktree(round, implementation.blockingUnknowns.join("\n"));
                             if (recoveredImpl) {
@@ -4793,7 +5387,8 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             (applyToWorkspace || rawOptions.runLocalVerification === true || hasOnDiskEdits);
                         if (applyToWorkspace) {
                             try {
-                                applyTargetFiles(repoRoot, targetImpl.files, backups);
+                                if (implementationHost) implementationHost.applyFiles(target, targetImpl.files);
+                                else applyTargetFiles(repoRoot, targetImpl.files, backups);
                             } catch (error) {
                                 validationErrors.push(
                                     `Target ${target.id} workspace verification failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -4801,7 +5396,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                             }
                         }
                         if (validationErrors.length === 0 && shouldRunLocalGate) {
-                            const gate = await step(`local-verification-v2-${round}-${target.id}-${targetContentFingerprint(target, targetImpl)}`, () => runLocalVerificationGate({
+                            const gate = await step(`local-verification-v2-${round}-${target.id}-${targetContentFingerprint(target, targetImpl)}`, () => (dependencies.verifyLocal || runLocalVerificationGate)({
                                 repoRoot,
                                 target,
                                 targetImpl,
@@ -4862,7 +5457,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                     const sourceBindings = task.targets.map((target) => {
                         const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
                         const repoRoot = path.resolve(workspaceRoot, target.localPath || ".");
-                        const publicationSource = effectiveCreatePrs
+                        const publicationSource = bindPublication
                             ? capturePublicationSource(repoRoot, target, targetImpl, exec) : null;
                         if (publicationSource) {
                             diffsByTarget[target.id] = exec("git", [
@@ -4937,6 +5532,13 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                         restoreAll();
                         return packet("NO-GO", reviewDrift);
                     }
+                    if (bindPublication) {
+                        for (const target of task.targets) {
+                            const targetImpl = implementation.targets.find((item) => item.targetId === target.id);
+                            const binding = sourceBindings.find((item) => item.targetId === target.id);
+                            verifyPublicationSource(path.resolve(workspaceRoot, target.localPath || "."), targetImpl, binding.publicationSource, exec);
+                        }
+                    }
 
                     if (!validateReview(review, task)) {
                         restoreAll();
@@ -4946,7 +5548,20 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                     if (Array.isArray(review.blockingUnknowns) && review.blockingUnknowns.length > 0) {
                         review.blockingUnknowns = review.blockingUnknowns.filter((item) => !isLocalBuildEnvBlocker(item));
                     }
-                    history.push({ round: round + 1, review });
+                    const roundTarget = Array.isArray(implementation?.targets) ? implementation.targets[0] : null;
+                    history.push({
+                        round: round + 1,
+                        review,
+                        ...(roundTarget ? {
+                            builderSummary: typeof roundTarget.summary === "string" ? roundTarget.summary : "",
+                            files: Array.isArray(roundTarget.files)
+                                ? roundTarget.files.map((file) => (record(file) && typeof file.path === "string" ? file.path : "")).filter(Boolean)
+                                : [],
+                            testsAddedOrUpdated: Array.isArray(roundTarget.testsAddedOrUpdated)
+                                ? roundTarget.testsAddedOrUpdated.filter((entry) => typeof entry === "string")
+                                : [],
+                        } : {}),
+                    });
                     await recordMilestone(ctx, {
                         id: `${prefix}-review-${round}`,
                         title: `Independent source review, round ${round + 1}`,
@@ -5045,7 +5660,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
 Resolve every validation error and reviewer finding in history autonomously without asking the user or returning verdict "blocked":
 - For any valid code or unit-test defect (including entry-tap admission or lifecycle callback release across branches when requested by the reviewer), implement the code and unit-test fix directly.
 - If a reviewer finding conflicts with flight-off preservation, the approved design doc, or headless local environment limits (such as no attached adb device for androidTest), keep the safe behavior, record the exact technical justification in summary and evidence, and return verdict "pass" so the independent reviewer can verify the disposition.`,
-                useSlimSchemas ? slimResultSchema : implementationSchema,
+                builderSchema,
                 {
                     round: fixes + 1,
                     fixIteration: fixes,
@@ -5062,7 +5677,7 @@ Resolve every validation error and reviewer finding in history autonomously with
                 rawOptions.builderModel,
             ));
             latestRawBuilderOutput = rawFixImpl;
-            implementation = await normalizeBuild(rawFixImpl, `fix-${fixes}`);
+            implementation = await normalizeBuild(rawFixImpl, `fix-${fixes}`, implementation);
         }
     } catch (error) {
         if (!isWorkflowControlError(ctx, error)) restoreAll();

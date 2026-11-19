@@ -119,7 +119,7 @@ test("native checkout diagnostics trigger a bounded remote-only retry without re
     assert.equal(result.blockerKind, "ci-infrastructure");
 });
 
-test("native retry touches failed stages only and requires an actual boolean acknowledgement", windowsOnly, () => {
+test("native retry touches failed stages only and requires an actual boolean acknowledgement", windowsOnly, async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "ado-retry-stages-"));
     try {
         const writes = path.join(root, "writes.jsonl");
@@ -141,14 +141,14 @@ test("native retry touches failed stages only and requires an actual boolean ack
             writeFileSync(file, setup);
             return execFileSync("powershell", ["-NoProfile", "-File", file], { encoding: "utf8", stdio: "pipe", timeout: 30_000 });
         };
-        assert.equal(retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, { exec }), true);
+        assert.equal(await retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, { exec }), true);
         const requests = readFileSync(writes, "utf8").trim().split(/\r?\n/);
         assert.equal(requests.length, 1);
         assert.match(requests[0], /\/stages\/failed\?/);
         assert.doesNotMatch(requests[0], /successful/);
-        assert.equal(retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, { exec: () => "not true" }), false);
+        assert.equal(await retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, { exec: () => "not true" }), false);
         const abort = Object.assign(new Error("Cancelled retry"), { name: "AbortError" });
-        assert.throws(() => retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, {
+        await assert.rejects(() => retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, {
             exec: () => { throw abort; },
         }), (error) => error === abort);
     } finally { rmSync(root, { recursive: true, force: true }); }
@@ -181,7 +181,7 @@ test("checkout recovery is stage-only when identifiers or stage PATCH acknowledg
                     writeFileSync(file, setup);
                     return execFileSync("powershell", ["-NoProfile", "-File", file], { encoding: "utf8", stdio: "pipe", timeout: 30_000 });
                 };
-                const acknowledged = retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, { exec: scriptExec, stageOnly });
+                const acknowledged = await retryFailedAdoBuildStages(parsed, { prBuilds: [{ id: 77, result: "failed" }] }, { exec: scriptExec, stageOnly });
                 assert.equal(acknowledged, !stageOnly);
                 const requests = existsSync(writes) ? readFileSync(writes, "utf8").trim().split(/\r?\n/) : [];
                 assert.equal(requests.some((uri) => /\/policy\/evaluations\//.test(uri)), !stageOnly && scenario !== "partial-stage-failure");
@@ -382,4 +382,135 @@ test("a source/merge change during collection forces a fresh snapshot, not an ol
         policies: [policy(1, "approved")], changeHead: true }));
     assert.equal(snapshot.snapshotHeadChanged, true);
     assert.equal(ciEvidenceFromSnapshot(snapshot).status, "pending");
+});
+
+test("read-only observer accepts only the configured target and carries it to the ADO snapshot", () => {
+    const github = { provider: "github", hostname: "github.com", slug: "example/project", localPath: ".", baseBranch: "dev" };
+    assert.ok(parsePullRequestUrl("https://github.com/example/project/pull/42", github));
+    assert.equal(parsePullRequestUrl("https://github.com/AzureAD/android-complete/pull/42", github), null);
+    const ado = { provider: "ado", hostname: "dev.azure.com", slug: "example/Engineering/Project", localPath: ".", baseBranch: "dev" };
+    const target = parsePullRequestUrl("https://dev.azure.com/example/Engineering/_git/Project/pullrequest/42", ado);
+    assert.ok(target);
+    assert.doesNotThrow(() => buildAdoSnapshotScript(target, ado));
+    assert.equal(parsePullRequestUrl(prUrl, ado), null);
+});
+
+test("read-only observation never mutates or delegates and distinguishes CI and review states", async () => {
+    const trustedRepository = { provider: "github", hostname: "github.com", slug: "example/project",
+        localPath: ".", baseBranch: "dev", headSha: current, headBranch: "feature" };
+    const url = "https://github.com/example/project/pull/42";
+    const snapshot = {
+        provider: "github", number: 42, url, state: "OPEN", baseRefName: "dev",
+        headRefName: "feature", headRefOid: current, mergeStateStatus: "CLEAN",
+        reviewThreadsComplete: true, unresolvedReviewThreadCount: 0,
+        statusCheckRollup: [{ name: "CI", status: "COMPLETED", conclusion: "SUCCESS" }],
+    };
+    const observe = async (value, extra = {}) => runPrObserver({
+        args: { prUrl: url, options: { maxCiPollAttempts: 0, publishStatus: true } },
+        step: async (_key, producer) => producer(),
+        agent: async () => { throw new Error("Read-only observation must not invoke an agent"); },
+    }, {
+        observeOnly: true, trustedRepository, exec: () => "", fetchPrSnapshot: () => value,
+        publishStatus: () => { throw new Error("Read-only observation must not publish status"); },
+        refreshStaleBuilds: () => { throw new Error("Read-only observation must not refresh policies"); },
+        retryFailedBuilds: () => { throw new Error("Read-only observation must not retry builds"); },
+        onRepairAttempt: () => { throw new Error("Read-only observation must not repair"); },
+        ...extra,
+    });
+    const ready = await observe(snapshot);
+    assert.equal(ready.status, "ready-for-human-merge");
+    assert.equal(ready.ci.status, "passed");
+    for (const changed of [
+        { reviewThreadsComplete: false },
+        { unresolvedReviewThreadCount: 1 },
+        { activeReviewThreads: [{ id: 8, comments: [] }] },
+        { headRefOid: previous },
+        { baseRefName: "other" },
+        { state: "CLOSED" },
+    ]) {
+        const result = await observe({ ...snapshot, ...changed });
+        assert.equal(result.status, "needs-owner-decision");
+        assert.equal(result.repairAttempts, 0);
+    }
+    const pending = await observe({ ...snapshot, statusCheckRollup: [{ name: "CI", status: "IN_PROGRESS" }] });
+    assert.equal(pending.ci.status, "pending");
+    assert.notEqual(pending.status, "ci-failed");
+    assert.equal(pending.continuation, null, "read-only observation must not advertise a mutation-capable standalone continuation");
+    const unknown = await observe({ ...snapshot, statusCheckRollup: [] });
+    assert.equal(unknown.ci.status, "unknown");
+    assert.notEqual(unknown.status, "ready-for-human-merge");
+    const failed = await observe({ ...snapshot, statusCheckRollup: [{ name: "CI", status: "COMPLETED", conclusion: "FAILURE" }] });
+    assert.equal(failed.ci.status, "failed");
+    assert.equal(failed.status, "ci-failed");
+    for (const changed of [
+        { headRefOid: previous },
+        { headRefName: "other" },
+        { baseRefName: "other" },
+        { number: 43 },
+        { state: "CLOSED" },
+    ]) {
+        const result = await observe({
+            ...snapshot, ...changed,
+            statusCheckRollup: [{ name: "CI", status: "COMPLETED", conclusion: "FAILURE" }],
+        });
+        assert.equal(result.status, "needs-owner-decision");
+        assert.equal(result.ci.status, "unknown");
+        assert.equal(result.ci.headSha, null);
+        assert.equal(result.repairAttempts, 0);
+    }
+});
+
+test("read-only observer revalidates the reviewed head after polling", async () => {
+    const trustedRepository = { provider: "github", hostname: "github.com", slug: "example/project",
+        localPath: ".", baseBranch: "dev", headSha: current, headBranch: "feature" };
+    const url = "https://github.com/example/project/pull/42";
+    let reads = 0;
+    const result = await runPrObserver({
+        args: { prUrl: url, options: { maxCiPollAttempts: 1, ciPollIntervalMs: 0 } },
+        step: async (_key, producer) => producer(),
+        agent: async () => { throw new Error("Unexpected agent"); },
+    }, {
+        observeOnly: true, trustedRepository, exec: () => "", sleep: async () => {},
+        fetchPrSnapshot: () => ({
+            provider: "github", number: 42, url, state: "OPEN", baseRefName: "dev",
+            headRefName: "feature", headRefOid: ++reads === 1 ? current : previous,
+            mergeStateStatus: "CLEAN", reviewThreadsComplete: true, unresolvedReviewThreadCount: 0,
+            statusCheckRollup: [reads === 1
+                ? { name: "CI", status: "IN_PROGRESS" }
+                : { name: "CI", status: "COMPLETED", conclusion: "FAILURE" }],
+        }),
+    });
+    assert.equal(reads, 2);
+    assert.equal(result.status, "needs-owner-decision");
+    assert.equal(result.ci.status, "unknown");
+    assert.equal(result.ci.headSha, null);
+    assert.match(result.summary, /head changed/);
+});
+
+test("cancelling a quiet read-only observer interrupts polling without a final status or another read", async () => {
+    const controller = new AbortController();
+    const url = "https://github.com/example/project/pull/42";
+    let reads = 0;
+    await assert.rejects(runPrObserver({
+        signal: controller.signal,
+        args: { prUrl: url, options: { maxCiPollAttempts: 1, ciPollIntervalMs: 200 } },
+        step: async (_key, producer) => producer(),
+        agent: async () => { throw new Error("Unexpected agent"); },
+    }, {
+        observeOnly: true,
+        trustedRepository: { provider: "github", hostname: "github.com", slug: "example/project",
+            localPath: ".", baseBranch: "dev", headSha: current, headBranch: "feature" },
+        exec: () => "",
+        fetchPrSnapshot: () => {
+            reads++;
+            setTimeout(() => controller.abort(), 5);
+            return {
+                provider: "github", number: 42, url, state: "OPEN", baseRefName: "dev",
+                headRefName: "feature", headRefOid: current, mergeStateStatus: "CLEAN",
+                reviewThreadsComplete: true, unresolvedReviewThreadCount: 0,
+                statusCheckRollup: [{ name: "CI", status: "IN_PROGRESS" }],
+            };
+        },
+    }), { name: "AbortError" });
+    assert.equal(reads, 1);
 });
