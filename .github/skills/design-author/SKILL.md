@@ -60,10 +60,23 @@ risks/safeguards and accountable owners/blockers. The brief is the primary human
 approval surface; reviewers drill into linked detail rather than reading the entire
 spec. Preserve the full specification and existing gates.
 
+Use the workflow's [authoritative decision/status register](../../extensions/DevDesignDoc/README.md#one-authoritative-decisionstatus-register)
+instead of independent status lists or brief decision flags. Give every record a
+stable ID, category, owner, state, requirement/support links and resolution provenance.
+Missing requirements and unresolved baseline facts block drafting; pending design
+acceptance blocks planning, not drafting/review; later runtime/release checks block
+their later gate. Both document summaries must derive from these same records.
+Never resolve human acceptance or release checks through an AI recommendation.
+Successful independent review means **Ready for human review**, with human approval
+pending and planning not yet authorized; only a genuine separately recorded
+exact-revision human approval can establish approval for planning. No UI is involved.
+
 Independently check consistency/completeness; target ten minutes within the complete
 rendered 1,800-word/16,000-character budget without silently omitting critical
-information. Publish both artifacts together and bind human approval to their exact
-paired revision. Regenerate/re-review both after substantive edits and highlight
+information. Render detailed registers as readable tables rather than duplicate
+machine JSON dumps. Publish both Markdown artifacts and all hash-bound design/evidence
+appendices together in their original relative layout; preserve their exact bytes
+and bind human approval to the complete paired revision. Regenerate/re-review after edits and highlight
 changes since the verified prior human review; never reuse stale approval.
 Design approval is not rollout permission. This human brief is distinct from the
 design-time pre-mortem authoring brief and the later post-implementation pre-mortem.
