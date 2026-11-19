@@ -23,6 +23,7 @@ def deliver_descriptor_items(
     *,
     executor: str = "engine-agency-mcp",
     mcp_caller: MCPCaller | None = None,
+    as_of=None,
 ) -> list[dict]:
     """Durably offer, claim-before-IO, send via Agency MCP, and finalize notification descriptors."""
     if mcp_caller is None:
@@ -30,7 +31,7 @@ def deliver_descriptor_items(
     results: list[dict] = []
     if not items:
         return results
-    st, orch = C.load_orch(runs_root, release, config)
+    st, orch = C.load_orch(runs_root, release, config, as_of)
     for item in items:
         D.offer(orch, item)
         try:

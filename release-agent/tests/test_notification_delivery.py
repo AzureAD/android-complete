@@ -505,10 +505,9 @@ def test_cleanup_backstop_and_suspend(orch):
     assert [r["id"] for r in automations.cleanup_plan(orch.state, entries, C.DEFAULT_CONFIG)["removals"]] == ["old"]
 
 
-def test_rc_poller_phase_scope(orch):
+def test_release_drainer_cleanup_scope(orch):
     defs = {d["slug"]: d for d in automations.load_defs(C.DEFAULT_CONFIG)}
-    assert defs["build-verify-rc-poller"]["cleanup_when"] == "phase_done:build_verify"
-    assert defs["morning-step-drain"]["cleanup_when"] == "release_done"
+    assert defs["release-drainer"]["cleanup_when"] == "release_done"
 
 
 def test_generated_worker_contract_cannot_omit_lifecycle():
@@ -746,8 +745,8 @@ def test_outbound_notification_steps_declare_contract():
 def test_release_wide_prompt_pins_all_advancement_and_cleanup():
     from orchestrator import automations
     specs = {item["slug"]: item for item in automations.plan(C.DEFAULT_CONFIG, "2026-09", "2026-09-09")["automations"]}
-    block = specs["morning-step-drain"]["prompt"]
-    for command in ("status", "next --release 2026-09 --deliver", "tick --release 2026-09 --deliver", "automation cleanup"):
+    block = specs["release-drainer"]["prompt"]
+    for command in ("drain --release 2026-09 --trigger scheduled --deliver --json", "automation cleanup"):
         assert command in block
     assert "finally" in block and "never recreate or re-enable" in block
 
@@ -805,11 +804,17 @@ def test_bugbash_final_retries_failure_not_trigger_completion(orch, tmp_path, mo
     assert json.loads(capsys.readouterr().out)["decision"] == "stopped"
 
 
-def test_stale_terminal_rc_report_does_not_retire_poller(orch):
+def test_stale_terminal_step_does_not_retire_phase_scoped_poller(orch):
     from tests._harness import _active_phase
     _active_phase(orch.state, "build_verify")
-    orch.state.set_step("build_verify", "rc_report", StepState(status="done"))
-    spec = next(s for s in automations.load_defs(C.DEFAULT_CONFIG)
-                if s["slug"] == "build-verify-rc-poller")
-    entry = {**spec, "scope": "release", "release": orch.state.release_id, "id": "rc", "name": "rc"}
+    orch.state.set_step("build_verify", "rc_report_notify", StepState(status="done"))
+    entry = {
+        "scope": "release",
+        "release": orch.state.release_id,
+        "id": "rc",
+        "name": "rc",
+        "kind": "step-driving",
+        "steps": ["build_verify.rc_report_notify"],
+        "cleanup_when": "phase_done:build_verify",
+    }
     assert not automations.cleanup_plan(orch.state, [entry], C.DEFAULT_CONFIG)["removals"]

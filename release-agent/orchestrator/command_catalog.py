@@ -17,6 +17,7 @@ COMMAND_MODULES = (
     CommandModule("readiness"),
     CommandModule("pipeline"),
     CommandModule("notify"),
+    CommandModule("drain_cmd"),
     CommandModule("delivery_cmd"),
     CommandModule("deliver_cmd"),
     CommandModule("lockdown"),

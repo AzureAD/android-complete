@@ -23,6 +23,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 from orchestrator import m365
+from orchestrator.schedule import is_business_day, is_holiday, us_holidays
 from tools import pipelines as P
 from tools import testplans as T
 from tools import distribution as D
@@ -32,61 +33,6 @@ PROJECT = T.PROJECT
 
 WORK_START_HOUR = 9        # 09:00 local — first post of the day / window open
 WORK_END_HOUR = 18         # 18:00 local — stop for the day
-
-
-# ----------------------------------------------------------------- US holidays
-
-def _nth_weekday(year, month, weekday, n):
-    """The date of the n-th `weekday` (Mon=0..Sun=6) of `month` in `year` (n>=1)."""
-    d = date(year, month, 1)
-    offset = (weekday - d.weekday()) % 7
-    return d + timedelta(days=offset + 7 * (n - 1))
-
-
-def _last_weekday(year, month, weekday):
-    """The date of the LAST `weekday` of `month`."""
-    if month == 12:
-        nxt = date(year + 1, 1, 1)
-    else:
-        nxt = date(year, month + 1, 1)
-    d = nxt - timedelta(days=1)
-    return d - timedelta(days=(d.weekday() - weekday) % 7)
-
-
-def _observed(d):
-    """Federal-holiday observation: Sat -> Fri, Sun -> Mon."""
-    if d.weekday() == 5:
-        return d - timedelta(days=1)
-    if d.weekday() == 6:
-        return d + timedelta(days=1)
-    return d
-
-
-def us_holidays(year):
-    """Set of observed US FEDERAL holiday dates for `year` (hardcoded rules)."""
-    h = {
-        _observed(date(year, 1, 1)),                 # New Year's Day
-        _nth_weekday(year, 1, 0, 3),                 # MLK Jr. — 3rd Mon Jan
-        _nth_weekday(year, 2, 0, 3),                 # Presidents' Day — 3rd Mon Feb
-        _last_weekday(year, 5, 0),                   # Memorial Day — last Mon May
-        _observed(date(year, 6, 19)),                # Juneteenth
-        _observed(date(year, 7, 4)),                 # Independence Day
-        _nth_weekday(year, 9, 0, 1),                 # Labor Day — 1st Mon Sep
-        _nth_weekday(year, 10, 0, 2),                # Columbus/Indigenous — 2nd Mon Oct
-        _observed(date(year, 11, 11)),               # Veterans Day
-        _nth_weekday(year, 11, 3, 4),                # Thanksgiving — 4th Thu Nov
-        _observed(date(year, 12, 25)),               # Christmas
-    }
-    return h
-
-
-def is_holiday(d):
-    return d in us_holidays(d.year)
-
-
-def is_business_day(d) -> bool:
-    """True if `d` is a weekday (Mon-Fri) and not an observed US federal holiday."""
-    return d.weekday() < 5 and not is_holiday(d)
 
 
 def is_working_time(now: datetime) -> bool:

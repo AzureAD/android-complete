@@ -163,8 +163,8 @@ def test_registry_relocates_release_automations_into_release_folder():
 
 
 def test_automation_plan_derives_specs_from_ccd():
-    """`plan` turns automations.yaml into concrete optional accelerator specs:
-    `morning-step-drain` (7:00 AM daily NL schedule) plus optional phase pollers."""
+    """`plan` turns automations.yaml into the single unified `release-drainer`
+    accelerator (`07:00-19:00/2h` -> `cron: 0 7-19/2 * * *`)."""
     from orchestrator import automations as A
     result = A.plan(
         CONFIG, "2026-09", "2026-09-09",
@@ -173,96 +173,65 @@ def test_automation_plan_derives_specs_from_ccd():
     )
     assert result["problems"] == []
     by = {a["slug"]: a for a in result["automations"]}
-    assert set(by) == {
-        "morning-step-drain",
-        "ccd-localization-watcher",
-        "finalize-orchestrator-poller",
-        "build-verify-rc-poller",
-        "bug-bash-update-poller",
-    }
-    assert by["morning-step-drain"]["daily_at"] == "07:00"
-    assert by["morning-step-drain"]["schedule"] == "every day at 7am"
-    assert by["morning-step-drain"]["one_shot"] is False
-    assert by["morning-step-drain"]["optional"] is True
-    assert by["morning-step-drain"]["registration"]["slug"] == "morning-step-drain"
-    assert by["morning-step-drain"]["registration"]["schedule"] == "every day at 7am"
-    assert by["morning-step-drain"]["registration"]["cleanup_when"] == "release_done"
-    assert by["finalize-orchestrator-poller"]["schedule"] == "every 2 hours"
-    assert by["finalize-orchestrator-poller"]["steps"] == [
-        "finalize.orchestrator_finalization"]
-    assert "poll-orchestrator-finalization --release 2026-09" in \
-        by["finalize-orchestrator-poller"]["prompt"]
-    assert "8 hours" in by["finalize-orchestrator-poller"]["prompt"]
-    assert by["bug-bash-update-poller"]["schedule"] == "every 3 hours"
-    assert by["bug-bash-update-poller"]["registration"]["schedule"] == "every 3 hours"
-    assert "every 3 hours" in by["bug-bash-update-poller"]["prompt"]
-    assert by["bug-bash-update-poller"]["on_demand"]
-    assert by["build-verify-rc-poller"]["cleanup_when"] == "phase_done:build_verify"
-    assert by["build-verify-rc-poller"]["provision_when"] == \
-        "step_status:build_verify.mrwp_ecs:in_flight"
+    assert set(by) == {"release-drainer"}
+    assert by["release-drainer"]["daily_window"] == "07:00-19:00/2h"
+    assert by["release-drainer"]["schedule"] == "cron: 0 7-19/2 * * *"
+    assert by["release-drainer"]["one_shot"] is False
+    assert by["release-drainer"]["optional"] is True
+    assert by["release-drainer"]["registration"]["slug"] == "release-drainer"
+    assert by["release-drainer"]["registration"]["schedule"] == "cron: 0 7-19/2 * * *"
+    assert by["release-drainer"]["registration"]["cleanup_when"] == "release_done"
 
 
 def test_on_demand_obligation_remains_optional_and_non_blocking():
-    """State-triggered on-demand pollers surface under `optional`, never `required`."""
+    """The unified `release-drainer` surfaces under `optional`, never `required`."""
     from orchestrator import automations as A
-    from orchestrator.state import StepState
 
     st = ReleaseState(
         release_id="2026-09", ccd="2026-09-09",
         timezone="America/Los_Angeles")
     Orchestrator(CONFIG, st, mocks={})
-    _active_phase(st, "build_verify")
-    st.set_step("build_verify", "mrwp_ecs", StepState(status="in_flight"))
 
     missing = A.provisioning_obligations(st, [], CONFIG)
     assert missing["required"] == []
-    assert "build-verify-rc-poller" in [item["slug"] for item in missing["optional"]]
+    assert [item["slug"] for item in missing["optional"]] == ["release-drainer"]
     assert missing["recoveries"] == []
 
     planned = {item["slug"]: item for item in A.plan(
         CONFIG, st.release_id, st.ccd,
         owner_timezone=st.timezone)["automations"]}
     active = [{
-        **planned["build-verify-rc-poller"]["registration"],
-        "key": "release:2026-09:build-verify-rc-poller",
-        "id": "poller-id",
+        **planned["release-drainer"]["registration"],
+        "key": "release:2026-09:release-drainer",
+        "id": "drainer-id",
         "status": "active",
     }]
     satisfied = A.provisioning_obligations(st, active, CONFIG)
     assert satisfied["required"] == []
-    assert satisfied["active"] == ["build-verify-rc-poller"]
-
-    st.set_step("build_verify", "mrwp_ecs", StepState(status="done"))
-    settled = A.provisioning_obligations(st, [], CONFIG)
-    assert settled["required"] == []
-    assert "build-verify-rc-poller" not in [item["slug"] for item in settled["optional"]]
+    assert satisfied["active"] == ["release-drainer"]
 
 
-def test_morning_step_drain_prompt_drains_and_never_resurrects():
+def test_release_drainer_prompt_drains_journals_and_never_resurrects():
     from orchestrator import automations as A
 
     by = {item["slug"]: item for item in A.plan(
         CONFIG, "2026-09", "2026-09-09",
         owner_timezone="America/Los_Angeles")["automations"]}
-    prompt = by["morning-step-drain"]["prompt"]
-    assert "next --release 2026-09 --deliver --json" in prompt
-    assert "tick --release 2026-09 --deliver --json" in prompt
+    prompt = by["release-drainer"]["prompt"]
+    assert "drain --release 2026-09 --trigger scheduled --deliver --json" in prompt
+    assert "drain-runs.jsonl" in prompt
+    assert "scout_bot_cta" in prompt
     assert "reconcile-create --ensure" not in prompt
     assert "never recreate or re-enable" in prompt
 
 
 def test_automation_names_follow_standard_format():
-    """Every provisioned automation title is `<release-id> · <scope> — <label>`, where <scope>
-    is the phase's DISPLAY name (from phases.yaml) and <label> is the yaml `label`."""
+    """Every provisioned automation title is `<release-id> · <scope> — <label>`."""
     from orchestrator import automations as A
     result = A.plan(CONFIG, "2026-09", "2026-09-09", owner_timezone="America/Los_Angeles")
     by = {a["slug"]: a for a in result["automations"]}
-    assert by["morning-step-drain"]["name"] == "2026-09 · Release-wide — morning step drain"
-    assert by["build-verify-rc-poller"]["name"] == "2026-09 · Build & Lib Verification — RC verification poller"
-    assert by["finalize-orchestrator-poller"]["name"] == \
-        "2026-09 · Finalize & Publish — Release Orchestrator poller"
-    assert by["bug-bash-update-poller"]["name"] == "2026-09 · Test / Bug Bash — bug-bash update poller"
-    assert by["morning-step-drain"]["registration"]["name"] == by["morning-step-drain"]["name"]
+    assert by["release-drainer"]["name"] == "2026-09 · Release-wide — release drainer"
+    assert by["release-drainer"]["registration"]["name"] == by["release-drainer"]["name"]
     for a in result["automations"]:
         assert a["name"].startswith("2026-09 · ")
         assert " — " in a["name"]
@@ -279,7 +248,7 @@ def test_automation_name_helper_and_phase_label():
     assert A.phase_label(CONFIG, None) == "Release-wide"
 
 
-def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
+def test_cli_plan_returns_single_release_drainer(capsys):
     import json
     import tempfile as _tf
     from orchestrator import cli
@@ -287,32 +256,20 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
         rid = "2026-09"
         state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles")
         Orchestrator(CONFIG, state, mocks={})
-        state.readiness_items["ccd_confirmed"] = {"status": "pass"}
         C.save_state(state, d, rid)
         base = ["--runs-root", d, "automation", "plan", "--release", rid, "--json"]
         assert cli.main(base) == 0
         startup = json.loads(capsys.readouterr().out)["automations"]
-        assert startup and all(not a["on_demand"] for a in startup)
-        assert {a["slug"] for a in startup} == {
-            "morning-step-drain",
-            "finalize-orchestrator-poller",
-        }
+        assert [a["slug"] for a in startup] == ["release-drainer"]
+        assert not startup[0]["on_demand"]
 
-        assert cli.main(base[:-1] + ["--on-demand", "build-verify-rc-poller", "--json"]) == 0
-        on_demand = json.loads(capsys.readouterr().out)["automations"]
-        assert [a["slug"] for a in on_demand] == ["build-verify-rc-poller"]
-
-        from orchestrator.state import StepState
-        _active_phase(state, "build_verify")
-        state.set_step("build_verify", "mrwp_ecs", StepState(status="in_flight"))
-        C.save_state(state, d, rid)
         obligations = [
             "--runs-root", d, "automation", "obligations",
             "--release", rid, "--json"]
         assert cli.main(obligations) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["required"] == []
-        assert "build-verify-rc-poller" in [a["slug"] for a in out["optional"]]
+        assert [a["slug"] for a in out["optional"]] == ["release-drainer"]
 
 
 def test_cleanup_plan_applies_declared_lifecycle_rules():
@@ -474,8 +431,6 @@ def test_automation_sync_repins_on_ccd_change():
         from tests._automation import observed
         planned = automations.plan(CONFIG, rid, st.ccd, owner_timezone=st.timezone)
         for item in planned["automations"]:
-            if item["slug"] not in ("morning-step-drain", "finalize-orchestrator-poller"):
-                continue
             entry = reg.prepare(**item["registration"], spec=item["provider_spec"])
             reg.reconcile_create(entry["key"], observed({"id": item["slug"], "spec": item["provider_spec"]}),
                                  spec=item["provider_spec"])
@@ -490,12 +445,11 @@ def test_automation_sync_repins_on_ccd_change():
         # in sync → nothing changed
         u0 = {u["slug"]: u for u in sync()["updates"]}
         assert all(not u["changed"] for u in u0.values())
-        assert u0["morning-step-drain"]["cleanup_when"] == "release_done"
-        # change owner timezone → morning-step-drain host-converted schedule drifts, interval poller unchanged
+        assert u0["release-drainer"]["cleanup_when"] == "release_done"
+        # change owner timezone → release-drainer host-converted schedule drifts
         st.timezone = "America/New_York"; C.save_state(st, d, rid)
         u1 = {u["slug"]: u for u in sync()["updates"]}
-        assert u1["morning-step-drain"]["changed"]
-        assert not u1["finalize-orchestrator-poller"]["changed"]
+        assert u1["release-drainer"]["changed"]
 
 
 

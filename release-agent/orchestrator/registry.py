@@ -711,9 +711,9 @@ class AutomationRegistry:
             if any(s["kind"] == "step-driving" or s["status"] != "active"
                    for s in siblings):
                 return "Cleanup barrier: child intents or unresolved sibling operations remain"
-            # Retire the release-wide morning step drainer last after any phase helpers.
-            if entry["slug"] == "morning-step-drain" and siblings:
-                return "Cleanup barrier: retire release helpers before morning-step-drain"
+            # Retire the release-wide drainer last after any phase helpers.
+            if entry["slug"] in ("release-drainer", "morning-step-drain") and siblings:
+                return f"Cleanup barrier: retire release helpers before {entry['slug']}"
         return ""
 
     def confirm_absent(

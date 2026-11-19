@@ -88,12 +88,16 @@ class StatusViewMixin:
                 # needs_owner = a genuine USER task. A pending scout step is Scout's
                 # automatic work (not the user's) until it BLOCKS (s_blocked), so it is
                 # NOT flagged — only gates, reminders, attests, and blocks are.
+                s_ready = selection.step(phase["id"], sid)
                 needs = bool((is_gate or is_rem or is_attest or s_blocked) and not s_done and not continuing
-                             and selection.step(phase["id"], sid).prerequisites_met)
+                             and s_ready.prerequisites_met and (s_blocked or s_ready.time_ready))
                 steps_view.append({
                     "id": sid, "name": s["name"], "status": status,
                     "needs_owner": needs,
-                    "time_ready": selection.step(phase["id"], sid).time_ready,
+                    "time_ready": s_ready.time_ready,
+                    "available": s_ready.time_ready,
+                    "available_at": s_ready.available_at,
+                    "unavailable_reason": s_ready.unavailable_reason,
                     "note": stp.note,          # agent result / block reason / detail
                     "execution": self.step_execution(phase["id"], sid) if not s_done else {},
                     "links": list(getattr(stp, "links", None) or []),  # durable refs to items evaluated
@@ -362,47 +366,7 @@ class StatusViewMixin:
         # — its dedicated cron automation runs it at the pinned time.
         scout_pending = list(selection.scout_pending)
         from orchestrator.dispatch import phase_plan, decorate_handoff_contract
-        from orchestrator.release_contract import DispatchAction
         work_dispatch = phase_plan(self, selection, chk)
-        ccd_watcher = None
-        if chk["signed"] and current_phase == "ccd" and self.automation_entries is not None:
-            from orchestrator.commands.automation import ccd_watcher_setup_hint
-            ccd_watcher = ccd_watcher_setup_hint(
-                self.automation_entries(),
-                self.state.release_id,
-                self.config_path,
-                self.state,
-                selection,
-                now=self.now_local,
-            )
-            if ccd_watcher is not None:
-                setup_task = {
-                    "key": "setup:ccd-localization-watcher",
-                    "phase": "ccd",
-                    "step": "ccd-localization-watcher",
-                    "name": f"Set up CCD localization check & reminder ({ccd_watcher['schedule']})",
-                    "kind": "scout",
-                    "requires_approval": False,
-                    "outbound_notification": False,
-                    "depends_on": [],
-                    "required_tools": [],
-                    "command": ccd_watcher["plan_command"],
-                    "record_command": ccd_watcher["record_command"],
-                    "skip_command": ccd_watcher["skip_command"],
-                    "instruction": ccd_watcher["instruction"],
-                }
-                work_dispatch = {
-                    **work_dispatch,
-                    "pending_work": [setup_task, *work_dispatch["pending_work"]],
-                    "next_action": DispatchAction.RUN_PHASE_WORK.value,
-                    "continue_automatically": True,
-                    "may_return_to_user": False,
-                    "instruction": (
-                        "Complete the one-time Phase 1 `ccd-localization-watcher` automation setup in "
-                        "`pending_work` (via `automation plan` -> `m_create_automation` -> "
-                        "`automation record-setup`) before returning to the owner."
-                    ),
-                }
         report = {
             "release_id": self.state.release_id,
             "completion_provenance": self._completion_provenance(selection),
@@ -457,7 +421,4 @@ class StatusViewMixin:
             ],
             "updated_at": self.state.updated_at,
         }
-        decorated = decorate_handoff_contract(report)
-        if ccd_watcher is not None:
-            decorated["ccd_watcher_setup"] = ccd_watcher
-        return decorated
+        return decorate_handoff_contract(report)

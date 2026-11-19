@@ -655,15 +655,12 @@ def test_notify_digest_reports_gate_and_progress():
 
 
 
-def test_automation_prompt_delegates_to_step_module():
-    """The planner is generic: a step that declares `automation_prompt` owns its bespoke
-    instruction (`finalize-orchestrator-poller`), while `morning-step-drain` uses the
-    release-wide 7:00 AM pre-work step drainer prompt."""
+def test_release_drainer_prompt_drives_unified_drain():
+    """`release-drainer` uses the unified `drain` command + `scout_bot_cta` claim/result flow."""
     from orchestrator import automations as A
     by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
-    assert "poll-orchestrator-finalization" in by["finalize-orchestrator-poller"]["prompt"]
-    assert "next --release 2026-09 --deliver --json" in by["morning-step-drain"]["prompt"]
-    assert "tick --release 2026-09 --deliver --json" in by["morning-step-drain"]["prompt"]
+    assert "drain --release 2026-09 --trigger scheduled --deliver --json" in by["release-drainer"]["prompt"]
+    assert "scout_bot_cta" in by["release-drainer"]["prompt"]
 
 
 def test_digest_uses_distinct_same_day_hold_ids():

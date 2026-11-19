@@ -17,13 +17,13 @@ def observed(*rows):
 
 
 def seed_driver(runs_root, state, config=None):
-    """Acknowledge a synthetic optional morning-step-drain accelerator in an isolated CLI fixture."""
+    """Acknowledge a synthetic optional release-drainer accelerator in an isolated CLI fixture."""
     from orchestrator import automations, cli_common as C
     from orchestrator.registry import AutomationRegistry
     config = config or C.DEFAULT_CONFIG
     worker = next(item for item in automations.plan(
         config, state.release_id, state.ccd, owner_timezone=state.timezone)["automations"]
-        if item["slug"] == "morning-step-drain")
+        if item["slug"] == "release-drainer")
     registry = AutomationRegistry(str(runs_root), state.release_id)
     spec = worker["provider_spec"]
     entry = registry.prepare(**worker["registration"], spec=spec)

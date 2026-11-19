@@ -15,7 +15,6 @@ ID = "orchestrator_finalization"
 KIND = "agent"
 NAME = "Monitor Release Orchestrator to 'Publish GitHub Release Notes'"
 REQUIRED_TOOLS = ('az',)
-AUTOMATION = 'finalize-orchestrator-poller'
 EFFECT_MODE = "read_only"
 EVIDENCE = (OwnStepData(), PipelineScope(PipelineSlot.FINAL))
 

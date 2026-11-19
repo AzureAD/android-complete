@@ -16,7 +16,6 @@ KIND = "scout"
 NAME = 'Post RC verification report summary to Scout bot'
 REQUIRED_TOOLS = ('scout_teams_relay',)
 REQUIRES_APPROVAL = False
-AUTOMATION = 'build-verify-rc-poller'
 NOTIFICATION = True
 
 

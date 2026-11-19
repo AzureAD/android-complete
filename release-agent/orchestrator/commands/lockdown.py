@@ -15,7 +15,7 @@ import json as _json
 
 from orchestrator import cli_common as C
 from orchestrator.outcomes import Blocked, Done
-from steps.preflight.lockdown import overlapping_periods, decide  # noqa: F401 (re-export)
+from steps.preflight.lockdown import CONFIG as LOCKDOWN_CFG, overlapping_periods, decide, release_window  # noqa: F401 (re-export)
 
 
 def cmd_check_lockdown(args):
@@ -30,8 +30,9 @@ def cmd_check_lockdown(args):
         return 1
 
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    ctx = orch.context("preflight", "lockdown")
     try:
-        status, detail = decide(orch.context("preflight", "lockdown"), raw)
+        status, detail = decide(ctx, raw)
     except ValueError as exc:
         print(f"Cannot check lockdown: {exc}")
         return 1

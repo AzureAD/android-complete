@@ -75,6 +75,8 @@ class ReleaseState:
     notification_deliveries: dict = field(default_factory=dict)  # id -> immutable descriptor, status, attempts, completion
     resources: dict = field(default_factory=dict)  # release-owned external identities; survives step reopen
     task_attempts: dict = field(default_factory=dict)  # owner requests and immutable prior-attempt snapshots
+    last_owner_interaction_at: Optional[str] = None    # UTC ISO timestamp of latest owner decision/action/check-in
+    drain_tracker: dict = field(default_factory=dict)  # hold signature + CTA pacing state across drain runs
     _checkpoint: ClassVar[Optional[Callable[[], None]]] = None
     # Phase-2 release-pipeline runs — the RECORD of what verification resolved, reused by
     # the RC report + gate (no re-discovery). Because a re-triggered 'Trigger RC Testing'
@@ -142,6 +144,10 @@ class ReleaseState:
             for key, value in obj.readiness_items.items()
         ):
             raise ValueError("Invalid readiness facts")
+        if obj.last_owner_interaction_at is not None and not isinstance(obj.last_owner_interaction_at, str):
+            raise ValueError("Invalid last_owner_interaction_at timestamp")
+        if not isinstance(obj.drain_tracker, dict):
+            raise ValueError("Invalid drain_tracker state")
         if not isinstance(obj.gate_decisions, list):
             raise ValueError("Invalid gate decisions")
         gate_fields = {"step", "decision", "at", "by", "comment"}
@@ -299,6 +305,10 @@ class ReleaseState:
         """Merge resolved payload versions (common/msal/broker/authenticator) into the record,
         ignoring blank values. Idempotent — safe to call on every discovery."""
         self.versions.update({k: v for k, v in (versions or {}).items() if v})
+
+    def touch_owner_interaction(self, at: Optional[str] = None) -> None:
+        """Record an interactive owner check-in/decision so idle-stall escalation resets."""
+        self.last_owner_interaction_at = at or _now()
 
     def is_done(self, phase: str, step: str) -> bool:
         """Raw terminal fact only; workflow completion is StateProjection.step_complete."""

@@ -24,22 +24,18 @@ def cmd_checklist(args):
     if getattr(args, "json", False):
         # Keep the full checklist and deterministic card on the same snapshot.
         # Tool output alone is not a user-visible table: the skill must paste it.
+        from orchestrator.commands.automation import drainer_setup_hint
+        hint = drainer_setup_hint(args.runs_root, args.release, args.config, st)
         if attest:
             payload = render.attest_prompt_payload(chk, args.release)
             payload["progression_policy"] = runtime_report["progression_policy"]
             payload["display_before_prompt"] = runtime_report["handoff_ready"]
-            if chk.get("signed"):
-                from orchestrator.commands.automation import morning_drain_setup_hint
-                hint = morning_drain_setup_hint(args.runs_root, args.release, args.config, st)
-                if hint is not None:
-                    payload["morning_drain_setup"] = hint
+            if hint is not None:
+                payload["drainer_setup"] = hint
             print(_json.dumps(payload))
         else:
-            if chk.get("signed"):
-                from orchestrator.commands.automation import morning_drain_setup_hint
-                hint = morning_drain_setup_hint(args.runs_root, args.release, args.config, st)
-                if hint is not None:
-                    chk = {**chk, "morning_drain_setup": hint}
+            if hint is not None:
+                chk = {**chk, "drainer_setup": hint}
             print(_json.dumps(chk))
         return code
     if attest:
@@ -87,6 +83,7 @@ def cmd_sign(args):
     if unknown:
         print(f"Not attestable (unknown or not an attest item): {', '.join(unknown)}")
         return 2
+    st.touch_owner_interaction()
     chk = orch.gate.sign(ids, note=args.note or None)
     C.save_state(st, args.runs_root, args.release)
     el = C.elog(args.runs_root, args.release)
@@ -98,11 +95,11 @@ def cmd_sign(args):
            items=ids, signed=chk["signed"])
     if chk["signed"]:
         print(f"Readiness signed at {chk['signed_at']}. Entry gate cleared — you can now start Phase 0.")
-        from orchestrator.commands.automation import morning_drain_setup_hint
-        hint = morning_drain_setup_hint(args.runs_root, args.release, args.config, st)
+        from orchestrator.commands.automation import drainer_setup_hint
+        hint = drainer_setup_hint(args.runs_root, args.release, args.config, st)
         if hint is not None:
             print(
-                f"  Optional 7:00 AM accelerator setup: run `{hint['plan_command']}`, create "
+                f"  Optional 7 AM–7 PM release drainer setup: run `{hint['plan_command']}`, create "
                 f"`{hint['name']}` ({hint['schedule']}) via `m_create_automation` (or reuse if present), "
                 f"and record with `{hint['record_command']}` (or `{hint['skip_command']}` if unavailable), "
                 "then proceed immediately to `next --deliver`."

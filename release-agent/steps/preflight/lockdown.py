@@ -106,9 +106,11 @@ def decide(context, raw_periods, cfg: dict | None = None):
                         f"({window}). Checked {len(periods)} period(s).")
     listed = "; ".join(
         f"{h['name']} ({h['start'].isoformat()}..{h['end'].isoformat()})" for h in hits)
-    return "attention", (f"{len(hits)} {blocking_env} CCOA lockdown(s) overlap the release "
-                         f"window ({window}): {listed}. Shift CCD past the lockdown "
-                         f"(set-ccd) if needed.")
+    return "attention", (
+        f"{len(hits)} {blocking_env} CCOA lockdown(s) overlap the release window ({window}): "
+        f"{listed}. Review CCOA freeze dates — shift CCD outside the freeze (set-ccd) and re-check, "
+        f"or confirm rollout avoids deploying during the freeze before waiving: {cfg['url']}"
+    )
 
 
 def build(context: StepContext):

@@ -620,6 +620,6 @@ def test_single_line_yaml_step_removal_requires_no_other_file_edits(tmp_path):
         now=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     assert not planned["problems"]
-    drain = next(w for w in planned["automations"] if w["slug"] == "morning-step-drain")
+    drain = next(w for w in planned["automations"] if w["slug"] == "release-drainer")
     assert drain["steps"] == [] and drain["optional"] is True
 

@@ -23,13 +23,7 @@ def plan(**kwargs):
 def test_all_specs_are_complete_and_exact_tool_kwargs(tmp_path):
     result = plan()
     assert not result["problems"]
-    assert {worker["slug"] for worker in result["automations"]} == {
-        "morning-step-drain",
-        "ccd-localization-watcher",
-        "finalize-orchestrator-poller",
-        "build-verify-rc-poller",
-        "bug-bash-update-poller",
-    }
+    assert {worker["slug"] for worker in result["automations"]} == {"release-drainer"}
     reg = AutomationRegistry(str(tmp_path))
     for worker in result["automations"]:
         assert not worker["problems"]
@@ -100,11 +94,8 @@ def test_canonical_cli_allows_optional_morning_drain_and_enforces_on_demand(tmp_
     common = ["--release", state.release_id, "--json"]
     assert cli.main(base + ["plan"] + common) == 0
     planned_out = json.loads(capsys.readouterr().out)
-    assert {w["slug"] for w in planned_out["automations"]} == {
-        "morning-step-drain",
-        "finalize-orchestrator-poller",
-    }
-    assert cli.main(base + ["plan", "--slug", "morning-step-drain"] + common) == 0
+    assert {w["slug"] for w in planned_out["automations"]} == {"release-drainer"}
+    assert cli.main(base + ["plan", "--slug", "release-drainer"] + common) == 0
     assert len(json.loads(capsys.readouterr().out)["automations"]) == 1
     workers = {w["slug"]: w for w in plan()["automations"]}
 
@@ -120,11 +111,7 @@ def test_canonical_cli_allows_optional_morning_drain_and_enforces_on_demand(tmp_
             argv += ["--step", step]
         return cli.main(argv + list(extra))
 
-    assert prepare(workers["morning-step-drain"]) == 0
-    capsys.readouterr()
-    assert prepare(workers["build-verify-rc-poller"]) == 1
-    assert "On-demand" in capsys.readouterr().out
-    assert prepare(workers["build-verify-rc-poller"], ["--on-demand", "build-verify-rc-poller"]) == 0
+    assert prepare(workers["release-drainer"]) == 0
     capsys.readouterr()
     assert cli.main(base + ["sync"] + common) == 0
     sync = json.loads(capsys.readouterr().out)

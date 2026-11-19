@@ -59,7 +59,7 @@ def _execution_guidance(execution: dict, status=None) -> str:
             "before starting another attempt.")
 
 
-def step_detail(s: dict, limit: int = 160) -> str:
+def step_detail(s: dict, limit: int | None = None) -> str:
     """One-line 'Details' summary of a step's execution, from its stored note.
 
     Generic — works for ANY step (current or future phases) because every step
@@ -67,13 +67,17 @@ def step_detail(s: dict, limit: int = 160) -> str:
     structured `links` ([{name,url}], e.g. the wiki page or CG alerts page).
     Prefers the stored `links` for the reference; falls back to the first URL found
     in the note. Empty when nothing ran yet; an em dash for outstanding items.
+    Blocked/in-flight steps default to a generous 500-char limit so actionable
+    block reasons are never cut off mid-sentence.
     """
+    state = s.get("state") or s.get("status")
+    if limit is None:
+        limit = 320 if state in ("blocked", "in_flight", "fail", "unable") else 160
     note = s.get("note")
     if s.get("execution"):
-        note = _execution_guidance(s["execution"], s.get("state", s.get("status")))
+        note = _execution_guidance(s["execution"], state)
     links = s.get("links") or []
     if not note and not links:
-        state = s.get("state")
         return "—" if state in ("pending", "scheduled", "reminder", "gate", "auto") else ""
     text = str(note or "").strip()
     lead = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")

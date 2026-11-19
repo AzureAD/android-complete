@@ -32,12 +32,11 @@ The **release label** always matches the **calendar month of the elected release
    - Release execution uses a single **state-driven hybrid model** — automations are purely optional accelerators and never block initialization or readiness.
    - If a custom date (other than the 2nd Wednesday of `<id>`) was elected, apply `set-ccd --release <id> --date <YYYY-MM-DD> --reason "Owner selected release date <YYYY-MM-DD> at release start"` (preview, then `--confirm` when pipeline 3155 is reachable).
    - **Initialization is NOT a stopping point.** All readiness items and phase steps are mandatory. Immediately run `verify --release <id> --pending-only` and `checklist --release <id> --attest-prompt --json` per [readiness-gate.md](readiness-gate.md), execute **every** runnable probe in `pending_auto_checks` without halting on individual failures (recording `--status fail --detail "<specific tool/connector error>"` only on the failed check), fetch `checklist --release <id> --attest-prompt --handoff --json`, paste `display_markdown` verbatim as live Markdown, and prompt with the readiness attestation/repair card.
-4. **Provision the integrated 7:00 AM `morning-step-drain` accelerator (once, non-blocking) & continue automatic guided progression after readiness clears:**
-   - Right when Readiness clears (`signed: true`), if `morning_drain_setup` has not been recorded yet:
-     1. Run `python -m orchestrator.cli automation plan --release <id> --slug morning-step-drain --json` to read `provider_spec`.
-     2. Check `m_list_automations`: if `<id> · Release-wide — morning step drain` already exists, record its ID; otherwise call `m_create_automation` once with `provider_spec`, then record via `python -m orchestrator.cli automation record-setup --release <id> --slug morning-step-drain --id <id> --json`. (If `m_create_automation` is unavailable or fails, record `--skipped "<reason>"` and continue immediately — never block the release!)
-   - Immediately run `next --release <id> --deliver --json` and execute all eligible tasks in `work_dispatch` whose `depends_on` lists are satisfied without asking the owner to say `"next"`.
-   - Whenever the release reaches Phase 1 (`current_phase == "ccd"`) and `ccd_watcher_setup` is returned in `status` / `next` / `done`, perform its one-time non-blocking setup (`automation plan --release <id> --slug ccd-localization-watcher --json` → `m_create_automation` → `automation record-setup --release <id> --slug ccd-localization-watcher --id <id> --json`, or `--skipped "<reason>"` if unavailable). It runs every 2 hours starting at 8:00 AM on CCD (`watch-ccd-localization --release <id> --deliver --json`), reminds the owner if localization isn't triggered or merged yet, and deletes itself once Phase 1 completes or at 10:00 PM on CCD.
+4. **Provision the integrated `release-drainer` accelerator (7:00 AM–7:00 PM every 2h, Entry Gate -> Release Done) & continue automatic guided progression:**
+   - Right at `init` (Entry Gate) or `checklist` / `sign`, if `drainer_setup` has not been recorded yet:
+     1. Read `drainer_setup.provider_spec` (or run `python -m orchestrator.cli automation plan --release <id> --slug release-drainer --json`).
+     2. Check `m_list_automations`: if `<id> · Release-wide — release drainer` already exists, record its ID; otherwise call `m_create_automation` once with `provider_spec`, then record via `python -m orchestrator.cli automation record-setup --release <id> --slug release-drainer --id <id> --json`. (If `m_create_automation` is unavailable or fails, record `--skipped "<reason>"` and continue immediately — never block the release!)
+   - Right after Readiness clears (`signed: true`), immediately run `next --release <id> --deliver --json` and execute all eligible tasks in `work_dispatch` whose `depends_on` lists and `available` windows are satisfied without asking the owner to say `"next"`.
    - Also inspect `work_dispatch.held_work`: if an entry has `pollable: true` (`in_flight` async work such as `ccd.localization_pr`), execute one reconciliation pass via its `resume_command` (`task ... --retry`), then re-run `next --release <id> --deliver --json` if the step settled.
    - If a step fails due to a missing or misconfigured tool/connector, fail **only that step** via `fail-step --release <id> --phase <p> --step <s> --tool <tool> --reason "<specific error>"` and continue executing all remaining independent and satisfied-dependency steps! Future phase dates (`CCD`, `CCD+1`) defer scheduled phase execution — never move the clock (`--as-of`) or rewrite source state to force early sends.
    - Stop at a genuine human input/approval, scheduled/external wait, or completion. Exhaust independent siblings first, then fetch `status --release <id> --details --handoff --json` and paste its full `display_markdown` table before prompting. Status-only and explicitly one-task requests remain scoped.
@@ -60,22 +59,24 @@ Phases are anchored to the CCD (`CCD-7`, `CCD`, `CCD+1`). By default, CCD is the
 
 No blanket write authority comes from successful setup. Each owning write step still checks its target, required review, access, host consent, and receipt.
 
-## Optional background accelerators (`morning-step-drain`)
+## Unified Release Drainer (`release-drainer`)
 
 The release pipeline uses a **unified state-driven hybrid model** with zero mode split:
-- Every step's eligibility is derived purely from durable release state + phase anchor dates (`CCD-7`, `CCD`, `CCD+1`).
-- Automations in `config/automations.yaml` (chief among them **`morning-step-drain`**, scheduled daily at **7:00 AM** owner-local time -> `"every day at 7am"`) are **optional, non-blocking accelerators**.
-- Disabling or deleting any automation in Scout's UI **never** blocks `status`, readiness, or manual progression, and background runs **never** resurrect disabled or deleted automations.
-- Concurrent 7:00 AM background drains (`--scheduled`) and chat sessions share `<runs-root>/<release>/.state.lock` plus durable claim-before-IO checkpoints (`D.claim` / `write_review.authorize`), preventing collisions or double-execution.
+- Every phase and step declares explicit `depends_on` prerequisites and an optional `available` window (`CCD-7`, `CCD`, `CCD+1`, `CCD+1 09:00`, `weekdays_only`, `forbid_weekdays`, `hours_local`).
+- `config/automations.yaml` declares a single optional release-wide automation: **`release-drainer`**, scheduled every 2 hours from **7:00 AM to 7:00 PM** (`cron: 0 7-19/2 * * *`), scoped from the **Entry Gate** until **`release_done`**.
+- Each drainer pass runs `drain --release <id> --trigger scheduled --deliver --json`, writes a machine-readable JSON line to `<runs-root>/<release>/drain-runs.jsonl` (capturing entry/exit snapshots, executed steps, waiting `blocked` vs `human_input` counts & reasons, and missed drain slots), and delivers anti-spam Calls-to-Action via **Scout Teams bot + HTML Email** using idle-business-hour & external-cutoff escalation.
+- Disabling or deleting `release-drainer` in Scout's UI **never** blocks `status`, readiness, or manual progression, and background runs **never** resurrect disabled or deleted automations.
+- Concurrent background drains (`--scheduled`) and chat sessions share `<runs-root>/<release>/.state.lock` plus durable claim-before-IO checkpoints (`D.claim` / `write_review.authorize`), preventing collisions or double-execution.
 
-When the owner asks to provision or inspect optional background accelerators:
+When the owner asks to provision or inspect the drainer or drain journal:
 
 ```powershell
 python -m orchestrator.cli automation plan --release <id> --json
 python -m orchestrator.cli automation obligations --release <id> --json
+python -m orchestrator.cli drain-log --release <id> --json
 ```
 
-For each desired optional accelerator (`morning-step-drain`, `finalize-orchestrator-poller`, or state-triggered `--on-demand <slug>` pollers):
+For `release-drainer`:
 1. Write the exact `provider_spec` from `automation plan --json` to a temporary JSON file outside `.release-runs`.
 2. Read fresh exhaustive `m_list_automations` + `m_get_automation` details into `{observed_at:<UTC>, complete:true, automations:[{id, spec}]}`.
 3. Run `automation reconcile-create --release <id> --slug <slug> --ensure --claim --executor <session> --spec-file <spec.json> --observed-file <obs.json> --json` (adding `--on-demand <slug>` for on-demand pollers).

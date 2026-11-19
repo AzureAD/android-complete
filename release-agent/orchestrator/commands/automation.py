@@ -81,7 +81,7 @@ def _canonical_policy(args, reg, spec, *, preparing=False):
     if definition.get("on_demand") and args.on_demand != args.slug:
         raise ValueError("On-demand workers require --on-demand <slug>; never provision at startup")
     st = C.load_state(args.runs_root, args.release)
-    if not definition.get("every") and not definition.get("daily_at"):
+    if not definition.get("every") and not definition.get("daily_at") and not definition.get("daily_window"):
         confirmed = (st.readiness_items.get("ccd_confirmed") or {}).get("status") == "pass"
         if st.ccd_conflict or not confirmed:
             raise ValueError("CCD workers require owner-confirmed CCD with no conflict")
@@ -435,73 +435,34 @@ def _cmd_cleanup(args):
     return 1 if result["problems"] else 0
 
 
-def morning_drain_setup_hint(runs_root: str, release: str, config_path: str, state) -> dict | None:
-    """Return one-time setup metadata for `morning-step-drain` when Readiness is signed and
-    no registry entry exists yet; returns None once recorded (even if later disabled/deleted)."""
-    if not release or not runs_root:
+def drainer_setup_hint(runs_root: str, release: str, config_path: str, state) -> dict | None:
+    """Return one-time setup metadata for `release-drainer` starting at the Entry Gate
+    whenever no registry entry exists yet; returns None once recorded (even if later disabled/deleted)."""
+    if not release or not runs_root or state.cancellation:
         return None
     reg = AutomationRegistry(runs_root, release)
-    if reg.get(key=stable_key(release, "morning-step-drain")) is not None:
+    if reg.get(key=stable_key(release, "release-drainer")) is not None:
         return None
     planned = auto_plan.plan(config_path, release, state.ccd, owner_timezone=state.timezone)
-    worker = next((a for a in planned["automations"] if a["slug"] == "morning-step-drain"), None)
+    worker = next((a for a in planned["automations"] if a["slug"] == "release-drainer"), None)
     if not worker or worker.get("problems") or not worker.get("provider_spec"):
         return None
     return {
-        "slug": "morning-step-drain",
+        "slug": "release-drainer",
         "name": worker["name"],
         "schedule": worker["schedule"],
         "optional": True,
         "provider_spec": worker["provider_spec"],
-        "plan_command": f"automation plan --release {release} --slug morning-step-drain --json",
-        "record_command": f"automation record-setup --release {release} --slug morning-step-drain --id <created-id> --json",
-        "skip_command": f"automation record-setup --release {release} --slug morning-step-drain --skipped \"<reason>\" --json",
+        "plan_command": f"automation plan --release {release} --slug release-drainer --json",
+        "record_command": f"automation record-setup --release {release} --slug release-drainer --id <created-id> --json",
+        "skip_command": f"automation record-setup --release {release} --slug release-drainer --skipped \"<reason>\" --json",
         "instruction": (
-            "Integrated one-time setup: call `m_list_automations` — if an automation named "
+            "Integrated one-time setup (runs 7:00 AM–7:00 PM every 2h from Entry Gate until release completion): "
+            "call `m_list_automations` — if an automation named "
             f"`{worker['name']}` already exists, record its ID with `record_command`; otherwise "
             "call `m_create_automation` once with `provider_spec` and record the returned ID with "
             "`record_command`. If `m_create_automation` is unavailable or fails, run `skip_command` "
-            "and continue immediately into Phase 0 (non-blocking)."
-        ),
-    }
-
-
-def ccd_watcher_setup_hint(entries: list[dict] | None, release: str, config_path: str, state, selection, now=None) -> dict | None:
-    """Return one-time setup metadata for `ccd-localization-watcher` once Phase 1 (`ccd`) is reached
-    and before CCD 10:00 PM; returns None once recorded in the registry."""
-    if not release or entries is None:
-        return None
-    if selection.frontier is None or selection.frontier.id != "ccd" or state.cancellation or state.halt:
-        return None
-    target_key = stable_key(release, "ccd-localization-watcher")
-    if any(item.get("key") == target_key for item in entries):
-        return None
-    planned = auto_plan.plan(config_path, release, state.ccd, owner_timezone=state.timezone, now=now)
-    worker = next((a for a in planned["automations"] if a["slug"] == "ccd-localization-watcher"), None)
-    if not worker or worker.get("problems") or not worker.get("provider_spec"):
-        return None
-    # Do not offer setup if CCD 10:00 PM has already passed or Phase 1 is complete.
-    probe_entry = {**worker["registration"], "id": "probe", "scope": "release", "status": "active"}
-    cleanup = auto_plan.cleanup_plan(state, [probe_entry], config_path, now=now)
-    if cleanup["removals"] or cleanup["problems"]:
-        return None
-    return {
-        "slug": "ccd-localization-watcher",
-        "name": worker["name"],
-        "schedule": worker["schedule"],
-        "optional": True,
-        "plan_command": f"automation plan --release {release} --slug ccd-localization-watcher --json",
-        "record_command": f"automation record-setup --release {release} --slug ccd-localization-watcher --id <created-id> --json",
-        "skip_command": f"automation record-setup --release {release} --slug ccd-localization-watcher --skipped \"<reason>\" --json",
-        "instruction": (
-            "SILENT ONE-TIME PHASE 1 SETUP (`requires_approval: false`): Run `command` "
-            f"(`automation plan --release {release} --slug ccd-localization-watcher --json`) to read "
-            "`automations[0].provider_spec`, call `m_list_automations` (reuse ID if "
-            f"`{worker['name']}` already exists, else call `m_create_automation` once with that exact "
-            "`provider_spec`), then record via "
-            f"`automation record-setup --release {release} --slug ccd-localization-watcher --id <created-id> --json` "
-            f"(or `--skipped \"<reason>\"` if `m_create_automation` is unavailable — non-blocking!). "
-            "Do NOT call `m_ask_user`!"
+            "and continue immediately (non-blocking)."
         ),
     }
 

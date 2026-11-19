@@ -228,13 +228,13 @@ def validate(config_path: str) -> list:
             problems.append(f"duplicate automation slug '{slug}'")
         slugs.add(slug)
         if set(d) - {
-            "slug", "label", "phase", "scope", "steps", "every", "daily_at", "ccd_window",
+            "slug", "label", "phase", "scope", "steps", "every", "daily_at", "daily_window", "ccd_window",
             "on_demand", "provision_when", "cleanup_when", "purpose", "prompt_kind",
         }:
             problems.append(f"automation '{slug}' has unknown settings")
-        sched_modes = sum(bool(d.get(k)) for k in ("every", "daily_at", "ccd_window"))
+        sched_modes = sum(bool(d.get(k)) for k in ("every", "daily_at", "daily_window", "ccd_window"))
         if sched_modes > 1:
-            problems.append(f"automation '{slug}' cannot combine 'every', 'daily_at', and 'ccd_window'")
+            problems.append(f"automation '{slug}' cannot combine 'every', 'daily_at', 'daily_window', and 'ccd_window'")
         if d.get("daily_at") is not None:
             try:
                 if not isinstance(d["daily_at"], str) or len(d["daily_at"]) != 5:
@@ -242,6 +242,10 @@ def validate(config_path: str) -> list:
                 datetime.strptime(d["daily_at"], "%H:%M")
             except ValueError:
                 problems.append(f"automation '{slug}' has invalid daily_at {d.get('daily_at')!r} (expected HH:MM)")
+        if d.get("daily_window") is not None and _parse_ccd_window(d.get("daily_window")) is None:
+            problems.append(
+                f"automation '{slug}' has invalid daily_window {d.get('daily_window')!r} (expected HH:MM-HH:MM/<N>h)"
+            )
         if d.get("ccd_window") is not None and _parse_ccd_window(d.get("ccd_window")) is None:
             problems.append(
                 f"automation '{slug}' has invalid ccd_window {d.get('ccd_window')!r} (expected HH:MM-HH:MM/<N>h)"
@@ -258,10 +262,10 @@ def validate(config_path: str) -> list:
         if not rules or not all(_valid_cleanup_rule(rule) for rule in rules):
             problems.append(f"automation '{slug}' has invalid/missing cleanup_when")
         s_steps = d.get("steps", []) or []
-        if not s_steps and d.get("prompt_kind") != "morning-step-drain":
+        if not s_steps and d.get("prompt_kind") not in ("release-drainer", "morning-step-drain"):
             problems.append(f"automation '{slug}' has no steps")
             continue
-        interval = bool(d.get("every") or d.get("daily_at") or d.get("ccd_window"))
+        interval = bool(d.get("every") or d.get("daily_at") or d.get("daily_window") or d.get("ccd_window"))
         fires = set()
         for sk in s_steps:
             mod = steps_pkg.get_step(*sk.split(".", 1)) if "." in sk else None
@@ -288,6 +292,46 @@ def validate(config_path: str) -> list:
             problems.append(f"scheduled step '{sk}' (has fire_at_local) is not owned "
                             f"by any time-of-day automation in automations.yaml")
     return problems
+
+
+def daily_window_slots(window_spec: str = "07:00-19:00/2h") -> tuple[tuple[int, int], ...]:
+    """Return ordered `(hour, minute)` local slot tuples for a `'HH:MM-HH:MM/<N>h'` window."""
+    parsed = _parse_ccd_window(window_spec)
+    if parsed is None:
+        raise ValueError(f"Invalid daily_window specification: {window_spec!r}")
+    start_h, end_h, step_h, minute = parsed
+    return tuple((h, minute) for h in range(start_h, end_h + 1, step_h))
+
+
+def _daily_window_cron(
+    window_spec: str,
+    *,
+    owner_timezone=None,
+    scheduler_timezone=None,
+    now=None,
+) -> str:
+    """Compile a recurring daily window (`07:00-19:00/2h`) into Scout's cron schedule."""
+    parsed = _parse_ccd_window(window_spec)
+    if parsed is None:
+        raise ValueError(f"Invalid daily_window specification: {window_spec!r}")
+    start_h, end_h, step_h, minute = parsed
+    if not owner_timezone or not scheduler_timezone or owner_timezone == scheduler_timezone:
+        hour_expr = f"{start_h}-{end_h}/{step_h}" if step_h > 1 else f"{start_h}-{end_h}"
+        return f"cron: {minute} {hour_expr} * * *"
+    owner = schedule.get_tz(owner_timezone)
+    host = schedule.get_tz(scheduler_timezone)
+    if owner is None or host is None:
+        raise ValueError("Owner and scheduler host IANA timezones must both be available")
+    from datetime import time as _time
+    ref_utc = now if (now is not None and now.tzinfo is not None) else datetime.now(timezone.utc)
+    ref_date = ref_utc.astimezone(owner).date()
+    host_pts = [
+        datetime.combine(ref_date, _time(h, minute), owner).astimezone(host)
+        for h in range(start_h, end_h + 1, step_h)
+    ]
+    mins = sorted({dt.minute for dt in host_pts})
+    hrs = sorted({dt.hour for dt in host_pts})
+    return f"cron: {','.join(map(str, mins))} {','.join(map(str, hrs))} * * *"
 
 
 def _format_scout_time_12h(hour: int, minute: int) -> str:
@@ -418,50 +462,27 @@ def _prompt_for(spec: dict, release: str) -> str:
         "Never resurrect or recreate automations that the owner disabled or deleted."
     )
 
-    if spec.get("prompt_kind") == "morning-step-drain":
+    if spec.get("prompt_kind") in ("release-drainer", "morning-step-drain"):
         return (
-            f"Release {release} — 7:00 AM pre-work step drainer (optional background accelerator).\n"
-            f"1. Run `status --release {release} --json`. If the release is missing, unsigned, halted, "
-            "blocked on readiness/workflow revision, cancelled, or complete, skip new phase work and run "
-            "only the final cleanup check.\n"
-            f"2. Loop `next --release {release} --deliver --json`. This single locked command advances "
-            "all eligible Python `auto` steps AND delivers all `requires_approval: false` notification "
-            "steps (`notice`, `flight_reminder`, `ccd.final_reminder`, `ccd.pr_reminder`, "
-            "`final_status_email`, etc.) silently in Python via Agency MCP — NEVER call `workiq_send_*` "
-            "or `m_ask_user`!\n"
-            "3. Inspect `work_dispatch.pending_work` after each `next --deliver`: for every remaining "
-            "task with `requires_approval: false` (e.g. `preflight.lockdown` Playwright CCOA scrape, "
-            "`ccd.localization` via `launch-localization --execute --auto-approve`), execute it silently "
-            "once through its owning `step-action` and domain follow-up command, then re-run "
-            f"`next --release {release} --deliver --json` to discover newly unblocked work. "
-            "Do NOT execute `requires_approval: true` tasks in the background — hold them with "
-            "`--hold-step phase.step=Requires owner approval` on the final handoff check so the pipeline "
-            "waits cleanly at the human-in-the-loop gate when the owner starts work.\n"
-            "4. Inspect `work_dispatch.held_work`: for each entry with `pollable: true` (`in_flight` "
-            "async work such as `ccd.localization_pr` or `finalize.orchestrator_finalization`), execute ONE "
-            "reconciliation pass via its `resume_command` (`task ... --retry`), then re-run `next --release "
-            f"{release} --deliver --json` if the step settled. If `status --release {release} --json` returns "
-            "`ccd_watcher_setup` (Phase 1 reached with no registry entry yet for `ccd-localization-watcher`), "
-            "create it once via `m_create_automation` and record with `automation record-setup`. "
-            "Never re-trigger an owned build or tight-loop.\n"
-            f"5. Run `tick --release {release} --deliver --json` to send the once-per-day morning owner "
-            "digest (and any eligible preflight Core deadline alert) silently in Python via Agency MCP. "
-            "Respect `mocks.local.yaml` redirects.\n"
-            + protocol + cleanup
-        )
-
-    if spec.get("prompt_kind") == "ccd-localization-watcher":
-        return (
-            f"Release {release} — Code Complete Day localization check & reminder (runs every 2h from 8:00 AM to 10:00 PM on CCD).\n"
-            f"1. Run `python -m orchestrator.cli --scheduled watch-ccd-localization --release {release} --deliver --json`.\n"
-            "   - Python checks live ADO build & Localization PR status automatically.\n"
-            "   - If the Localization PR merged (or no PR was required), Python marks `ccd.localization_pr` done.\n"
-            "   - If localization has not started yet, is still running, or the Localization PR is open and unmerged, "
-            "Python sends a reminder to the release owner via Agency MCP prompting them to open `/release-agent` "
-            "and complete the pending Phase 1 steps (NEVER call `workiq_send_*` or `m_ask_user`).\n"
-            "2. Always execute the cleanup block below: once all Phase 1 items are complete OR it is at/after "
-            "10:00 PM on Code Complete Day, `automation cleanup` will list this automation in `removals` — "
-            "claim it with `claim-delete`, delete it via `m_delete_automation`, and record `delete-result`.\n"
+            f"Release {release} — Unified Release Drainer (runs every 2h from 7:00 AM to 7:00 PM).\n"
+            f"1. Run `python -m orchestrator.cli --scheduled drain --release {release} --trigger scheduled --deliver --json`.\n"
+            "   - Python automatically drains all eligible Python `auto` steps, reconciles `in_flight` / `read_only` "
+            "steps, and delivers `requires_approval: false` notification steps silently via Agency MCP "
+            "(NEVER call `workiq_send_*` or `m_ask_user`).\n"
+            "2. Inspect `pending_host_work` in the JSON output:\n"
+            "   - If `pending_host_work` is non-empty (e.g. Entry Gate Scout auto checks, `preflight.lockdown` "
+            "Playwright CCOA scrape, or `ccd.localization` via `launch-localization --execute --auto-approve`), "
+            "execute each non-approval item ONCE via its owning command. Never start `requires_approval: true` writes.\n"
+            "   - After finishing `pending_host_work`, finalize the journaled run with "
+            f"`python -m orchestrator.cli --scheduled drain --release {release} --finalize-run <run_id> --deliver --json` "
+            "(which runs any newly unlocked steps, writes `<runs-root>/<release>/drain-runs.jsonl`, and evaluates CTA notifications).\n"
+            "3. Inspect `scout_bot_cta` on the finalized drain payload:\n"
+            "   - When `scout_bot_cta` is non-null, claim it with "
+            f"`python -m orchestrator.cli --scheduled notification claim --release {release} --id <id> --hash <hash> "
+            "--executor release-drainer --json`; ONLY when `permission_to_send` is true, call `m_send_teams_message` "
+            "with the exact `message` text so the release owner receives the Scout bot Call-to-Action, then record "
+            f"`python -m orchestrator.cli --scheduled notification result --release {release} --id <id> --execution-id "
+            "<execution_id> --outcome sent|not_sent|uncertain --evidence \"<provider evidence>\"`.\n"
             + protocol + cleanup
         )
 
@@ -512,6 +533,7 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
         s_steps = d.get("steps", []) or []
         interval = d.get("every")
         daily_at = d.get("daily_at")
+        daily_window = d.get("daily_window")
         ccd_window = d.get("ccd_window")
         # STANDARD name: '<release> · <scope> — <label>'. `label` is the short purpose; `scope`
         # is the phase display name (or an explicit `scope:` override for non-phase automations).
@@ -526,6 +548,19 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             try:
                 sched = _daily_schedule(
                     daily_at,
+                    owner_timezone=owner_timezone,
+                    scheduler_timezone=scheduler_timezone,
+                    now=now,
+                )
+            except ValueError as exc:
+                sched = None
+                entry_problems.append(str(exc))
+        elif daily_window:
+            fire_at = daily_window
+            one_shot = False
+            try:
+                sched = _daily_window_cron(
+                    daily_window,
                     owner_timezone=owner_timezone,
                     scheduler_timezone=scheduler_timezone,
                     now=now,
@@ -569,6 +604,7 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             "purpose": d.get("purpose", ""),
             "fire_at": fire_at,
             "daily_at": daily_at,
+            "daily_window": daily_window,
             "ccd_window": ccd_window,
             "ccd_date": ccd_date.isoformat() if ccd_date else None,
             "weekday": weekday,
@@ -871,6 +907,8 @@ def cleanup_plan(state, entries: list, config_path: str, *, now=None) -> dict:
             })
     kinds = {e["id"]: e.get("kind") for e in entries}
     removals.sort(key=lambda r: (
-        kinds.get(r["id"]) == "release-level", r.get("slug") == "morning-step-drain", r["name"]
+        kinds.get(r["id"]) == "release-level",
+        r.get("slug") in ("release-drainer", "morning-step-drain"),
+        r["name"],
     ))
     return {"release": state.release_id, "removals": removals, "problems": problems}

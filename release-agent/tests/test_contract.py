@@ -223,14 +223,21 @@ def test_status_only_is_scoped_but_recorded_results_resume_guided_progression():
 
 
 def test_unified_hybrid_dispatch_shares_locked_state_machine_with_optional_accelerators():
+    import yaml
     from orchestrator import automations
     skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
     assert "By default, use `work_dispatch`" in skill
-    assert "morning-step-drain" in skill and "optional, non-blocking accelerators" in skill
+    assert "release-drainer" in skill and "optional, non-blocking accelerator" in skill
     assert "Status-only" in skill and "explicitly one-task" in skill
     for spec in automations.plan(CONFIG, "2026-09", "2026-09-09")["automations"]:
         assert "work_dispatch" in spec["prompt"] and ".state.lock" in spec["prompt"]
         assert "never recreate or re-enable" in spec["prompt"]
+    # Every phase and step in shipped config/phases.yaml explicitly declares `depends_on`.
+    raw_cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    for phase in raw_cfg["phases"]:
+        assert isinstance(phase.get("depends_on"), list), phase["id"]
+        for step in phase["steps"]:
+            assert isinstance(step.get("depends_on"), list), f"{phase['id']}.{step['id']}"
 
 
 def test_all_automations_are_optional_accelerators_without_mandatory_startup_blockers():
@@ -238,8 +245,7 @@ def test_all_automations_are_optional_accelerators_without_mandatory_startup_blo
     defs = automations.load_defs(CONFIG)
     assert all(not item.get("required_on_start") for item in defs)
     slugs = {item["slug"] for item in defs}
-    assert "morning-step-drain" in slugs
-    assert not ({"push-reminders", "daily-status-email", "ccd-morning", "ccd-noon", "ccd-localization-poller"} & slugs)
+    assert slugs == {"release-drainer"}
     for path in ("SKILL.md", os.path.join("reference", "starting-and-scheduling.md"),
                  os.path.join("reference", "readiness-gate.md"),
                  os.path.join("reference", "presenting-status.md")):
@@ -255,7 +261,7 @@ def test_worker_prompts_never_auto_resurrect_deleted_automations():
     for path in (os.path.join("reference", "starting-and-scheduling.md"),
                  os.path.join("reference", "commands.md")):
         text = open(os.path.join(ROOT, "skill", path), encoding="utf-8").read()
-        assert "morning-step-drain" in text or "tick --release" in text
+        assert "release-drainer" in text or "drain --release" in text
 
 
 def test_skill_and_handoff_json_fit_within_inline_tool_output_budget(tmp_path, capsys):

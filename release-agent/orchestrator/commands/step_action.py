@@ -347,6 +347,7 @@ def cmd_task(args):
         )
         if not transition.changed:
             raise ValueError(transition.message)
+        state.touch_owner_interaction()
         C.save_state(state, args.runs_root, args.release)
         C.elog(args.runs_root, args.release).log(
             "task_rerun", phase=args.phase, step=args.step, driver=args.reason)

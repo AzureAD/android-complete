@@ -254,7 +254,9 @@ def phase_manifest(workflow, handlers):
             "id": phase.id,
             "definition_hash": digest({
                 "version": workflow.version, "id": phase.id, "execution": phase.execution,
-                "anchor": phase.anchor, "conditional": phase.conditional, "steps": steps,
+                "anchor": phase.anchor, "depends_on": _semantic(phase.depends_on),
+                "available": _semantic(phase.available),
+                "conditional": phase.conditional, "steps": steps,
             }),
             "step_keys": [step.key for step in phase.steps],
         })

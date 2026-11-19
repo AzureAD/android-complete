@@ -995,9 +995,9 @@ def test_localization_inflight_is_not_retriggered_by_release_worker():
 
 
 
-def test_ccd_steps_are_purely_state_driven_without_dedicated_ccd_automations():
-    """Phase 1 (`ccd`) uses 4 clean steps plus the 8 AM–10 PM every-2h `ccd-localization-watcher`
-    (provisioned once Phase 1 is reached and auto-removed when Phase 1 completes or at 10 PM on CCD)."""
+def test_ccd_steps_are_purely_state_driven_under_unified_release_drainer():
+    """Phase 1 (`ccd`) uses 4 clean steps driven by the single release-wide `release-drainer`
+    (`07:00-19:00/2h` -> `cron: 0 7-19/2 * * *`)."""
     from orchestrator import automations as A
     assert A.validate(CONFIG) == []
     by = {
@@ -1010,55 +1010,25 @@ def test_ccd_steps_are_purely_state_driven_without_dedicated_ccd_automations():
             scheduler_timezone="America/Los_Angeles",
         )["automations"]
     }
-    assert "ccd-morning" not in by
-    assert "ccd-noon" not in by
-    drain = by["morning-step-drain"]
-    assert drain["daily_at"] == "07:00" and drain["one_shot"] is False and drain["optional"] is True
-    watcher = by["ccd-localization-watcher"]
-    assert watcher["schedule"] == "cron: 0 8-22/2 9 9 *"
-    assert watcher["one_shot"] is False and watcher["on_demand"] is True
-    assert watcher["provision_when"] == "phase_reached:ccd"
-    assert watcher["cleanup_when"] == ["phase_done:ccd", "ccd_after:22:00"]
-    assert watcher["steps"] == ["ccd.localization", "ccd.localization_pr"]
+    assert set(by) == {"release-drainer"}
+    drain = by["release-drainer"]
+    assert drain["daily_window"] == "07:00-19:00/2h"
+    assert drain["schedule"] == "cron: 0 7-19/2 * * *"
+    assert drain["one_shot"] is False and drain["optional"] is True
+    assert drain["cleanup_when"] == "release_done"
 
 
-def test_ccd_localization_watcher_lifecycle_reminds_settles_and_retires_at_10pm(ccd_replay):
-    """End-to-end check of the Phase 1 `ccd-localization-watcher` automation:
-    1. Surfaced via `ccd_watcher_setup` right when Phase 1 is reached.
-    2. At 8:00 AM on CCD when localization hasn't started yet -> reminds owner.
-    3. When PR #16790317 is open & unmerged at 10:00 AM -> reminds owner with PR link.
-    4. At 10:00 PM on CCD -> `cleanup_plan` marks it for deletion even if Phase 1 is still open.
-    5. When PR #16790317 merges in ADO -> `watch-ccd-localization` marks `localization_pr` Done
-       automatically with `reminded: False`, and `cleanup_plan` marks it for deletion immediately."""
+def test_unified_release_drainer_reconciles_ccd_localization_pr_and_journals(ccd_replay):
+    """End-to-end check of Phase 1 (`ccd`) under the unified `release-drainer` (`drain`):
+    1. When PR #16790317 is open & unmerged at 11:00 AM -> `drain` parks on `ccd.localization_pr`
+       (`blocked_count == 1`), records `drain-runs.jsonl`, and marks CTA due (`immediate_new_hold`).
+    2. When PR #16790317 merges in ADO at 3:00 PM -> `drain` automatically re-checks
+       `ccd.localization_pr`, marks Phase 1 complete, and advances into `build_verify` (scheduled)."""
     from datetime import datetime
-    from orchestrator import automations as A
-    from orchestrator.commands.localization import watch_ccd_localization
+    from orchestrator import drain as D
 
     client = ccd_replay
-    # 1. Phase 1 reached on 2026-09-08 (before CCD) -> `ccd_watcher_setup` surfaced once!
-    rep0 = client.result("status", "--json")
-    hint = rep0["ccd_watcher_setup"]
-    assert hint["slug"] == "ccd-localization-watcher"
-    assert "cron:" in hint["schedule"]
-    client.result(
-        "automation",
-        "record-setup",
-        "--slug",
-        "ccd-localization-watcher",
-        "--id",
-        "watcher-auto-id",
-        "--json",
-    )
-    assert "ccd_watcher_setup" not in client.result("status", "--json")
-
-    # 2. 8:00 AM on CCD before localization has started -> stages owner reminder!
-    t_8am = datetime.fromisoformat("2026-09-09T08:00:00-07:00")
-    client.at("2026-09-09T08:00:00-07:00")
-    w8 = watch_ccd_localization(client.root, client.rid, CONFIG, now=t_8am)
-    assert w8["status"] == "reminded" and w8["reminded"] is True and not w8["cleanup_due"]
-    assert "NOT been triggered yet" in w8["localization_summary"]
-
-    # Complete reminders + launch localization -> open unmerged PR #16790317 at 10:00 AM
+    client.at("2026-09-09T09:00:00-07:00")
     for sid in ("final_reminder", "pr_reminder"):
         item, = client.result(
             "notification", "prepare", "--source", "step", "--phase", "ccd", "--step", sid
@@ -1067,28 +1037,24 @@ def test_ccd_localization_watcher_lifecycle_reminds_settles_and_retires_at_10pm(
     client.result("launch-localization", "--execute", "--auto-approve", "--executor", "test")
     client.control.update(build_status="completed", build_result="succeeded", build_logs=_PR_LOG, pr_status="active")
 
-    t_10am = datetime.fromisoformat("2026-09-09T10:00:00-07:00")
-    client.at("2026-09-09T10:00:00-07:00")
-    w10 = watch_ccd_localization(client.root, client.rid, CONFIG, now=t_10am)
-    assert w10["status"] == "reminded" and "16790317" in w10["localization_summary"]
-    assert client.load().get_step("ccd", "localization_pr").status == "blocked"
+    t_11am = datetime.fromisoformat("2026-09-09T11:00:00-07:00")
+    client.at("2026-09-09T11:00:00-07:00")
+    d11 = D.run_drain(client.root, client.rid, CONFIG, now=t_11am)
+    assert d11["finalized"] is True
+    assert d11["waiting"]["blocked_count"] == 1
+    assert d11["waiting"]["items"][0]["step"] == "ccd.localization_pr"
+    assert d11["notification"]["due"] is True and d11["notification"]["reason"] == "immediate_new_hold"
 
-    # 4. At 10:00 PM on CCD while still unmerged -> `cleanup_plan` retires `ccd-localization-watcher`!
-    from orchestrator.registry import AutomationRegistry
-    entries = AutomationRegistry(client.root, client.rid).list(release=client.rid)
-    t_10pm = datetime.fromisoformat("2026-09-09T22:00:00-07:00")
-    cleanup_at_10pm = A.cleanup_plan(client.load(), entries, CONFIG, now=t_10pm)
-    assert [r["id"] for r in cleanup_at_10pm["removals"]] == ["watcher-auto-id"]
-    assert "22:00" in cleanup_at_10pm["removals"][0]["reason"]
-
-    # 5. If owner merges PR #16790317 in ADO at 12:00 PM -> `watch-ccd-localization` settles Phase 1 with no nag!
-    t_noon = datetime.fromisoformat("2026-09-09T12:00:00-07:00")
-    client.at("2026-09-09T12:00:00-07:00")
+    # Owner merges PR #16790317 in ADO before the 3:00 PM drain slot -> drainer settles Phase 1 automatically!
+    t_3pm = datetime.fromisoformat("2026-09-09T15:00:00-07:00")
+    client.at("2026-09-09T15:00:00-07:00")
     client.control["pr_status"] = "completed"
-    w12 = watch_ccd_localization(client.root, client.rid, CONFIG, now=t_noon)
-    assert w12["status"] == "complete" and w12["phase_complete"] is True and w12["reminded"] is False
-    cleanup_on_done = A.cleanup_plan(client.load(), entries, CONFIG, now=t_noon)
-    assert [r["id"] for r in cleanup_on_done["removals"]] == ["watcher-auto-id"]
+    d15 = D.run_drain(client.root, client.rid, CONFIG, now=t_3pm)
+    assert d15["finalized"] is True
+    assert any(s["step"] == "ccd.localization_pr" and s["to_status"] == "done" for s in d15["executed_steps"])
+    assert d15["exited"]["phase"] == "build_verify"
+    assert d15["waiting"]["blocked_count"] == 0
+    assert len(D.read_drain_runs(client.root, client.rid)) == 2
 
 
 

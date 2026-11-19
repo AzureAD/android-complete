@@ -106,7 +106,9 @@ def cmd_init(args):
     checklist_command = f"checklist --release {args.release} --attest-prompt --json"
     initialized_report = orch.status_report()
     if getattr(args, "json", False):
-        print(_json.dumps({
+        from orchestrator.commands.automation import drainer_setup_hint
+        drainer_hint = drainer_setup_hint(args.runs_root, args.release, args.config, st)
+        init_payload = {
             "status": "done", "summary": "Release context initialized; no phase work or approval has run.",
             "initialized": True, "release_id": st.release_id, "state_path": sp,
             "owner_email": st.owner_email, "owner_name": st.owner_name,
@@ -122,7 +124,10 @@ def cmd_init(args):
             "continue_automatically": initialized_report["work_dispatch"]["continue_automatically"],
             "checklist_command": checklist_command,
             **C.guided_followup(orch, initialized_report),
-        }, indent=2))
+        }
+        if drainer_hint is not None:
+            init_payload["drainer_setup"] = drainer_hint
+        print(_json.dumps(init_payload, indent=2))
         return 0
     owner_line = f"  Owner: {st.owner_name + ' ' if st.owner_name else ''}{st.owner_email or '(unresolved)'}{owner_note}"
     tz_line = f"  Timezone: {st.timezone or schedule.DEFAULT_TZ}{tz_note}"
@@ -263,6 +268,7 @@ def cmd_approve(args):
     if act.kind == "idle":
         print(act.message)
         return 1
+    st.touch_owner_interaction()
     C.save_state(st, args.runs_root, args.release)
     el = C.elog(args.runs_root, args.release)
     el.log("gate_approved", phase=act.phase, step=act.step, driver=args.comment or None)
@@ -274,6 +280,7 @@ def cmd_deny(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     act = orch.deny_gate(args.comment or "")
     if act.kind != "idle":
+        st.touch_owner_interaction()
         C.elog(args.runs_root, args.release).log(
             "gate_denied", phase=act.phase, step=act.step, driver=args.comment or None)
     C.save_state(st, args.runs_root, args.release)
@@ -302,6 +309,7 @@ def cmd_done(args):
         else:
             print(msg)
         return 1
+    st.touch_owner_interaction()
     el = C.elog(args.runs_root, args.release)
     el.log("fact_recorded" if act.kind == "recorded" else "reminder_done",
            phase=act.phase, step=act.step, driver=args.note or None)
@@ -332,6 +340,7 @@ def cmd_skip(args):
         else:
             print(act.message)
         return 1
+    st.touch_owner_interaction()
     el = C.elog(args.runs_root, args.release)
     el.log("step_skipped", phase=args.phase, step=args.step, driver=args.reason)
     C.save_state(st, args.runs_root, args.release)
@@ -363,6 +372,7 @@ def cmd_complete_manually(args):
     )
     if not transition.changed:
         raise ValueError(transition.message)
+    st.touch_owner_interaction()
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
         "task_completed_manually", phase=args.phase, step=args.step, driver=args.note)
@@ -387,6 +397,7 @@ def cmd_reopen(args):
     if act.kind == "idle":
         print(act.message)
         return 1
+    st.touch_owner_interaction()
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log("step_reopened", phase=args.phase, step=args.step, driver=args.reason or None)
     C.emit(args.runs_root, args.release, act.message, kind="override")

@@ -917,16 +917,22 @@ def test_poll_rc_resolved_blocked_idle():
 
 
 
-def test_rc_poller_automation_is_on_demand_interval():
-    """The build-verify-rc-poller is planned as an on-demand 30-min interval automation
-    driving rc_report, with a bespoke poll prompt (not the default step-action prompt)."""
+def test_release_drainer_is_single_canonical_automation():
+    """`config/automations.yaml` defines only the unified `release-drainer` (`07:00-19:00/2h`);
+    phase steps run directly through the state machine without per-phase pollers."""
     from orchestrator import automations as A
     assert A.validate(CONFIG) == []
-    plan = A.plan(CONFIG, "2026-08", "2026-08-26")
-    rc = next(a for a in plan["automations"] if a["slug"] == "build-verify-rc-poller")
-    assert rc["on_demand"] and rc["interval"] == "30 minutes"
-    assert rc["steps"] == ["build_verify.rc_report_notify"]
-    assert "poll-rc --release 2026-08" in rc["prompt"] or "RC verification poller" in rc["name"]
+    plan = A.plan(
+        CONFIG,
+        "2026-08",
+        "2026-08-26",
+        owner_timezone="America/Los_Angeles",
+        scheduler_timezone="America/Los_Angeles",
+    )
+    assert [a["slug"] for a in plan["automations"]] == ["release-drainer"]
+    drainer = plan["automations"][0]
+    assert drainer["schedule"] == "cron: 0 7-19/2 * * *"
+    assert drainer["cleanup_when"] == "release_done"
 
 
 

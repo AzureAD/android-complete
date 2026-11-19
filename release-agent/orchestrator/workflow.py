@@ -12,6 +12,7 @@ from typing import Any, Mapping, Optional
 
 from orchestrator.command_catalog import APPROVAL_COMMANDS, EXTERNAL_WRITE_COMMANDS
 from orchestrator.effects import EffectMode, EffectRecovery
+from orchestrator.schedule import AvailableRule, parse_available_rule
 
 
 class WorkflowConfigError(ValueError):
@@ -65,6 +66,9 @@ def _hydrate_step_from_module(raw_step: Mapping[str, Any], module: object) -> di
     if "required_tools" not in merged and getattr(module, "REQUIRED_TOOLS", None) is not None:
         tools_val = getattr(module, "REQUIRED_TOOLS")
         merged["required_tools"] = list(tools_val) if isinstance(tools_val, (list, tuple)) else tools_val
+    if "available" not in merged and getattr(module, "AVAILABLE", None) is not None:
+        avail_val = getattr(module, "AVAILABLE")
+        merged["available"] = avail_val.to_dict() if isinstance(avail_val, AvailableRule) else deepcopy(avail_val)
     return merged
 
 
@@ -84,6 +88,14 @@ def normalize_workflow_config(config: Any, resolver=None) -> Any:
         pid = raw_phase.get("id")
         p_copy = dict(raw_phase)
         p_copy.setdefault("execution", "parallel")
+        p_copy.setdefault("depends_on", [])
+        if "available" in p_copy and "anchor" not in p_copy:
+            try:
+                parsed_avail = parse_available_rule(p_copy["available"], context=f"phase {pid}.available")
+            except ValueError:
+                parsed_avail = None
+            if parsed_avail and parsed_avail.anchor_spec:
+                p_copy["anchor"] = parsed_avail.anchor_spec
         norm_steps = []
         for raw_step in raw_phase["steps"]:
             if (
@@ -146,6 +158,7 @@ class StepDefinition:
     depends_on: tuple[str, ...]
     required_tools: tuple[str, ...]
     raw: Mapping[str, Any]
+    available: Optional[AvailableRule] = None
 
     @property
     def key(self) -> str:
@@ -169,6 +182,8 @@ class PhaseDefinition:
     conditional: bool
     steps: tuple[StepDefinition, ...]
     raw: Mapping[str, Any]
+    depends_on: tuple[str, ...] = ()
+    available: Optional[AvailableRule] = None
 
     def step(self, step_id: str) -> Optional[StepDefinition]:
         return next((step for step in self.steps if step.id == step_id), None)
@@ -202,7 +217,7 @@ class WorkflowDefinition:
             _reject_unknown_keys(
                 raw_phase,
                 {
-                    "id", "name", "anchor", "execution",
+                    "id", "name", "anchor", "available", "depends_on", "execution",
                     "steps", "show_pipeline_runs", "conditional",
                 },
                 f"phase {phase_id}",
@@ -221,6 +236,30 @@ class WorkflowDefinition:
                 not isinstance(anchor, str) or not re.fullmatch(r"CCD(?:[+-]\d+)?", anchor)
             ):
                 raise WorkflowConfigError(f"Phase {phase_id} has invalid anchor {anchor!r}.")
+            raw_phase_available = raw_phase.get("available")
+            try:
+                phase_available = parse_available_rule(
+                    raw_phase_available if raw_phase_available is not None else anchor,
+                    context=f"phase {phase_id}.available",
+                )
+            except ValueError as exc:
+                raise WorkflowConfigError(str(exc)) from exc
+            if (
+                anchor is not None
+                and raw_phase_available is not None
+                and (phase_available is None or phase_available.anchor_spec != anchor)
+            ):
+                raise WorkflowConfigError(
+                    f"Phase {phase_id} anchor {anchor!r} conflicts with available {raw_phase_available!r}."
+                )
+            if anchor is None and phase_available and phase_available.anchor_spec:
+                anchor = phase_available.anchor_spec
+            phase_deps = raw_phase.get("depends_on", [])
+            if not isinstance(phase_deps, list) or any(
+                not isinstance(dep, str) or not dep.strip() or dep != dep.strip()
+                for dep in phase_deps
+            ):
+                raise WorkflowConfigError(f"Phase {phase_id} has invalid depends_on.")
             phase_name = _required_name(raw_phase.get("name"), f"phase {phase_id}")
             conditional = raw_phase.get("conditional", False)
             if not isinstance(conditional, bool):
@@ -250,7 +289,7 @@ class WorkflowDefinition:
                     raw_step,
                     {
                         "id", "name", "kind", "owner", "source", "gate",
-                        "attest", "depends_on", "required_tools", "requires_approval",
+                        "attest", "available", "depends_on", "required_tools", "requires_approval",
                         "approval_command",
                         "write_command", "write_precondition", "manual_result", "repeatable",
                         "pollable", "refresh_invalidation", "effect_mode",
@@ -456,6 +495,13 @@ class WorkflowDefinition:
                     raise WorkflowConfigError(
                         f"Only external or approval_gate steps may declare requires_approval: true ({phase_id}.{step_id})."
                     )
+                try:
+                    step_available = parse_available_rule(
+                        raw_step.get("available"),
+                        context=f"step {phase_id}.{step_id}.available",
+                    )
+                except ValueError as exc:
+                    raise WorkflowConfigError(str(exc)) from exc
                 step = StepDefinition(
                     phase_id=phase_id,
                     id=step_id,
@@ -478,6 +524,7 @@ class WorkflowDefinition:
                     depends_on=tuple(dependencies),
                     required_tools=tuple(required_tools),
                     raw=_freeze(raw_step),
+                    available=step_available,
                 )
                 steps.append(step)
                 step_by_key[step.key] = step
@@ -491,6 +538,8 @@ class WorkflowDefinition:
                     conditional=conditional,
                     steps=tuple(steps),
                     raw=_freeze(raw_phase),
+                    depends_on=tuple(phase_deps),
+                    available=phase_available,
                 )
             )
 
@@ -653,7 +702,37 @@ def _validate_dependencies(phases: list[PhaseDefinition]) -> None:
     by_id = {step.key: step for phase in phases for step in phase.steps}
     positions = {step.key: (pi, si) for pi, phase in enumerate(phases)
                  for si, step in enumerate(phase.steps)}
+    phase_positions = {phase.id: pi for pi, phase in enumerate(phases)}
     by_phase = {phase.id: phase for phase in phases}
+
+    for phase in phases:
+        for dep in phase.depends_on:
+            if "." in dep:
+                if dep not in by_id:
+                    raise WorkflowConfigError(
+                        f"Phase {phase.id} depends on unknown step {dep}."
+                    )
+                dep_phase_id = by_id[dep].phase_id
+                if dep_phase_id == phase.id:
+                    raise WorkflowConfigError(
+                        f"Phase {phase.id} cannot depend on its own step {dep}."
+                    )
+                if phase_positions[dep_phase_id] > phase_positions[phase.id]:
+                    raise WorkflowConfigError(
+                        f"Phase {phase.id} cannot depend on later step {dep}."
+                    )
+            else:
+                if dep not in by_phase:
+                    raise WorkflowConfigError(
+                        f"Phase {phase.id} depends on unknown phase {dep}."
+                    )
+                if dep == phase.id:
+                    raise WorkflowConfigError(f"Phase {phase.id} cannot depend on itself.")
+                if phase_positions[dep] > phase_positions[phase.id]:
+                    raise WorkflowConfigError(
+                        f"Phase {phase.id} cannot depend on later phase {dep}."
+                    )
+
     for step in by_id.values():
         for dependency in WorkflowDefinition.dependency_keys(step):
             if dependency not in by_id:

@@ -1,7 +1,6 @@
-# Per-release optional automation accelerators.
+# Per-release unified automation accelerator.
 # Automations are non-blocking convenience accelerators: disabling or deleting them
 # never blocks or breaks interactive or manual workflow progression.
-# Step membership is single-sourced on each step module (`AUTOMATION` / `AUTOMATIONS`).
 
 version: 2
 provider_defaults:
@@ -12,50 +11,12 @@ provider_defaults:
   browserHeadless: true
   teamsNotify: never
 automations:
-- slug: morning-step-drain
-  label: morning step drain
+- slug: release-drainer
+  label: release drainer
   scope: Release-wide
-  prompt_kind: morning-step-drain
-  daily_at: "07:00"
+  prompt_kind: release-drainer
+  daily_window: "07:00-19:00/2h"
   steps: []
   cleanup_when: release_done
-  purpose: Run once daily at 7:00 AM before the workday to drain all eligible non-blocking steps and park
-    cleanly at the next human gate
-- slug: ccd-localization-watcher
-  label: localization check & reminder
-  phase: ccd
-  prompt_kind: ccd-localization-watcher
-  ccd_window: "08:00-22:00/2h"
-  on_demand: true
-  provision_when: phase_reached:ccd
-  cleanup_when:
-  - phase_done:ccd
-  - ccd_after:22:00
-  purpose: Every 2 hours on CCD (8:00 AM–10:00 PM), check localization trigger & PR merge status, remind
-    the release owner if incomplete, and auto-delete when Phase 1 completes or at 10:00 PM on CCD
-- slug: finalize-orchestrator-poller
-  label: Release Orchestrator poller
-  phase: finalize
-  every: 2 hours
-  cleanup_when: steps_done
-  purpose: Poll final release orchestration every 2 hours until the GitHub release-notes gate, capture
-    final build identities, and escalate once after 8 hours
-- slug: build-verify-rc-poller
-  label: RC verification poller
-  phase: build_verify
-  every: 30 minutes
-  on_demand: true
-  provision_when: step_status:build_verify.mrwp_ecs:in_flight
-  cleanup_when: phase_done:build_verify
-  purpose: Poll a re-triggered RC every 30 min; hold while in-flight, re-apply the gate on completion,
-    courtesy-nudge the owner at 6h
-- slug: bug-bash-update-poller
-  label: bug-bash update poller
-  phase: bug_bash
-  every: 3 hours
-  on_demand: true
-  cleanup_when:
-  - step_flag:bug_bash.bugbash_updates:poll_complete
-  - phase_done:bug_bash
-  purpose: Post a Bug Bash progress update at the configured interval (working hours); @mention owners
-    with remaining tests; stop when all complete or the owner signs off
+  purpose: Run every 2 hours from 7:00 AM to 7:00 PM to drain eligible steps from entry gate through
+    release completion, write drain-runs.jsonl, and send paced Scout bot + email calls-to-action

@@ -79,7 +79,8 @@ def main(argv=None):
                     return 1
             diagnostics = {
                 "status", "list", "inspect-state", "workflow-adopt", "mock-spec",
-                "step-info", "gate-info", "task-history", "log", "journal", "paths", "preview-release",
+                "step-info", "gate-info", "task-history", "log", "drain-log",
+                "journal", "paths", "preview-release",
                 "bugbash-progress", "m365-capabilities",
             }
             pending_deliveries = (

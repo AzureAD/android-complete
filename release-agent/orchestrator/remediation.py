@@ -110,9 +110,11 @@ def _classify_external_fix(
         if step_id == "lockdown" or ("ccoa" in low and "overlap" in low):
             return (
                 f"CCOA Change-Freeze / Lockdown Schedule ({CCOA_URL})",
-                f"{clean_reason} Reschedule past the freeze with "
+                f"{clean_reason} Action required: inspect the CCOA schedule ({CCOA_URL}) first — "
+                f"either shift CCD outside the freeze with "
                 f"`set-ccd --release {release_id} --date <YYYY-MM-DD> --reason \"Shift past CCOA lockdown\"` "
-                "and re-run, or waive with `skip` if you have an approved lockdown exception.",
+                "and re-run, confirm your rollout dates avoid shipping during the freeze (`complete-manually`), "
+                "or waive (`skip`) ONLY if you have an approved CCOA lockdown exception.",
             )
         if step_id == "cg":
             return (

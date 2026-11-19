@@ -54,7 +54,6 @@ REQUIRED_TOOLS = ('az',)
 REQUIRES_APPROVAL = False
 REPEATABLE = True
 POLLABLE = True
-AUTOMATION = "ccd-localization-watcher"
 WRITE_COMMAND = "launch-localization"
 
 # Coordinates (org/project/pipeline id, repo urls, the Code-reviews chat) come from

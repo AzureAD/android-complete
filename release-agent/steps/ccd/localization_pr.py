@@ -27,7 +27,6 @@ KIND = "agent"
 NAME = "Verify localization PR & merge status"
 REQUIRED_TOOLS = ("az",)
 EFFECT_MODE = "read_only"
-AUTOMATION = "ccd-localization-watcher"
 
 
 @dataclass(frozen=True)

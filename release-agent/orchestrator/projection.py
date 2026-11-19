@@ -27,6 +27,9 @@ class PhaseReadiness:
     complete: bool
     due: bool
     opens: Optional[date]
+    prerequisites_met: bool = True
+    available_at: Optional[str] = None
+    unavailable_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,12 @@ class StepReadiness:
     reserved: bool
     recovery: bool
     mocked: bool
+    available_at: Optional[str] = None
+    unavailable_reason: Optional[str] = None
+
+    @property
+    def available(self) -> bool:
+        return self.time_ready
 
 
 @dataclass(frozen=True)
@@ -164,32 +173,53 @@ class StateProjection:
     def frontier_phase(self) -> Optional[PhaseDefinition]:
         return self.scheduling().frontier
 
-    def phase_anchor_date(self, phase: PhaseDefinition) -> Optional[date]:
+    def phase_prerequisites_met(self, phase: PhaseDefinition) -> bool:
+        for dep in phase.depends_on:
+            if "." in dep:
+                dep_step = self.workflow.step_by_key[dep]
+                dep_phase = self.workflow.phase(dep_step.phase_id)
+                if dep_phase and self.phase_included(dep_phase) and not self.step_complete(dep_step):
+                    return False
+            else:
+                dep_phase = self.workflow.phase(dep)
+                if dep_phase and self.phase_included(dep_phase) and not self.phase_complete(dep_phase):
+                    return False
+        return True
+
+    def phase_availability(self, phase: PhaseDefinition) -> schedule.AvailabilityStatus:
         ccd = schedule.parse_date(self.state.ccd)
-        if not phase.anchor or ccd is None:
-            return None
-        return schedule.anchor_date(ccd, phase.anchor)
+        return schedule.evaluate_availability(
+            phase.available,
+            ccd,
+            as_of=self.as_of,
+            now_local=self.now_local,
+        )
+
+    def phase_anchor_date(self, phase: PhaseDefinition) -> Optional[date]:
+        return self.phase_availability(phase).opens_date
 
     def phase_due(self, phase: PhaseDefinition) -> bool:
-        anchor = self.phase_anchor_date(phase)
-        return anchor is None or self.as_of >= anchor
+        return self.phase_availability(phase).available
 
-    def step_time_ready(self, step: StepDefinition) -> bool:
-        fire = self.fire_at(step)
-        if not fire:
-            return True
-        hour, minute = (int(value) for value in fire.split(":"))
-        fire_time = time(hour, minute)
+    def step_availability(self, step: StepDefinition) -> schedule.AvailabilityStatus:
+        ccd = schedule.parse_date(self.state.ccd)
         phase = self.workflow.phase(step.phase_id)
         anchor = self.phase_anchor_date(phase) if phase else None
-        if anchor is not None:
-            if self.as_of > anchor:
-                return True
-            if self.as_of < anchor:
-                return False
-        return self.now_local.time() >= fire_time
+        return schedule.evaluate_availability(
+            step.available,
+            ccd,
+            as_of=self.as_of,
+            now_local=self.now_local,
+            fire_at_local=self.fire_at(step),
+            anchor_fallback=anchor,
+        )
+
+    def step_time_ready(self, step: StepDefinition) -> bool:
+        return self.step_availability(step).available
 
     def prerequisites_met(self, phase: PhaseDefinition, step: StepDefinition) -> bool:
+        if not self.phase_prerequisites_met(phase):
+            return False
         if any(
             not self.step_complete(self.workflow.step_by_key[dependency])
             for dependency in self.workflow.dependency_keys(step)
@@ -207,16 +237,26 @@ class StateProjection:
     def scheduling(self, attempted: Iterable[str] = ()) -> SchedulingResult:
         """Select without invoking handlers, reserving work, or changing facts."""
         attempted = frozenset(attempted)
-        phases = tuple(
-            PhaseReadiness(
-                phase, self.phase_included(phase), self.phase_complete(phase),
-                self.phase_due(phase), self.phase_anchor_date(phase),
+        phase_items = []
+        for phase in self.workflow.phases:
+            p_avail = self.phase_availability(phase)
+            phase_items.append(
+                PhaseReadiness(
+                    phase,
+                    self.phase_included(phase),
+                    self.phase_complete(phase),
+                    p_avail.available,
+                    p_avail.opens_date,
+                    self.phase_prerequisites_met(phase),
+                    p_avail.available_at,
+                    p_avail.reason,
+                )
             )
-            for phase in self.workflow.phases
-        )
-        frontier = next(
-            (item.definition for item in phases if item.included and not item.complete),
-            None,
+        phases = tuple(phase_items)
+        incomplete_phases = [item for item in phases if item.included and not item.complete]
+        frontier = (
+            next((item.definition for item in incomplete_phases if item.prerequisites_met), None)
+            or next((item.definition for item in incomplete_phases), None)
         )
         readiness = []
         for phase in self.workflow.phases:
@@ -229,10 +269,12 @@ class StateProjection:
                     and record.status in ("running", "in_flight", "blocked")
                     and execution.get("effect_mode") == step.effect_mode.value
                 )
+                s_avail = self.step_availability(step)
                 readiness.append(StepReadiness(
                     step, self.step_complete(step), record.status,
-                    self.prerequisites_met(phase, step), self.step_time_ready(step),
+                    self.prerequisites_met(phase, step), s_avail.available,
                     bool(execution), recovery, self.is_mocked(step),
+                    s_avail.available_at, s_avail.reason,
                 ))
         steps = tuple(readiness)
         suspension = (
@@ -250,8 +292,12 @@ class StateProjection:
                 item for item in steps
                 if item.definition.phase_id == frontier.id and not item.complete
             ]
-            phase_due = next(item.due for item in phases if item.definition == frontier)
-            if not phase_due:
+            frontier_readiness = next(item for item in phases if item.definition == frontier)
+            if not frontier_readiness.prerequisites_met:
+                focus = HoldProjection(
+                    HoldKind.WAITING.value, frontier.id, outstanding[0].definition.id, reason="phase_prerequisite"
+                )
+            elif not frontier_readiness.due:
                 focus = HoldProjection(HoldKind.SCHEDULED.value, frontier.id, outstanding[0].definition.id)
             else:
                 eligible = [item for item in outstanding if item.prerequisites_met]

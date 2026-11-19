@@ -546,17 +546,33 @@ class Orchestrator(StatusViewMixin):
             readiness = selection.phase(phase.id)
             if not readiness.due:
                 opens = readiness.opens
-                days = (opens - self.as_of).days
-                action.message = (
-                    f"{phase.name} opens {opens.isoformat()} "
-                    f"({schedule.humanize_delta(days)}). Nothing to do yet."
-                )
+                if opens is not None and self.as_of < opens:
+                    days = (opens - self.as_of).days
+                    action.message = (
+                        f"{phase.name} opens {opens.isoformat()} "
+                        f"({schedule.humanize_delta(days)}). Nothing to do yet."
+                    )
+                else:
+                    detail = readiness.unavailable_reason or readiness.available_at or "scheduled"
+                    action.message = f"{phase.name} is not available yet ({detail}). Nothing to do yet."
             else:
                 fire = self.handler(phase.id, step.id).fire_at_local
-                action.message = (
-                    f"{phase.name} → {step.name} is scheduled for {fire} "
-                    "(fires via its timed automation). Nothing to do yet."
-                )
+                step_readiness = selection.step(phase.id, step.id)
+                if fire and step.available is None:
+                    action.message = (
+                        f"{phase.name} → {step.name} is scheduled for {fire} "
+                        "(fires via its timed automation). Nothing to do yet."
+                    )
+                else:
+                    detail = (
+                        step_readiness.unavailable_reason
+                        or step_readiness.available_at
+                        or fire
+                        or "waiting for availability window"
+                    )
+                    action.message = (
+                        f"{phase.name} → {step.name} is scheduled ({detail}). Nothing to do yet."
+                    )
         elif hold.kind == "in_flight":
             record = self.state.get_step(phase.id, step.id)
             action.message = (

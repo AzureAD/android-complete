@@ -218,8 +218,6 @@ def guided_followup(orch, report=None) -> dict:
         result["display_markdown"] = report["display_markdown"]
     if report.get("owner_prompt") is not None:
         result["owner_prompt"] = report["owner_prompt"]
-    if report.get("ccd_watcher_setup") is not None:
-        result["ccd_watcher_setup"] = report["ccd_watcher_setup"]
     return result
 
 

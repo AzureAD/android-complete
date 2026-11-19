@@ -1,37 +1,40 @@
-# Release Orchestrator — workflow topology (phases, schedule anchors, and step dependency graph).
+# Release Orchestrator — workflow topology (phases, availability rules, and step dependency graph).
 # Step metadata (name, kind, requires_approval, required_tools, effect_mode, write_command,
-# KNOWLEDGE, MOCKABLE, AUTOMATION) lives inside each co-located module `steps/<phase>/<step>.py`.
+# AVAILABLE, KNOWLEDGE, MOCKABLE) lives inside each co-located module `steps/<phase>/<step>.py`.
 # Pure YAML-only human/gate/placeholder steps (without a Python module) declare `name` and `kind` inline.
 
 phases:
   - id: preflight
     name: "Pre-flight & Code Complete"
-    anchor: "CCD-7"
+    depends_on: []
+    available: "CCD-7"
     steps:
-      - { id: notice }
-      - { id: flight_reminder }
-      - { id: lockdown }
-      - { id: breaking }
-      - { id: cg }
-      - { id: oneauth_access }
-      - { id: cron }
-      - { id: vitals }
+      - { id: notice, depends_on: [] }
+      - { id: flight_reminder, depends_on: [] }
+      - { id: lockdown, depends_on: [] }
+      - { id: breaking, depends_on: [] }
+      - { id: cg, depends_on: [] }
+      - { id: oneauth_access, depends_on: [] }
+      - { id: cron, depends_on: [] }
+      - { id: vitals, depends_on: [] }
 
   - id: ccd
     name: "Code Complete Day"
-    anchor: "CCD"
+    depends_on: [preflight]
+    available: "CCD"
     steps:
-      - { id: final_reminder }
-      - { id: pr_reminder }
-      - { id: localization }
+      - { id: final_reminder, depends_on: [] }
+      - { id: pr_reminder, depends_on: [] }
+      - { id: localization, depends_on: [] }
       - { id: localization_pr, depends_on: [localization] }
 
   - id: build_verify
     name: "Build & Lib Verification"
-    anchor: "CCD+1"
+    depends_on: [ccd]
+    available: "CCD+1"
     show_pipeline_runs: true
     steps:
-      - { id: checker_fired }
+      - { id: checker_fired, depends_on: [] }
       - { id: orchestrator_health, depends_on: [checker_fired] }
       - { id: mrwp_ecs, depends_on: [orchestrator_health] }
       - { id: mrwp_local, depends_on: [mrwp_ecs] }
@@ -42,6 +45,7 @@ phases:
 
   - id: bug_bash
     name: "Test / Bug Bash"
+    depends_on: [build_verify]
     steps:
       - { id: clone_plans_broker, depends_on: [build_verify.mrwp_ecs, build_verify.mrwp_local] }
       - { id: clone_plans_auth, depends_on: [build_verify.auth_ecs] }
@@ -57,6 +61,7 @@ phases:
 
   - id: finalize
     name: "Finalize & Publish"
+    depends_on: [bug_bash]
     steps:
       - { id: remove_rc_tags_gate, depends_on: [bug_bash.bugbash_complete] }
       - { id: orchestrator_finalization, depends_on: [remove_rc_tags_gate] }
@@ -70,6 +75,7 @@ phases:
 
   - id: rollout_start
     name: "Rollout Start"
+    depends_on: [finalize]
     steps:
       - { id: identify_auth_build, depends_on: [finalize.orchestrator_finalization] }
       - { id: tag_authenticator, depends_on: [identify_auth_build] }
@@ -82,6 +88,7 @@ phases:
 
   - id: monitor
     name: "Monitoring & Ring Advancement"
+    depends_on: [rollout_start]
     steps:
       - { id: health_report, name: "Crash-% health report (halt/hotfix/proceed)", kind: auto, implementation: dummy, depends_on: [rollout_start.beta_play_store] }
       - { id: adoption, name: "Adoption % vs ring threshold", kind: auto, implementation: dummy, depends_on: [rollout_start.beta_play_store] }
@@ -89,31 +96,34 @@ phases:
       - { id: advance, name: "Ring advance / halt decision", kind: approval_gate, depends_on: [guards] }
       - { id: progress_email, name: "Send progression email on advance", kind: auto, implementation: dummy, depends_on: [advance] }
       - { id: dashboard, name: "Update ADX dashboard params", kind: auto, implementation: dummy, depends_on: [advance] }
-      - { id: crash_annot, name: "Flag new vs existing crashes", kind: human_action }
-      - { id: hotfix_eval, name: "Surface hotfix-trigger criteria", kind: human_action }
+      - { id: crash_annot, name: "Flag new vs existing crashes", kind: human_action, depends_on: [health_report] }
+      - { id: hotfix_eval, name: "Surface hotfix-trigger criteria", kind: human_action, depends_on: [health_report] }
 
   - id: partner
     name: "Partner Stores"
+    depends_on: [monitor]
     steps:
-      - { id: china, name: "China publish flow", kind: human_action }
-      - { id: samsung, name: "Samsung portal upload", kind: human_action }
+      - { id: china, name: "China publish flow", kind: human_action, depends_on: [monitor.advance] }
+      - { id: samsung, name: "Samsung portal upload", kind: human_action, depends_on: [monitor.advance] }
       - { id: ngms, name: "Verify nGMS upload", kind: auto, implementation: dummy, depends_on: [monitor.advance] }
       - { id: teams_dev, name: "Teams Devices announcement", kind: auto, implementation: dummy, depends_on: [monitor.advance] }
       - { id: approvals, name: "Track partner approvals + final notice", kind: auto, implementation: dummy, depends_on: [china, samsung, ngms] }
-      - { id: review_times, name: "Maintain review-times table", kind: auto, implementation: dummy }
+      - { id: review_times, name: "Maintain review-times table", kind: auto, implementation: dummy, depends_on: [approvals] }
 
   - id: hotfix
     name: "Hotfix (conditional)"
     conditional: true
+    depends_on: []
     steps:
-      - { id: cherry, name: "Cherry-pick PRs", kind: auto, implementation: dummy }
+      - { id: cherry, name: "Cherry-pick PRs", kind: auto, implementation: dummy, depends_on: [] }
       - { id: rebuild, name: "Rebuild + retain hotfix build", kind: auto, implementation: dummy, depends_on: [cherry] }
       - { id: smoke, name: "P0 smoke subset", kind: approval_gate, depends_on: [rebuild] }
       - { id: expedite, name: "Expedited rollout", kind: auto, implementation: dummy, depends_on: [smoke] }
-      - { id: alpha_orgs, name: "Track alpha-mitigation orgs to remove", kind: auto, implementation: dummy }
+      - { id: alpha_orgs, name: "Track alpha-mitigation orgs to remove", kind: auto, implementation: dummy, depends_on: [expedite] }
 
   - id: close
     name: "Release Close"
+    depends_on: [monitor, partner]
     steps:
       - { id: closeout, name: "Close-out checklist (approvals/comms/bugs)", kind: auto, implementation: dummy, depends_on: [partner.approvals, monitor.advance] }
       - { id: done, name: "Release complete", kind: approval_gate, depends_on: [closeout] }

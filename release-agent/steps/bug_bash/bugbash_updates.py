@@ -82,7 +82,6 @@ NAME = 'Post bug-bash progress updates (first post + periodic poller)'
 REQUIRED_TOOLS = ('az', 'workiq')
 REQUIRES_APPROVAL = False
 REPEATABLE = True
-AUTOMATION = 'bug-bash-update-poller'
 NOTIFICATION = True
 
 BROKER_SUITE_NAME = "Manual Tests (Android Broker)"
@@ -156,9 +155,14 @@ def plan_links(context):
     ] + monthly_links
 
 
+DEFAULT_POLL_HOURS = 3
+
+
 def poll_interval_hours(context, config_path):
-    """Use the provisioning interval for notification checkpoints/expiry too."""
+    """Use the provisioning interval for notification checkpoints/expiry (default 3h)."""
     specs = [spec for spec in context.services.assets.automation_definitions(config_path) if spec.get("slug") == "bug-bash-update-poller"]
+    if not specs:
+        return DEFAULT_POLL_HOURS
     interval = specs[0].get("every") if len(specs) == 1 else None
     match = re.fullmatch(r"([1-9][0-9]*) hours?", interval) if isinstance(interval, str) else None
     hours = int(match[1]) if match else 0

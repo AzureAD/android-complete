@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, datetime, timedelta, timezone
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Mapping, Optional, Tuple
 
 # The release runs on the OWNER's wall clock, not the host's. On a UTC host, a bare
 # date.today() rolls to the next day at UTC-midnight (evening the day before, Pacific),
@@ -333,3 +334,360 @@ def ccd_viability(ccd: date, as_of: date, open_spec: str = "CCD-7") -> dict:
         "runway_days": runway_days,
         "compressed": compressed,
     }
+
+
+# --------------------------------------------------- US holidays & business time
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """The date of the n-th `weekday` (Mon=0..Sun=6) of `month` in `year` (n>=1)."""
+    d = date(year, month, 1)
+    offset = (weekday - d.weekday()) % 7
+    return d + timedelta(days=offset + 7 * (n - 1))
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    """The date of the LAST `weekday` of `month`."""
+    nxt = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    d = nxt - timedelta(days=1)
+    return d - timedelta(days=(d.weekday() - weekday) % 7)
+
+
+def _observed(d: date) -> date:
+    """Federal-holiday observation: Sat -> Fri, Sun -> Mon."""
+    if d.weekday() == 5:
+        return d - timedelta(days=1)
+    if d.weekday() == 6:
+        return d + timedelta(days=1)
+    return d
+
+
+def us_holidays(year: int) -> set[date]:
+    """Observed US federal holiday dates for `year`."""
+    return {
+        _observed(date(year, 1, 1)),                 # New Year's Day
+        _nth_weekday(year, 1, 0, 3),                 # MLK Jr. — 3rd Mon Jan
+        _nth_weekday(year, 2, 0, 3),                 # Presidents' Day — 3rd Mon Feb
+        _last_weekday(year, 5, 0),                   # Memorial Day — last Mon May
+        _observed(date(year, 6, 19)),                # Juneteenth
+        _observed(date(year, 7, 4)),                 # Independence Day
+        _nth_weekday(year, 9, 0, 1),                 # Labor Day — 1st Mon Sep
+        _nth_weekday(year, 10, 0, 2),                # Columbus/Indigenous — 2nd Mon Oct
+        _observed(date(year, 11, 11)),               # Veterans Day
+        _nth_weekday(year, 11, 3, 4),                # Thanksgiving — 4th Thu Nov
+        _observed(date(year, 12, 25)),               # Christmas
+    }
+
+
+def is_holiday(d: date) -> bool:
+    return d in us_holidays(d.year)
+
+
+def is_business_day(d: date) -> bool:
+    """True if `d` is Mon-Fri and not an observed US federal holiday."""
+    return d.weekday() < 5 and not is_holiday(d)
+
+
+def next_business_day(d: date) -> date:
+    """Return `d` if it is a business day, else the next business day after `d`."""
+    cur = d
+    while not is_business_day(cur):
+        cur += timedelta(days=1)
+    return cur
+
+
+def previous_business_day(d: date) -> date:
+    """Return the most recent business day strictly before `d`."""
+    cur = d - timedelta(days=1)
+    while not is_business_day(cur):
+        cur -= timedelta(days=1)
+    return cur
+
+
+def business_days_until(start: date, target: date) -> int:
+    """Count business days strictly after `start` up to and including `target`
+    (negative when `target < start`, 0 when `target == start`)."""
+    if target == start:
+        return 0
+    if target > start:
+        cur = start + timedelta(days=1)
+        count = 0
+        while cur <= target:
+            if is_business_day(cur):
+                count += 1
+            cur += timedelta(days=1)
+        return count
+    return -business_days_until(target, start)
+
+
+def business_hours_between(
+    start_dt: datetime,
+    end_dt: datetime,
+    *,
+    tz=None,
+    day_start_hour: int = 7,
+    day_end_hour: int = 19,
+) -> float:
+    """Elapsed business hours between `start_dt` and `end_dt` across owner-local
+    business days within `[day_start_hour:00, day_end_hour:00)`."""
+    zone = tz if tz is not None else (end_dt.tzinfo or start_dt.tzinfo or get_tz())
+    s = start_dt.astimezone(zone) if (zone and start_dt.tzinfo) else start_dt
+    e = end_dt.astimezone(zone) if (zone and end_dt.tzinfo) else end_dt
+    if e <= s:
+        return 0.0
+    total_seconds = 0.0
+    cur_date = s.date()
+    end_date = e.date()
+    while cur_date <= end_date:
+        if is_business_day(cur_date):
+            win_start = datetime.combine(cur_date, time(day_start_hour, 0), s.tzinfo)
+            win_end = datetime.combine(cur_date, time(day_end_hour, 0), s.tzinfo)
+            seg_start = max(s, win_start)
+            seg_end = min(e, win_end)
+            if seg_end > seg_start:
+                total_seconds += (seg_end - seg_start).total_seconds()
+        cur_date += timedelta(days=1)
+    return round(total_seconds / 3600.0, 2)
+
+
+# --------------------------------------------------- declarative `available` rules
+
+_NOT_BEFORE_RE = re.compile(
+    r"^CCD\s*([+-]\s*\d+)?(?:\s+((?:[01]\d|2[0-3]):[0-5]\d))?$",
+    re.IGNORECASE,
+)
+_HOURS_WINDOW_RE = re.compile(
+    r"^((?:[01]\d|2[0-3]):[0-5]\d)-((?:[01]\d|2[0-3]):[0-5]\d)$"
+)
+_WEEKDAY_BY_LOWER = {name.lower(): name for name in calendar.day_name}
+
+
+@dataclass(frozen=True)
+class AvailableRule:
+    """Declarative execution-eligibility window for a phase or step."""
+
+    not_before: Optional[str] = None
+    weekdays_only: bool = False
+    forbid_weekdays: tuple[str, ...] = ()
+    hours_local: Optional[str] = None
+
+    @property
+    def anchor_spec(self) -> Optional[str]:
+        if not self.not_before:
+            return None
+        return self.not_before.split(" ", 1)[0]
+
+    @property
+    def not_before_time(self) -> Optional[str]:
+        if not self.not_before or " " not in self.not_before:
+            return None
+        return self.not_before.split(" ", 1)[1]
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if self.not_before is not None:
+            out["not_before"] = self.not_before
+        if self.weekdays_only:
+            out["weekdays_only"] = True
+        if self.forbid_weekdays:
+            out["forbid_weekdays"] = list(self.forbid_weekdays)
+        if self.hours_local is not None:
+            out["hours_local"] = self.hours_local
+        return out
+
+
+@dataclass(frozen=True)
+class AvailabilityStatus:
+    """Evaluated availability of a phase or step at a specific owner-local instant."""
+
+    available: bool
+    opens_date: Optional[date] = None
+    available_at: Optional[str] = None
+    reason: Optional[str] = None
+
+
+def _normalize_not_before(value: Any, context: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{context} not_before must be a non-empty string.")
+    m = _NOT_BEFORE_RE.match(value.strip())
+    if not m:
+        raise ValueError(
+            f"{context} has invalid availability spec {value!r} "
+            "(expected e.g. 'CCD-7', 'CCD', 'CCD+1', or 'CCD+1 09:00')."
+        )
+    offset = m.group(1).replace(" ", "") if m.group(1) else ""
+    hm = m.group(2)
+    base = f"CCD{offset}"
+    return f"{base} {hm}" if hm else base
+
+
+def parse_available_rule(raw: Any, *, context: str = "available") -> Optional[AvailableRule]:
+    """Validate and normalize a phase/step `available` specification."""
+    if raw is None:
+        return None
+    if isinstance(raw, AvailableRule):
+        return None if raw.to_dict() == {} else raw
+    if isinstance(raw, str):
+        return AvailableRule(not_before=_normalize_not_before(raw, context))
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{context} must be a string or mapping.")
+    allowed = {"not_before", "weekdays_only", "forbid_weekdays", "hours_local"}
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ValueError(
+            f"Unknown {context} field(s): {', '.join(sorted(str(k) for k in unknown))}"
+        )
+    not_before = (
+        _normalize_not_before(raw["not_before"], context)
+        if raw.get("not_before") is not None
+        else None
+    )
+    weekdays_only = raw.get("weekdays_only", False)
+    if type(weekdays_only) is not bool:
+        raise ValueError(f"{context}.weekdays_only must be a boolean.")
+    raw_forbid = raw.get("forbid_weekdays", ())
+    if not isinstance(raw_forbid, (list, tuple)):
+        raise ValueError(f"{context}.forbid_weekdays must be a list of weekday names.")
+    forbid: list[str] = []
+    for item in raw_forbid:
+        if not isinstance(item, str) or item.strip().lower() not in _WEEKDAY_BY_LOWER:
+            raise ValueError(
+                f"{context}.forbid_weekdays contains invalid weekday {item!r}."
+            )
+        canon = _WEEKDAY_BY_LOWER[item.strip().lower()]
+        if canon not in forbid:
+            forbid.append(canon)
+    if set(forbid) >= set(calendar.day_name) or (
+        weekdays_only and set(forbid) >= set(calendar.day_name[:5])
+    ):
+        raise ValueError(f"{context}.forbid_weekdays leaves no eligible days.")
+    hours_local = raw.get("hours_local")
+    if hours_local is not None:
+        if not isinstance(hours_local, str) or not _HOURS_WINDOW_RE.match(hours_local.strip()):
+            raise ValueError(
+                f"{context}.hours_local must match 'HH:MM-HH:MM' (got {hours_local!r})."
+            )
+        hours_local = hours_local.strip()
+        s_txt, e_txt = hours_local.split("-", 1)
+        sh, sm = (int(v) for v in s_txt.split(":"))
+        eh, em = (int(v) for v in e_txt.split(":"))
+        if time(sh, sm) >= time(eh, em):
+            raise ValueError(
+                f"{context}.hours_local start must be earlier than end ({hours_local!r})."
+            )
+    rule = AvailableRule(
+        not_before=not_before,
+        weekdays_only=weekdays_only,
+        forbid_weekdays=tuple(forbid),
+        hours_local=hours_local,
+    )
+    return None if rule.to_dict() == {} else rule
+
+
+def _parse_hm(hm: str) -> time:
+    h, m = (int(v) for v in hm.split(":"))
+    return time(h, m)
+
+
+def _next_permitted_day(
+    start_date: date,
+    *,
+    weekdays_only: bool,
+    forbid_weekdays: tuple[str, ...],
+) -> date:
+    cur = start_date
+    for _ in range(370):
+        if weekdays_only and not is_business_day(cur):
+            cur += timedelta(days=1)
+            continue
+        if calendar.day_name[cur.weekday()] in forbid_weekdays:
+            cur += timedelta(days=1)
+            continue
+        return cur
+    return cur
+
+
+def evaluate_availability(
+    rule: Optional[AvailableRule],
+    ccd: Optional[date],
+    *,
+    as_of: date,
+    now_local: datetime,
+    fire_at_local: Optional[str] = None,
+    anchor_fallback: Optional[date] = None,
+) -> AvailabilityStatus:
+    """Evaluate a declarative `AvailableRule` (plus optional `fire_at_local`) on the owner's clock."""
+    opens_date: Optional[date] = None
+    if rule and rule.anchor_spec and ccd is not None:
+        opens_date = anchor_date(ccd, rule.anchor_spec)
+    elif anchor_fallback is not None:
+        opens_date = anchor_fallback
+
+    nb_time = rule.not_before_time if rule else None
+    effective_gate_time = nb_time or fire_at_local
+    if opens_date is not None:
+        if as_of < opens_date:
+            at = f"{opens_date.isoformat()}T{effective_gate_time}" if effective_gate_time else opens_date.isoformat()
+            return AvailabilityStatus(False, opens_date, at, f"Not available before {at}")
+        if as_of == opens_date and nb_time and now_local.time() < _parse_hm(nb_time):
+            at = f"{opens_date.isoformat()}T{nb_time}"
+            return AvailabilityStatus(False, opens_date, at, f"Not available before {at}")
+
+    if fire_at_local:
+        ft = _parse_hm(fire_at_local)
+        if opens_date is not None:
+            if as_of == opens_date and now_local.time() < ft:
+                at = f"{opens_date.isoformat()}T{fire_at_local}"
+                return AvailabilityStatus(False, opens_date, at, f"Not available before {at}")
+        elif now_local.time() < ft:
+            at = f"{as_of.isoformat()}T{fire_at_local}"
+            return AvailabilityStatus(False, opens_date, at, f"Not available before {at}")
+
+    if rule is None:
+        return AvailabilityStatus(True, opens_date, None, None)
+
+    if rule.weekdays_only and not is_business_day(as_of):
+        nxt = _next_permitted_day(
+            as_of + timedelta(days=1),
+            weekdays_only=rule.weekdays_only,
+            forbid_weekdays=rule.forbid_weekdays,
+        )
+        start_s = rule.hours_local.split("-", 1)[0] if rule.hours_local else None
+        at = f"{nxt.isoformat()}T{start_s}" if start_s else nxt.isoformat()
+        return AvailabilityStatus(
+            False, opens_date, at, f"Available on business days only (next: {at})"
+        )
+
+    day_name = calendar.day_name[as_of.weekday()]
+    if day_name in rule.forbid_weekdays:
+        nxt = _next_permitted_day(
+            as_of + timedelta(days=1),
+            weekdays_only=rule.weekdays_only,
+            forbid_weekdays=rule.forbid_weekdays,
+        )
+        start_s = rule.hours_local.split("-", 1)[0] if rule.hours_local else None
+        at = f"{nxt.isoformat()}T{start_s}" if start_s else nxt.isoformat()
+        return AvailabilityStatus(
+            False, opens_date, at, f"Not available on {day_name} (next: {at})"
+        )
+
+    if rule.hours_local:
+        s_txt, e_txt = rule.hours_local.split("-", 1)
+        st, et = _parse_hm(s_txt), _parse_hm(e_txt)
+        now_t = now_local.time()
+        if now_t < st:
+            at = f"{as_of.isoformat()}T{s_txt}"
+            return AvailabilityStatus(
+                False, opens_date, at, f"Outside local window {rule.hours_local} (opens {at})"
+            )
+        if now_t > et:
+            nxt = _next_permitted_day(
+                as_of + timedelta(days=1),
+                weekdays_only=rule.weekdays_only,
+                forbid_weekdays=rule.forbid_weekdays,
+            )
+            at = f"{nxt.isoformat()}T{s_txt}"
+            return AvailabilityStatus(
+                False, opens_date, at, f"Outside local window {rule.hours_local} (next: {at})"
+            )
+
+    return AvailabilityStatus(True, opens_date, None, None)

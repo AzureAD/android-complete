@@ -26,8 +26,10 @@ The agent handles those details from actual engine/tool responses.
 | Required readiness | `checklist --release <id> --attest-prompt --json` |
 | Record named readiness confirmations | `sign --release <id> --item <id> --note "<owner confirmation>"` |
 | Optional setup diagnostics | `onboarding --json` |
-| Heartbeat / morning drain + digest | `tick --release <id> [--deliver] --json` |
-| CCD 2-hour localization check & owner reminder | `watch-ccd-localization --release <id> [--deliver] --json` |
+| Unified drainer pass (+ `drain-runs.jsonl` & CTA) | `drain --release <id> [--trigger scheduled\|interactive] [--deliver] --json` |
+| Inspect structured drain journal & missed slots | `drain-log --release <id> [--limit N] --json` |
+| Acknowledge hold (reset idle-stall timer) | `ack-hold --release <id> [--note "<owner note>"] --json` |
+| Legacy digest heartbeat | `tick --release <id> [--deliver] --json` |
 | Record one-time accelerator setup | `automation record-setup --release <id> --slug <slug> [--id <id> \| --skipped "<reason>"] --json` |
 | Plan / inspect optional accelerators | `automation plan --release <id> --json`; `automation obligations --release <id> --json` |
 
@@ -170,8 +172,8 @@ as fallback, keeping arguments literal. Denied reads (`401`/`403`) never trigger
 alternate-account or transport fallback.
 
 Release execution uses a single unified state-driven model with no mode split.
-Optional background accelerators (such as `morning-step-drain`) are non-blocking and
-never required to start or advance a release; when explicitly requested, provision them
+The optional background accelerator (`release-drainer`) is non-blocking and
+never required to start or advance a release; when explicitly requested, provision it
 via `automation plan`, fresh provider observations, `reconcile-create --ensure --claim`,
 and `create-result`, and never auto-recreate disabled or deleted automations. Cleanup uses
 its checked claim/result protocol, not direct registry deletion.

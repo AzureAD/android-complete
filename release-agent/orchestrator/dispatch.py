@@ -225,16 +225,72 @@ def owner_prompt_payload(report: dict) -> dict | None:
     if not action:
         return None
     if action.get("reason") == "blocked":
+        rid = report.get("release_id")
+        step_id = action.get("step")
+        step_row = next(
+            (s for s in (report.get("current_steps") or []) if s.get("id") == step_id),
+            {},
+        )
+        step_note = " ".join(str(step_row.get("note") or "").split())
+        low_note = step_note.lower()
+        is_ccoa_overlap = (
+            step_id == "lockdown"
+            and "ccoa" in low_note
+            and "overlap" in low_note
+        )
+        if is_ccoa_overlap:
+            from orchestrator.remediation import CCOA_URL
+            return {
+                "ready": True,
+                "kind": "blocked_step",
+                "phase": action.get("phase"),
+                "step": step_id,
+                "resume_on_resolve": True,
+                "question": (
+                    f"CCOA freeze overlap on release {rid}: {step_note} "
+                    f"Please check the CCOA schedule ({CCOA_URL}) before choosing how to proceed:"
+                ),
+                "answers": [
+                    {
+                        "title": "Re-check CCOA schedule (retry)",
+                        "description": "Re-scrape CCOA dates after updating CCD or if the CCOA schedule changed.",
+                        "action": "retry",
+                    },
+                    {
+                        "title": "Shift CCD outside lockdown (set new date)",
+                        "description": "Pick a new Code Complete Date outside the CCOA freeze (set-ccd) and re-verify.",
+                        "action": "rerun",
+                    },
+                    {
+                        "title": "Checked CCOA dates — rollout avoids freeze",
+                        "description": "Confirm you reviewed CCOA dates and verified production rollout stages will not deploy during the freeze.",
+                        "action": "complete-manually",
+                    },
+                    {
+                        "title": "Waive — approved CCOA lockdown exception",
+                        "description": "Only after checking CCOA dates: waive with your approved CCOA exception / justification (do not skip blindly).",
+                        "action": "override",
+                    },
+                    {
+                        "title": "Keep blocked while checking CCOA dates",
+                        "description": "Leave held while you inspect the CCOA schedule and coordinate release/rollout timing.",
+                        "action": "hold",
+                    },
+                ],
+                "recommendedIndex": 4,
+            }
+        question = (
+            f"Blocked step '{action.get('step_name')}' on release {rid}: {step_note} — how should Scout proceed?"
+            if step_note
+            else f"How should Scout handle blocked step '{action.get('step_name')}' for release {rid}?"
+        )
         return {
             "ready": True,
             "kind": "blocked_step",
             "phase": action.get("phase"),
-            "step": action.get("step"),
+            "step": step_id,
             "resume_on_resolve": True,
-            "question": (
-                f"How should Scout handle blocked step '{action.get('step_name')}' "
-                f"for release {report.get('release_id')}?"
-            ),
+            "question": question,
             "answers": [
                 {
                     "title": "Fixed — retry",
@@ -252,8 +308,8 @@ def owner_prompt_payload(report: dict) -> dict | None:
                     "action": "complete-manually",
                 },
                 {
-                    "title": "Override",
-                    "description": "Skip with an explicit owner reason and continue remaining steps automatically.",
+                    "title": "Override (skip with reason)",
+                    "description": "Verify the underlying finding first, then waive with an explicit owner reason and continue automatically.",
                     "action": "override",
                 },
                 {

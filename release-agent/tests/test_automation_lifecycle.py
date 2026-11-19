@@ -204,7 +204,7 @@ def test_nonowned_missing_blocked_reconcile_never_grants_creation(tmp_path, stat
 @pytest.mark.parametrize("status", sorted(STATUSES))
 def test_parent_delete_barrier_counts_all_child_intents(tmp_path, status):
     reg = AutomationRegistry(str(tmp_path))
-    parent, _ = active(reg, "morning-step-drain", kind="release-level", cleanup="release_done")
+    parent, _ = active(reg, "release-drainer", kind="release-level", cleanup="release_done")
     stage(reg, status, slug="child")
     denied = reg.claim_delete(parent["id"], "cleaner")
     assert not denied["permission_to_delete"] and "barrier" in denied["reason"]
@@ -213,14 +213,14 @@ def test_parent_delete_barrier_counts_all_child_intents(tmp_path, status):
 
 def test_parent_waits_for_helpers_and_unresolved_sibling_operations(tmp_path):
     reg = AutomationRegistry(str(tmp_path))
-    active(reg, "morning-step-drain", kind="release-level", cleanup="release_done")
+    active(reg, "release-drainer", kind="release-level", cleanup="release_done")
     active(reg, "helper", kind="release-level", cleanup="release_done")
-    assert not reg.claim_delete("morning-step-drain", "cleaner")["permission_to_delete"]
+    assert not reg.claim_delete("release-drainer", "cleaner")["permission_to_delete"]
     claim = reg.claim_delete("helper", "cleaner")
     assert claim["permission_to_delete"]
-    assert not reg.claim_delete("morning-step-drain", "cleaner")["permission_to_delete"]
+    assert not reg.claim_delete("release-drainer", "cleaner")["permission_to_delete"]
     reg.delete_result("helper", claim["attempt_id"], "deleted", "receipt")
-    assert reg.claim_delete("morning-step-drain", "cleaner")["permission_to_delete"]
+    assert reg.claim_delete("release-drainer", "cleaner")["permission_to_delete"]
 
 
 @pytest.mark.parametrize("status", ["deleting", "delete_uncertain"])

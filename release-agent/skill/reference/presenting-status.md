@@ -22,14 +22,14 @@ At every owner-input or wait boundary, **always print the existing full status t
 Never end an actionable hold with prose-only `"please review/confirm"` — always follow the pasted table with an `m_ask_user` option card (using `owner_prompt` when provided, or the exact options below):
 
 - **Attestation / human action (`confirm` / `action`):** run `step-action --release <id> --phase <p> --step <s>` for the exact `prompt`, paste fresh `display_markdown`, and call `m_ask_user` with **Completed**, **Not yet**, **Skip (waive)**, **Need help** (`step-info`).
-- **Blocked step (`blocked`):** paste fresh `display_markdown` + the block note, and call `m_ask_user` with:
+- **Blocked step (`blocked`):** paste fresh `display_markdown` + the full block note, and pass `owner_prompt.question` & `owner_prompt.answers` **verbatim** to `m_ask_user` when present (preserving domain-specific guidance such as `preflight.lockdown` CCOA date review — if the owner chooses **Shift CCD outside lockdown**, collect the new `YYYY-MM-DD` date, apply `set-ccd`, and re-run `lockdown`). Fallback options when `owner_prompt` is absent:
   - **Fixed — retry** (`task --retry` to recheck/reconcile the same attempt after a real fix)
   - **New attempt / inputs** (`rerun` with `step-info --json` public parameters, keeping prior history)
   - **Completed manually** (`complete-manually`, owner-attested without claiming provider verification)
-  - **Override (skip)** (collect free-text reason, then `skip`)
+  - **Override (skip with reason)** (verify the underlying finding first, collect free-text reason, then `skip`)
   - **Keep blocked** (leave unchanged)
   *(An uncertain/owned prior runner requires confirming the prior runner stopped before `--prior-writer-stopped`.)*
 - **Approval gate (`gate`):** approval gates remain genuine decisions, not manual-completion or skip toggles. Local gate → paste `display_markdown` + `m_ask_user` **Approve gate / Deny gate / Keep on hold**. External gate (`remove_rc_tags_gate`, `publish_notes_gate`) → run `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`, display the exact coordinates/build/stage/approval ID/hash alongside `display_markdown`, then `m_ask_user` **Approve / Deny / Keep on hold**.
 
-Ask only for genuinely missing information, never a confirmation the owner already clearly supplied. After recording the owner's answer, **resume automatic guided progression** immediately unless the owner explicitly limited the scope. Background accelerators (`morning-step-drain`, phase pollers) are optional and non-blocking; never block status or auto-recreate automations the owner disabled or deleted.
+Ask only for genuinely missing information, never a confirmation the owner already clearly supplied. After recording the owner's answer, **resume automatic guided progression** immediately unless the owner explicitly limited the scope. The background `release-drainer` is optional and non-blocking; never block status or auto-recreate automations the owner disabled or deleted.
 

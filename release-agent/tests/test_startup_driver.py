@@ -44,7 +44,7 @@ def driver(root, state, status):
     worker = next(
         item
         for item in A.plan(CONFIG, RID, state.ccd, owner_timezone=state.timezone)["automations"]
-        if item["slug"] == "morning-step-drain"
+        if item["slug"] == "release-drainer"
     )
     spec, registry = worker["provider_spec"], AutomationRegistry(str(root), RID)
     entry = registry.prepare(**worker["registration"], spec=spec)
@@ -172,10 +172,11 @@ def test_every_surface_operates_cleanly_with_zero_automations(tmp_path, monkeypa
     if surface == "obligations":
         assert code == 0
         assert payload["required"] == []
-        assert "morning-step-drain" in [item["slug"] for item in payload["optional"]]
+        assert "release-drainer" in [item["slug"] for item in payload["optional"]]
     elif surface == "init":
         assert code == 0 and payload["initialized"]
         assert payload["next_action"] == "readiness"
+        assert payload["drainer_setup"]["slug"] == "release-drainer"
     elif surface == "checklist":
         assert code == 2
         assert all(item.get("kind") != "automation" for item in payload.get("pending_work", []))
@@ -318,7 +319,7 @@ def test_explicit_halt_cannot_claim_driver_creation(tmp_path, capsys):
         "automation",
         "reconcile-create",
         "--slug",
-        "morning-step-drain",
+        "release-drainer",
         "--spec-json",
         json.dumps(worker["provider_spec"]),
         "--observed-json",
@@ -485,16 +486,16 @@ def test_ambiguous_post_dispatch_timeout_fences_against_duplicate_replay(tmp_pat
     assert attempts["count"] == 1
 
 
-def test_readiness_sign_surfaces_one_time_morning_drain_setup_and_never_repeats(tmp_path, capsys):
-    """When Readiness is signed, `checklist --json` surfaces `morning_drain_setup` once; after
-    `automation record-setup` (created or skipped), it never prompts or recreates again."""
-    release(tmp_path, ready=True)
+def test_entry_gate_surfaces_one_time_drainer_setup_and_never_repeats(tmp_path, capsys):
+    """Starting at the Entry Gate (`checklist --json` and `init --json`), `drainer_setup` surfaces
+    once; after `automation record-setup` (created or skipped), it never prompts or recreates again."""
+    release(tmp_path, ready=False)
     code, out = call(tmp_path, capsys, "checklist", "--attest-prompt", "--json")
     payload = json.loads(out)
-    assert code == 0 and payload["next_action"] == "complete"
-    hint = payload["morning_drain_setup"]
-    assert hint["slug"] == "morning-step-drain"
-    assert hint["schedule"].startswith("every day at ")
+    assert code == 0
+    hint = payload["drainer_setup"]
+    assert hint["slug"] == "release-drainer"
+    assert hint["schedule"].startswith("cron:")
     assert hint["provider_spec"]["oneShot"] is False
 
     # Record setup once via `automation record-setup --id ...`
@@ -504,16 +505,16 @@ def test_readiness_sign_surfaces_one_time_morning_drain_setup_and_never_repeats(
         "automation",
         "record-setup",
         "--slug",
-        "morning-step-drain",
+        "release-drainer",
         "--id",
-        "scout-auto-7am",
+        "scout-drainer-2h",
         "--json",
     )
     rec = json.loads(rec_out)
     assert code == 0 and rec["recorded"] is True and rec["entry"]["status"] == "active"
 
-    # Once recorded, `morning_drain_setup` is no longer surfaced (even if user disables/deletes in UI).
+    # Once recorded, `drainer_setup` is no longer surfaced (even if user disables/deletes in UI).
     code, out2 = call(tmp_path, capsys, "checklist", "--attest-prompt", "--json")
-    assert code == 0 and "morning_drain_setup" not in json.loads(out2)
+    assert code == 0 and "drainer_setup" not in json.loads(out2)
 
 

@@ -10,6 +10,7 @@ from orchestrator import automations as A, cli, cli_common as C
 from orchestrator.registry import AutomationRegistry, stable_key, provider_check_fresh
 from orchestrator.state import StepState
 from tests._automation import observed
+from tests._context import fresh_orchestrator as Orchestrator
 from tests._harness import CONFIG, _active_phase
 from tests.test_startup_driver import RID, release, driver
 
@@ -34,7 +35,7 @@ def ensure_reg(registry, worker, observations, *, claim=True, executor="offline-
         registration=worker["registration"], ensure=True, claim=claim, executor=executor)
 
 
-def current_worker(state, slug="morning-step-drain"):
+def current_worker(state, slug="release-drainer"):
     return next(item for item in A.plan(
         CONFIG, RID, state.ccd, owner_timezone=state.timezone)["automations"] if item["slug"] == slug)
 
@@ -220,9 +221,20 @@ def test_ensure_obeys_release_and_worker_lifecycle(tmp_path, capsys, state_kind)
     state = release(tmp_path)
     worker = current_worker(state)
     if state_kind == "objective_complete":
-        _active_phase(state, "finalize")
-        state.set_step("finalize", "orchestrator_finalization", StepState(status="done"))
-        worker = current_worker(state, "finalize-orchestrator-poller")
+        orch = Orchestrator(CONFIG, state, mocks={})
+        for phase in orch.config["phases"]:
+            if phase.get("conditional"):
+                continue
+            for step in phase["steps"]:
+                state.set_step(phase["id"], step["id"], StepState(status="done"))
+                if step.get("kind") == "approval_gate":
+                    state.gate_decisions.append({
+                        "step": f"{phase['id']}.{step['id']}",
+                        "decision": "approved",
+                        "at": "2026-12-09T00:00:00Z",
+                        "by": "human",
+                        "comment": None,
+                    })
     else:
         setattr(state, "halt" if state_kind == "halted" else "cancellation",
                 {"reason": "owner stopped", "at": datetime.now(timezone.utc).isoformat()})
@@ -230,27 +242,6 @@ def test_ensure_obeys_release_and_worker_lifecycle(tmp_path, capsys, state_kind)
     code, result = ensure_cli(tmp_path, capsys, worker, observed())
     assert code == 1 and not result["permission_to_create"]
     assert not (tmp_path / RID / "_automations.json").exists()
-
-
-def test_on_demand_worker_is_ensured_only_after_its_trigger_and_before_settlement(tmp_path, capsys):
-    state = release(tmp_path)
-    _active_phase(state, "build_verify")
-    C.save_state(state, str(tmp_path), RID)
-    worker = current_worker(state, "build-verify-rc-poller")
-    code, result = ensure_cli(tmp_path, capsys, worker, observed())
-    assert code == 1 and not result["permission_to_create"]
-    state.set_step("build_verify", "mrwp_ecs", StepState(status="in_flight"))
-    C.save_state(state, str(tmp_path), RID)
-    code, result = ensure_cli(tmp_path, capsys, worker, observed())
-    assert code == 0 and result["permission_to_create"]
-    registry = AutomationRegistry(str(tmp_path), RID)
-    registry.create_result(stable_key(RID, worker["slug"]), result["attempt_id"], "created",
-                           "synthetic poller", automation_id="poller-id", spec=worker["provider_spec"])
-    _active_phase(state, "bug_bash")
-    C.save_state(state, str(tmp_path), RID)
-    code, result = ensure_cli(tmp_path, capsys, worker, observed())
-    assert code == 1 and not result["permission_to_create"]
-    assert registry.get(auto_id="poller-id")["status"] == "active"  # Cleanup owns retirement.
 
 
 def test_two_deleted_generations_recover_independently_with_append_only_history(tmp_path):
@@ -292,7 +283,7 @@ def test_obligations_revalidate_registered_driver_not_only_missing_entries(tmp_p
                      "--release", RID, "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["required"] == []
-    assert "morning-step-drain" in [worker["slug"] for worker in result["ensure"]]
+    assert "release-drainer" in [worker["slug"] for worker in result["ensure"]]
 
 
 @pytest.mark.parametrize("change", ["none", "unapplied", "reopened", "new-generation", "different-owner"])
