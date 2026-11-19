@@ -5,10 +5,11 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
-    rubric, sections, runDesignFeature, validateStage0, validateDesign,
+    rubric, sections, designSectionHeadings, designSchema, runDesignFeature, validateStage0, validateDesign,
     validateEvidence, validateReview, workflowDefinition, digest,
     pairRevision, renderHumanReviewBrief, renderPairedDocuments, briefWordBudget, briefCharacterBudget, riskCategories,
-    validatePairedDocuments,
+    validatePairedDocuments, formatDesignMarkdown, buildDesignReviewDelta,
+    extractTrailingJsonBlock, parseDesignSections, parseDesignOutput, parseEvidenceOutput,
 } from "./workflow.mjs";
 
 const stage0 = () => ({
@@ -568,14 +569,15 @@ test("default-off contracts reach the human packet and author/reviewer schemas w
     assert.equal(packet.recommendation, "GO to Planning");
     assert.equal(packet.humanApproval, "pending");
     assert.deepEqual(packet.design.featureFlags, d.featureFlags);
-    const schema = ctx.calls[1].options.schema;
-    assert.ok(schema.required.includes("featureFlags"));
-    assert.ok(schema.properties.sections.required.includes("featureFlagsAndIsolation"));
+    assert.equal(ctx.calls[1].options.schema, undefined);
+    assert.ok(designSchema.required.includes("featureFlags"));
+    assert.ok(designSchema.properties.sections.required.includes("featureFlagsAndIsolation"));
     for (const key of ["defaultValue", "configurationFailureValue", "productionDefaultValue"]) {
-        assert.equal(schema.properties.featureFlags.items.properties[key].type, "boolean");
-        assert.equal(schema.properties.featureFlags.items.properties[key].const, false);
+        assert.equal(designSchema.properties.featureFlags.items.properties[key].type, "boolean");
+        assert.equal(designSchema.properties.featureFlags.items.properties[key].const, false);
     }
     const author = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+    assert.match(author, /## 13\. Feature Flags and Isolation \(featureFlagsAndIsolation\)/);
     assert.match(author, /runtimeBehaviorChange/);
     assert.match(author, /zero new side effects/);
     assert.match(author, /approved enabled E2E test cohort/);
@@ -690,8 +692,10 @@ This is an authoring brief, not a pre-mortem draft or human acceptance/rollout a
         assert.equal(packet.design.sections.preMortemAndOperationalReadiness, d.sections.preMortemAndOperationalReadiness);
         assert.deepEqual(packet.stage0, stage0());
         assert.equal(ctx.calls.length, 3);
-        assert.ok(ctx.calls[1].options.schema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
+        assert.equal(ctx.calls[1].options.schema, undefined);
+        assert.ok(designSchema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
         const task = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+        assert.match(task, /## 12\. Pre-Mortem and Operational Readiness \(preMortemAndOperationalReadiness\)/);
         assert.match(task, /every feature, including single-repo and non-runtime/);
         assert.match(task, /authoring brief, not the pre-mortem draft/);
         assert.match(task, /only after all feature implementation is complete/);
@@ -819,7 +823,9 @@ test("pre-mortem authoring-brief findings require repair and a fresh independent
     assert.equal(ctx.calls.length, 5);
     const revision = ctx.calls[3];
     assert.equal(revision.options.label, "Design revision");
-    assert.ok(revision.options.schema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
+    assert.equal(revision.options.schema, undefined);
+    assert.ok(designSchema.properties.sections.required.includes("preMortemAndOperationalReadiness"));
+    assert.match(revision.prompt.split("\nDATA:\n")[0], /## 12\. Pre-Mortem and Operational Readiness \(preMortemAndOperationalReadiness\)/);
     assert.match(revision.prompt.split("\nDATA:\n")[0], /only after all feature implementation is complete/);
     assert.match(revision.prompt.split("\nDATA:\n")[0], /actual KQL drafts/);
     assert.equal(ctx.calls[4].options.label, "Independent design reviewer");
@@ -898,8 +904,10 @@ test("accessibility is a required design section and omission is repaired before
     assert.equal(packet.recommendation, "GO to Planning");
     assert.equal(packet.fixIterations, 1);
     assert.equal(ctx.calls[2].options.label, "Design revision");
+    assert.ok(designSchema.properties.sections.required.includes("accessibility"));
     for (const index of [1, 2]) {
-        assert.ok(ctx.calls[index].options.schema.properties.sections.required.includes("accessibility"));
+        assert.equal(ctx.calls[index].options.schema, undefined);
+        assert.match(ctx.calls[index].prompt.split("\nDATA:\n")[0], /## 9\. Accessibility \(accessibility\)/);
     }
 });
 
@@ -1157,7 +1165,7 @@ test("checkpoint keys bind input revision and workflow has finite explicit limit
     assert.notEqual(a.keys[0], b.keys[0]);
     assert.equal(workflowDefinition.meta.name, "design-feature");
     assert.deepEqual(workflowDefinition.meta.limits, {
-        maxConcurrentSubagents: 1, maxTotalSubagents: 7, timeoutSeconds: 1800, maxAiCredits: 20,
+        maxConcurrentSubagents: 1, maxTotalSubagents: 7, timeoutSeconds: 7200, maxAiCredits: 20,
     });
 });
 
@@ -1588,4 +1596,217 @@ test("mutation of source pins during evidence gathering stops before authoring",
     assert.equal(packet.recommendation, "NO-GO");
     assert.deepEqual(packet.sourceManifest, sourceManifest());
     assert.equal(ctx.calls.length, 1);
+});
+
+test("hybrid Markdown prose outputs for evidence and 13-section design author parse cleanly with host-stamped digests and paired brief", async () => {
+    const evidenceMarkdown = `# Baseline Research Summary
+
+Common already preserves compatibility via Contract.java.
+
+## Evidence Metadata
+
+\`\`\`json
+{
+  "approvalVerification": {
+    "verified": true,
+    "revision": "requirements-v3",
+    "reference": "review/123",
+    "rationale": "Inspected approval record review/123 bound to requirements-v3."
+  },
+  "references": [{ "id": "E1", "repository": "Common", "path": "Contract.java", "locator": "lines 10-20" }],
+  "facts": [{ "statement": "Contract exists.", "referenceIds": ["E1"] }],
+  "sourceVerification": [{ "repository": "Common", "verified": true, "rationale": "Verified at pinned commit." }],
+  "scenarioTraces": [{
+    "id": "T1", "requirementIds": ["R1"], "scenario": "Existing caller invokes Contract",
+    "trigger": "Contract.call()", "conditions": "Default configuration",
+    "steps": [{ "behavior": "Validates input and executes existing flow", "referenceIds": ["E1"] }],
+    "terminalOutcome": { "behavior": "Returns compatible result to caller", "referenceIds": ["E1"] },
+    "status": "verified"
+  }]
+}
+\`\`\``;
+    const sampleRuntimeDesign = runtimeDesign();
+    const designMarkdown = formatDesignMarkdown(sampleRuntimeDesign);
+    assert.equal(sections.length, 13);
+    for (const key of sections) {
+        assert.ok(designMarkdown.includes(`## ${designSectionHeadings[key]} (${key})`));
+    }
+    const compactReview = {
+        pairRevision: "placeholder",
+        references: [],
+        criteria: rubric.map((id) => ({ id, pass: true })),
+        changeChecks: [{
+            changeId: "C1", baselineVerified: true, necessityConfirmed: true, counterevidenceVerified: true,
+            referenceIds: ["E1"], rationale: "Counterevidence confirmed gap and flag isolation.",
+        }],
+        briefChecks: {
+            consistent: true, complete: true, risksVisible: true,
+            evidenceDistinguished: true, revisionChangesAccurate: true,
+            rationale: "Brief matches all 13 detailed design sections and default-off flag register.",
+        },
+    };
+    const ctx = context([evidenceMarkdown]);
+    let turn = 0;
+    ctx.agent = async (prompt, options) => {
+        ctx.calls.push({ prompt, options });
+        turn++;
+        if (turn === 1) return evidenceMarkdown;
+        if (turn === 2) return designMarkdown;
+        const data = JSON.parse(prompt.split("\nDATA:\n")[1]);
+        return { ...compactReview, pairRevision: data.pairRevision };
+    };
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.reviewReady, true);
+    assert.ok(packet.pairedDocuments);
+    assert.equal(ctx.calls[0].options.schema, undefined);
+    assert.equal(ctx.calls[1].options.schema, undefined);
+    assert.ok(ctx.calls[2].options.schema);
+    assert.equal(packet.evidence.references[0].revision, sourceRevision);
+    assert.equal(packet.evidence.approvalVerification.verified, true);
+    assert.equal(packet.evidence.priorReviewVerification, null);
+    assert.equal(packet.design.stage0Revision, "requirements-v3");
+    assert.deepEqual(packet.design.featureFlags, sampleRuntimeDesign.featureFlags);
+});
+
+test("round 2+ independent design review supplies deterministic reviewDelta and still catches new regressions", async () => {
+    const first = runtimeDesign();
+    const firstReview = review(first);
+    firstReview.criteria = firstReview.criteria.map((c) =>
+        c.id === "securityPrivacyAndPerformance" ? { ...c, pass: false } : c,
+    );
+    firstReview.findings.push({
+        id: "F-SEC-1",
+        rubricId: "securityPrivacyAndPerformance",
+        severity: "major",
+        location: "securityPrivacyPerformance",
+        evidence: "Missing explicit PII scrubbing contract on error path.",
+        requiredChange: "Specify Logger PII redaction in securityPrivacyPerformance.",
+    });
+
+    const second = runtimeDesign();
+    second.sections.securityPrivacyPerformance = `${second.sections.securityPrivacyPerformance}\nScrub all PII via Logger error tags.`;
+    second.humanReviewBrief.risks = second.humanReviewBrief.risks.map((risk) =>
+        risk.category === "securityAuthentication"
+            ? { ...risk, safeguards: `${risk.safeguards} Scrub all PII via Logger error tags.` }
+            : risk,
+    );
+
+    const deltaPreview = buildDesignReviewDelta(first, second, [{ round: 0, review: firstReview }]);
+    assert.deepEqual(deltaPreview.changedSections.map((s) => s.sectionId), ["securityPrivacyPerformance"]);
+    assert.equal(deltaPreview.unchangedPassingSections.length, 12);
+    assert.ok(deltaPreview.changedRegisters.includes("humanReviewBrief"));
+    assert.equal(deltaPreview.priorOpenFindings.length, 1);
+    assert.deepEqual(deltaPreview.priorFailedCriteria, ["securityPrivacyAndPerformance"]);
+
+    const secondReviewWithRegression = review(second);
+    secondReviewWithRegression.criteria = secondReviewWithRegression.criteria.map((c) =>
+        c.id === "measurableTelemetryAndSuccess" ? { ...c, pass: false } : c,
+    );
+    secondReviewWithRegression.findings.push({
+        id: "F-TEL-2",
+        rubricId: "measurableTelemetryAndSuccess",
+        severity: "blocker",
+        location: "telemetryAndSuccessCriteria",
+        evidence: "New log tag introduced without span correlation.",
+        requiredChange: "Bind error tag to correlation_id in telemetryAndSuccessCriteria.",
+    });
+
+    const third = structuredClone(second);
+    third.sections.telemetryAndSuccessCriteria = `${third.sections.telemetryAndSuccessCriteria}\nBind error tag to correlation_id.`;
+
+    const ctx = context([evidence(), first, firstReview, second, secondReviewWithRegression, third, review(third)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 2);
+
+    const round0Data = JSON.parse(ctx.calls[2].prompt.split("\nDATA:\n")[1]);
+    assert.equal(round0Data.reviewDelta, undefined);
+
+    const round1Data = JSON.parse(ctx.calls[4].prompt.split("\nDATA:\n")[1]);
+    assert.deepEqual(round1Data.reviewDelta.changedSections.map((s) => s.sectionId), ["securityPrivacyPerformance"]);
+    assert.equal(round1Data.reviewDelta.unchangedPassingSections.length, 12);
+    assert.equal(round1Data.reviewDelta.priorOpenFindings[0].id, "F-SEC-1");
+
+    const round2Data = JSON.parse(ctx.calls[6].prompt.split("\nDATA:\n")[1]);
+    assert.deepEqual(round2Data.reviewDelta.changedSections.map((s) => s.sectionId), ["telemetryAndSuccessCriteria"]);
+    assert.equal(round2Data.reviewDelta.priorOpenFindings[0].id, "F-TEL-2");
+});
+
+test("omitted approvalVerification in Markdown or object evidence stays fail-closed without synthesizing verification", async () => {
+    const unverifiedMarkdown = `# Baseline Research Summary
+
+## Evidence Metadata
+
+\`\`\`json
+{
+  "references": [{ "id": "E1", "repository": "Common", "path": "Contract.java", "locator": "lines 10-20" }],
+  "facts": [{ "statement": "Contract exists.", "referenceIds": ["E1"] }],
+  "sourceVerification": [{ "repository": "Common", "verified": true, "rationale": "Verified at pinned commit." }],
+  "scenarioTraces": [{
+    "id": "T1", "requirementIds": ["R1"], "scenario": "Existing caller invokes Contract",
+    "trigger": "Contract.call()", "conditions": "Default configuration",
+    "steps": [{ "behavior": "Validates input and executes existing flow", "referenceIds": ["E1"] }],
+    "terminalOutcome": { "behavior": "Returns compatible result to caller", "referenceIds": ["E1"] },
+    "status": "verified"
+  }]
+}
+\`\`\``;
+    const s0 = stage0();
+    s0.approval.reference = "unread/nonexistent-approval-ref";
+    const parsed = parseEvidenceOutput(unverifiedMarkdown, s0, sourceManifest(), undefined);
+    assert.equal(parsed.approvalVerification, undefined);
+    assert.deepEqual(
+        validateEvidence(parsed, s0, sourceManifest(), undefined),
+        ["Evidence worker could not verify the approval record for the exact Stage 0 revision."],
+    );
+
+    const ctx = context([unverifiedMarkdown], s0);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "needs clarification");
+    assert.deepEqual(packet.reasons, ["Evidence worker could not verify the approval record for the exact Stage 0 revision."]);
+    assert.equal(ctx.calls.length, 1);
+});
+
+test("parseDesignSections keeps ### and #### subsections inside their parent ## section even when titled like another section", () => {
+    const sample = runtimeDesign();
+    sample.sections.accessibility = "TalkBack announces state transitions and keeps 48dp touch targets.";
+    sample.sections.testsAndEvals = [
+        "### Accessibility",
+        "Verify TalkBack announcements and focus order with Espresso.",
+        "",
+        "#### Feature Flags and Isolation",
+        "Verify default-off flag F1 returns baseline response when disabled.",
+    ].join("\n");
+    const rawMarkdown = formatDesignMarkdown(sample);
+    const { markdownBody } = extractTrailingJsonBlock(rawMarkdown);
+    const parsedSections = parseDesignSections(markdownBody);
+
+    assert.equal(parsedSections.accessibility, sample.sections.accessibility);
+    assert.equal(parsedSections.testsAndEvals, sample.sections.testsAndEvals);
+    assert.equal(parsedSections.featureFlagsAndIsolation, sample.sections.featureFlagsAndIsolation);
+});
+
+test("extractTrailingJsonBlock and parseDesignOutput preserve fenced code blocks with multi-token info strings before trailing metadata", () => {
+    const sample = runtimeDesign();
+    sample.sections.componentsInterfacesCompatibility = [
+        "Updated adapter contract:",
+        "",
+        '```kotlin title="Example.kt" {linenos=true}',
+        "fun execute(): Boolean = false",
+        "```",
+        "",
+        "~~~kql role=\"query\" window=\"7d\"",
+        "android_spans | take 5",
+        "~~~",
+    ].join("\n");
+    const rawMarkdown = formatDesignMarkdown(sample);
+    const extracted = extractTrailingJsonBlock(rawMarkdown);
+    assert.ok(extracted.metadata);
+    assert.deepEqual(extracted.metadata.featureFlags, sample.featureFlags);
+    assert.match(extracted.markdownBody, /```kotlin title="Example\.kt" \{linenos=true\}/);
+
+    const parsedDesign = parseDesignOutput(rawMarkdown, stage0(), evidence());
+    assert.equal(parsedDesign.sections.componentsInterfacesCompatibility, sample.sections.componentsInterfacesCompatibility);
+    assert.equal(validateDesign(parsedDesign, stage0(), evidence(), undefined).length, 0);
 });
