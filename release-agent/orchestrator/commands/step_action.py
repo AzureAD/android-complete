@@ -200,7 +200,17 @@ def prepare_step(args, st, orch):
                 f"step:{args.phase}.{args.step}:"
                 f"{metadata.get('checkpoint', 'once')}:{generation}",
                 scope, out["tool"], payload, completion)
-            out["notifications"] = [item] if D.available(orch, item) else []
+            notif_items = [item] if D.available(orch, item) else []
+            also_email = out["payload"].get("_also_email")
+            if isinstance(also_email, dict) and also_email.get("to"):
+                email_item = D.descriptor(
+                    st,
+                    f"step:{args.phase}.{args.step}:"
+                    f"{metadata.get('checkpoint', 'once')}:{generation}:email",
+                    scope, "workiq_send_email", also_email, {})
+                if D.available(orch, email_item):
+                    notif_items.append(email_item)
+            out["notifications"] = notif_items
             out["mcp_arguments"] = payload
             out["ready_to_execute"] = not definition.requires_approval
             out["complete_command"] = (

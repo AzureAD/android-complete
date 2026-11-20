@@ -29,7 +29,13 @@ def verify_mrwp(context, provider):
     rc_num = rc_num if rc_num is not MISSING else None
     mid = context.input("mrwp_id", MISSING)
     if mid is MISSING:
-        ok, run, detail = context.services.pipelines.find_orchestrator_run(ORG, PROJECT, ORCHESTRATOR_DEF, context.release.release_id)
+        finder = context.services.pipelines.find_orchestrator_run
+        try:
+            ok, run, detail = finder(
+                ORG, PROJECT, ORCHESTRATOR_DEF, context.release.release_id, ccd=context.release.ccd
+            )
+        except TypeError:
+            ok, run, detail = finder(ORG, PROJECT, ORCHESTRATOR_DEF, context.release.release_id)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"{label}: could not read orchestrator run ({detail}){hint}.")
@@ -64,8 +70,8 @@ def verify_mrwp(context, provider):
         return Blocked(f"{label}: build status is unknown; retry verification.", links=links)
     if bstatus not in (MISSING, None) and bstatus != "completed":
         return InProgress(
-            f"{label} run {mid} is still running (status: {bstatus}) — Scout is polling "
-            f"every 30 min and will re-evaluate the RC when it completes.", links=links)
+            f"{label} run {mid} is still running (status: {bstatus}) — release-drainer checks "
+            f"every 2h and will re-evaluate the RC when it completes.", links=links)
 
     # 2) stage-completion rule
     stages = context.input("stages", MISSING)

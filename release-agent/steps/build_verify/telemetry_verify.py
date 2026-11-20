@@ -108,12 +108,20 @@ def _version(context):
     if not build.get("complete") or build.get("result") not in ("succeeded", "partiallySucceeded"):
         return (None, "no successful Authenticator ECS RC build recorded for the current RC — "
                       "run auth_ecs first")
-    number = build.get("build_number") or ""
-    match = re.fullmatch(r"(\d+\.\d+\.\d+)-rc(\d+)", number, re.IGNORECASE)
-    if not match or match.group(2) != str(build.get("run_id")):
-        return (None, f"Authenticator ECS build {build.get('run_id')} has a missing or invalid "
-                      f"APK build number ({number!r}) — re-run auth_ecs to capture it")
-    return (match.group(1), "")
+    number = (build.get("build_number") or "").strip()
+    # Accept `<X.Y.Z>-rc<build_id>` (with optional flavor suffix like `-ecs`) OR a bare 4-digit-middle
+    # Authenticator APK version `<X.YYYY.Z>` (never a 3-part Broker version like `16.6.0-RC1-ecs` or mismatched `-rc<other>`).
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)-rc(\d+)(?:-[A-Za-z0-9._-]+)?", number, re.IGNORECASE)
+    if match:
+        if match.group(2) != str(build.get("run_id")):
+            return (None, f"Authenticator ECS build {build.get('run_id')} has a mismatched "
+                          f"APK build number ({number!r}) — re-run auth_ecs to capture it")
+        return (match.group(1), "")
+    bare_apk = re.fullmatch(r"(\d+\.\d{4}\.\d+)", number)
+    if bare_apk:
+        return (bare_apk.group(1), "")
+    return (None, f"Authenticator ECS build {build.get('run_id')} has a missing or invalid "
+                  f"APK build number ({number!r}) — re-run auth_ecs to capture it")
 
 
 def build(context: StepContext):

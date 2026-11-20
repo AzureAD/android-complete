@@ -666,4 +666,93 @@ def test_release_state_save_retries_transient_windows_permission_error(tmp_path,
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
 
 
+def test_phase2_fixes_ccd_filtering_inprogress_orchestrator_telemetry_and_html_rc_email(monkeypatch):
+    """Verify all Phase 2 fixes:
+    1. `find_checker_runs` ignores earlier-in-month triggers before `ccd` and catches end-of-month
+       11 PM PT runs that cross into next month in UTC.
+    2. `find_orchestrator_run` prefers exact `AuthenticatorBranch=release-<ccd>` over older runs.
+    3. `orchestrator_health` returns `in_progress` (not `blocked`) while pre-gate stages are running.
+    4. `telemetry_verify` accepts `-rc<id>-ecs` and bare 4-digit APK versions while rejecting Broker versions.
+    5. `rc_report_notify` includes `telemetry_verify` row counts AND attaches the full HTML email report.
+    """
+    from orchestrator.commands.step_action import prepare_step
+    from steps.build_verify import _common as K, orchestrator_health as OH, rc_report_notify as RN, telemetry_verify as TV
+    from steps.lib import mockctx
+    from tests._context import context as _ctx, invoke as _inv, pipeline as _pipe
+    from tests._mrwp_evidence import PROD, snapshot
+    from tools.pipelines import orchestrator as PO
+
+    # 1. Checker runs: Nov 11 vs custom CCD Nov 19 + Nov 30 11:00 PM PT (`2026-12-01T07:00:00Z`)
+    monkeypatch.setattr(PO._pp, "_az_json", lambda *a, **k: (True, [
+        {"id": 10, "queueTime": "2026-11-11T07:00:00Z"},
+        {"id": 20, "queueTime": "2026-11-20T07:00:00Z"},
+        {"id": 30, "queueTime": "2026-12-01T07:00:00Z"},
+    ], ""))
+    ok_c1, runs_nov19, _ = PO.find_checker_runs("org", "proj", 3155, "2026-11", ccd="2026-11-19", timezone_name="America/Los_Angeles")
+    assert ok_c1 and [r["id"] for r in runs_nov19] == [30, 20]  # 10 (Nov 11) excluded!
+    ok_c2, runs_nov30, _ = PO.find_checker_runs("org", "proj", 3155, "2026-11", ccd="2026-11-30", timezone_name="America/Los_Angeles")
+    assert ok_c2 and [r["id"] for r in runs_nov30] == [30]      # Dec 1 UTC = Nov 30 11 PM PT included!
+
+    # 2. Orchestrator lookup: ignores older Nov 11 run when CCD is Nov 19
+    monkeypatch.setattr(PO._pp, "_az_json", lambda *a, **k: (True, [
+        {"id": 100, "queueTime": "2026-11-11T08:00:00Z", "tags": ["AuthenticatorBranch=release-2026-11-11"]},
+        {"id": 200, "queueTime": "2026-11-19T08:00:00Z", "tags": ["AuthenticatorBranch=release-2026-11-19"]},
+    ], ""))
+    ok_o, orun, _ = PO.find_orchestrator_run("org", "proj", 2828, "2026-11", ccd="2026-11-19")
+    assert ok_o and orun["id"] == 200
+
+    # 3. `orchestrator_health` returns `in_progress` while `Trigger RC Testing` is running (`result=None`)
+    st = ReleaseState(release_id="2026-11", ccd="2026-11-19", owner_email="owner@example.test")
+    running_stages = [
+        {"name": "Validate Branch and Versions availability", "state": "completed", "result": "succeeded"},
+        {"name": "Create Release Branches", "state": "completed", "result": "succeeded"},
+        {"name": "Trigger RC Testing", "state": "inProgress", "result": None},
+        {"name": "Remove RC Tags", "state": "pending", "result": None},
+    ]
+    run_payload = {
+        "id": 200,
+        "tags": [
+            "AuthenticatorBranch=release-2026-11-19",
+            "NextCommonVersion=1.0.0",
+            "NextMsalVersion=2.0.0",
+            "NextBrokerVersion=3.0.0",
+        ],
+    }
+    res_ip = OH.build(_ctx(st, inputs={"run": run_payload, "stages": running_stages}))
+    assert res_ip.kind == "in_progress" and "Trigger RC Testing" in res_ip.note
+
+    # 4. `telemetry_verify` version extraction handles `-rc<id>-ecs` and bare `6.2611.1234`
+    from tests._auth_evidence import auth_test
+    _pipe(K.stash_auth, st, 1, {
+        "build": {"run_id": "555", "rc": 1, "build_number": "6.2611.1234-rc555-ecs", "complete": True, "result": "succeeded"},
+        "test": auth_test({
+            "Firebase Test Lab - UIAutomator E2E Tests": {"present": True, "passed": 98, "failed": 2, "total": 100, "pct": 98.0},
+            "Firebase Test Lab - Monthly UI Tests": {"present": True, "passed": 100, "failed": 0, "total": 100, "pct": 100.0},
+        }, rc=1),
+        "verdict": "clean",
+    })
+    with mockctx.active({}):
+        tv_out = _inv(TV.build, st)
+    assert tv_out.kind == "needs_skill" and tv_out.payload["version"] == "6.2611.1234"
+
+    # 5. `rc_report_notify` includes `Telemetry (Kusto)` line AND attaches companion HTML email!
+    from tests._harness import _ready_for_rc_report, _seed_rc_pipeline
+    st2 = ReleaseState(release_id="2026-11", ccd="2026-11-19", owner_email="owner@example.test")
+    _ready_for_rc_report(st2)
+    _seed_rc_pipeline(st2, {"total": 100, "passed": 98, "failed": 2}, {"total": 100, "passed": 100, "failed": 0})
+    st2.set_step("build_verify", "telemetry_verify", StepState(
+        status="done",
+        note="telemetry flowing for 6.2611.1234 — 42 row(s)",
+        data={"version": "6.2611.1234", "rows": 42},
+    ))
+    orch = Orchestrator(CONFIG, st2, mocks={}, as_of=date(2026, 11, 20))
+    prep = prepare_step(SimpleNamespace(phase="build_verify", step="rc_report_notify", release="2026-11"), st2, orch)
+    assert "Telemetry (Kusto): 42 row(s) for APK 6.2611.1234" in prep["mcp_arguments"]["message"]
+    assert "_also_email" not in prep["mcp_arguments"]
+    assert [n["tool"] for n in prep["notifications"]] == ["m_send_teams_message", "workiq_send_email"]
+    assert prep["notifications"][1]["payload"]["isHtml"] is True
+    assert "Telemetry (Kusto): 42 row(s)" in prep["notifications"][1]["payload"]["body"]
+
+
+
 

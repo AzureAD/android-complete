@@ -1105,6 +1105,16 @@ def _drain_python_loop(
                     act = orch.run_task(step.phase_id, step.id, retry=True)
                     C.save_state(st, runs_root, release)
                     C.log_actions(C.elog(runs_root, release), [act], state=st)
+                elif (
+                    step.key == "build_verify.telemetry_verify"
+                    and rec.status == "blocked"
+                    and (rec.data or {}).get("rows") == 0
+                ):
+                    reconciled_once.add(step.key)
+                    orch.reopen(
+                        step.phase_id, step.id, "Scheduled drainer re-checking 0-row Kusto telemetry"
+                    )
+                    C.save_state(st, runs_root, release)
 
         after = _status_map(orch)
         if after == before:

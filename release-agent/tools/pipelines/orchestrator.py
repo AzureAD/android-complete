@@ -29,14 +29,16 @@ ORCH_REQUIRED_STAGES = [
 ORCH_PARK_STAGE = "Remove RC Tags"
 
 
-def find_orchestrator_run(org, project, def_id, release_month, timeout=60):
-    """Find THE Release Orchestrator run for a release month.
+def find_orchestrator_run(org, project, def_id, release_month, timeout=60, *, ccd=None):
+    """Find THE Release Orchestrator run for a release month (and optional elected CCD).
 
     Matches the run's self-tag `AuthenticatorBranch=release-<YYYY>-<MM>-*` (debug
-    runs tag `test-release-*`, so they're excluded). On multiple matches returns the
-    most recent by queueTime. Returns (ok, run, detail); run is the az build dict
-    (incl. `tags`) or None if not found.
+    runs tag `test-release-*`, so they're excluded). When `ccd` ('YYYY-MM-DD') is
+    supplied, prefers exact `AuthenticatorBranch=release-<ccd>`, and otherwise ignores
+    earlier-in-month runs whose branch date precedes `ccd`.
     """
+    from datetime import timedelta
+    from orchestrator import schedule
     ok, builds, detail = _pp._az_json(
         ["pipelines", "build", "list", "--definition-ids", str(def_id),
          "--org", org, "--project", project, "--top", "50"], timeout)
@@ -51,6 +53,24 @@ def find_orchestrator_run(org, project, def_id, release_month, timeout=60):
             or build.get("queueTime") is not None and not isinstance(build["queueTime"], str)
             for build in builds):
         return False, None, "malformed orchestrator run collection"
+    ccd_date = schedule.parse_date(ccd) if ccd else None
+    if ccd_date is not None:
+        exact_tag = f"AuthenticatorBranch=release-{ccd_date.isoformat()}"
+        exact = [b for b in (builds or []) if exact_tag in (b.get("tags") or [])]
+        if exact:
+            return (True, max(exact, key=lambda b: b.get("queueTime") or ""), "")
+        candidates = []
+        for b in (builds or []):
+            for t in (b.get("tags") or []):
+                if isinstance(t, str) and t.startswith("AuthenticatorBranch=release-"):
+                    bdate = schedule.parse_date(t[len("AuthenticatorBranch=release-"):])
+                    if bdate is not None and ccd_date <= bdate <= ccd_date + timedelta(days=14):
+                        candidates.append(b)
+                        break
+        if not candidates:
+            return (True, None, f"no orchestrator run tagged {exact_tag} found")
+        return (True, max(candidates, key=lambda b: b.get("queueTime") or ""), "")
+
     prefix = f"AuthenticatorBranch=release-{release_month}-"     # release-2026-08-
     matches = [b for b in (builds or [])
                if any((t or "").startswith(prefix) for t in (b.get("tags") or []))]
@@ -80,11 +100,14 @@ def discover_versions(org, project, release_month, orch_def=None, timeout=60):
     return (True, versions, "")
 
 
-def find_checker_runs(org, project, def_id, release_month, timeout=60):
-    """Return (ok, runs, detail) — the checker's builds queued in the release month,
-    newest first. The checker runs DAILY (a cron); only the run on the actual Code
-    Complete Day triggers the release, so the caller scans these for the one whose
-    'Trigger Monthly Release' stage succeeded."""
+def find_checker_runs(org, project, def_id, release_month, timeout=60, *, ccd=None, timezone_name=None):
+    """Return (ok, runs, detail) — the checker's builds queued for the release,
+    newest first. When `ccd` ('YYYY-MM-DD') is supplied, filters to runs queued on
+    or after `ccd` (within 14 days, checking both owner-local and UTC dates so an
+    end-of-month 11 PM PT run whose UTC timestamp rolls into the 1st of next month is
+    still captured, while earlier-in-month runs before `ccd` are excluded)."""
+    from datetime import timedelta
+    from orchestrator import schedule
     ok, builds, detail = _pp._az_json(
         ["pipelines", "build", "list", "--definition-ids", str(def_id),
          "--org", org, "--project", project, "--top", "60"], timeout)
@@ -94,6 +117,21 @@ def find_checker_runs(org, project, def_id, release_month, timeout=60):
             not isinstance(build, Mapping) or _numeric_build_id(build.get("id")) is None
             or not isinstance(build.get("queueTime"), str) for build in builds):
         return False, None, "malformed checker run collection"
+    ccd_date = schedule.parse_date(ccd) if ccd else None
+    if ccd_date is not None:
+        tz = schedule.get_tz(timezone_name)
+        matched = []
+        upper = ccd_date + timedelta(days=14)
+        for b in (builds or []):
+            qdt = schedule.parse_iso_utc(b.get("queueTime"))
+            if qdt is None:
+                continue
+            utc_d = qdt.date()
+            loc_d = qdt.astimezone(tz).date() if tz is not None else utc_d
+            if (ccd_date <= loc_d <= upper) or (ccd_date <= utc_d <= upper):
+                matched.append(b)
+        matched.sort(key=lambda b: b.get("queueTime") or "", reverse=True)
+        return (True, matched, "")
     inmonth = [b for b in (builds or [])
                if (b.get("queueTime") or "").startswith(release_month)]
     inmonth.sort(key=lambda b: b.get("queueTime") or "", reverse=True)

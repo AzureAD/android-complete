@@ -28,39 +28,66 @@ def _auth_summary(model: dict, auth: dict) -> str:
 
 
 def build(context: StepContext):
+    from html import escape
     to = context.release.owner_email
     if not to:
         return Blocked("rc_report_notify: no release owner email on record.")
     try:
-        _, html, _, model = R.rc_email(context)
+        subject, html, _, model = R.rc_email(context)
         lineage = R.report_lineage(context, html)
         auth = R.auth_report_gate(model)
         ecs, local = (H.mrwp_leg_summary(model, provider) for provider in ("ECS", "Local"))
         links = R.rc_run_links(model)
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
         return Blocked(f"rc_report_notify: could not summarize the RC report ({exc}).")
+
+    tv_step = context.evidence.step("build_verify", "telemetry_verify")
+    tv_data = tv_step.data or {}
+    if tv_data.get("version") and tv_data.get("rows") is not None:
+        tv_line = f"Telemetry (Kusto): {tv_data['rows']} row(s) for APK {tv_data['version']}"
+    elif tv_step.note:
+        tv_line = f"Telemetry (Kusto): {tv_step.note}"
+    else:
+        tv_line = ""
+
     matches = list(lineage["source_matches"])
     runs_text = "\n".join(f"- [{item['name']}]({item['url']})" for item in links)
     message = (
         f"**Release {context.release.release_id} - RC verification summary**\n\n"
         f"Summary: MRWP ECS: {ecs['headline']}; MRWP Local: {local['headline']}; "
-        f"Authenticator ECS: {_auth_summary(model, auth)}.\n\n"
+        f"Authenticator ECS: {_auth_summary(model, auth)}.\n"
+        + (f"{tv_line}\n" if tv_line else "")
+        + "\n"
         + (f"Pipeline runs:\n{runs_text}\n\n" if runs_text else "")
+        + "Full HTML RC verification report has also been emailed to you. "
         + "Review the results and decide `rc_report_gate` (`approve` or `deny`)."
+    )
+    email_html = (
+        html + f"<p style=\"font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#344054;\">"
+        f"<b>{escape(tv_line)}</b></p>"
+        if tv_line else html
     )
     completion = {
         "kind": "step",
         "record_as": ID,
         "status": "pass",
-        "note": f"RC verification summary posted to Scout bot for {to}",
+        "note": f"RC verification summary + HTML report sent to {to}",
         "links": links,
         "data": {"report_lineage": lineage, "gate_preconditions": matches},
     }
     return NeedsSkill(
         tool="m_send_teams_message",
-        payload={"message": message},
+        payload={
+            "message": message,
+            "_also_email": {
+                "to": [to],
+                "subject": subject,
+                "body": email_html,
+                "isHtml": True,
+            },
+        },
         record_as=ID,
-        summary=f"Post the RC verification report summary to the owner's Scout bot ({to})",
+        summary=f"Post the RC verification summary to Scout bot and email the full HTML report ({to})",
         note=completion["note"],
         outbound=True,
         notification={

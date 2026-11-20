@@ -295,6 +295,16 @@ def deliver_one_step(
     if D.prune_progress(orch):
         pass
     C.save_state(st, runs_root, release)
+    companion_deliveries = []
+    if len(items) > 1:
+        companion_deliveries = deliver_descriptor_items(
+            runs_root,
+            release,
+            config,
+            items[1:],
+            executor=executor,
+            mcp_caller=mcp_caller,
+        )
     C.elog(runs_root, release).log(
         "notification_delivered",
         phase=phase,
@@ -312,6 +322,7 @@ def deliver_one_step(
         "via": via,
         "target": claimed.get("target"),
         "notification_id": item["id"],
+        **({"companion_deliveries": companion_deliveries} if companion_deliveries else {}),
         "summary": out.get("note") or out.get("summary") or evidence,
     }
 

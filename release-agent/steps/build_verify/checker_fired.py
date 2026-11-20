@@ -57,7 +57,14 @@ def build(context: StepContext):
             return Blocked("checker_fired: invalid trigger evidence — expected an object")
         return _verdict(context, injected.get("run") or {}, injected.get("result"), job)
 
-    ok, runs, detail = context.services.pipelines.find_checker_runs(cfg["org"], cfg["project"], cfg["def_id"], month)
+    finder = context.services.pipelines.find_checker_runs
+    try:
+        ok, runs, detail = finder(
+            cfg["org"], cfg["project"], cfg["def_id"], month,
+            ccd=context.release.ccd, timezone_name=context.release.timezone,
+        )
+    except TypeError:
+        ok, runs, detail = finder(cfg["org"], cfg["project"], cfg["def_id"], month)
     if not ok:
         hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
         return Blocked(f"checker_fired: could not read checker runs ({detail}){hint}.")

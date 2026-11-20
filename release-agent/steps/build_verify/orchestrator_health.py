@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from orchestrator.step_context import StepContext
 
-from orchestrator.outcomes import Done, Blocked
+from orchestrator.outcomes import Done, Blocked, InProgress
 from orchestrator import schedule
 from orchestrator.evidence import ReleaseVersions
 from steps.lib.mockctx import MISSING
@@ -52,14 +52,25 @@ def build(context: StepContext):
 
     run = context.input("run", MISSING)
     if run is MISSING:
-        ok, run, detail = context.services.pipelines.find_orchestrator_run(cfg["org"], cfg["project"], cfg["def_id"], month)
+        finder = context.services.pipelines.find_orchestrator_run
+        try:
+            ok, run, detail = finder(
+                cfg["org"], cfg["project"], cfg["def_id"], month, ccd=context.release.ccd
+            )
+        except TypeError:
+            ok, run, detail = finder(cfg["org"], cfg["project"], cfg["def_id"], month)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"orchestrator_health: could not read orchestrator runs ({detail}){hint}.")
     if not run:
+        expected_tag = (
+            f"AuthenticatorBranch=release-{context.release.ccd}"
+            if context.release.ccd
+            else f"AuthenticatorBranch=release-{month}-*"
+        )
         return Blocked(
             f"No Release Orchestrator run found for {month} (no run tagged "
-            f"AuthenticatorBranch=release-{month}-*). The release may not have started, "
+            f"{expected_tag}). The release may not have started, "
             f"or the run isn't tagged. Check def {cfg['def_id']}.")
 
     if not isinstance(run, dict) or not K.valid_id(run.get("id")):
@@ -95,13 +106,20 @@ def build(context: StepContext):
             return Blocked(f"orchestrator_health: ambiguous duplicate stage '{name}'", links=links)
         by_name[name] = stage
 
-    # Required pre-gate stages must all be green.
+    # Required pre-gate stages must all be green; hold InProgress while genuinely still executing.
     for name in cfg["required_stages"]:
         st = by_name.get(name)
         if st is None:
             return Blocked(
                 f"Release Orchestrator run {bid} is missing the '{name}' stage — "
                 f"the run may have aborted early.{K.UNBLOCK_HELP}", links=links)
+        if st.get("state") in ("inProgress", "notStarted", "pending") and st.get("result") is None:
+            return InProgress(
+                f"Release Orchestrator run {bid} is still executing pre-gate stage '{name}' "
+                f"(state={st.get('state')}) — release-drainer checks every 2h and will continue "
+                f"once parked at '{cfg['park_stage']}'.",
+                links=links,
+            )
         if st.get("state") != "completed" or st.get("result") != "succeeded":
             return Blocked(
                 f"Release Orchestrator stage '{name}' did not succeed "

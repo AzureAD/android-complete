@@ -14,6 +14,8 @@ informational suite verdict reused by the report.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import Done, Blocked, InProgress
@@ -31,6 +33,15 @@ KIND = "agent"
 NAME = 'Verify Authenticator ECS build + UI tests'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+
+
+@dataclass(frozen=True)
+class BuildParameters:
+    build_id: str | None = None
+    test_build_id: str | None = None
+
+
+PARAMETERS = {"build": BuildParameters}
 
 # Mock knobs (mocks.local.yaml): consumed inside verify_auth_ecs via mock_input.
 MOCKABLE = {
@@ -148,18 +159,34 @@ def verify_auth_ecs(context):
     test_status, suites (the auth_ui_suite_rates map), rc (override the RC number)."""
     label = "Authenticator ECS"
 
-    # 1) resolve the current-RC ECS build (or take the injected one)
+    # 1) resolve the current-RC ECS build (or take explicit parameter / injected mock)
+    param_bid = getattr(context.parameters, "build_id", None)
+    param_tbid = getattr(context.parameters, "test_build_id", None)
     ab = context.input("auth_build", MISSING)
     if ab is MISSING:
         auth_branch = (getattr(context.release, "versions", None) or {}).get("authenticator")
-        if not auth_branch:
+        if not auth_branch and not param_bid:
             return Blocked(f"{label}: no authenticator branch on state.versions yet — run "
                            f"orchestrator_health first.")
-        ok, ab, detail = context.services.pipelines.find_auth_ecs_build(auth_branch)
-        if not ok:
+        ok, ab, detail = context.services.pipelines.find_auth_ecs_build(auth_branch or "")
+        if param_bid and (not ok or not ab or str(ab.get("build_id")) != str(param_bid)):
+            ok_b, bstat, bres, bdet = context.services.pipelines.get_build_status(
+                AUTH_ORG, AUTH_PROJECT, param_bid
+            )
+            if not ok_b:
+                return Blocked(f"{label}: could not read override build {param_bid} ({bdet}).")
+            ab = {
+                "build_id": str(param_bid),
+                "rc": latest_rc(context).get("rc") or 1,
+                "version": (ab or {}).get("version"),
+                "build_number": (ab or {}).get("build_number"),
+                "status": bstat,
+                "result": bres,
+            }
+        elif not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"{label}: could not query the auth build ({detail}){hint}.")
-        if not ab:
+        elif not ab:
             return Blocked(f"{label}: no ECS release-candidate auth build found for this "
                            f"release ({detail}). Verify the auth working-branch was cut.")
     build_id = ab.get("build_id")
@@ -183,8 +210,9 @@ def verify_auth_ecs(context):
         invalidated = (PipelineEvidence(runs),)
     if status != "completed":
         return InProgress(
-            f"{label} build {build_id} is still running (status: {status}) — Scout is polling "
-            f"every 30 min and will capture its UI tests when it completes.", links=links, updates=invalidated)
+            f"{label} build {build_id} is still running (status: {status}) — release-drainer "
+            f"checks every 2h and will capture its UI tests when it completes.",
+            links=links, updates=invalidated)
 
     # A build that ran but did NOT succeed has no usable UI-test data. Record the fact (the
     # RC report consolidates it and decides) and finish — this step never gates, it only
@@ -205,7 +233,7 @@ def verify_auth_ecs(context):
             links=links, updates=(evidence,))
 
     # 2) find the post-build UI-test run (data availability). Not run yet -> hold.
-    tb = context.input("test_build", MISSING)
+    tb = param_tbid or context.input("test_build", MISSING)
     if tb is MISSING:
         ok, tb, detail = context.services.pipelines.find_auth_ui_test_build(build_id)
         if not ok:
@@ -216,7 +244,7 @@ def verify_auth_ecs(context):
         # The test auto-triggers off build completion (PR 16976328); it just hasn't run yet.
         return InProgress(
             f"{label} build {build_id} is green, but its post-build UI-test run hasn't "
-            f"appeared yet — Scout is polling every 30 min and will capture it once it runs.",
+            f"appeared yet — release-drainer checks every 2h and will capture it once it runs.",
             links=links, updates=invalidated)
     links.append({"name": f"{label} UI tests", "url": auth_build_url(tb)})
 
