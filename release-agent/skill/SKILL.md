@@ -52,7 +52,7 @@ No blanket write authority comes from setup/readiness: every owning write step r
 | Skip / Completed manually | `skip ... --reason "<reason>" --json` / `complete-manually ... --note "<note>"` | Record waiver/owner-attested completion of any non-gate task, then continue eligible work |
 | Record a confirmation | `record-fact --release <id> --phase <p> --step <s> --note "<statement>" --json` | Record supplied fact, then continue eligible work |
 | Use existing Bug Bash invite | `adopt-bugbash-invite --release <id> --result-file ...` | Bind verified invite without duplicate send, then resume eligible work |
-| Ask about step / gate / RC | `step-info`, `gate-info`, or `rc-report --release <id>` | Answer from step knowledge (`journal --kind qa` if active) or paste `rc-report` raw |
+| Ask about step / gate / RC / why a step failed | `step-info`, `gate-info`, `rc-report --release <id>`, or `diagnose --release <id> --phase <p> --step <s> --json` | Answer from step knowledge / ADO task logs / test failure clusters (`record-diagnosis` to save AI triage) |
 | Check setup | `onboarding --json` | Diagnose/register requested setup only; do not initialize or advance a release |
 
 **Launcher menu (`/release-agent` alone or `"menu"`):** Run `commands --json`. Paste `status_markdown` (active release) or `guide_markdown` (none) as raw Markdown, then present `launcher_prompt` via `m_ask_user`. If the user selects **Update / override a step** or **Re-run a step** without naming one, present a step picker via `m_ask_user` (checking `step-info --json` for valid `--param` inputs). `task` returns `done`, `needs_input`, `waiting`, or `failed` with exact `kind`, tool, and payload.

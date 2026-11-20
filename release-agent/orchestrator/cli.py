@@ -79,7 +79,7 @@ def main(argv=None):
                     return 1
             diagnostics = {
                 "status", "list", "inspect-state", "workflow-adopt", "mock-spec",
-                "step-info", "gate-info", "task-history", "log", "drain-log",
+                "step-info", "gate-info", "task-history", "log", "drain-log", "diagnose",
                 "journal", "paths", "preview-release",
                 "bugbash-progress", "m365-capabilities",
             }

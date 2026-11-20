@@ -52,21 +52,59 @@ def build(context: StepContext):
 
     matches = list(lineage["source_matches"])
     runs_text = "\n".join(f"- [{item['name']}]({item['url']})" for item in links)
+
+    # Embed stored AI diagnosis (or deterministic test-cluster brief) when RC suites have failures.
+    diag_md = ""
+    diag_html = ""
+    gate_step = context.evidence.step("build_verify", "rc_report_gate")
+    stored_diag = (gate_step.data or {}).get("ai_diagnosis") if gate_step else None
+    if isinstance(stored_diag, dict) and stored_diag.get("headline"):
+        from orchestrator import diagnosis as DIAG
+        md_lines = DIAG.format_diagnosis_markdown(stored_diag, indent="")
+        if md_lines:
+            diag_md = "\n".join(md_lines) + "\n\n"
+        diag_html = DIAG.format_diagnosis_html(stored_diag, title_prefix="RC Test Failure Triage")
+    else:
+        failures = ((model.get("ui_evidence") or {}).get("failures")) or []
+        if failures:
+            from types import SimpleNamespace
+            from orchestrator import diagnosis as DIAG
+            try:
+                clusters = DIAG.collect_rc_test_clusters(
+                    "",
+                    context.release.release_id,
+                    SimpleNamespace(pipeline_runs=context.evidence.pipeline_runs),
+                )
+                if clusters["total_failed_tests"] > 0:
+                    det = DIAG.build_deterministic_brief({
+                        "step": "build_verify.rc_report_gate",
+                        "diagnosis_kind": "rc_test_failures",
+                        "test_clusters": clusters,
+                    })
+                    md_lines = DIAG.format_diagnosis_markdown(det, indent="")
+                    if md_lines:
+                        diag_md = "\n".join(md_lines) + "\n\n"
+                    diag_html = DIAG.format_diagnosis_html(det, title_prefix="RC Test Failure Triage")
+            except Exception:
+                pass
+
     message = (
         f"**Release {context.release.release_id} - RC verification summary**\n\n"
         f"Summary: MRWP ECS: {ecs['headline']}; MRWP Local: {local['headline']}; "
         f"Authenticator ECS: {_auth_summary(model, auth)}.\n"
         + (f"{tv_line}\n" if tv_line else "")
         + "\n"
+        + diag_md
         + (f"Pipeline runs:\n{runs_text}\n\n" if runs_text else "")
         + "Full HTML RC verification report has also been emailed to you. "
         + "Review the results and decide `rc_report_gate` (`approve` or `deny`)."
     )
-    email_html = (
-        html + f"<p style=\"font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#344054;\">"
+    tv_html = (
+        f"<p style=\"font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#344054;\">"
         f"<b>{escape(tv_line)}</b></p>"
-        if tv_line else html
+        if tv_line else ""
     )
+    email_html = html + tv_html + diag_html
     completion = {
         "kind": "step",
         "record_as": ID,

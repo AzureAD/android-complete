@@ -580,6 +580,20 @@ def status_view(r: dict) -> str:
                 f"- **{sname}** — *System:* {rem['system']} · *Fix:* {rem['how_to_fix']}{links_suffix}\n"
                 f"  - *Escape hatch:* `{rem['complete_manually_command']}` or `{rem['skip_command']}`"
             )
+            if isinstance(fs.get("ai_diagnosis"), dict) and fs["ai_diagnosis"].get("headline"):
+                from . import diagnosis as DIAG
+                lines.extend(DIAG.format_diagnosis_markdown(fs["ai_diagnosis"], indent="  "))
+
+    if r.get("gate") and not (r.get("work_dispatch") or {}).get("continue_automatically"):
+        gate_step_row = next(
+            (s for s in r.get("current_steps", []) if s.get("id") == r["gate"].get("step")),
+            None,
+        )
+        if gate_step_row and isinstance(gate_step_row.get("ai_diagnosis"), dict) and gate_step_row["ai_diagnosis"].get("headline"):
+            from . import diagnosis as DIAG
+            lines.append("")
+            lines.append(f"🔍 **Failure Triage for `{r['gate'].get('step_name')}`:**")
+            lines.extend(DIAG.format_diagnosis_markdown(gate_step_row["ai_diagnosis"], indent=""))
 
     # 2) Phase map (overview). Icon is prefixed onto the Phase name (no separate
     # empty-header icon column — that renders with a huge gap in Scout's tables).

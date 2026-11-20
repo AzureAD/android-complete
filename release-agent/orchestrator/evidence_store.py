@@ -176,6 +176,15 @@ def _write(directory, parts, content):
         except FileExistsError:
             if _read(target) != content:
                 raise EvidenceError(f"RC evidence changed on disk: {target}; restore the original file")
+        except PermissionError:
+            try:
+                with open(target, "xb") as dst:
+                    dst.write(content.encode("utf-8") if isinstance(content, str) else content)
+                    dst.flush()
+                    os.fsync(dst.fileno())
+            except FileExistsError:
+                if _read(target) != content:
+                    raise EvidenceError(f"RC evidence changed on disk: {target}; restore the original file")
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

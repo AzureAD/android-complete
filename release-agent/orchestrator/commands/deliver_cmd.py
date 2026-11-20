@@ -212,6 +212,50 @@ def deliver_one_step(
         }
 
     item = items[0]
+    if item["tool"] == "m_send_teams_message":
+        companion_deliveries = []
+        if len(items) > 1:
+            companion_deliveries = deliver_descriptor_items(
+                runs_root,
+                release,
+                config,
+                items[1:],
+                executor=executor,
+                mcp_caller=mcp_caller,
+            )
+            st, orch = C.load_orch(runs_root, release, config)
+        offered = D.offer(orch, item)
+        C.save_state(st, runs_root, release)
+        nid = offered["id"]
+        nhash = offered["hash"]
+        msg_body = (offered.get("payload") or {}).get("message") or ""
+        return {
+            "status": "awaiting_scout_bot",
+            "release": release,
+            "phase": phase,
+            "step": step,
+            "tool": "m_send_teams_message",
+            "notification_id": nid,
+            **({"companion_deliveries": companion_deliveries} if companion_deliveries else {}),
+            "scout_bot_delivery": {
+                "action_required": True,
+                "notification_id": nid,
+                "hash": nhash,
+                "tool": "m_send_teams_message",
+                "message": msg_body,
+                "claim_command": (
+                    f"python -m orchestrator.cli --scheduled notification claim --release {release} "
+                    f"--id \"{nid}\" --hash \"{nhash}\" --executor {executor} --json"
+                ),
+                "ack_sent_command": (
+                    f"python -m orchestrator.cli --scheduled notification result --release {release} "
+                    f"--id \"{nid}\" --execution-id <execution_id> --outcome sent "
+                    f"--evidence \"Scout bot DM sent via m_send_teams_message\""
+                ),
+            },
+            "summary": "Companion email sent (if any); claim and send Scout bot DM via m_send_teams_message.",
+        }
+
     D.offer(orch, item)
     claimed = D.claim(orch, item["id"], item["hash"], executor)
     C.save_state(st, runs_root, release)
@@ -357,6 +401,10 @@ def drain_auto_notifications(
                 continue
             handler = orch.handler(step_def.phase_id, sid)
             if not handler.notification:
+                continue
+            if "scout_teams_relay" in (step_def.required_tools or ()):
+                # Scout bot (`m_send_teams_message`) steps run via `pending_host_work`
+                # so Scout can synthesize AI failure diagnosis first and call `m_send_teams_message`.
                 continue
             attempted.add(step_def.key)
             res = deliver_one_step(

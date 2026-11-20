@@ -236,6 +236,7 @@ class StatusViewMixin:
                 "owner": "human" if kind in ("gate", "attest", "reminder") else "agent",
                 "state": s_state,
                 "note": rec.get("note"),          # agent result / block reason / detail
+                "ai_diagnosis": (rec.get("data") or {}).get("ai_diagnosis"),
                 "execution": self.step_execution(current_phase_obj["id"], s["id"])
                              if s_state not in ("done", "skipped") else {},
                 "links": rec.get("links") or [],  # durable refs (wiki page, CG alerts)

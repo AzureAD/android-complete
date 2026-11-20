@@ -7,6 +7,7 @@ from html import escape
 import hashlib
 import json
 import os
+import re
 import time as _monotonic
 import uuid
 from typing import Any, Optional
@@ -300,8 +301,24 @@ def _diff_executed_steps(
     return changed
 
 
-def _collect_pending_host_work(orch) -> list[dict[str, Any]]:
-    """Return `requires_approval: false` Scout/MCP host tasks remaining in this drain turn."""
+def _collect_pending_host_work(
+    orch,
+    *,
+    runs_root: Optional[str] = None,
+    config_path: Optional[str] = None,
+    deliver: bool = False,
+) -> list[dict[str, Any]]:
+    """Return `requires_approval: false` Scout/MCP host tasks remaining in this drain turn.
+
+    Includes:
+      1. Readiness Scout auto-checks (`oncall_now`, `adx_access`, `teams_notify`, `ccd_confirmed`).
+      2. Non-approval Scout phase steps (`preflight.lockdown`, `ccd.localization`).
+      3. Automatic pre-CTA AI failure diagnoses (`scope: "ai_diagnosis"`) for newly blocked
+         pipeline/telemetry steps or `<100%` RC test failures — ordered BEFORE `scout_teams_relay`
+         notifications and CTA finalize so the very first RC Report & CTA Email/Scout DM include
+         the AI root-cause & action brief.
+      4. `requires_approval: false` `scout_teams_relay` notifications (`build_verify.rc_report_notify`).
+    """
     if orch.state.halt or orch.state.cancellation:
         return []
     if not orch.gate.signed:
@@ -327,7 +344,7 @@ def _collect_pending_host_work(orch) -> list[dict[str, Any]]:
         ]
     rep = orch.status_report()
     pending_work = (rep.get("work_dispatch") or {}).get("pending_work") or []
-    return [
+    out: list[dict[str, Any]] = [
         {
             "scope": "phase",
             "step": item.get("key") or f"{item.get('phase')}.{item.get('step')}",
@@ -341,6 +358,33 @@ def _collect_pending_host_work(orch) -> list[dict[str, Any]]:
         if not item.get("requires_approval") and not item.get("outbound_notification")
     ]
 
+    if deliver and runs_root and config_path:
+        from orchestrator import diagnosis as DIAG
+        out.extend(DIAG.pending_diagnosis_targets(orch, runs_root, config_path))
+
+    # Queue `requires_approval: false` `scout_teams_relay` notifications (`m_send_teams_message` + companion email)
+    # AFTER `ai_diagnosis` so `rc_report_notify` embeds the recorded AI triage!
+    for item in pending_work:
+        if item.get("requires_approval") or not item.get("outbound_notification"):
+            continue
+        phase_id = item.get("phase")
+        step_id = item.get("step")
+        step_def = orch.workflow.step(phase_id, step_id) if (phase_id and step_id) else None
+        if step_def is not None and "scout_teams_relay" in (step_def.required_tools or ()):
+            out.append({
+                "scope": "scout_notification",
+                "step": step_def.key,
+                "phase": phase_id,
+                "step_id": step_id,
+                "name": step_def.name,
+                "requires_approval": False,
+                "command": (
+                    f"python -m orchestrator.cli --scheduled deliver-step --release {orch.state.release_id} "
+                    f"--phase {phase_id} --step {step_id} --json"
+                ),
+            })
+    return out
+
 
 def _waiting_minutes(since_iso: Optional[str], now_utc: datetime) -> Optional[int]:
     parsed = schedule.parse_iso_utc(since_iso)
@@ -349,7 +393,13 @@ def _waiting_minutes(since_iso: Optional[str], now_utc: datetime) -> Optional[in
     return max(0, int((now_utc - parsed.astimezone(timezone.utc)).total_seconds() // 60))
 
 
-def classify_waiting(orch, now_utc: datetime) -> dict[str, Any]:
+def classify_waiting(
+    orch,
+    now_utc: datetime,
+    *,
+    runs_root: Optional[str] = None,
+    config_path: Optional[str] = None,
+) -> dict[str, Any]:
     """Classify all currently eligible waiting items into `blocked`, `human_input`, `in_flight`, `unavailable`."""
     items: list[dict[str, Any]] = []
     selection = orch.scheduling()
@@ -433,6 +483,12 @@ def classify_waiting(orch, now_utc: datetime) -> dict[str, Any]:
                         (orch._projection().latest_gate_decision(step) or {}).get("comment")
                         if gate_denied else "Step is blocked and requires owner attention."
                     )
+                    diag = None
+                    if runs_root and config_path and rec.status == "blocked":
+                        from orchestrator import diagnosis as DIAG
+                        diag = DIAG.effective_diagnosis_for_step(
+                            orch, runs_root, config_path, step.phase_id, step.id, fetch_live_logs=False
+                        )
                     items.append({
                         "step": step.key,
                         "name": step.name,
@@ -442,6 +498,7 @@ def classify_waiting(orch, now_utc: datetime) -> dict[str, Any]:
                         "waiting_minutes": _waiting_minutes(since, now_utc),
                         "available_at": None,
                         "links": links,
+                        **({"diagnosis": diag} if diag else {}),
                     })
                 elif not s_ready.time_ready:
                     items.append({
@@ -471,6 +528,12 @@ def classify_waiting(orch, now_utc: datetime) -> dict[str, Any]:
                         if step.is_gate
                         else "Awaiting release owner confirmation/input."
                     )
+                    diag = None
+                    if runs_root and config_path and step.key == "build_verify.rc_report_gate":
+                        from orchestrator import diagnosis as DIAG
+                        diag = DIAG.effective_diagnosis_for_step(
+                            orch, runs_root, config_path, step.phase_id, step.id, fetch_live_logs=False
+                        )
                     items.append({
                         "step": step.key,
                         "name": step.name,
@@ -480,6 +543,7 @@ def classify_waiting(orch, now_utc: datetime) -> dict[str, Any]:
                         "waiting_minutes": _waiting_minutes(since, now_utc),
                         "available_at": None,
                         "links": links,
+                        **({"diagnosis": diag} if diag else {}),
                     })
 
     return {
@@ -559,6 +623,42 @@ def _format_duration_minutes(minutes: Optional[int]) -> str:
     return f"{hours}h {rem}m" if rem else f"{hours}h"
 
 
+_TSG_INLINE_RE = re.compile(r"Recovery TSG:\s*(https?://\S+)", re.IGNORECASE)
+_ESC_INLINE_RE = re.compile(r"escalate:\s*(https?://\S+)", re.IGNORECASE)
+_NEVER_RAN_LIST_RE = re.compile(
+    r"(\d+\s+stage\(s\)\s+never\s+ran\s*\([^)]*\)):\s*[^.]+\.(?:\s*A stage that never ran means the pipeline aborted partway\.)?",
+    re.IGNORECASE,
+)
+
+
+def _compact_blocked_item_for_cta(item: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
+    """Strip redundant boilerplate / 15-stage walls of text and extract clean TSG/Escalate links."""
+    raw = str(item.get("reason") or "").strip()
+    links = [dict(lnk) for lnk in (item.get("links") or []) if lnk.get("name") and lnk.get("url")]
+    existing_urls = {lnk["url"] for lnk in links}
+
+    m_tsg = _TSG_INLINE_RE.search(raw)
+    if m_tsg:
+        tsg_url = m_tsg.group(1).rstrip(".,)")
+        if tsg_url not in existing_urls:
+            links.append({"name": "Recovery TSG", "url": tsg_url})
+            existing_urls.add(tsg_url)
+    m_esc = _ESC_INLINE_RE.search(raw)
+    if m_esc:
+        esc_url = m_esc.group(1).rstrip(".,)")
+        if esc_url not in existing_urls:
+            links.append({"name": "Escalate (Teams)", "url": esc_url})
+            existing_urls.add(esc_url)
+
+    # Strip the generic `UNBLOCK_HELP` tail (`→ Each failed stage's output describes...`)
+    lead = raw.split("\n→")[0].split("→ Each failed stage")[0].strip()
+    if item.get("diagnosis"):
+        # When a rich Root-Cause Triage card follows right below, condense any 15-stage skipped list
+        # to a crisp 1-line summary so we never dump a redundant wall of stage names above the triage.
+        lead = _NEVER_RAN_LIST_RE.sub(r"\1 — pipeline aborted partway.", lead)
+    return lead, links
+
+
 def render_cta_messages(
     state,
     snapshot: dict[str, Any],
@@ -625,24 +725,30 @@ def render_cta_messages(
             md_lines.append(f"- {icon} **{ps['name']}** — {st_word}")
 
     if blocked_items:
+        from orchestrator import diagnosis as DIAG
         md_lines.append(f"\n⛔ **Blocked — Action Required ({len(blocked_items)}):**")
         for item in blocked_items:
             friendly = item.get("name") or item["step"]
             wait_txt = _format_duration_minutes(item.get("waiting_minutes"))
+            lead_reason, clean_links = _compact_blocked_item_for_cta(item)
             links_md = " · ".join(
                 f"[{lnk['name']}]({lnk['url']})"
-                for lnk in (item.get("links") or [])
-                if lnk.get("name") and lnk.get("url")
+                for lnk in clean_links
             )
             suffix = f" — {links_md}" if links_md else ""
-            md_lines.append(f"- **{friendly}** *(waiting {wait_txt})*: {item['reason']}{suffix}")
+            md_lines.append(f"- **{friendly}** *(waiting {wait_txt})*: {lead_reason}{suffix}")
+            if item.get("diagnosis"):
+                md_lines.extend(DIAG.format_diagnosis_markdown(item["diagnosis"], indent="  "))
 
     if human_items:
+        from orchestrator import diagnosis as DIAG
         md_lines.append(f"\n👤 **Needs Your Input ({len(human_items)}):**")
         for item in human_items:
             friendly = item.get("name") or item["step"]
             wait_txt = _format_duration_minutes(item.get("waiting_minutes"))
             md_lines.append(f"- **{friendly}** *(waiting {wait_txt})*: {item['reason']}")
+            if item.get("diagnosis"):
+                md_lines.extend(DIAG.format_diagnosis_markdown(item["diagnosis"], indent="  "))
 
     focus_names = ", ".join(f"**{i.get('name') or i['step']}**" for i in actionable[:2])
     md_lines.append(
@@ -658,21 +764,30 @@ def render_cta_messages(
         "#F79009" if level == "attention" else "#2E90FA"
     )
 
-    def _html_items(rows: list[dict[str, Any]]) -> str:
+    def _html_items(rows: list[dict[str, Any]], *, compact_blocked: bool = False) -> str:
+        from orchestrator import diagnosis as DIAG
         parts = []
         for item in rows:
             friendly = item.get("name") or item["step"]
             wait_txt = _format_duration_minutes(item.get("waiting_minutes"))
+            if compact_blocked:
+                reason_txt, clean_links = _compact_blocked_item_for_cta(item)
+            else:
+                reason_txt = str(item.get("reason") or "")
+                clean_links = [lnk for lnk in (item.get("links") or []) if lnk.get("name") and lnk.get("url")]
             links_html = " &middot; ".join(
                 f'<a href="{escape(str(lnk["url"]), quote=True)}">{escape(str(lnk["name"]))}</a>'
-                for lnk in (item.get("links") or [])
-                if lnk.get("name") and lnk.get("url")
+                for lnk in clean_links
             )
             link_part = f" &mdash; {links_html}" if links_html else ""
+            diag_card = (
+                f"<br>{DIAG.format_diagnosis_html(item['diagnosis'])}"
+                if item.get("diagnosis") else ""
+            )
             parts.append(
-                f"<li style=\"margin-bottom:6px;\"><b>{escape(str(friendly))}</b> "
+                f"<li style=\"margin-bottom:10px;\"><div><b>{escape(str(friendly))}</b> "
                 f"<span style=\"color:#475467;\">(waiting {escape(wait_txt)})</span>: "
-                f"{escape(str(item['reason']))}{link_part}</li>"
+                f"{escape(reason_txt)}{link_part}</div>{diag_card}</li>"
             )
         return "".join(parts)
 
@@ -707,7 +822,7 @@ def render_cta_messages(
         )
 
     blocked_html = (
-        f"<p><b>Blocked &mdash; Action Required ({len(blocked_items)}):</b></p><ul>{_html_items(blocked_items)}</ul>"
+        f"<p><b>Blocked &mdash; Action Required ({len(blocked_items)}):</b></p><ul>{_html_items(blocked_items, compact_blocked=True)}</ul>"
         if blocked_items else ""
     )
     human_html = (
@@ -927,6 +1042,20 @@ def evaluate_risk_and_cta(
                 pending_bot,
             )
         return risk, {"sent": False, "due": False, "reason": cta_reason, "channels": []}, None
+
+    if deliver and getattr(orch, "_clock_now", None) is None:
+        from orchestrator import diagnosis as DIAG
+        for item in actionable:
+            diag = item.get("diagnosis")
+            is_unfetched_blocked = item.get("category") == "blocked" and (
+                diag is None or (isinstance(diag, dict) and diag.get("source") == "deterministic")
+            )
+            if is_unfetched_blocked and "." in str(item.get("step", "")):
+                p_id, _, s_id = str(item["step"]).partition(".")
+                if orch.workflow.step(p_id, s_id) is not None:
+                    item["diagnosis"] = DIAG.effective_diagnosis_for_step(
+                        orch, runs_root, config_path, p_id, s_id, fetch_live_logs=True
+                    )
 
     ch = _cta_channels(config_path)
     ncfg = notif.load_config(config_path) if os.path.isfile(notif.notifications_path(config_path)) else {
@@ -1229,7 +1358,13 @@ def run_drain(
         mcp_caller=mcp_caller,
     )
     elapsed_ms = prior_ms + max(1, int((_monotonic.monotonic() - t_mono_start) * 1000))
-    pending_host_work = [] if finalize_run else _collect_pending_host_work(orch)
+    pending_host_work = (
+        []
+        if finalize_run
+        else _collect_pending_host_work(
+            orch, runs_root=runs_root, config_path=config_path, deliver=deliver
+        )
+    )
 
     friendly_names = _step_friendly_names(orch)
     if pending_host_work:
@@ -1268,7 +1403,7 @@ def run_drain(
     after_statuses = _status_map(orch)
     executed_steps = _diff_executed_steps(before_statuses, after_statuses, friendly_names)
     exited = capture_snapshot(orch)
-    waiting = classify_waiting(orch, now_utc)
+    waiting = classify_waiting(orch, now_utc, runs_root=runs_root, config_path=config_path)
     risk, notif_summary, scout_bot_cta = evaluate_risk_and_cta(
         orch,
         exited,
