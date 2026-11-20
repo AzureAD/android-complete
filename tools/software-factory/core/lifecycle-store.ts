@@ -25,8 +25,9 @@ export function lifecycleSchema(db: DatabaseSync): void {
             feature_id TEXT PRIMARY KEY REFERENCES features(id), version INTEGER NOT NULL, content_json TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS factory_configuration (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-            hash TEXT NOT NULL, content_json TEXT NOT NULL, actor_json TEXT NOT NULL, created_at TEXT NOT NULL
+            id TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id),
+            hash TEXT NOT NULL, content_json TEXT NOT NULL, actor_json TEXT NOT NULL, created_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, id)
         );
         CREATE TABLE IF NOT EXISTS factory_resident_owner (
             session_id TEXT PRIMARY KEY, token TEXT NOT NULL, heartbeat INTEGER NOT NULL
@@ -37,6 +38,30 @@ export function lifecycleSchema(db: DatabaseSync): void {
         CREATE TABLE IF NOT EXISTS factory_pending_reviews (
             id TEXT PRIMARY KEY, session_id TEXT NOT NULL, scope_hash TEXT NOT NULL, command_json TEXT NOT NULL, created_at TEXT NOT NULL
         );
+    `);
+    const configColumns = db.prepare("PRAGMA table_info(factory_configuration)").all() as Array<{ name?: unknown; pk?: unknown }>;
+    const projectPk = configColumns.find((col) => col.name === "project_id")?.pk;
+    if (typeof projectPk !== "number" || projectPk === 0) {
+        db.exec(`
+            DROP TRIGGER IF EXISTS factory_configuration_immutable_update;
+            DROP TRIGGER IF EXISTS factory_configuration_immutable_delete;
+            ALTER TABLE factory_configuration RENAME TO factory_configuration_legacy;
+            CREATE TABLE factory_configuration (
+                id TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id),
+                hash TEXT NOT NULL, content_json TEXT NOT NULL, actor_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                PRIMARY KEY (project_id, id)
+            );
+            INSERT OR IGNORE INTO factory_configuration (id, project_id, hash, content_json, actor_json, created_at)
+                SELECT id, project_id, hash, content_json, actor_json, created_at FROM factory_configuration_legacy;
+            INSERT OR IGNORE INTO factory_configuration (id, project_id, hash, content_json, actor_json, created_at)
+                SELECT fc.id, lc.project_id, fc.hash, lc.mappings_json, fc.actor_json, fc.created_at
+                FROM factory_local_configuration lc
+                JOIN factory_configuration_legacy fc ON fc.id = lc.configuration_id
+                JOIN projects p ON p.id = lc.project_id;
+            DROP TABLE factory_configuration_legacy;
+        `);
+    }
+    db.exec(`
         CREATE TRIGGER IF NOT EXISTS factory_configuration_immutable_update
             BEFORE UPDATE ON factory_configuration BEGIN SELECT RAISE(ABORT, 'Immutable configuration history'); END;
         CREATE TRIGGER IF NOT EXISTS factory_configuration_immutable_delete
@@ -184,15 +209,34 @@ export class LifecycleStore {
     }
 
     configure(value: Configuration, actor: Actor): ConfigRevision {
-        const existing = this.configuration();
-        if (existing && hash(existing.value) === hash(value)) return existing;
-        const config = { id: hash(sharedConfiguration(value)), hash: hash(sharedConfiguration(value)), value, createdAt: now() };
-        this.registry.connection.prepare("INSERT OR IGNORE INTO factory_configuration VALUES (?, ?, ?, ?, ?, ?)")
-            .run(config.id, this.registry.project.id, config.hash, JSON.stringify(value), JSON.stringify(actor), config.createdAt);
-        this.registry.connection.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
-            .run(this.registry.project.id, config.id, JSON.stringify(value));
+        const normalized = parseConfiguration(value);
+        const db = this.registry.connection;
+        const ownMapping = db.prepare("SELECT configuration_id FROM factory_local_configuration WHERE project_id = ?").get(this.registry.project.id);
+        const ownConfig = typeof ownMapping?.configuration_id === "string"
+            ? db.prepare("SELECT id FROM factory_configuration WHERE project_id = ? AND id = ?").get(this.registry.project.id, ownMapping.configuration_id)
+            : undefined;
+        const existing = ownMapping && ownConfig ? this.configuration() : null;
+        if (existing && hash(existing.value) === hash(normalized)) return existing;
+        const sharedHash = hash(sharedConfiguration(normalized));
+        const createdAt = now();
+        const serialized = JSON.stringify(normalized);
+        db.exec("BEGIN IMMEDIATE");
+        try {
+            db.prepare("INSERT OR IGNORE INTO factory_configuration (id, project_id, hash, content_json, actor_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+                .run(sharedHash, this.registry.project.id, sharedHash, serialized, JSON.stringify(actor), createdAt);
+            db.prepare("INSERT INTO factory_local_configuration (project_id, configuration_id, mappings_json) VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET configuration_id=excluded.configuration_id, mappings_json=excluded.mappings_json")
+                .run(this.registry.project.id, sharedHash, serialized);
+            db.exec("COMMIT");
+        } catch (error) {
+            db.exec("ROLLBACK");
+            throw error;
+        }
+        const saved = this.configuration(sharedHash);
+        if (!saved) {
+            throw new FactoryError("storage_corrupt", "Persisted configuration could not be reloaded for this project.", 500);
+        }
         this.emit({ kind: "configuration_updated" });
-        return config;
+        return saved;
     }
 
     generation(state: FactoryState, stage: "design" | "plan", revision: string): number {

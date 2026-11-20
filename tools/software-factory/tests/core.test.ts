@@ -284,3 +284,178 @@ test("LifecycleStore validates configuration, artifact authority, and repair pub
         f.cleanup();
     }
 });
+
+test("isolated projects sharing a registry can persist identical portable configurations with project-local mappings", () => {
+    const f = fixture();
+    const otherWorkspace = path.join(f.directory, "other-project");
+    mkdirSync(otherWorkspace);
+    execFileSync("git", ["init", "--quiet", "-b", "main", f.workspace]);
+    execFileSync("git", ["-C", f.workspace, "remote", "add", "origin", "https://example.test/org/project-a.git"]);
+    execFileSync("git", ["init", "--quiet", "-b", "main", otherWorkspace]);
+    execFileSync("git", ["-C", otherWorkspace, "remote", "add", "origin", "https://example.test/org/project-b.git"]);
+
+    const regA = new Registry(f.database, f.workspace);
+    const regB = new Registry(f.database, otherWorkspace);
+    const storeA = new LifecycleStore(regA);
+    const storeB = new LifecycleStore(regB);
+    try {
+        assert.notEqual(regA.project.id, regB.project.id);
+        assert.deepEqual(regA.projectIds, [regA.project.id]);
+        assert.deepEqual(regB.projectIds, [regB.project.id]);
+
+        const makeConfig = (localPath: string, account: string) => parseConfiguration({
+            boards: {
+                organization: "IdentityDivision",
+                project: "Engineering",
+                workItemType: "Product Backlog Item",
+                areaPath: "Engineering\\Android",
+                iterationPath: "Engineering",
+                assignee: "",
+                parentId: null,
+            },
+            repositories: {
+                common: {
+                    provider: "github",
+                    hostname: "github.com",
+                    slug: "AzureAD/microsoft-authentication-library-common-for-android",
+                    baseBranch: "dev",
+                    localPath,
+                    account,
+                },
+            },
+        });
+
+        const savedA = storeA.configure(makeConfig("common-a", "account-a"), actor);
+        const savedB = storeB.configure(makeConfig("common-b", "account-b"), actor);
+        assert.equal(savedA.id, savedB.id, "shared portable configuration hash must match");
+
+        const loadedA = storeA.configuration();
+        const loadedB = storeB.configuration();
+        assert.ok(loadedA, "first project configuration must load");
+        assert.ok(loadedB, "second isolated project configuration must not return null");
+        assert.equal(loadedA.id, savedA.id);
+        assert.equal(loadedB.id, savedB.id);
+        assert.equal(loadedA.value.repositories.common?.localPath, "common-a");
+        assert.equal(loadedA.value.repositories.common?.account, "account-a");
+        assert.equal(loadedB.value.repositories.common?.localPath, "common-b");
+        assert.equal(loadedB.value.repositories.common?.account, "account-b");
+        assert.equal(storeB.configuration(savedB.id)?.value.repositories.common?.localPath, "common-b");
+
+        // Also verify identical localPath/account across two isolated projects
+        const thirdWorkspace = path.join(f.directory, "third-project");
+        mkdirSync(thirdWorkspace);
+        execFileSync("git", ["init", "--quiet", "-b", "main", thirdWorkspace]);
+        execFileSync("git", ["-C", thirdWorkspace, "remote", "add", "origin", "https://example.test/org/project-c.git"]);
+        const regC = new Registry(f.database, thirdWorkspace);
+        const storeC = new LifecycleStore(regC);
+        try {
+            const savedC = storeC.configure(makeConfig("common-a", "account-a"), actor);
+            assert.equal(savedC.id, savedA.id);
+            assert.equal(storeC.configuration()?.id, savedC.id);
+            assert.equal(storeC.configuration(savedC.id)?.value.repositories.common?.account, "account-a");
+        } finally {
+            regC.close();
+        }
+    } finally {
+        regB.close();
+        regA.close();
+        f.cleanup();
+    }
+});
+
+test("lifecycleSchema migrates legacy single-PK factory_configuration tables and repairs orphaned local mappings", () => {
+    const f = fixture();
+    const legacyDbPath = path.join(f.directory, "legacy.sqlite");
+    const workspaceA = path.join(f.directory, "legacy-a");
+    const workspaceB = path.join(f.directory, "legacy-b");
+    mkdirSync(workspaceA);
+    mkdirSync(workspaceB);
+
+    const configA = parseConfiguration({
+        boards: {
+            organization: "IdentityDivision",
+            project: "Engineering",
+            workItemType: "Product Backlog Item",
+            areaPath: "Engineering\\Android",
+            iterationPath: "Engineering",
+            assignee: "",
+            parentId: null,
+        },
+        repositories: {
+            common: {
+                provider: "github",
+                hostname: "github.com",
+                slug: "AzureAD/microsoft-authentication-library-common-for-android",
+                baseBranch: "dev",
+                localPath: "common-a",
+                account: "account-a",
+            },
+        },
+    });
+    const configB = parseConfiguration({
+        ...configA,
+        repositories: {
+            common: {
+                ...configA.repositories.common!,
+                localPath: "common-b",
+                account: "account-b",
+            },
+        },
+    });
+
+    try {
+        // Seed a v2 database using the legacy single-column PK where project B's factory_configuration row was dropped by INSERT OR IGNORE.
+        const seedRegA = new Registry(legacyDbPath, workspaceA);
+        const seedRegB = new Registry(legacyDbPath, workspaceB);
+        const projectAId = seedRegA.project.id;
+        const projectBId = seedRegB.project.id;
+        seedRegB.close();
+        seedRegA.close();
+
+        const raw = new DatabaseSync(legacyDbPath);
+        try {
+            raw.exec(`
+                DROP TRIGGER IF EXISTS factory_configuration_immutable_update;
+                DROP TRIGGER IF EXISTS factory_configuration_immutable_delete;
+                DROP TABLE factory_configuration;
+                CREATE TABLE factory_configuration (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    hash TEXT NOT NULL, content_json TEXT NOT NULL, actor_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TRIGGER factory_configuration_immutable_update
+                    BEFORE UPDATE ON factory_configuration BEGIN SELECT RAISE(ABORT, 'Immutable configuration history'); END;
+                CREATE TRIGGER factory_configuration_immutable_delete
+                    BEFORE DELETE ON factory_configuration BEGIN SELECT RAISE(ABORT, 'Immutable configuration history'); END;
+            `);
+            const cfgId = "legacy-shared-config-id";
+            const createdAt = now();
+            raw.prepare("INSERT INTO factory_configuration VALUES (?, ?, ?, ?, ?, ?)")
+                .run(cfgId, projectAId, cfgId, JSON.stringify(configA), JSON.stringify(actor), createdAt);
+            raw.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?)")
+                .run(projectAId, cfgId, JSON.stringify(configA));
+            raw.prepare("INSERT INTO factory_local_configuration VALUES (?, ?, ?)")
+                .run(projectBId, cfgId, JSON.stringify(configB));
+        } finally {
+            raw.close();
+        }
+
+        const migratedRegA = new Registry(legacyDbPath, workspaceA);
+        const migratedRegB = new Registry(legacyDbPath, workspaceB);
+        const migratedStoreA = new LifecycleStore(migratedRegA);
+        const migratedStoreB = new LifecycleStore(migratedRegB);
+        try {
+            assert.equal(migratedStoreA.configuration()?.value.repositories.common?.localPath, "common-a");
+            assert.equal(migratedStoreB.configuration()?.value.repositories.common?.localPath, "common-b");
+            assert.equal(migratedStoreB.configuration()?.value.repositories.common?.account, "account-b");
+            assert.throws(
+                () => migratedRegB.connection.prepare("DELETE FROM factory_configuration WHERE project_id = ?").run(projectBId),
+                /Immutable configuration history/,
+            );
+        } finally {
+            migratedRegB.close();
+            migratedRegA.close();
+        }
+    } finally {
+        f.cleanup();
+    }
+});
