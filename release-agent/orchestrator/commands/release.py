@@ -404,33 +404,39 @@ def cmd_reopen(args):
     return 0
 
 
-_RC_RETRIGGER_ANCHOR = "mrwp_ecs"
+_RC_RETRIGGER_ANCHORS = ("mrwp_ecs", "mrwp_local")
 
 
 def cmd_rc_retriggered(args):
     """The human explicitly signals that a NEW RC has been triggered (a flaky-run
     re-trigger, or the orchestrator re-running RC testing after a broker cherry-pick).
 
-    Reopens the Phase-2 RC-testing steps so the engine re-resolves the NEWEST MRWP run
-    (mrwp_run_ids already picks the highest id) and re-applies the gate. Scout's poller /
-    next then holds while the new run is in-flight and re-evaluates on completion — so an
-    early poll can't mark an in-progress RC as a false failure."""
+    Reopens both parallel MRWP RC-testing roots (`mrwp_ecs` and `mrwp_local`) and their
+    downstream consumers so the engine re-resolves the NEWEST MRWP runs and re-applies
+    the gate. Holds cleanly while in-flight and re-evaluates on completion."""
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
     reason = (args.reason or "RC re-triggered").strip()
-    result = orch.reopen(
-        "build_verify", _RC_RETRIGGER_ANCHOR, reason
-    )
-    if not result.changed:
-        print(result.message)
+    affected: list[str] = []
+    last_message = ""
+    for anchor in _RC_RETRIGGER_ANCHORS:
+        if st.get_step("build_verify", anchor).status != "pending":
+            res = orch.reopen("build_verify", anchor, reason)
+            last_message = res.message
+            for item in res.affected:
+                if item not in affected:
+                    affected.append(item)
+    if not affected:
+        res = orch.reopen("build_verify", _RC_RETRIGGER_ANCHORS[0], reason)
+        print(last_message or res.message)
         return 1
-    affected = list(result.affected)
+    st.touch_owner_interaction()
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
         "rc_retriggered", driver=reason, steps=",".join(affected))
     msg = (f"RC re-trigger acknowledged — invalidated {len(affected)} downstream step(s) "
-           f"from build_verify.{_RC_RETRIGGER_ANCHOR}. Scout will "
+           f"from build_verify.mrwp_ecs + build_verify.mrwp_local. Scout will "
            f"re-resolve the newest RC and re-apply the gate; it holds (no action needed) "
-           f"while the run is still in-flight and polls every 30 min. Reason: {reason}")
+           f"while the run is still in-flight. Reason: {reason}")
     C.emit(args.runs_root, args.release, msg, kind="override")
     print(msg)
     return 0

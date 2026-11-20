@@ -132,10 +132,12 @@ class Orchestrator(StatusViewMixin):
 
     def _workflow_definition(self) -> WorkflowDefinition:
         """Read once per operation and recompile only when config content changes."""
+        normalized_mem = normalize_workflow_config(self.config, self._handler_resolver)
+        mem_fingerprint = workflow_fingerprint(normalized_mem)
         cache = operation_cache(self)
         if cache is not None and "workflow" in cache:
             cached = cache["workflow"]
-            if workflow_fingerprint(self.config) == cached.fingerprint:
+            if mem_fingerprint == cached.fingerprint:
                 return cached
         with open(self.config_path, "rb") as fh:
             config_bytes = fh.read()
@@ -146,9 +148,11 @@ class Orchestrator(StatusViewMixin):
             if disk_fingerprint != self._config_file_fingerprint:
                 self.config = disk_config
                 self._config_file_fingerprint = disk_fingerprint
+                normalized_mem = disk_config
+                mem_fingerprint = disk_fingerprint
             self._config_file_hash = config_hash
-        if workflow_fingerprint(self.config) != self.workflow.fingerprint:
-            workflow = WorkflowDefinition.compile(self.config, resolver=self._handler_resolver)
+        if mem_fingerprint != self.workflow.fingerprint:
+            workflow = WorkflowDefinition.compile(normalized_mem, resolver=self._handler_resolver)
             handlers = HandlerCatalog.compile(workflow, self._handler_resolver)
             self.workflow, self.handlers = workflow, handlers
         if cache is not None:

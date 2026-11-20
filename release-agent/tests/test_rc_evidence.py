@@ -400,14 +400,21 @@ def test_resolved_poll_reports_passed_after_rc_gate_approval(
 
 def test_capture_dependencies_hold_both_independent_children(ready):
     orch = Orchestrator(CONFIG, ready, mocks={})
-    assert orch.reopen("build_verify", "mrwp_local", "Recapture current RC").changed
+    # Reopening `mrwp_ecs` invalidates `auth_ecs` -> `telemetry_verify` -> `rc_report_notify`.
+    assert orch.reopen("build_verify", "mrwp_ecs", "Recapture current ECS RC").changed
     assert orch.scout_pending_steps() == []
     assert orch.step_action_guard("build_verify", "rc_report_notify").kind == "blocked"
-    orch.skip_step("build_verify", "mrwp_local", "Verified externally")
+    # Reopening `mrwp_local` as well ensures `rc_report_notify` requires `mrwp_local`, `auth_ecs`, AND `telemetry_verify`.
+    assert orch.reopen("build_verify", "mrwp_local", "Recapture current Local RC").changed
+    orch.skip_step("build_verify", "mrwp_ecs", "Verified externally")
     assert orch.scout_pending_steps() == []
     orch.skip_step("build_verify", "auth_ecs", "Verified externally")
-    assert orch.scout_pending_steps() == ["telemetry_verify", "rc_report_notify"]
+    # `auth_ecs` is done -> `telemetry_verify` unblocks, while `rc_report_notify` waits on `mrwp_local` + `telemetry_verify`!
+    assert orch.scout_pending_steps() == ["telemetry_verify"]
     assert orch.step_action_guard("build_verify", "telemetry_verify") is None
+    assert orch.step_action_guard("build_verify", "rc_report_notify").kind == "blocked"
+    orch.skip_step("build_verify", "mrwp_local", "Verified externally")
+    assert orch.scout_pending_steps() == ["telemetry_verify"]
     orch.skip_step("build_verify", "telemetry_verify", "Owner override")
     assert orch.scout_pending_steps() == ["rc_report_notify"]
 

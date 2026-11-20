@@ -1000,6 +1000,10 @@ def test_agent_steps_render_as_automatic_not_pending():
     orch.state.set_step("build_verify", "mrwp_ecs", StepState(status="done", by="test"))
     orch.state.set_step("build_verify", "mrwp_local", StepState(status="done", by="test"))
     orch.state.set_step("build_verify", "auth_ecs", StepState(status="done", by="test"))
+    steps_mid = {s["id"]: s for s in orch.status_report()["current_steps"]}
+    assert steps_mid["telemetry_verify"]["state"] == "scout"
+    assert steps_mid["rc_report_notify"]["state"] == "pending"
+    orch.state.set_step("build_verify", "telemetry_verify", StepState(status="done", by="test"))
     steps_after = {s["id"]: s for s in orch.status_report()["current_steps"]}
     assert steps_after["rc_report_notify"]["state"] == "scout"
 

@@ -1,7 +1,10 @@
 # Build and RC verification
 
 Normal phase progression opens at CCD+1. The declared capture dependencies are:
-checker, orchestrator health, MRWP ECS, MRWP Local, then Authenticator ECS.
+`checker_fired` → `orchestrator_health` → (`mrwp_ecs` and `mrwp_local` in parallel);
+`auth_ecs` depends on `mrwp_ecs`; `telemetry_verify` depends on `auth_ecs`;
+`rc_report_notify` depends on `[mrwp_ecs, mrwp_local, auth_ecs, telemetry_verify]`; and
+`rc_report_gate` depends on `[telemetry_verify, rc_report_notify]`.
 Use the returned task/continuation rather than discovering later stages from memory.
 
 An in-progress build is waiting, not an aborted pipeline. A completed run with

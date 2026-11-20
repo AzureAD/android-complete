@@ -37,10 +37,10 @@ phases:
       - { id: checker_fired, depends_on: [] }
       - { id: orchestrator_health, depends_on: [checker_fired] }
       - { id: mrwp_ecs, depends_on: [orchestrator_health] }
-      - { id: mrwp_local, depends_on: [mrwp_ecs] }
-      - { id: auth_ecs, depends_on: [mrwp_local] }
+      - { id: mrwp_local, depends_on: [orchestrator_health] }
+      - { id: auth_ecs, depends_on: [mrwp_ecs] }
       - { id: telemetry_verify, depends_on: [auth_ecs] }
-      - { id: rc_report_notify, depends_on: [auth_ecs] }
+      - { id: rc_report_notify, depends_on: [mrwp_ecs, mrwp_local, auth_ecs, telemetry_verify] }
       - { id: rc_report_gate, name: "Decide RC quality gate after reviewing report", kind: approval_gate, depends_on: [telemetry_verify, rc_report_notify] }
 
   - id: bug_bash
