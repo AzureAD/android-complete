@@ -1,0 +1,19 @@
+{
+  "name": "software-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test tests/core.test.ts tests/progress.test.ts"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "^1.0.26",
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~5.9.3"
+  }
+}

@@ -1,0 +1,8 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
