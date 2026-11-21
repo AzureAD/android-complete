@@ -747,9 +747,9 @@ def test_activate_chat_composes_needs_skill():
     assert out["kind"] == "needs_skill" and out["tool"] == "record-bugbash-chat"
     g = out["payload"]["_gather"]
     assert g["meeting_topic"] == "August 2026 Release Bug Bash"
-    assert "Playwright" in g["instructions"] and "m_ask_user" in g["instructions"]
+    assert "m_ask_user" in g["instructions"]
+    assert "Chat with participants" in g["instructions"] and "Copy link" in g["instructions"]
     assert "--chat-link" in g["instructions"] and "--confirm-activated" in g["instructions"]
-    assert "On the first access failure, stop retrying" in g["instructions"]
     assert "record-bugbash-chat --release 2026-08" in out["payload"]["followup_command"]
     assert _steps.get_step("bug_bash", "activate_chat").KIND == "scout"
 
@@ -967,10 +967,111 @@ def test_bugbash_updates_composes_needs_skill():
     assert out["payload"]["mentions"][0]["mentionText"] == "Alice"
     assert out["payload"]["mentions"][0]["mentioned"]["user"]["id"] == "11111111-1111-1111-1111-111111111111"
     assert "_mentions" not in out["payload"]
-    assert out["payload"]["_automation"] == {"on_demand": "bug-bash-update-poller"}
+    assert "_automation" not in out["payload"]
+    assert out["notification"]["completion"]["status"] == "in_flight"
+    assert out["notification"]["completion"]["data"]["posts_sent"] == 1
     assert "August 2026 Bug Bash" in out["payload"]["content"]
     assert out["record_as"] == "bugbash_updates" and out["outbound"] is True
     assert _steps.get_step("bug_bash", "bugbash_updates").KIND == "scout"
+    assert _steps.get_step("bug_bash", "bugbash_updates").POLLABLE is True
+
+
+def test_bugbash_updates_stays_in_flight_across_multiple_posts_until_marked_complete(tmp_path, monkeypatch):
+    """Step 7 (`bugbash_updates`) stays `in_flight` across multiple periodic posts, reuses
+    `cached_people`, respects the 3h cooldown (unless `force=True`), never triggers a 4h
+    stall alert in `release-drainer`, and unlocks `bugbash_complete` when marked complete."""
+    from datetime import datetime, timedelta, timezone
+    from orchestrator import cli_common as _C, drain as _D, mocks as _mocks_mod
+    from orchestrator.commands.deliver_cmd import deliver_one_step, drain_auto_notifications
+    from orchestrator.dispatch import decorate_handoff_contract
+
+    st = _bb_updates_state()
+    _active_phase(st, "bug_bash")
+    for dep_step in ("clone_plans_broker", "clone_plans_auth", "ui_test_status", "distribute_tests", "send_invite", "activate_chat", "notify_native_auth", "native_auth_signoff"):
+        existing = st.get_step("bug_bash", dep_step)
+        if existing.status != "done":
+            existing.status = "done"
+            st.set_step("bug_bash", dep_step, existing)
+    rid = st.release_id
+    _C.save_state(st, str(tmp_path), rid)
+
+    prog_step1 = {"total": 4, "done": 1, "remaining": 3, "unassigned": 0, "owners": {
+        "a@x": {"name": "Alice", "total": 4, "done": 1, "remaining": 3, "tests": [
+            {"id": "1", "name": "T1", "url": "u1", "state": "notrun", "products": ["Broker"]}]}}}
+    sent_msgs = []
+    fake_mcp = lambda srv, tool, args: sent_msgs.append((srv, tool, args)) or {"id": f"msg-{len(sent_msgs)}"}
+
+    # 1) Post #1 (with `people` resolved once -> cached in `step.data["cached_people"]`): step transitions `pending -> in_flight`!
+    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+        "bug_bash.bugbash_updates": {
+            "progress": prog_step1,
+            "people": {"a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}},
+            "now": "2026-08-18T09:05:00-07:00",
+        }
+    })
+    r1 = drain_auto_notifications(str(tmp_path), rid, CONFIG, mcp_caller=fake_mcp)
+    assert len(r1) == 1 and r1[0]["status"] == "done"
+    st1 = _C.load_state(str(tmp_path), rid)
+    rec1 = st1.get_step("bug_bash", "bugbash_updates")
+    assert rec1.status == "in_flight"
+    assert rec1.data["posts_sent"] == 1
+    assert rec1.data["cached_people"]["chat_id"] == "19:meeting_X@thread.v2"
+    assert len(sent_msgs) == 1
+
+    # 2) Within 3h cooldown (1 hour later, WITHOUT `people` mock — proving `cached_people` + cooldown): returns `in_flight` without resending!
+    rec1.data["last_posted_at"] = datetime.fromisoformat("2026-08-18T09:05:00-07:00").astimezone(timezone.utc).isoformat()
+    st1.set_step("bug_bash", "bugbash_updates", rec1)
+    _C.save_state(st1, str(tmp_path), rid)
+    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+        "bug_bash.bugbash_updates": {
+            "progress": prog_step1,
+            "now": "2026-08-18T10:15:00-07:00",
+        }
+    })
+    r_cool = deliver_one_step(str(tmp_path), rid, CONFIG, "bug_bash", "bugbash_updates", mcp_caller=fake_mcp)
+    assert r_cool["status"] == "in_flight"
+    assert len(sent_msgs) == 1
+
+    # 3) After 3h+ cooldown (1:00 PM working hours, NO `people` mock!): reuses `cached_people` and posts Update #2 while staying `in_flight`!
+    prog_step2 = {**prog_step1, "done": 2, "remaining": 2}
+    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+        "bug_bash.bugbash_updates": {
+            "progress": prog_step2,
+            "now": "2026-08-18T13:10:00-07:00",
+        }
+    })
+    r2 = drain_auto_notifications(str(tmp_path), rid, CONFIG, mcp_caller=fake_mcp)
+    assert len(r2) == 1 and r2[0]["status"] == "done"
+    assert len(sent_msgs) == 2
+    st2 = _C.load_state(str(tmp_path), rid)
+    rec2 = st2.get_step("bug_bash", "bugbash_updates")
+    assert rec2.status == "in_flight"
+    assert rec2.data["posts_sent"] == 2
+    assert "Update #2 posted (2/4 done, 2 remaining" in rec2.note
+
+    # 4) Verify `LONG_RUNNING_IN_FLIGHT`: even after 10 hours in `in_flight`, `_actionable_waiting_items` NEVER flags it as a 4h stalled pipeline!
+    _, orch2 = _C.load_orch(str(tmp_path), rid, CONFIG)
+    waiting = _D.classify_waiting(orch2, datetime.now(timezone.utc) + timedelta(hours=10))
+    assert _D._actionable_waiting_items(waiting) == []
+
+    # 5) Owner prompt offers `Mark complete` / `Post an immediate update now` / `Keep active`,
+    #    and running `complete-manually` closes Step 7 (`in_flight -> done`) and unlocks `bugbash_complete`!
+    from orchestrator import cli as _cli
+    rep = decorate_handoff_contract(orch2.status_report())
+    assert rep["owner_prompt"]["kind"] == "active_recurring_step"
+    assert rep["owner_prompt"]["answers"][0]["action"] == "complete-manually"
+    assert _cli.main([
+        "--config", CONFIG,
+        "--runs-root", str(tmp_path),
+        "complete-manually",
+        "--release", rid,
+        "--phase", "bug_bash",
+        "--step", "bugbash_updates",
+        "--note", "Release engineer signed off Bug Bash updates",
+    ]) == 0
+    _, orch3 = _C.load_orch(str(tmp_path), rid, CONFIG)
+    assert orch3.state.get_step("bug_bash", "bugbash_updates").status == "done"
+    assert orch3.status_report()["gate"]["step"] == "bugbash_complete"
 
 
 

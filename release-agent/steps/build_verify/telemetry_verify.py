@@ -35,6 +35,11 @@ REQUIRED_TOOLS = ('kusto',)
 REQUIRES_APPROVAL = False
 REPEATABLE = True
 
+
+def should_recheck_blocked(record) -> bool:
+    """Re-query Kusto on scheduled drain ticks only when blocked due to 0 ingested rows."""
+    return (getattr(record, "data", None) or {}).get("rows") == 0
+
 @dataclass(frozen=True)
 class BuildParameters:
     version: str | None = None

@@ -2002,7 +2002,7 @@ class TransitionKernel:
                 stored_data["in_flight_since"] = previous.data["in_flight_since"]
         if status == "done" or (status == "blocked" and not preserve_execution):
             self._close_write_review(stored_data, previous.execution)
-        if status == "done":
+        if status in ("done", "in_flight"):
             self._bind_notification_identity(stored_data, previous.execution)
         if status == "in_flight":
             stored_data.setdefault("in_flight_since", self.now())
@@ -2019,7 +2019,11 @@ class TransitionKernel:
                     note=note,
                     by=by,
                     links=list(links or []),
-                    execution=deepcopy(previous.execution),
+                    execution=(
+                        None
+                        if (previous.execution or {}).get("notification_id")
+                        else deepcopy(previous.execution)
+                    ),
                     data=stored_data,
                 ),
             )

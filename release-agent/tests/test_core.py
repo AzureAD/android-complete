@@ -169,7 +169,7 @@ def test_bug_bash_posts_progress_before_native_auth_notice():
     ran_steps = [a.step for a in actions if a.phase == "bug_bash" and a.kind == "ran"]
     assert {"clone_plans_broker", "clone_plans_auth", "ui_test_status", "distribute_tests",
             "send_invite", "activate_chat", "bugbash_updates", "notify_native_auth"} <= set(ran_steps)
-    assert actions[-1].kind == "reminder" and actions[-1].step == "ui_failures"
+    assert actions[-1].kind == "gate" and actions[-1].step == "bugbash_complete"
 
 
 
@@ -515,27 +515,26 @@ def test_only_frontier_phase_shows_current_despite_stale_downstream_progress():
 # ---- reminder steps (human, non-gate → hold until done) ----
 
 def test_reminder_holds_until_done():
-    """The bug-bash phase has 'ui_failures' (human, non-gate) → the engine must
+    """The preflight phase has 'vitals' (human, non-gate) → the engine must
     HOLD for the person, not silently auto-complete it."""
-    st, orch = _orch()
-    # drive through the gates until we hit the first reminder hold
-    guard = 0
-    while orch.status_report()["status"] not in ("awaiting_action", "complete") and guard < 100:
-        orch.run_until_gate()
-        if orch.status_report()["status"] == "holding_gate":
-            orch.approve_gate("ok")
-        guard += 1
+    st = ReleaseState(release_id="t")
+    orch = Orchestrator(CONFIG, st)
+    orch.gate.verify()
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+    _drain_phase0_scout_only(orch)
+    orch.run_until_gate()
     assert orch.status_report()["status"] == "awaiting_action"
-    assert orch.status_report()["current_step"] == "ui_failures"
-    assert not st.is_done("bug_bash", "ui_failures")
-    assert "bug_bash.ui_failures" in orch.status_report()["pending_human"]
+    assert orch.status_report()["current_step"] == "vitals"
+    assert not st.is_done("preflight", "vitals")
+    assert "preflight.vitals" in orch.status_report()["pending_human"]
     # re-running does not advance past a reminder
     orch.run_until_gate()
     assert orch.status_report()["status"] == "awaiting_action"
     # marking it done clears the hold and advances
-    orch.complete_step(note="triaged")
-    assert st.is_done("bug_bash", "ui_failures")
-    assert "bug_bash.ui_failures" not in orch.status_report()["pending_human"]
+    orch.complete_step(note="checked")
+    assert st.is_done("preflight", "vitals")
+    assert "preflight.vitals" not in orch.status_report()["pending_human"]
 
 
 

@@ -51,13 +51,12 @@ phases:
       - { id: clone_plans_auth, depends_on: [build_verify.auth_ecs] }
       - { id: ui_test_status, depends_on: [clone_plans_broker, clone_plans_auth, build_verify.auth_ecs] }
       - { id: distribute_tests, depends_on: [ui_test_status] }
-      - { id: send_invite, depends_on: [clone_plans_broker, clone_plans_auth] }
+      - { id: send_invite, depends_on: [distribute_tests] }
       - { id: activate_chat, depends_on: [send_invite] }
-      - { id: bugbash_updates, depends_on: [activate_chat, ui_test_status] }
-      - { id: notify_native_auth, depends_on: [clone_plans_broker] }
-      - { id: ui_failures, name: "Review Phase 2 automation failures (Broker + Authenticator)", kind: human_action, depends_on: [ui_test_status] }
+      - { id: bugbash_updates, depends_on: [activate_chat, distribute_tests] }
+      - { id: notify_native_auth, depends_on: [clone_plans_broker, activate_chat] }
       - { id: native_auth_signoff, depends_on: [notify_native_auth] }
-      - { id: bugbash_complete, name: "Bug bash complete + signed off", kind: approval_gate, depends_on: [ui_failures, native_auth_signoff] }
+      - { id: bugbash_complete, name: "Bug bash complete + signed off", kind: approval_gate, depends_on: [distribute_tests, bugbash_updates, native_auth_signoff] }
 
   - id: finalize
     name: "Finalize & Publish"

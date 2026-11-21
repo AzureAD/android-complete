@@ -525,6 +525,17 @@ def send_notification(
         if payload.get("location"):
             args["location"] = payload["location"]
         resp = mcp_caller("calendar", "CreateEvent", args)
+        if isinstance(resp, dict):
+            resp = dict(resp)
+            if not resp.get("id"):
+                nested_evt = resp.get("event") if isinstance(resp.get("event"), dict) else {}
+                eid = resp.get("eventId") or nested_evt.get("id")
+                if isinstance(eid, str) and eid.strip():
+                    resp["id"] = eid.strip()
+            if not isinstance(resp.get("onlineMeeting"), dict):
+                jurl = resp.get("joinUrl") or resp.get("onlineMeetingUrl")
+                if isinstance(jurl, str) and jurl.strip():
+                    resp["onlineMeeting"] = {"joinUrl": jurl.strip()}
         return {"server": "calendar", "mcp_tool": "CreateEvent", "response": resp}
 
     raise ValueError(f"Unsupported notification transport for direct Agency MCP delivery: {tool}")

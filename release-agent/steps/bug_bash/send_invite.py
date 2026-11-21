@@ -51,7 +51,7 @@ ID = "send_invite"
 KIND = "scout"
 NAME = 'Schedule Bug Bash + send Teams invite'
 REQUIRED_TOOLS = ('workiq',)
-REQUIRES_APPROVAL = False
+REQUIRES_APPROVAL = True
 MANUAL_RESULT = True
 NOTIFICATION = True
 

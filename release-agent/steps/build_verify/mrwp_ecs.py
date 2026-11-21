@@ -20,6 +20,7 @@ KIND = "agent"
 NAME = 'Verify MRWP (ECS) ran to completion + tests'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 
 # Mock knobs (mocks.local.yaml): mrwp_id (inject build id), stages (inject stage list),
 # tests (inject test summary). Consumed inside _mrwp.verify_mrwp via mock_input.

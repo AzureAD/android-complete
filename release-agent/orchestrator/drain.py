@@ -362,15 +362,19 @@ def _collect_pending_host_work(
         from orchestrator import diagnosis as DIAG
         out.extend(DIAG.pending_diagnosis_targets(orch, runs_root, config_path))
 
-    # Queue `requires_approval: false` `scout_teams_relay` notifications (`m_send_teams_message` + companion email)
-    # AFTER `ai_diagnosis` so `rc_report_notify` embeds the recorded AI triage!
+    # Queue `requires_approval: false` notifications that still need Scout host handling:
+    #   (a) `scout_teams_relay` (`m_send_teams_message` + companion email), ordered AFTER `ai_diagnosis`;
+    #   (b) two-stage gather notifications (`notify_native_auth`, `bugbash_updates`) where `prepare_step`
+    #       returns `notifications == []` until Scout gathers verified identity/member parameters.
     for item in pending_work:
         if item.get("requires_approval") or not item.get("outbound_notification"):
             continue
         phase_id = item.get("phase")
         step_id = item.get("step")
         step_def = orch.workflow.step(phase_id, step_id) if (phase_id and step_id) else None
-        if step_def is not None and "scout_teams_relay" in (step_def.required_tools or ()):
+        if step_def is None:
+            continue
+        if "scout_teams_relay" in (step_def.required_tools or ()):
             out.append({
                 "scope": "scout_notification",
                 "step": step_def.key,
@@ -381,6 +385,21 @@ def _collect_pending_host_work(
                 "command": (
                     f"python -m orchestrator.cli --scheduled deliver-step --release {orch.state.release_id} "
                     f"--phase {phase_id} --step {step_id} --json"
+                ),
+            })
+        elif deliver:
+            # Since `drain_auto_notifications` already ran inside `_drain_python_loop(..., deliver=True)`,
+            # any remaining `pending` `requires_approval: false` notification requires Scout host gathering!
+            out.append({
+                "scope": "phase",
+                "step": step_def.key,
+                "phase": phase_id,
+                "step_id": step_id,
+                "name": step_def.name,
+                "requires_approval": False,
+                "command": (
+                    f"python -m orchestrator.cli --scheduled step-action --release {orch.state.release_id} "
+                    f"--phase {phase_id} --step {step_id}"
                 ),
             })
     return out
@@ -592,12 +611,25 @@ def detect_external_cutoff(orch) -> Optional[str]:
     return None
 
 
+def _is_long_running_in_flight(step_key: str) -> bool:
+    if not isinstance(step_key, str) or "." not in step_key:
+        return False
+    import steps as steps_pkg
+    phase_id, _, step_id = step_key.partition(".")
+    mod = steps_pkg.get_step(phase_id, step_id)
+    return bool(mod is not None and getattr(mod, "LONG_RUNNING_IN_FLIGHT", False))
+
+
 def _actionable_waiting_items(waiting: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for item in waiting.get("items") or []:
         if item["category"] in ("blocked", "human_input"):
             out.append(item)
-        elif item["category"] == "in_flight" and (item.get("waiting_minutes") or 0) >= 240:
+        elif (
+            item["category"] == "in_flight"
+            and (item.get("waiting_minutes") or 0) >= 240
+            and not _is_long_running_in_flight(item.get("step", ""))
+        ):
             out.append({
                 **item,
                 "category": "blocked",
@@ -1165,6 +1197,30 @@ def evaluate_risk_and_cta(
     )
 
 
+def _should_recheck_step(step, rec) -> bool:
+    """Generic check whether an `in_flight` or `blocked` step should be re-evaluated in a drain pass.
+
+    Driven declaratively by step metadata (`EffectMode.READ_ONLY` + module `RECHECK_WHEN_BLOCKED`
+    or `should_recheck_blocked(rec)`) so `_drain_python_loop` has zero per-step conditionals.
+    """
+    if step.kind == StepKind.AUTO and step.effect_mode == EffectMode.READ_ONLY and rec.status == "in_flight":
+        return True
+    if rec.status != "blocked":
+        return False
+    import steps as steps_pkg
+    mod = steps_pkg.get_step(step.phase_id, step.id)
+    if mod is None:
+        return False
+    pred = getattr(mod, "should_recheck_blocked", None)
+    if callable(pred):
+        return bool(pred(rec))
+    return bool(
+        step.kind == StepKind.AUTO
+        and step.effect_mode == EffectMode.READ_ONLY
+        and getattr(mod, "RECHECK_WHEN_BLOCKED", False)
+    )
+
+
 def _drain_python_loop(
     runs_root: str,
     release: str,
@@ -1206,8 +1262,7 @@ def _drain_python_loop(
             if delivered:
                 st, orch = C.load_orch(runs_root, release, config_path, now or as_of)
 
-        # Reconcile any eligible read_only `in_flight` (or externally-resolvable `ccd.localization_pr`)
-        # step at most once in this drain run.
+        # Reconcile any eligible `in_flight` or declaratively `RECHECK_WHEN_BLOCKED` step at most once.
         selection = orch.scheduling()
         if selection.frontier and selection.phase(selection.frontier.id).due:
             for s_ready in selection.steps:
@@ -1221,27 +1276,16 @@ def _drain_python_loop(
                 ):
                     continue
                 rec = st.get_step(step.phase_id, step.id)
-                can_recheck = (
-                    step.kind == StepKind.AUTO
-                    and step.effect_mode == EffectMode.READ_ONLY
-                    and (
-                        rec.status == "in_flight"
-                        or (step.key == "ccd.localization_pr" and rec.status == "blocked")
-                    )
-                )
-                if can_recheck:
-                    reconciled_once.add(step.key)
+                if not _should_recheck_step(step, rec):
+                    continue
+                reconciled_once.add(step.key)
+                if step.kind == StepKind.AUTO:
                     act = orch.run_task(step.phase_id, step.id, retry=True)
                     C.save_state(st, runs_root, release)
                     C.log_actions(C.elog(runs_root, release), [act], state=st)
-                elif (
-                    step.key == "build_verify.telemetry_verify"
-                    and rec.status == "blocked"
-                    and (rec.data or {}).get("rows") == 0
-                ):
-                    reconciled_once.add(step.key)
+                else:
                     orch.reopen(
-                        step.phase_id, step.id, "Scheduled drainer re-checking 0-row Kusto telemetry"
+                        step.phase_id, step.id, f"Scheduled drainer re-checking {step.key}"
                     )
                     C.save_state(st, runs_root, release)
 

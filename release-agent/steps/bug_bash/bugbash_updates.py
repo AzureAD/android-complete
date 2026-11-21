@@ -64,8 +64,11 @@ from orchestrator.step_context import StepContext, thaw
 
 import re
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 from orchestrator import schedule
-from orchestrator.outcomes import NeedsSkill, Blocked, Done
+from orchestrator.outcomes import NeedsSkill, Blocked, Done, InProgress
 from steps.lib.mockctx import MISSING
 from tools import bugbash as BB
 from tools.distribution import ConnectorObservationRequired
@@ -78,10 +81,12 @@ from steps.bug_bash.ui_results import completed_result
 
 ID = "bugbash_updates"
 KIND = "scout"
-NAME = 'Post bug-bash progress updates (first post + periodic poller)'
+NAME = 'Post bug-bash progress updates (active until marked complete)'
 REQUIRED_TOOLS = ('az', 'workiq')
 REQUIRES_APPROVAL = False
 REPEATABLE = True
+POLLABLE = True
+LONG_RUNNING_IN_FLIGHT = True
 NOTIFICATION = True
 
 BROKER_SUITE_NAME = "Manual Tests (Android Broker)"
@@ -171,12 +176,31 @@ def poll_interval_hours(context, config_path):
     return hours
 
 
+def _cached_people_if_complete(context, chat_id: str, progress: dict) -> dict | None:
+    """Reuse cached Entra mention identities when bound to `chat_id` and covering all pending owners."""
+    cached = (context.evidence.step("bug_bash", ID).data or {}).get("cached_people")
+    if not isinstance(cached, dict) or cached.get("chat_id") != chat_id:
+        return None
+    people = thaw(cached.get("people"))
+    if not isinstance(people, dict):
+        return None
+    by_lower = {str(k).casefold(): v for k, v in people.items()}
+    for upn, info in (progress.get("owners") or {}).items():
+        if (info or {}).get("remaining", 0) > 0 and str(upn).casefold() not in by_lower:
+            return None
+    return people
+
+
 def prepare_update(context, progress, members_file=None):
     """One resolved transport payload shared by initial and periodic progress posts."""
     chat_id = stored_chat_id(context)
     if not chat_id:
         return False, None, "Missing/stale meeting binding"
     people = context.input("people", MISSING) if members_file is None else MISSING
+    if people is MISSING and members_file is None:
+        reused = _cached_people_if_complete(context, chat_id, progress)
+        if reused is not None:
+            people = reused
     if people is MISSING:
         observation = None
         if members_file is not None:
@@ -194,19 +218,47 @@ def prepare_update(context, progress, members_file=None):
                                              plan_links(context), people)
     except ValueError as exc:
         return False, None, str(exc)
-    return True, {"chatId": chat_id, "content": content, "contentType": "html", "mentions": mentions}, ""
+    return True, {
+        "chatId": chat_id,
+        "content": content,
+        "contentType": "html",
+        "mentions": mentions,
+        "_resolved_people": thaw(people) if isinstance(people, dict) else {},
+    }, ""
 
 
 @dataclass(frozen=True)
 class BuildParameters:
     members_file: str | None = None
+    force: bool | str = False
+
+    def __post_init__(self):
+        if isinstance(self.force, str):
+            norm = self.force.strip().lower()
+            if norm in ("1", "true", "yes"):
+                object.__setattr__(self, "force", True)
+            elif norm in ("0", "false", "no", ""):
+                object.__setattr__(self, "force", False)
+            else:
+                raise ValueError("force must be true or false")
 
 
 PARAMETERS = {"build": BuildParameters}
 
 
+def _cooldown_remaining_minutes(last_posted_iso: str | None, now_utc: datetime, interval_hours: int = DEFAULT_POLL_HOURS) -> int:
+    last_dt = schedule.parse_iso_utc(last_posted_iso)
+    if last_dt is None:
+        return 0
+    # Allow 5-minute grace so 2h/3h cron jitter never skips an aligned slot.
+    target_min = max(30, interval_hours * 60 - 5)
+    elapsed_min = int((now_utc - last_dt.astimezone(timezone.utc)).total_seconds() // 60)
+    return max(0, target_min - elapsed_min)
+
+
 def build(context: StepContext[BuildParameters]):
     members_file = context.parameters.members_file
+    force = bool(context.parameters.force)
     if not context.release.ccd:
         return Blocked("bugbash_updates: no CCD set — can't title the Bug Bash.")
     chat_id = stored_chat_id(context)
@@ -214,16 +266,83 @@ def build(context: StepContext[BuildParameters]):
         return Blocked("bugbash_updates: meeting chat binding is missing/stale "
                        "(run activate_chat against the current invitation).")
 
+    step_rec = context.evidence.step("bug_bash", ID)
+    step_data = thaw(step_rec.data or {})
+    posts_sent = int(step_data.get("posts_sent") or 0)
+    last_posted_at = step_data.get("last_posted_at")
+
     ok, progress, detail = gather(context)
     if not ok:
         return Blocked(f"bugbash_updates: couldn't read test progress ({detail}).")
 
     month_year = schedule.target_month_label(context.release)
     if BB.all_complete(progress):
-        if not progress["total"]:
-            return Done(f"No manual or triage bug-bash work remains for {month_year}; nothing to poll.")
-        return Done(f"All {progress['total']} bug-bash tests are already complete — "
-                    f"nothing to poll; ready for {month_year} bug bash sign-off.")
+        if posts_sent == 0:
+            if not progress["total"]:
+                return Done(f"No manual or triage bug-bash work remains for {month_year}; nothing to post.")
+            return Done(f"All {progress['total']} bug-bash tests are already complete — "
+                        f"ready for {month_year} bug bash sign-off.")
+        ok_fin, payload_fin, detail_fin = prepare_update(context, progress, members_file)
+        if not ok_fin:
+            return Done(f"All {progress['total']} bug-bash tests are complete — closing updates ({detail_fin}).")
+        resolved_people = payload_fin.pop("_resolved_people", {})
+        completion_text = (
+            f"all {progress['total']} tests complete!"
+            if progress["total"] else "no manual or triage work remaining!"
+        )
+        wrapup_html = (
+            f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'
+            f'<p><b>🎉 {month_year} Bug Bash — {completion_text}</b><br>'
+            f'Thanks everyone. Closing out automated updates.</p></div>'
+            + payload_fin["content"]
+        )
+        final_note = f"Final wrap-up posted (#{posts_sent + 1}) — all {progress['total']} bug-bash tests complete"
+        return NeedsSkill(
+            tool="workiq_send_chat_message",
+            payload={**payload_fin, "content": wrapup_html},
+            record_as=ID,
+            summary=f"Post final {month_year} bug-bash wrap-up (all {progress['total']} tests complete)",
+            note=final_note,
+            outbound=True,
+            notification={
+                "checkpoint": f"complete-{posts_sent + 1}",
+                "state_matches": chat_state_matches(context),
+                "completion": {
+                    "status": "pass",
+                    "note": final_note,
+                    "data": {
+                        **({"cached_people": {"chat_id": chat_id, "people": resolved_people}} if resolved_people else {}),
+                        "posts_sent": posts_sent + 1,
+                        "done": progress["done"],
+                        "total": progress["total"],
+                        "remaining": 0,
+                        "poll_complete": True,
+                    },
+                    "stamp": ["last_posted_at"],
+                },
+            },
+        )
+
+    # For periodic updates after Update #1 (`posts_sent >= 1`), honor working hours + 3h cooldown unless `force=True`.
+    if posts_sent >= 1 and not force:
+        la_tz = ZoneInfo("America/Los_Angeles")
+        now_raw = context.input("now", MISSING)
+        now_dt = (
+            datetime.fromisoformat(str(now_raw).replace("Z", "+00:00")).astimezone(la_tz)
+            if now_raw is not MISSING and now_raw
+            else datetime.now(la_tz)
+        )
+        if not BB.is_working_time(now_dt.replace(tzinfo=None)):
+            return InProgress(
+                step_rec.note
+                or f"Update #{posts_sent} active ({progress['done']}/{progress['total']} done, {progress['remaining']} remaining) — paused outside 09:00–18:00 PT working hours."
+            )
+        rem_min = _cooldown_remaining_minutes(last_posted_at, now_dt.astimezone(timezone.utc))
+        if rem_min > 0:
+            return InProgress(
+                step_rec.note
+                or f"Update #{posts_sent} active ({progress['done']}/{progress['total']} done, {progress['remaining']} remaining) — next update in ~{rem_min}m; mark complete anytime."
+            )
 
     try:
         ok, payload, detail = prepare_update(context, progress, members_file)
@@ -244,22 +363,42 @@ def build(context: StepContext[BuildParameters]):
                 payload={"chatId": chat_id, "_connector_reads": [request],
                          "_followup": "Save the fresh owner-bound observation envelope; rerun "
                                       "step-action with --param members_file=<path>. Do not record completion."},
-                summary="Gather complete meeting-member identities before preparing the first update",
+                summary="Gather complete meeting-member identities before preparing the update",
                 note=detail)
         return Blocked(f"bugbash_updates: {detail}")
+
+    resolved_people = payload.pop("_resolved_people", {})
+    next_num = posts_sent + 1
+    active_note = (
+        f"Update #{next_num} posted ({progress['done']}/{progress['total']} done, "
+        f"{progress['remaining']} remaining across {len(progress['owners'])} owner(s)) — active until marked complete"
+    )
     return NeedsSkill(
         tool="workiq_send_chat_message",
-        payload={
-            **payload,
-            "_automation": {"on_demand": "bug-bash-update-poller"},
-        },
+        payload=payload,
         record_as=ID,
-        summary=(f"Post the first {month_year} bug-bash update ({progress['done']}/"
-                 f"{progress['total']} done) to the meeting chat, then provision the configured "
-                 f"update poller"),
-        note=f"{progress['remaining']} test(s) remaining across {len(progress['owners'])} owner(s)",
+        summary=(
+            f"Post {month_year} bug-bash update #{next_num} "
+            f"({progress['done']}/{progress['total']} done) to the meeting chat"
+        ),
+        note=active_note,
         outbound=True,
-        notification={"state_matches": chat_state_matches(context)},
+        notification={
+            "checkpoint": f"post-{next_num}",
+            "state_matches": chat_state_matches(context),
+            "completion": {
+                "status": "in_flight",
+                "note": active_note,
+                "data": {
+                    **({"cached_people": {"chat_id": chat_id, "people": resolved_people}} if resolved_people else {}),
+                    "posts_sent": next_num,
+                    "done": progress["done"],
+                    "total": progress["total"],
+                    "remaining": progress["remaining"],
+                },
+                "stamp": ["last_posted_at"],
+            },
+        },
     )
 
 

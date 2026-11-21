@@ -79,9 +79,18 @@ class HandlerCatalog:
     def compile(
         cls, workflow: WorkflowDefinition, resolver: HandlerResolver
     ) -> "HandlerCatalog":
+        from dataclasses import replace as _dc_replace
         handlers = {}
         for step in workflow.step_by_key.values():
-            handlers[step.key] = _compile_handler(step, resolver(step.phase_id, step.id))
+            h = _compile_handler(step, resolver(step.phase_id, step.id))
+            # Drop optional `UIFailureContribution` scopes whose target step was removed from `phases.yaml`.
+            filtered_scopes = tuple(
+                sc for sc in h.evidence.scopes
+                if not isinstance(sc, UIFailureContribution) or sc.target in workflow.step_by_key
+            )
+            if len(filtered_scopes) != len(h.evidence.scopes):
+                h = _dc_replace(h, evidence=EvidenceAuthority(filtered_scopes))
+            handlers[step.key] = h
         _validate_evidence_targets(workflow, handlers)
         return cls(handler_by_key=MappingProxyType(handlers))
 

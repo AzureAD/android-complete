@@ -134,6 +134,7 @@ def cmd_post_bugbash_update(args):
         }))
         return 0
 
+    payload.pop("_resolved_people", None)
     if BB.all_complete(progress):
         completion_text = (f'all {progress["total"]} tests complete!' if progress["total"] else
                            'no manual or triage work remaining!')

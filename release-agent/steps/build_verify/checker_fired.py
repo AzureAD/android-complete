@@ -25,6 +25,7 @@ KIND = "agent"
 NAME = 'Verify Code Complete Checker fired the release'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 
 CONFIG = {
     "org": K.ORG, "project": K.PROJECT, "def_id": CHECKER_DEF,

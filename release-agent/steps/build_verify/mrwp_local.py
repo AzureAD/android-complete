@@ -20,6 +20,7 @@ KIND = "agent"
 NAME = 'Verify MRWP (Local) ran to completion + tests'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 
 MOCKABLE = {
     "mrwp_id": {"kind": "input", "desc": "Inject the Local MRWP build id (skip orchestrator lookup)."},

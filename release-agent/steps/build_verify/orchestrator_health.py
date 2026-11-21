@@ -30,6 +30,7 @@ KIND = "agent"
 NAME = 'Verify Release Orchestrator health (parked at Remove RC Tags)'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 
 CONFIG = {
     "org": K.ORG, "project": K.PROJECT, "def_id": ORCHESTRATOR_DEF,

@@ -12,14 +12,54 @@ from tests._context import invoke, fresh_orchestrator as Orchestrator
 from tests._harness import CONFIG, _active_step
 
 
+def _config_with_optional_ui_failures(tmp_path=None):
+    import os
+    import tempfile
+    import yaml
+    with open(CONFIG, "r", encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    for p in doc["phases"]:
+        if p["id"] == "bug_bash":
+            if not any(s["id"] == "ui_failures" for s in p["steps"]):
+                p["steps"].insert(-1, {
+                    "id": "ui_failures",
+                    "name": "Review Phase 2 automation failures (Broker + Authenticator)",
+                    "kind": "human_action",
+                    "depends_on": ["ui_test_status"],
+                })
+                p["steps"][-1]["depends_on"] = list(dict.fromkeys(
+                    [*p["steps"][-1].get("depends_on", []), "ui_failures"]
+                ))
+    import atexit
+    fd, path = tempfile.mkstemp(prefix="phases-uifail-", suffix=".yaml", dir=os.path.dirname(CONFIG))
+    atexit.register(lambda p=path: os.path.exists(p) and os.remove(p))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(doc, fh)
+    return path
+
+
 def _ready(step=N.ID):
+    cfg = _config_with_optional_ui_failures() if step == "ui_failures" else CONFIG
     state = ReleaseState(release_id="2000-01", ccd="2000-01-12",
                          owner_email="owner@example.test")
-    _active_step(state, "bug_bash", step)
+    orch_seed = Orchestrator(cfg, state, mocks={})
+    for p in orch_seed.workflow.phases:
+        if p.id == "bug_bash":
+            for s in p.steps:
+                if s.id == step:
+                    break
+                state.set_step("bug_bash", s.id, StepState(status="done"))
+            break
+        for s in p.steps:
+            state.set_step(p.id, s.id, StepState(status="done"))
+            if s.is_gate:
+                state.gate_decisions.append({"step": s.key, "decision": "approved", "at": "2000-01-12T00:00:00Z", "by": "human", "comment": "ok"})
+    from tests._harness import _ready_state
+    _ready_state(state)
     state.set_step("bug_bash", "clone_plans_broker", StepState(
         status="done", data={"plan_id": 900, "ui_suite_id": 901}))
     state.set_step("bug_bash", "notify_native_auth", StepState())
-    orch = Orchestrator(CONFIG, state, mocks={})
+    orch = Orchestrator(cfg, state, mocks={})
     notice = orch.handler("bug_bash", Notice.ID).build(orch.context(
         "bug_bash", Notice.ID, parameters={"engineer": "engineer@example.test",
                                         "engineer_source": "synthetic verified directory"}))
@@ -231,7 +271,7 @@ def test_future_human_gate_and_scout_steps_are_pending_not_automatic_or_ready_fo
     report = Orchestrator(CONFIG, state, mocks={}).status_report()
     steps = {step["id"]: step for step in report["current_steps"]}
     phase_steps = {step["id"]: step for step in report["active_phase"]["steps"]}
-    for step in ("send_invite", "activate_chat", "notify_native_auth", "ui_failures",
+    for step in ("send_invite", "activate_chat", "notify_native_auth",
                  "native_auth_signoff", "bugbash_complete"):
         assert steps[step]["state"] == phase_steps[step]["status"] == "pending"
         assert not phase_steps[step]["needs_owner"]

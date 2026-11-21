@@ -191,6 +191,16 @@ def deliver_one_step(
             "summary": out.get("summary") or out.get("note") or "No delivery required",
         }
 
+    if out.get("kind") == "in_progress":
+        C.save_state(st, runs_root, release)
+        return {
+            "status": "in_flight",
+            "release": release,
+            "phase": phase,
+            "step": step,
+            "summary": out.get("note") or "Step remains active (in-flight)",
+        }
+
     if out.get("kind") == "blocked":
         C.save_state(st, runs_root, release)
         return {
@@ -392,12 +402,26 @@ def drain_auto_notifications(
         if not selection.frontier:
             break
         progressed = False
-        for sid in list(selection.scout_pending):
+        candidate_ids = list(selection.scout_pending)
+        for s_ready in selection.steps:
+            s_def = s_ready.definition
+            if (
+                s_def.phase_id == selection.frontier.id
+                and s_def.id not in candidate_ids
+                and s_def.pollable
+                and not s_def.requires_approval
+                and s_ready.status == "in_flight"
+                and not s_ready.reserved
+                and s_ready.prerequisites_met
+                and s_ready.time_ready
+            ):
+                candidate_ids.append(s_def.id)
+        for sid in candidate_ids:
             step_def = selection.frontier.step(sid)
             if step_def is None or step_def.key in attempted or step_def.requires_approval:
                 continue
             record = selection.step(step_def.phase_id, sid)
-            if record.status != "pending" or record.reserved:
+            if record.reserved or record.status not in ("pending", "in_flight"):
                 continue
             handler = orch.handler(step_def.phase_id, sid)
             if not handler.notification:

@@ -31,6 +31,26 @@ def _mark_prior_phases_done(st: ReleaseState) -> None:
 def test_pipeline_block_pauses_cta_for_ai_diagnosis_then_delivers_enriched_cta_and_caches(
     tmp_path, monkeypatch, capsys
 ):
+    from orchestrator import mocks as _mocks_mod
+    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+        "build_verify.orchestrator_health": {
+            "run": {
+                "id": 9002,
+                "tags": [
+                    "AuthenticatorBranch=release-2026-09-09",
+                    "NextCommonVersion=1.0.0",
+                    "NextMsalVersion=1.0.0",
+                    "NextBrokerVersion=1.0.0",
+                ],
+            },
+            "stages": [
+                {"name": "Validate Branch and Versions availability", "state": "completed", "result": "failed"},
+                {"name": "Create Release Branches", "state": "pending", "result": None},
+                {"name": "Trigger RC Testing", "state": "pending", "result": None},
+                {"name": "Remove RC Tags", "state": "pending", "result": None},
+            ],
+        },
+    })
     rid = "2026-09"
     st = ReleaseState(
         release_id=rid,
@@ -472,5 +492,77 @@ def test_mrwp_blocked_with_empty_data_resolves_build_from_links_follows_child_pi
     assert "[Recovery TSG](https://eng.ms/docs/recovery-tsg)" in md_cta
     assert "<br><div" in html_cta
     assert "child build #1725630" in html_cta
+
+
+@pytest.mark.real_revision
+def test_blocked_mrwp_auto_rechecks_through_inflight_to_done_when_retried_in_ado(
+    tmp_path, monkeypatch
+):
+    """Verify declarative `RECHECK_WHEN_BLOCKED`:
+    1. `mrwp_ecs` & `mrwp_local` start `blocked` (aborted stages).
+    2. Owner clicks 'Retry stage' in ADO -> next `run_drain` automatically transitions
+       both from `blocked -> in_flight` (quieting blocked CTAs while ADO runs).
+    3. ADO runs finish -> next `run_drain` transitions both `in_flight -> done` automatically!
+    """
+    from orchestrator import mocks as _mocks_mod
+    from tests._mrwp_evidence import PROD, snapshot
+
+    rid = "2026-11"
+    st = ReleaseState(
+        release_id=rid,
+        ccd="2026-11-19",
+        timezone="America/Los_Angeles",
+        owner_email="pedroro@microsoft.com",
+    )
+    _active_phase(st, "build_verify")
+    _mark_prior_phases_done(st)
+    st.set_step("build_verify", "checker_fired", StepState(status="done"))
+    st.set_step("build_verify", "orchestrator_health", StepState(status="done"))
+    st.set_step("build_verify", "mrwp_ecs", StepState(status="blocked", note="MRWP ECS aborted"))
+    st.set_step("build_verify", "mrwp_local", StepState(status="blocked", note="MRWP Local aborted"))
+    C.save_state(st, str(tmp_path), rid)
+
+    # Tick 1: ADO builds are now `inProgress` after owner clicked 'Retry stage' in ADO!
+    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+        "build_verify.mrwp_ecs": {"mrwp_id": "1725622", "build_status": "inProgress"},
+        "build_verify.mrwp_local": {"mrwp_id": "1725623", "build_status": "inProgress"},
+    })
+    d1 = D.run_drain(str(tmp_path), rid, CONFIG, now=datetime(2026, 11, 20, 11, 0, tzinfo=LA))
+    assert d1["waiting"]["blocked_count"] == 0
+    assert d1["waiting"]["in_flight_count"] == 2
+    assert {s["step"]: s["to_status"] for s in d1["executed_steps"]} == {
+        "build_verify.mrwp_ecs": "in_flight",
+        "build_verify.mrwp_local": "in_flight",
+    }
+
+    # Tick 2: Retried ADO builds complete -> both auto-transition `in_flight -> done`!
+    ecs_done = snapshot("1725622", {PROD: [("test_1_Pass", "Passed")]})
+    local_done = snapshot("1725623", {PROD: [("test_1_Pass", "Passed")]})
+    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+        "build_verify.mrwp_ecs": {
+            "mrwp_id": "1725622",
+            "rc": 1,
+            "build_status": "completed",
+            "stages": [{"name": "Build", "state": "completed", "result": "succeeded"}],
+            "tests": ecs_done["tests"],
+        },
+        "build_verify.mrwp_local": {
+            "mrwp_id": "1725623",
+            "rc": 1,
+            "build_status": "completed",
+            "stages": [{"name": "Build", "state": "completed", "result": "succeeded"}],
+            "tests": local_done["tests"],
+        },
+        "build_verify.auth_ecs": {
+            "auth_build": {"build_id": 900010, "rc": 1, "status": "inProgress", "result": None},
+        },
+    })
+    d2 = D.run_drain(str(tmp_path), rid, CONFIG, now=datetime(2026, 11, 20, 13, 0, tzinfo=LA))
+    st_final = C.load_state(str(tmp_path), rid)
+    assert st_final.get_step("build_verify", "mrwp_ecs").status == "done"
+    assert st_final.get_step("build_verify", "mrwp_local").status == "done"
+    # And downstream `auth_ecs` immediately unlocked and ran in the SAME drain pass!
+    assert st_final.get_step("build_verify", "auth_ecs").status == "in_flight"
+
 
 

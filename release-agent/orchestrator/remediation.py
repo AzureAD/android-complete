@@ -135,6 +135,15 @@ def _classify_external_fix(
                 f"then click 'Fixed — retry' (`task --release {release_id} --phase ccd --step localization_pr --retry`) "
                 "— or override with `complete-manually` / `skip`.",
             )
+        if step_id == "activate_chat":
+            return (
+                "Microsoft Teams — Bug Bash Meeting Chat",
+                f"{clean_reason} Manual fallback (no Playwright needed): 1) Open the Bug Bash invite in "
+                "Outlook/Teams Calendar and click 'Chat with participants' (send a quick message if needed "
+                "to create the thread). 2) Click '...' -> 'Copy link' on the chat/message. 3) Share that "
+                f"Teams link with Scout (`record-bugbash-chat --release {release_id} --chat-link <url>`) "
+                "to store the `19:meeting_...@thread.v2` chat ID for `bugbash_updates`.",
+            )
         if step_id in (
             "localization", "cron", "checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
             "auth_ecs", "verify_pub", "verify_release_notes", "identify_auth_build",
@@ -146,6 +155,14 @@ def _classify_external_fix(
             )
 
     # 2. External permission / tool / connector failures
+    if step_id == "activate_chat":
+        return (
+            "Microsoft Teams — Bug Bash Meeting Chat",
+            "Manual fallback (no Playwright needed): 1) Open the Bug Bash invite in Outlook/Teams Calendar "
+            "and click 'Chat with participants' (send a quick message if needed so Teams creates the thread). "
+            "2) Click '...' -> 'Copy link' on the chat/message. 3) Share that Teams URL with Scout "
+            f"(`record-bugbash-chat --release {release_id} --chat-link <url>`) to bind the meeting chat ID.",
+        )
     if step_id == "oneauth_access" or "tf401027" in low or "createbranch" in low:
         return (
             "Azure DevOps — OneAuth Git Repository",

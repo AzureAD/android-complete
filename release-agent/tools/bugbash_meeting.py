@@ -46,7 +46,7 @@ def meeting_chat_id(value):
 
 
 def chat_id_from_link(link):
-    """Accept only explicit Teams meeting-chat, message or meetup deep links."""
+    """Accept explicit Teams meeting-chat, message, meetup, or Teams v2 deep links."""
     if not isinstance(link, str) or link != link.strip():
         raise ValueError("Supply the Teams chat link copied from the exact invitation's Chat pane")
     parsed = urlparse(link)
@@ -57,6 +57,11 @@ def chat_id_from_link(link):
     parts = parsed.path.split("/")
     thread = unquote(parts[3]) if len(parts) >= 5 and parts[1:3] in (
         ["l", "chat"], ["l", "message"], ["l", "meetup-join"]) else None
+    if not meeting_chat_id(thread):
+        # Also support modern Teams v2 links carrying the encoded `19:meeting_...@thread.v2` token in path/query/fragment.
+        decoded = unquote(f"{parsed.path}?{parsed.query}#{parsed.fragment}")
+        m = re.search(r"19:meeting_[A-Za-z0-9_-]+@thread\.v2", decoded)
+        thread = m.group(0) if m else None
     if not meeting_chat_id(thread):
         raise ValueError("Link must contain a meeting thread ID; copy the meeting chat/message link")
     return thread

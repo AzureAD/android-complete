@@ -23,7 +23,7 @@ from .state import ReleaseState, _now
 from .context_boundary import EvidenceSession, evidence_view, release_view
 from .step_context import Clock, EffectContext, StepContext, freeze, thaw
 from .handler_contracts import HookRole
-from .outcomes import AutoOutcome, Done, Blocked, NeedsHuman, NeedsSkill, require_auto_outcome
+from .outcomes import AutoOutcome, Done, Blocked, InProgress, NeedsHuman, NeedsSkill, require_auto_outcome
 from .invariants import validate_snapshot
 from . import effects
 from .effects import EffectMode, EffectRecovery
@@ -1187,8 +1187,8 @@ class Orchestrator(StatusViewMixin):
         completed = self.completed_step_outcome(phase_id, step_id)
         if completed is not None and (not refresh or self.state.get_step(phase_id, step_id).status == "skipped"):
             return NextAction(kind="idle", phase=phase_id, step=step_id, message=completed.note)
-        if status not in ("pass", "attention"):
-            raise ValueError("Scout result must be pass or attention")
+        if status not in ("pass", "attention", "in_flight"):
+            raise ValueError("Scout result must be pass, attention, or in_flight")
         if definition.kind != StepKind.EXTERNAL:
             raise ValueError("Only external steps accept generic record-step results.")
         if definition.write_command and not execution:
@@ -1196,8 +1196,15 @@ class Orchestrator(StatusViewMixin):
                 f"{phase_id}/{step_id} requires an active {definition.write_command} reservation."
             )
         step_links = links if links is not None else self.state.get_step(phase_id, step_id).links
-        outcome = Done(detail, by="scout", links=step_links) if status == "pass" else Blocked(
-            detail, by="scout", links=step_links)
+        outcome = (
+            Done(detail, by="scout", links=step_links)
+            if status == "pass"
+            else (
+                InProgress(detail, links=step_links)
+                if status == "in_flight"
+                else Blocked(detail, by="scout", links=step_links)
+            )
+        )
         if execution or execution_id:
             return self.settle_execution(phase_id, step_id, execution_id, outcome, data=data)
         permit = self.authorize_outcome(

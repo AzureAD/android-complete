@@ -387,11 +387,16 @@ def _reassign_broker_failures(context, summary, notes, owner, coordinates):
 
 
 def _replace_failure_reminder(context, note, links, broker_count, failed_ids):
-    """Replace only this producer's note prefix/links/data, never human status or notes."""
+    """Replace only this producer's note prefix/links/data, never human status or notes.
+    No-op when the optional `ui_failures` reminder step is omitted from `phases.yaml`."""
     auth = context.recovery().step("bug_bash", ID).data.get("auth") or {}
-    context.effect.commit.commit(UIFailureReminder(
-        note, tuple(links), broker_count, tuple(failed_ids), tuple(auth.get("failures") or ()),
-        gate_preconditions=ui_results.reminder_preconditions(context)))
+    try:
+        context.effect.commit.commit(UIFailureReminder(
+            note, tuple(links), broker_count, tuple(failed_ids), tuple(auth.get("failures") or ()),
+            gate_preconditions=ui_results.reminder_preconditions(context)))
+    except ValueError as exc:
+        if "Unauthorized cross-step producer evidence" not in str(exc):
+            raise
 
 
 def _surface_ui_failures(context, rc, failures, coordinates):

@@ -33,6 +33,7 @@ KIND = "agent"
 NAME = 'Verify Authenticator ECS build + UI tests'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 
 
 @dataclass(frozen=True)

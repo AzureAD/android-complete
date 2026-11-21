@@ -178,9 +178,21 @@ def owner_prompt_payload(report: dict) -> dict | None:
         return None
     if plan.get("deferred_work"):
         return None
+    import steps as steps_pkg
+
+    def _is_long_running(held_item: dict) -> bool:
+        mod = steps_pkg.get_step(held_item.get("phase") or "", held_item.get("step") or "")
+        return bool(
+            held_item.get("status") == "in_flight"
+            and not held_item.get("owned")
+            and mod is not None
+            and getattr(mod, "LONG_RUNNING_IN_FLIGHT", False)
+        )
+
+    long_running_held = [h for h in (plan.get("held_work") or []) if _is_long_running(h)]
     non_blocked_held = [
         h for h in (plan.get("held_work") or [])
-        if h.get("status") != "blocked" or h.get("owned")
+        if (h.get("status") != "blocked" or h.get("owned")) and not _is_long_running(h)
     ]
     if non_blocked_held:
         return None
@@ -223,6 +235,44 @@ def owner_prompt_payload(report: dict) -> dict | None:
 
     action = report.get("action")
     if not action:
+        if len(long_running_held) == 1:
+            lr = long_running_held[0]
+            rid = report.get("release_id")
+            lr_row = next(
+                (s for s in (report.get("current_steps") or []) if s.get("id") == lr.get("step")),
+                {},
+            )
+            lr_name = lr_row.get("name") or lr.get("key")
+            lr_note = " ".join(str(lr_row.get("note") or "Active recurring step").split())
+            return {
+                "ready": True,
+                "kind": "active_recurring_step",
+                "phase": lr.get("phase"),
+                "step": lr.get("step"),
+                "resume_on_resolve": True,
+                "question": (
+                    f"'{lr_name}' is active on release {rid} ({lr_note}). "
+                    "It posts periodic updates automatically until all tests pass or you mark it complete."
+                ),
+                "answers": [
+                    {
+                        "title": "Mark complete (stop updates & unlock gate)",
+                        "description": "Close periodic updates (`complete-manually` / `done`) and continue to the Bug Bash sign-off gate.",
+                        "action": "complete-manually",
+                    },
+                    {
+                        "title": "Post an immediate update now",
+                        "description": "Send a fresh progress update right now (`deliver-step --param force=true`).",
+                        "action": "deliver-now",
+                    },
+                    {
+                        "title": "Keep active (continue periodic updates)",
+                        "description": "Leave running; `release-drainer` will continue posting working-hour updates.",
+                        "action": "hold",
+                    },
+                ],
+                "recommendedIndex": 2,
+            }
         return None
     if action.get("reason") == "blocked":
         rid = report.get("release_id")
@@ -278,6 +328,43 @@ def owner_prompt_payload(report: dict) -> dict | None:
                     },
                 ],
                 "recommendedIndex": 4,
+            }
+        if step_id == "activate_chat":
+            return {
+                "ready": True,
+                "kind": "blocked_step",
+                "phase": action.get("phase"),
+                "step": step_id,
+                "resume_on_resolve": True,
+                "question": (
+                    f"Bug Bash chat activation on release {rid} ({step_note or 'automatic lookup unavailable'}). "
+                    "To activate manually: 1) Open the Bug Bash invite in Outlook/Teams Calendar and click "
+                    "'Chat with participants' (send a quick message if needed). 2) Click '...' -> 'Copy link' "
+                    "on the chat/message. How would you like to proceed?"
+                ),
+                "answers": [
+                    {
+                        "title": "Share Teams chat link (manual activation)",
+                        "description": "Paste the copied Teams meeting-chat link so Scout extracts & binds the chat ID (`record-bugbash-chat --chat-link`).",
+                        "action": "provide-chat-link",
+                    },
+                    {
+                        "title": "Retry automatic chat lookup",
+                        "description": "Re-check via native WorkIQ / Teams connectors after opening the meeting chat.",
+                        "action": "retry",
+                    },
+                    {
+                        "title": "Post updates manually instead",
+                        "description": "Skip automated chat binding (`skip`) and generate read-only updates via `bugbash-progress`.",
+                        "action": "override",
+                    },
+                    {
+                        "title": "Keep blocked for now",
+                        "description": "Leave `activate_chat` on hold while you open Teams.",
+                        "action": "hold",
+                    },
+                ],
+                "recommendedIndex": 0,
             }
         primary_url = next(
             (str(lnk["url"]).strip() for lnk in (step_row.get("links") or []) if lnk.get("url")),
