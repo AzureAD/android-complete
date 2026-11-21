@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { workerGuidanceFiles } from "../runtime/guidance.ts";
 
 export function runtimeFingerprint(): string {
     const root = fileURLToPath(new URL("../", import.meta.url));
@@ -15,7 +16,7 @@ export function runtimeFingerprint(): string {
             else if (name.endsWith(".ts")) digest.update(file.slice(root.length)).update(readFileSync(file));
         }
     };
-    for (const directory of ["core", "providers"]) visit(path.join(root, directory));
+    for (const directory of ["core", "runtime", "providers"]) visit(path.join(root, directory));
     digest.update(readFileSync(path.join(root, "package-lock.json")));
     for (const relative of [
         "../../../.github/extensions/DevDesignDoc/workflow.mjs",
@@ -25,7 +26,7 @@ export function runtimeFingerprint(): string {
         "../../../.github/extensions/CodeFeature/status.mjs",
         "../../../.github/extensions/CodeFeature/verification.mjs",
         "../../../.github/extensions/CodeFeature/ado-snapshot.ps1",
-        "../../../.github/skills/design-author/references/design-standards.md",
+        ...workerGuidanceFiles.map((file) => `../../../${file}`),
     ]) digest.update(readFileSync(fileURLToPath(new URL(relative, import.meta.url))));
     return digest.digest("hex");
 }
