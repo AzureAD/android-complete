@@ -1,36 +1,15 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { Application } from "../core/application.ts";
+import { FactoryError } from "../core/contracts.ts";
 import { runtimeReport } from "../core/doctor.ts";
-import { parseRequirements } from "../core/contracts.ts";
-import type { Execution } from "../core/lifecycle-contracts.ts";
 import { nextStep, type AvailableGate } from "../core/progress.ts";
 import { runtimeHealth } from "../core/runtime-health.ts";
-import { actor, fixture, makeExecution, requirements } from "./helpers.ts";
-
-function addExecution(
-    f: ReturnType<typeof fixture>,
-    featureId: string,
-    revisionId: string,
-    overrides: Partial<Execution>,
-): Execution {
-    const id = overrides.id || randomUUID();
-    return f.store.change(featureId, (state) => {
-        const execution = makeExecution(id, revisionId, overrides);
-        state.executions.push(execution);
-        if (overrides.status === "error") {
-            f.store.event(state, "workflow_progress", id, {
-                actor,
-                message: `${execution.kind}: error - ${execution.error || execution.phase}`,
-            });
-        }
-        return execution;
-    });
-}
+import { actor, fixture, requirements } from "./helpers.ts";
 
 test("installation diagnostics reject missing, mismatched, and incomplete platform runtimes", () => {
     const f = fixture();
@@ -64,30 +43,63 @@ test("installation diagnostics reject missing, mismatched, and incomplete platfo
     }
 });
 
-test("failed chat-origin intake execution surfaces durable activity and retry guidance", () => {
+test("a runtime loader failure is a durable chat-origin failure, never an invisible or successful start", async (t) => {
     const f = fixture();
     try {
-        const feature = f.registry.create("startup-failure", parseRequirements({
-            title: "Broker throttling",
-            description: "Honor Retry-After for matching silent requests.",
-        }), actor);
-        addExecution(f, feature.id, feature.current.id, {
-            kind: "intake",
-            runtimeId: null,
-            status: "error",
-            phase: "startup",
-            error: "The Windows platform runtime package is missing.",
+        const feature = f.app.execute({
+            kind: "create_feature",
+            requestId: "startup-failure",
+            input: { title: "Broker throttling", description: "Honor Retry-After for matching silent requests." },
+        }, actor);
+        t.mock.method(f.app, "runtime", async () => {
+            throw new FactoryError("runtime_unavailable", "The Windows platform runtime package is missing.", 503);
         });
-        const view = f.store.view(feature.id);
+        const command = { kind: "start_workflow", featureId: feature.id, workflow: "intake" };
+        await assert.rejects(() => f.app.dispatch(command, actor), /confirmation/);
+        assert.equal(f.app.lifecycle.store.state(feature.id).executions.length, 0);
+        const result = await f.app.dispatch(command, actor, { granted: true, revisionId: f.app.prepare(command).consentKey!, actor });
+        assert.equal(result.outcome, "workflow_failed");
+        const view = f.app.lifecycle.store.view(feature.id);
         assert.equal(view.factory.executions[0]?.status, "error");
         assert.equal(view.factory.executions[0]?.runtimeId, null);
+        assert.equal(view.factory.executions[0]?.requestedBy?.channel, "chat");
         assert.equal(view.approvals.length, 0);
         assert.ok(view.activity.some((entry) => entry.source === "Copilot chat" && entry.detail.includes("Windows platform")));
         const step = nextStep(view, []);
         assert.equal(step.failed, true);
         assert.equal(step.action?.label, "Try again");
-        assert.deepEqual(step.action?.command, { kind: "start_workflow", featureId: feature.id, workflow: "intake" });
+        assert.deepEqual(step.action?.command, command);
+        assert.equal(view.current.id, feature.current.id);
     } finally {
+        f.cleanup();
+    }
+});
+
+test("concurrent runtime access shares one control owner", async () => {
+    const f = fixture();
+    try {
+        let calls = 0;
+        const app = new Application({
+            ...f.options,
+            runtimeFactory: async () => {
+                calls++;
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                return {
+                    launch: () => {},
+                    control: async () => ({ ok: true }),
+                    close: async () => {},
+                };
+            },
+        });
+        try {
+            const [first, second] = await Promise.all([app.runtime(), app.runtime()]);
+            assert.equal(first, second);
+            assert.equal(calls, 1);
+        } finally {
+            await app.shutdown();
+        }
+    } finally {
+        await f.app.shutdown();
         f.cleanup();
     }
 });
@@ -95,15 +107,19 @@ test("failed chat-origin intake execution surfaces durable activity and retry gu
 test("the guided view prioritizes active work, the current approval, and explicit continuation", () => {
     const f = fixture();
     try {
-        const feature = f.registry.create("progress", requirements(), actor);
-        f.registry.approve(feature.id, feature.current.id, actor);
-        const run = addExecution(f, feature.id, feature.current.id, { kind: "design" });
-        f.store.updateExecution(feature.id, run.id, { status: "running", phase: "Independent design reviewer" });
-        let view = f.store.view(feature.id);
+        const feature = f.app.execute({ kind: "create_feature", requestId: "progress", input: requirements() }, actor);
+        f.app.execute(
+            { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id },
+            actor,
+            { granted: true, revisionId: feature.current.id, actor },
+        );
+        const run = f.app.lifecycle.begin(feature.id, "design", actor);
+        f.app.lifecycle.store.updateExecution(feature.id, run.id, { status: "running", phase: "Independent design reviewer" });
+        let view = f.app.lifecycle.store.view(feature.id);
         assert.match(nextStep(view, []).description, /Started in Copilot chat/);
         assert.match(nextStep(view, []).description, /Independent design reviewer/);
-        f.store.updateExecution(feature.id, run.id, { status: "paused", phase: "design approval" });
-        view = f.store.view(feature.id);
+        f.app.lifecycle.store.updateExecution(feature.id, run.id, { status: "paused", phase: "design approval" });
+        view = f.app.lifecycle.store.view(feature.id);
         const gate: AvailableGate = { available: true, stage: "design", ready: true, approved: false, scopeHash: "exact-scope", blockers: [] };
         assert.equal(nextStep(view, [gate]).gate?.stage, "design");
         assert.equal(nextStep(view, [gate]).action, undefined, "review must precede continuation");
@@ -120,9 +136,13 @@ test("the guided view prioritizes active work, the current approval, and explici
 test("the guided view does not skip blocked backlog authority or hide an approved dispatch wave", () => {
     const f = fixture();
     try {
-        const feature = f.registry.create("delivery-progress", requirements(), actor);
-        f.registry.approve(feature.id, feature.current.id, actor);
-        const view = f.store.view(feature.id);
+        const feature = f.app.execute({ kind: "create_feature", requestId: "delivery-progress", input: requirements() }, actor);
+        f.app.execute(
+            { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id },
+            actor,
+            { granted: true, revisionId: feature.current.id, actor },
+        );
+        const view = f.app.lifecycle.store.view(feature.id);
         view.currentArtifacts.design = "fixture-design";
         view.currentArtifacts.plan = "fixture-plan";
         const approved = (stage: AvailableGate["stage"]): AvailableGate => ({ available: true, stage, ready: true, approved: true, blockers: [] });

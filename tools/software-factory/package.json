@@ -6,7 +6,7 @@
   "engines": { "node": ">=24.0.0" },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test tests/core.test.ts tests/progress.test.ts tests/providers.test.ts tests/ado-features.test.ts"
+    "test": "node --test tests/core.test.ts tests/progress.test.ts tests/providers.test.ts tests/ado-features.test.ts tests/lifecycle-gates.test.ts"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.26",
