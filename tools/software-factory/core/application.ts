@@ -7,15 +7,14 @@ import { FactoryError, parseCommand, text, validateActor, type Actor, type Conse
 import { Registry } from "./registry.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import type { Provider } from "../providers/provider.ts";
+import type { NativeSession } from "../runtime/controller.ts";
 import type { DeliverySettings, Execution, ExecutionLimits, FactoryFeature, Json, WorkflowAdmission, WorkflowKind } from "./lifecycle-contracts.ts";
 import { dispatch, prepare } from "./commands.ts";
 import { SharedAuthority } from "./shared.ts";
 import type { SharedProvider } from "./shared-contracts.ts";
 import { object } from "./contracts.ts";
 
-export interface NativeSession {
-    sessionId: string;
-}
+export type { NativeSession };
 
 export interface RuntimeController {
     launch(featureId: string, execution: Execution): void;
@@ -179,10 +178,11 @@ export class Application {
 
     async runtime(): Promise<RuntimeController> {
         if (this.native) return this.native;
-        if (!this.createRuntime) {
-            throw new FactoryError("runtime_unavailable", "The native workflow runtime controller is not installed yet.", 503);
-        }
-        this.runtimePending ??= Promise.resolve(this.createRuntime(this.lifecycle, this.joinedSession, this.shared)).then(
+        const factory: RuntimeFactory = this.createRuntime ?? (async (lifecycle, joinedSession, shared) => {
+            const { NativeRuntime } = await import("../runtime/controller.ts");
+            return new NativeRuntime(lifecycle, joinedSession, shared);
+        });
+        this.runtimePending ??= Promise.resolve(factory(this.lifecycle, this.joinedSession, this.shared)).then(
             (controller) => {
                 this.native = controller;
                 this.runtimePending = undefined;
