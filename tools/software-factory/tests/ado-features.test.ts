@@ -5,35 +5,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { AdoFeatureProvider } from "../providers/ado-features.ts";
 import { object } from "../core/contracts.ts";
-import { sharedConfiguration, type Configuration } from "../core/lifecycle-contracts.ts";
-import { digest, type SharedSnapshot } from "../core/shared-contracts.ts";
 import { actor, fixture, requirements } from "./helpers.ts";
-
-const testConfig: Configuration = {
-    repositories: { common: { provider: "github", hostname: "github.com", slug: "example/common", baseBranch: "dev", account: "local", localPath: "." } },
-    boards: { organization: "example", project: "Engineering", workItemType: "Product Backlog Item", areaPath: "Engineering", iterationPath: "Engineering", assignee: "", parentId: null },
-};
-
-function snapshotFor(f: ReturnType<typeof fixture>, featureId: string): SharedSnapshot {
-    const config = f.store.configuration();
-    if (!config) throw new Error("Missing test configuration");
-    const portable = sharedConfiguration(config.value);
-    const state = f.store.state(featureId);
-    return {
-        version: 1,
-        feature: f.registry.get(featureId),
-        state: {
-            ...state,
-            executions: [],
-            controls: [],
-            progress: [],
-            sessionBinding: null,
-            schedule: null,
-        },
-        configuration: { ...config, value: portable, hash: digest(portable) },
-        lock: null,
-    };
-}
 
 function transport() {
     const identity = { id: "alice", displayName: "Alice", providerDisplayName: "Alice" };
@@ -103,13 +75,15 @@ test("ADO attachment transport verifies historical writers, CAS, restart and ord
     const server = transport();
     const provider = server.provider();
     try {
-        f.store.configure(testConfig, actor);
+        f.app.lifecycle.configure({ repositories: { common: { provider: "github", hostname: "github.com", slug: "example/common", baseBranch: "dev", account: "local", localPath: "." } },
+            boards: { organization: "example", project: "Engineering", workItemType: "Product Backlog Item", areaPath: "Engineering", iterationPath: "Engineering", assignee: "", parentId: null } }, actor);
         const identity = await provider.identity(target);
         const author = { ...actor, ado: identity };
-        const feature = f.registry.create("root", requirements(), author);
-        const first = await provider.write(target, null, snapshotFor(f, feature.id), identity);
-        f.registry.approve(feature.id, feature.current.id, author);
-        const approved = await provider.write(target, first, snapshotFor(f, feature.id), identity);
+        const feature = f.app.execute({ kind: "create_feature", requestId: "root", input: requirements() }, author);
+        const first = await provider.write(target, null, f.app.shared.snapshot(f.app, feature.id), identity);
+        f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, author,
+            { granted: true, revisionId: feature.current.id, actor: author });
+        const approved = await provider.write(target, first, f.app.shared.snapshot(f.app, feature.id), identity);
         assert.equal(server.tokenCalls(), 1, "ADO access token is reused across sequential REST requests");
         const restarted = server.provider();
         assert.deepEqual((await restarted.read(target))?.snapshot.feature.approvals, approved.snapshot.feature.approvals);
@@ -132,13 +106,15 @@ test("seedVerified short-circuits cold-start ancestry downloads while still catc
     const baseServer = transport();
     const provider = baseServer.provider();
     try {
-        f.store.configure(testConfig, actor);
+        f.app.lifecycle.configure({ repositories: { common: { provider: "github", hostname: "github.com", slug: "example/common", baseBranch: "dev", account: "local", localPath: "." } },
+            boards: { organization: "example", project: "Engineering", workItemType: "Product Backlog Item", areaPath: "Engineering", iterationPath: "Engineering", assignee: "", parentId: null } }, actor);
         const identity = await provider.identity(target);
         const author = { ...actor, ado: identity };
-        const feature = f.registry.create("seeded", requirements(), author);
-        const first = await provider.write(target, null, snapshotFor(f, feature.id), identity);
-        f.registry.approve(feature.id, feature.current.id, author);
-        const second = await provider.write(target, first, snapshotFor(f, feature.id), identity);
+        const feature = f.app.execute({ kind: "create_feature", requestId: "seeded", input: requirements() }, author);
+        const first = await provider.write(target, null, f.app.shared.snapshot(f.app, feature.id), identity);
+        f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, author,
+            { granted: true, revisionId: feature.current.id, actor: author });
+        const second = await provider.write(target, first, f.app.shared.snapshot(f.app, feature.id), identity);
 
         const countingProvider = new AdoFeatureProvider(
             { run: async () => "fixture-token" },
@@ -163,11 +139,12 @@ test("ADO denied writes and lost responses cannot return a success receipt", asy
         const server = transport();
         const provider = server.provider();
         try {
-            f.store.configure(testConfig, actor);
+            f.app.lifecycle.configure({ repositories: { common: { provider: "github", hostname: "github.com", slug: "example/common", baseBranch: "dev", account: "local", localPath: "." } },
+                boards: { organization: "example", project: "Engineering", workItemType: "Product Backlog Item", areaPath: "Engineering", iterationPath: "Engineering", assignee: "", parentId: null } }, actor);
             const identity = await provider.identity(target);
-            const feature = f.registry.create("root", requirements(), { ...actor, ado: identity });
+            const feature = f.app.execute({ kind: "create_feature", requestId: "root", input: requirements() }, { ...actor, ado: identity });
             if (mode === "denied") server.deny(); else server.loseResponse();
-            await assert.rejects(() => provider.write(target, null, snapshotFor(f, feature.id), identity),
+            await assert.rejects(() => provider.write(target, null, f.app.shared.snapshot(f.app, feature.id), identity),
                 mode === "denied" ? /HTTP 403/ : /Reply lost/);
             const remote = await server.provider().read(target);
             assert.equal(!!remote, mode === "lost", "read-back distinguishes denial from uncertain committed writes");

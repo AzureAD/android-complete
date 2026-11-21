@@ -7,8 +7,9 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, symlinkSync,
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { Application } from "../core/application.ts";
 import { createBackup, inspectBackup, restoreClone } from "../core/backups.ts";
-import { FactoryError, parseRequirements, validateActor } from "../core/contracts.ts";
+import { FactoryError, MAX_COMMAND_BYTES, parseRequirements, validateActor } from "../core/contracts.ts";
 import { parseConfiguration, type Operation } from "../core/lifecycle-contracts.ts";
 import { LifecycleStore, now } from "../core/lifecycle-store.ts";
 import { Registry } from "../core/registry.ts";
@@ -16,6 +17,7 @@ import { currentPublicationBinding } from "../core/repairs.ts";
 import { ensureSubrepoWorktree, projectSdkRoot, resolveRepositoryRoot } from "../core/runtime-health.ts";
 import { systemRunner } from "../providers/cli.ts";
 import { actor, fixture, makeExecution, requirements } from "./helpers.ts";
+import { TeamProvider, teamConfig } from "./team-provider.ts";
 
 function errorCode(action: () => unknown, code: string) {
     assert.throws(action, (error: unknown) => error instanceof FactoryError && error.code === code);
@@ -457,5 +459,100 @@ test("lifecycleSchema migrates legacy single-PK factory_configuration tables and
         }
     } finally {
         f.cleanup();
+    }
+});
+
+test("Application.execute enforces trusted consent, command bounds, and revision superseding", () => {
+    const f = fixture();
+    try {
+        errorCode(() => f.app.execute({ kind: "dispatch" }, actor), "unsupported_command");
+        errorCode(
+            () => f.app.execute({ kind: "create_feature", requestId: "large", input: { ...requirements(), title: "x".repeat(MAX_COMMAND_BYTES) } }, actor),
+            "command_too_large",
+        );
+        errorCode(
+            () => f.app.execute({ kind: "create_feature", requestId: "no-session", input: requirements() }, { channel: "chat", reference: "forged" }),
+            "invalid_input",
+        );
+
+        const feature = f.app.execute({ kind: "create_feature", requestId: "app-exec-1", input: requirements() }, actor);
+        const approveCmd = { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id };
+        errorCode(() => f.app.execute(approveCmd, actor), "consent_required");
+        errorCode(() => f.app.execute({ ...approveCmd, approved: true }, actor), "invalid_input");
+
+        const approved = f.app.execute(approveCmd, actor, { granted: true, revisionId: feature.current.id, actor });
+        assert.equal(approved.status, "ready_for_design");
+
+        const run = f.app.lifecycle.begin(feature.id, "design", actor);
+        f.app.lifecycle.store.updateExecution(feature.id, run.id, { status: "running", phase: "drafting" });
+        f.app.lifecycle.store.change(feature.id, (state) => {
+            state.schedule = { minutes: 5, nextAt: now(), actor, scopeHash: "sched-1" };
+        });
+
+        const edited = f.app.execute({
+            kind: "revise_requirements",
+            featureId: feature.id,
+            expectedRevision: feature.current.id,
+            input: { ...requirements(), title: "Revised scope" },
+        }, actor);
+        assert.equal(edited.status, "requirements_review");
+        assert.equal(f.app.lifecycle.store.execution(feature.id, run.id).status, "superseded");
+        assert.equal(f.app.lifecycle.store.state(feature.id).schedule, null);
+        errorCode(() => f.app.execute(approveCmd, actor, { granted: true, revisionId: feature.current.id, actor }), "stale_revision");
+    } finally {
+        f.cleanup();
+    }
+});
+
+test("shared authority enforces publish-before-approval and syncs exact revisions across team instances", async () => {
+    const aliceFixture = fixture();
+    const bobFixture = fixture();
+    const sharedProvider = new TeamProvider();
+    const aliceApp = new Application({ ...aliceFixture.options, sharedProvider });
+    const bobApp = new Application({ ...bobFixture.options, sharedProvider });
+    try {
+        const bobActor = { channel: "chat" as const, reference: "bob-call-1", sessionId: "bob-session" };
+        aliceApp.lifecycle.store.configure(teamConfig(), actor);
+        bobApp.lifecycle.store.configure(teamConfig(".", "bob"), bobActor);
+        const draft = aliceApp.execute({ kind: "create_feature", requestId: "team-req-1", input: requirements() }, actor);
+
+        await assert.rejects(
+            () => aliceApp.preview({ kind: "approve_requirements", featureId: draft.id, expectedRevision: draft.current.id }),
+            (error: unknown) => error instanceof FactoryError && error.code === "publish_required",
+        );
+
+        const publishCmd = { kind: "publish_feature", featureId: draft.id, target: { create: true }, approve: true };
+        const prepared = await aliceApp.preview(publishCmd);
+        assert.ok(prepared.consentKey);
+        await assert.rejects(
+            () => aliceApp.submit(publishCmd, actor),
+            (error: unknown) => error instanceof FactoryError && error.code === "consent_required",
+        );
+        await aliceApp.submit(publishCmd, actor, { granted: true, revisionId: prepared.consentKey!, actor });
+
+        const targets = await sharedProvider.list();
+        assert.equal(targets.length, 1);
+
+        sharedProvider.user = { id: "bob", displayName: "Bob" };
+        const openCmd = { kind: "open_shared_feature", target: targets[0]! };
+        const openPrepared = await bobApp.preview(openCmd);
+        await bobApp.submit(openCmd, bobActor, openPrepared.consentKey ? { granted: true, revisionId: openPrepared.consentKey, actor: bobActor } : undefined);
+
+        const aliceFeatures = await aliceApp.features();
+        assert.equal(aliceFeatures.length, 1);
+
+        const bobFeatures = await bobApp.features();
+        assert.equal(bobFeatures.length, 1);
+        const synced = bobFeatures[0]!;
+        assert.equal(synced.current.id, aliceFeatures[0]!.current.id);
+        assert.equal(synced.current.title, draft.current.title);
+        assert.deepEqual(synced.current.requirements, draft.current.requirements);
+        assert.equal(synced.approvals.length, 1);
+        assert.equal(synced.approvals[0]!.revisionId, synced.current.id);
+    } finally {
+        aliceApp.close();
+        bobApp.close();
+        aliceFixture.cleanup();
+        bobFixture.cleanup();
     }
 });
