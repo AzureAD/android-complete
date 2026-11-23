@@ -12,12 +12,22 @@ unit tests, and lint. Device/UI and optional-project checks are separate.
 
 ## AI-Driven Feature Development
 
-This repo supports an AI-driven development pipeline powered by GitHub Copilot agents. Design, plan, create work items, dispatch to coding agents, and monitor PRs — all from VS Code.
+Software Factory supports AI-driven feature development through native Copilot
+Dynamic Workflows from Copilot app chat, Copilot CLI chat, or an optional local UI.
 
-**Get started**: See the [AI Driven Development Guide](AI%20Driven%20Development%20Guide.md) for full instructions, or run:
+**Get started**: See [Software Factory](tools/software-factory/README.md), or install
+the shared core without the optional frontend:
 ```powershell
-.\scripts\setup-ai-orchestrator.ps1
+.\tools\software-factory\install.ps1
 ```
+
+The shared core covers requirements, guarded design, reviewed planning, separate
+backlog/dispatch approvals, provider operations, monitoring, and native recovery.
+See the [implementation plan](docs/software-factory-implementation-plan.md).
+See the [migration guide](AI%20Driven%20Development%20Guide.md) for retired
+Feature Orchestrator entry points. The Software Factory guide includes the new
+VS Code MCP adapter setup and its host-acceptance limits; the retired extension
+is not a fallback.
 
 For guided human input in the GitHub Copilot app, use the shared
 [Requirements Builder canvas](.github/extensions/RequirementsBuilder/README.md).
@@ -36,7 +46,6 @@ The repository declares the same ten integrations for each supported client:
 | GitHub Copilot app / CLI | [`.github/mcp.json`](.github/mcp.json), using `mcpServers` |
 | VS Code | [`.vscode/mcp.json`](.vscode/mcp.json), using `servers` |
 | Agency | [`agency.toml`](agency.toml), using native built-ins and custom servers |
-| Feature Orchestrator plugin | [`feature-orchestrator-plugin/.mcp.json`](feature-orchestrator-plugin/.mcp.json), using `mcpServers` |
 
 Keep these declarations in sync when adding, removing, or changing an integration.
 Agency retains its native ADO, WorkIQ, S360, Kusto, IcM, ES Chat, M365 User, and
@@ -60,10 +69,9 @@ No tokens, credentials, or authorization headers belong in these files.
 The [Copilot CLI discovery documentation](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers#adding-per-repository-mcp-servers)
 lists `.github/mcp.json` and checkout-local `.mcp.json`; it does not read
 `.vscode/mcp.json`. No redundant root `.mcp.json` is checked in here: a local file
-can take precedence over the shared file. The plugin config is loaded only when
-the plugin is installed/enabled and is mirrored so it does not introduce a stale
-ADO alias or organization. Its bundled defaults target this Android workspace;
-configure the bundled ADO definition before using the plugin for another organization.
+can take precedence over the shared file. The legacy Feature Orchestrator plugin
+and its bundled `.mcp.json` are retired (see
+[`feature-orchestrator-plugin/README.md`](feature-orchestrator-plugin/README.md)).
 Personal/global settings are intentionally not changed. The app's
 `.github/github-app.yml` configures instructions/scripts/automation, not MCP
 server definitions. Unrelated user-installed MCPs are not added without an
