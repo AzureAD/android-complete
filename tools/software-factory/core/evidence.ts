@@ -16,8 +16,9 @@ export function runtimeFingerprint(): string {
             else if (name.endsWith(".ts")) digest.update(file.slice(root.length)).update(readFileSync(file));
         }
     };
-    for (const directory of ["core", "runtime", "providers"]) visit(path.join(root, directory));
+    for (const directory of ["core", "runtime", "providers", "workflows"]) visit(path.join(root, directory));
     digest.update(readFileSync(path.join(root, "package-lock.json")));
+    digest.update(readFileSync(path.join(root, "evals", "design.mjs")));
     for (const relative of [
         "../../../.github/extensions/DevDesignDoc/workflow.mjs",
         "../../../.github/extensions/CodeFeature/workflow.mjs",

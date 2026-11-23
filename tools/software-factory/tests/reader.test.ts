@@ -322,6 +322,7 @@ test("assigned guides and workflow dependencies change the runtime fingerprint a
     try {
         const appRoot = path.join(directory, "tools", "software-factory");
         const workflowFiles = [
+            "tools/software-factory/evals/design.mjs",
             ".github/extensions/DevDesignDoc/workflow.mjs",
             ".github/extensions/CodeFeature/workflow.mjs",
             ".github/extensions/CodeFeature/observer.mjs",
@@ -330,7 +331,7 @@ test("assigned guides and workflow dependencies change the runtime fingerprint a
             ".github/extensions/CodeFeature/verification.mjs",
             ".github/extensions/CodeFeature/ado-snapshot.ps1",
         ];
-        for (const name of ["core", "runtime", "providers"]) {
+        for (const name of ["core", "runtime", "providers", "workflows"]) {
             mkdirSync(path.join(appRoot, name), { recursive: true });
         }
         for (const file of [

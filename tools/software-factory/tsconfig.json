@@ -13,5 +13,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["core/**/*.ts", "providers/**/*.ts", "tests/**/*.ts"]
+  "include": ["core/**/*.ts", "runtime/**/*.ts", "providers/**/*.ts", "workflows/**/*.ts", "tests/**/*.ts"]
 }
