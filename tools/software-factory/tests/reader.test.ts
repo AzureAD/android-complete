@@ -344,6 +344,7 @@ test("assigned guides and workflow dependencies change the runtime fingerprint a
         }
         for (const file of [
             "tools/software-factory/package-lock.json",
+            "tools/software-factory/cli.ts",
             "tools/software-factory/mcp.ts",
             ...workflowFiles,
         ]) {
