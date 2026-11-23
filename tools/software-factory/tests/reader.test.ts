@@ -330,8 +330,9 @@ test("assigned guides and workflow dependencies change the runtime fingerprint a
             ".github/extensions/CodeFeature/status.mjs",
             ".github/extensions/CodeFeature/verification.mjs",
             ".github/extensions/CodeFeature/ado-snapshot.ps1",
+            ".github/extensions/SoftwareFactory/extension.mjs",
         ];
-        for (const name of ["core", "runtime", "providers", "workflows"]) {
+        for (const name of ["core", "chat", "server", "runtime", "providers", "workflows"]) {
             mkdirSync(path.join(appRoot, name), { recursive: true });
         }
         for (const file of [
@@ -343,6 +344,7 @@ test("assigned guides and workflow dependencies change the runtime fingerprint a
         }
         for (const file of [
             "tools/software-factory/package-lock.json",
+            "tools/software-factory/mcp.ts",
             ...workflowFiles,
         ]) {
             const target = path.join(directory, file);
