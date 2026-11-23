@@ -645,12 +645,18 @@ def _integration_provider(monkeypatch, *, behind=0, conflicts=()):
         writes.append((head, base))
         return True, url, ""
 
+    pbi_store = {}
+
+    def create_pbi(org, project, title, **k):
+        pbi_store["4242"] = {"id": "4242", "title": title, "type": "Product Backlog Item", "project": project}
+        writes.append(("pbi", 4242))
+        return True, 4242, "https://example.test/wi/4242", ""
+
     monkeypatch.setattr(G, "plan_ri", plan_ri)
     monkeypatch.setattr(G, "push_reviewed", push)
     monkeypatch.setattr(P, "gh_create_pr", create)
-    monkeypatch.setattr(P, "create_pbi",
-                        lambda *a, **k: (writes.append(("pbi", 4242)) or
-                                         (True, 4242, "https://example.test/wi/4242", "")))
+    monkeypatch.setattr(P, "create_pbi", create_pbi)
+    monkeypatch.setattr(P, "read_pbi", lambda org, project, wid: (True, pbi_store.get(str(wid)), ""))
     return writes
 
 
@@ -661,7 +667,7 @@ def _run_integration_review(ns):
 
     with C.state_lock(ns.runs_root, ns.release):
         _, orch = C.load_orch(ns.runs_root, ns.release, ns.config)
-        with mockctx.active(CMD._step_mocks(orch)):
+        with mockctx.active(W.step_mocks(orch, "finalize", "integ_prs")):
             plan = CMD.integration_plan(orch.context("finalize", "integ_prs"), ns)
         ns.review_hash = W.review_hash(orch, "finalize", "integ_prs", plan)
         return CMD.cmd_create_integration_prs(ns)
@@ -1430,6 +1436,130 @@ def test_broker_change_list_reads_changes_txt():
         {"level": None, "text": "Plain entry with no level", "pr": 238}]
     # tried the finalized ref first, then fell back to release/<v>
     assert calls["refs"][0] == "working/release/16.5.0" and "release/16.5.0" in calls["refs"]
+
+
+def test_finalize_phase_dependency_graph_matches_approved_10_step_flow():
+    """Verify the approved 10-step Phase 4 (`finalize`) DAG in `config/phases.yaml`."""
+    from pathlib import Path
+    import yaml
+    from orchestrator.workflow import normalize_workflow_config
+
+    wf = normalize_workflow_config(yaml.safe_load(Path(CONFIG).read_text(encoding="utf-8")))
+    phase = next(p for p in wf["phases"] if p["id"] == "finalize")
+    deps = {s["id"]: list(s.get("depends_on") or []) for s in phase["steps"]}
+    assert list(deps.keys()) == [
+        "remove_rc_tags_gate",
+        "orchestrator_finalization",
+        "integ_prs",
+        "integ_prs_merged",
+        "publish_notes_gate",
+        "verify_pub",
+        "verify_release_notes",
+        "oneauth_common_pr",
+        "release_announcement",
+        "final_status_email",
+    ]
+    assert deps == {
+        "remove_rc_tags_gate": ["bug_bash.bugbash_complete"],
+        "orchestrator_finalization": ["remove_rc_tags_gate"],
+        "integ_prs": ["orchestrator_finalization"],
+        "integ_prs_merged": ["integ_prs"],
+        "publish_notes_gate": ["integ_prs_merged"],
+        "verify_pub": ["orchestrator_finalization"],
+        "verify_release_notes": ["publish_notes_gate"],
+        "oneauth_common_pr": ["orchestrator_finalization"],
+        "release_announcement": ["verify_pub", "verify_release_notes", "oneauth_common_pr"],
+        "final_status_email": ["release_announcement"],
+    }
+
+
+def test_integ_prs_merged_blocks_until_all_prs_merge_and_rechecks_automatically():
+    """`integ_prs_merged` blocks with direct links to unmerged PRs (holding `publish_notes_gate`),
+    opts into `RECHECK_WHEN_BLOCKED`, and resolves to `done` once all 8 PRs merge."""
+    from orchestrator import drain
+    from orchestrator.state import StepState
+    from steps.finalize import integ_prs_merged as M
+    from steps.lib import mockctx
+
+    assert M.RECHECK_WHEN_BLOCKED is True
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    st.versions = {
+        "common": "24.6.0",
+        "msal": "8.4.2",
+        "broker": "16.5.0",
+        "authenticator": "release/2026/08/13",
+    }
+    st.set_step("finalize", "integ_prs", StepState(
+        status="done",
+        data={
+            "last_write_progress": {
+                "operations": {
+                    "op1": {
+                        "kind": "integration.create",
+                        "target": {"repo": "msal", "head": "working/release/8.4.2", "base": "release/8.4.2"},
+                        "receipt": {"id": "2140", "url": "https://github.com/AzureAD/msal/pull/2140"},
+                    },
+                },
+            },
+        },
+    ))
+
+    # 1 open freeze PR on msal -> Blocked with link to PR #2140 only!
+    partial = {
+        "common": "merged",
+        "msal:freeze": "open",
+        "msal:integration": "merged",
+        "broker": "merged",
+        "authenticator": "merged",
+    }
+    with mockctx.active({"prs": partial}):
+        blocked = _invoke(M.build, st)
+    assert blocked.kind == "blocked"
+    assert "1 of 8" in blocked.reason
+    assert "msal freeze PR #2140 (open)" in blocked.reason
+    assert blocked.links == [{
+        "name": "msal freeze PR #2140 (open)",
+        "url": "https://github.com/AzureAD/msal/pull/2140",
+    }]
+
+    # Once all 8 PRs merge -> Done (preserving recorded receipt URLs)!
+    all_merged = {k: "merged" for k in ("common", "msal", "broker", "authenticator")}
+    with mockctx.active({"prs": all_merged}):
+        done = _invoke(M.build, st)
+    assert done.kind == "done"
+    assert "8/8" in done.note
+    assert any("2140" in lnk["url"] for lnk in done.links)
+
+    # Verify drain._should_recheck_step selects blocked `integ_prs_merged` AND `publish_notes_gate` stays gated!
+    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    _active_step(st, "finalize", "integ_prs_merged")
+    st.set_step("finalize", "integ_prs_merged", StepState(status="blocked", note=blocked.reason))
+    runnable_ids = {item.step.id for item in orch.scheduling().runnable}
+    assert "publish_notes_gate" not in runnable_ids
+    step_def = next(
+        s.definition for s in orch.scheduling().steps
+        if s.definition.phase_id == "finalize" and s.definition.id == "integ_prs_merged"
+    )
+    assert drain._should_recheck_step(step_def, st.get_step("finalize", "integ_prs_merged")) is True
+
+
+def test_pr_merge_state_helpers_normalize_gh_and_ado(monkeypatch):
+    """`gh_pr_merge_state` and `az_pr_merge_state` normalize GitHub/GHE and ADO merge states."""
+    import json
+    from tools import prs
+
+    monkeypatch.setattr(prs, "_run", lambda args, **kw: (
+        0,
+        json.dumps({"number": 512, "url": "https://github.com/o/r/pull/512", "title": "Freeze", "state": "MERGED", "mergedAt": "2026-08-14T10:00:00Z"})
+        if "gh" in args[0] else
+        json.dumps({"pullRequestId": 9901, "title": "Auth RI", "status": "active"}),
+        "",
+    ))
+    ok_gh, info_gh, _ = prs.gh_pr_merge_state("o/r", "working/release/1.0.0", "release/1.0.0", number=512)
+    assert ok_gh and info_gh["state"] == "merged" and info_gh["number"] == 512
+
+    ok_az, info_az, _ = prs.az_pr_merge_state("https://msazure.visualstudio.com/", "One", "AD-Authenticator-Android", "ri/1", "working", number=9901)
+    assert ok_az and info_az["state"] == "open" and info_az["number"] == 9901
 
 
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from orchestrator import cli_common as C, delivery as D, schedule
 
@@ -34,7 +34,7 @@ def _escalation(st, hours):
 
 
 def cmd_poll_orchestrator_finalization(args):
-    now = _parse_iso(args.now) if getattr(args, "now", None) else datetime.now(timezone.utc)
+    now = schedule.parse_iso_utc(args.now) if getattr(args, "now", None) else datetime.now(timezone.utc)
     if now is None:
         print(json.dumps({"error": f"bad --now: {args.now!r}"}))
         return 1
@@ -83,7 +83,7 @@ def cmd_poll_orchestrator_finalization(args):
                 "step_matches": {"in_flight_since": started_at},
                 "release_matches": {"owner_email": st.owner_email},
                 "not_before": (
-                    _parse_iso(started_at) + timedelta(hours=8)
+                    schedule.parse_iso_utc(started_at) + timedelta(hours=8)
                 ).isoformat(),
             }
             completion = {"kind": "step_data", "stamp": ["escalated_at"]}

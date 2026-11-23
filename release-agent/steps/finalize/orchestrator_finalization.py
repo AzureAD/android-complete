@@ -16,6 +16,7 @@ KIND = "agent"
 NAME = "Monitor Release Orchestrator to 'Publish GitHub Release Notes'"
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 EVIDENCE = (OwnStepData(), PipelineScope(PipelineSlot.FINAL))
 
 STAGE_ID = "PublishGitHubReleaseNotes"
@@ -87,11 +88,29 @@ def build(context: StepContext):
     status, detail, final = _stage_status(context)
     data = thaw(context.evidence.step("finalize", ID).data)
     data["last_polled_at"] = context.clock.iso()
+    orch_run_id = (final or {}).get("orchestrator_run_id") or ((context.evidence.pipeline_runs.get("orchestrator") or {}).get("run_id"))
+    mrwp_run_id = (final or {}).get("mrwp_run_id")
+    if orch_run_id:
+        data["run_id"] = str(orch_run_id)
+    if mrwp_run_id:
+        data["mrwp_run_id"] = str(mrwp_run_id)
+    links = []
+    if str(orch_run_id or "").isdigit():
+        links.append({
+            "name": f"Release Orchestrator #{orch_run_id}",
+            "url": f"{P.ENGINEERING_ORG.rstrip('/')}/{P.ENGINEERING_PROJECT}/_build/results?buildId={orch_run_id}",
+        })
+    if str(mrwp_run_id or "").isdigit():
+        links.append({
+            "name": f"Final1 MRWP #{mrwp_run_id}",
+            "url": f"{P.ENGINEERING_ORG.rstrip('/')}/{P.ENGINEERING_PROJECT}/_build/results?buildId={mrwp_run_id}",
+        })
     step_update = StepData(data)
     if status == "failed":
         return Blocked(
             f"orchestrator_finalization: final Release Orchestrator processing failed "
             f"({detail}). Investigate the orchestrator before creating integration PRs.",
+            links=links,
             updates=(step_update,),
         )
     if status != "ready":
@@ -99,6 +118,7 @@ def build(context: StepContext):
             f"orchestrator_finalization: waiting for the Release Orchestrator to park at "
             f"'{STAGE_NAME}' with final build tags ({detail}).",
             poll_in_min=POLL_INTERVAL_MIN,
+            links=links,
             updates=(step_update,),
         )
     runs = thaw(context.evidence.pipeline_runs)
@@ -110,6 +130,7 @@ def build(context: StepContext):
     return Done(
         f"Release Orchestrator is parked at '{STAGE_NAME}'; captured final MRWP "
         f"{final['mrwp_run_id']}.",
+        links=links,
         updates=(step_update, PipelineEvidence(runs)),
     )
 

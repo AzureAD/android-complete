@@ -65,11 +65,12 @@ phases:
       - { id: remove_rc_tags_gate, depends_on: [bug_bash.bugbash_complete] }
       - { id: orchestrator_finalization, depends_on: [remove_rc_tags_gate] }
       - { id: integ_prs, depends_on: [orchestrator_finalization] }
-      - { id: publish_notes_gate, depends_on: [orchestrator_finalization] }
-      - { id: verify_pub, depends_on: [publish_notes_gate] }
+      - { id: integ_prs_merged, depends_on: [integ_prs] }
+      - { id: publish_notes_gate, depends_on: [integ_prs_merged] }
+      - { id: verify_pub, depends_on: [orchestrator_finalization] }
       - { id: verify_release_notes, depends_on: [publish_notes_gate] }
-      - { id: oneauth_common_pr, depends_on: [verify_pub] }
-      - { id: release_announcement, depends_on: [verify_pub, verify_release_notes] }
+      - { id: oneauth_common_pr, depends_on: [orchestrator_finalization] }
+      - { id: release_announcement, depends_on: [verify_pub, verify_release_notes, oneauth_common_pr] }
       - { id: final_status_email, depends_on: [release_announcement] }
 
   - id: rollout_start

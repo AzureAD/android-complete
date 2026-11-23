@@ -34,6 +34,7 @@ KIND = "agent"
 NAME = 'Verify GitHub release notes (Broker + MSAL + Common)'
 REQUIRED_TOOLS = ('gh',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 
 # (repo key in integ_prs.CONFIG, which state.versions value supplies its version, label).
 TARGETS = [

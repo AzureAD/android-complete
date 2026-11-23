@@ -144,9 +144,16 @@ def _classify_external_fix(
                 f"Teams link with Scout (`record-bugbash-chat --release {release_id} --chat-link <url>`) "
                 "to store the `19:meeting_...@thread.v2` chat ID for `bugbash_updates`.",
             )
+        if step_id == "integ_prs_merged":
+            return (
+                "Freeze & Release-Integration Pull Requests",
+                f"{clean_reason} Review, approve, and merge the remaining open PRs linked above "
+                "(GitHub / GHE / Azure DevOps). `release-drainer` re-checks automatically on its "
+                "2-hour cadence, or run `task --retry` once all 8 PRs are merged.",
+            )
         if step_id in (
             "localization", "cron", "checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-            "auth_ecs", "verify_pub", "verify_release_notes", "identify_auth_build",
+            "auth_ecs", "orchestrator_finalization", "verify_pub", "verify_release_notes", "identify_auth_build",
         ):
             return (
                 "Azure Pipelines / Release Verification Check",

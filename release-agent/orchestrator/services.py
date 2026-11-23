@@ -48,6 +48,8 @@ class RepositoryReads:
     oneauth_read_text: Callable[..., tuple]
     wiki_page_exists: Callable[..., tuple]
     fetch_cg_alerts: Callable[..., tuple]
+    gh_pr_merge_state: Callable[..., tuple] | None = None
+    az_pr_merge_state: Callable[..., tuple] | None = None
 
 
 @dataclass(frozen=True)

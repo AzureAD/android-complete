@@ -28,9 +28,10 @@ from tools import maven as M
 
 ID = "verify_pub"
 KIND = "agent"
-NAME = 'Verify Maven Central + GitHub publication'
+NAME = 'Verify Maven Central publication (Common4j + Common + MSAL)'
 REQUIRED_TOOLS = ()
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 
 # What to verify: (artifact key, which state.versions value supplies its version, label).
 TARGETS = [

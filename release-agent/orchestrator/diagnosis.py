@@ -249,6 +249,10 @@ def _resolve_build_targets_for_step(
         _add("Authenticator ECS UI Tests", "auth_test", step_data.get("test_build_id") or ((auth.get("test") or {}).get("run_id")))
     elif phase_id == "ccd" and step_id in ("localization", "localization_pr"):
         _add("OneLocBuild Localization", "localization", step_data.get("build_id") or step_data.get("run_id"))
+    elif phase_id == "finalize" and step_id == "orchestrator_finalization":
+        final_runs = pr.get("final") or {}
+        _add("Release Orchestrator", "orchestrator", step_data.get("run_id") or final_runs.get("orchestrator_run_id") or (pr.get("orchestrator") or {}).get("run_id"))
+        _add("Final1 MRWP", "mrwp", step_data.get("mrwp_run_id") or final_runs.get("mrwp_run_id"))
     else:
         for key_name in ("build_id", "run_id", "test_build_id"):
             if step_data.get(key_name):

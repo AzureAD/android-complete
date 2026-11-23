@@ -146,6 +146,55 @@ def gh_find_open_pr(gh_repo: str, head: str, base: str, timeout=60):
     return (True, (arr[0] if arr else None), "")
 
 
+def gh_pr_merge_state(gh_repo: str, head: str, base: str, number=None, timeout=60):
+    """(ok, info|None, detail) — merge state for a GitHub/GHE PR (`number` or `head->base`).
+    `info` is {number, url, title, state} where `state` is 'merged' | 'open' | 'closed'."""
+    def _normalize(item):
+        raw_state = str(item.get("state") or "").upper()
+        merged = bool(item.get("mergedAt")) or raw_state == "MERGED"
+        state = "merged" if merged else ("open" if raw_state == "OPEN" else "closed")
+        return {
+            "number": item.get("number"),
+            "url": item.get("url"),
+            "title": item.get("title"),
+            "state": state,
+        }
+
+    if number is not None and str(number).isdigit():
+        rc, out, e = _run(
+            ["gh", "pr", "view", str(number), "--repo", gh_repo,
+             "--json", "number,url,title,state,mergedAt"], timeout=timeout)
+        if rc == 0 and out.strip():
+            try:
+                d = json.loads(out)
+                if isinstance(d, dict) and d.get("number"):
+                    return (True, _normalize(d), "")
+            except json.JSONDecodeError:
+                return (False, None, f"unparseable gh pr view output: {out!r}")
+        # Fall back to head->base lookup if number wasn't found directly.
+
+    rc, out, e = _run(
+        ["gh", "pr", "list", "--repo", gh_repo, "--head", head, "--base", base,
+         "--state", "all", "--limit", "10", "--json", "number,url,title,state,mergedAt"],
+        timeout=timeout)
+    if rc != 0:
+        return (False, None, e.strip() or "gh pr list failed")
+    try:
+        arr = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        return (False, None, f"unparseable gh output: {out!r}")
+    if not isinstance(arr, list):
+        return (False, None, "unexpected gh pr list payload")
+    if not arr:
+        return (True, None, "no PR found")
+    normalized = [_normalize(x) for x in arr if isinstance(x, dict)]
+    if not normalized:
+        return (True, None, "no PR found")
+    rank = {"merged": 0, "open": 1, "closed": 2}
+    normalized.sort(key=lambda x: (rank.get(x["state"], 9), -(int(x["number"] or 0))))
+    return (True, normalized[0], "")
+
+
 def gh_create_pr(gh_repo: str, head: str, base: str, title: str, body: str,
                  labels=None, draft=False, timeout=120):
     """(ok, url, detail) — create a PR. WRITE — only call when not dry-run."""
@@ -319,6 +368,55 @@ def az_find_open_pr(org, project, repo, head, base, timeout=60):
     url = (f"{org.rstrip('/')}/{project}/_git/{repo}/pullrequest/{num}" if num else None)
     return (True, {"number": num, "url": url, "title": p.get("title"),
                    "body": p.get("description", "")}, "")
+
+
+def az_pr_merge_state(org, project, repo, head, base, number=None, timeout=60):
+    """(ok, info|None, detail) — merge state for an ADO PR (`number` or `head->base`).
+    `info` is {number, url, title, state} where `state` is 'merged' | 'open' | 'closed'."""
+    def _normalize(p):
+        num = p.get("pullRequestId")
+        raw = str(p.get("status") or "").lower()
+        state = "merged" if raw == "completed" else ("open" if raw == "active" else "closed")
+        url = (f"{org.rstrip('/')}/{project}/_git/{repo}/pullrequest/{num}" if num else None)
+        return {
+            "number": num,
+            "url": url,
+            "title": p.get("title"),
+            "state": state,
+        }
+
+    if number is not None and str(number).isdigit():
+        rc, out, e = _run(
+            ["az", "repos", "pr", "show", "--org", org, "--id", str(number), "--output", "json"],
+            timeout=timeout)
+        if rc == 0 and out.strip():
+            try:
+                d = json.loads(out)
+                if isinstance(d, dict) and d.get("pullRequestId"):
+                    return (True, _normalize(d), "")
+            except json.JSONDecodeError:
+                return (False, None, f"unparseable az repos pr show output: {out!r}")
+
+    rc, out, e = _run(
+        ["az", "repos", "pr", "list", "--org", org, "--project", project,
+         "--repository", repo, "--source-branch", head, "--target-branch", base,
+         "--status", "all", "--top", "10", "--output", "json"], timeout=timeout)
+    if rc != 0:
+        return (False, None, e.strip() or "az repos pr list failed")
+    try:
+        arr = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        return (False, None, f"unparseable az output: {out!r}")
+    if not isinstance(arr, list):
+        return (False, None, "unexpected az repos pr list payload")
+    if not arr:
+        return (True, None, "no PR found")
+    normalized = [_normalize(x) for x in arr if isinstance(x, dict)]
+    if not normalized:
+        return (True, None, "no PR found")
+    rank = {"merged": 0, "open": 1, "closed": 2}
+    normalized.sort(key=lambda x: (rank.get(x["state"], 9), -(int(x["number"] or 0))))
+    return (True, normalized[0], "")
 
 
 def provider_repository_urls(repository, timeout=60):

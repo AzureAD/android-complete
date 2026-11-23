@@ -179,6 +179,7 @@ _SAFE_AGENTS = {
     # Phase-4 finalize integ_prs — real agent (gh/az/git). Short-circuit so flow tests
     # never hit the network; dedicated integ_prs tests exercise its real logic offline.
     "finalize.integ_prs": {"outcome": "done", "note": "integration PRs opened (test)"},
+    "finalize.integ_prs_merged": {"outcome": "done", "note": "integration and freeze PRs merged (test)"},
     # Phase-5 tag_authenticator — real agent (msazure/One git write). Short-circuit for flow
     # tests; dedicated tag_authenticator tests exercise its logic offline.
     "rollout_start.identify_auth_build": {
