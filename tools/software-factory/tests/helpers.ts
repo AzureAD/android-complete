@@ -3,10 +3,10 @@
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Application } from "../core/application.ts";
 import type { Actor, Requirements } from "../core/contracts.ts";
 import type { Execution, Json, RepositoryTarget } from "../core/lifecycle-contracts.ts";
-import { LifecycleStore, now } from "../core/lifecycle-store.ts";
-import { Registry } from "../core/registry.ts";
+import { now } from "../core/lifecycle-store.ts";
 import { ExternalProvider } from "../providers/external.ts";
 
 export const actor: Actor = { channel: "chat", reference: "tool-call-1", sessionId: "owning-session" };
@@ -46,20 +46,28 @@ export function fixture() {
     const directory = mkdtempSync(path.join(os.tmpdir(), "software-factory-test-"));
     const workspace = path.join(directory, "workspace");
     mkdirSync(workspace);
-    const database = path.join(directory, "registry.sqlite");
-    const registry = new Registry(database, workspace);
-    const store = new LifecycleStore(registry);
+    const options = { database: path.join(directory, "registry.sqlite"), workspace };
+    const app = new Application(options);
     return {
         directory,
         workspace,
-        database,
-        registry,
-        store,
+        database: options.database,
+        options,
+        app,
+        registry: app.registry,
+        store: app.lifecycle.store,
         cleanup: () => {
-            registry.close();
+            app.close();
             rmSync(directory, { recursive: true });
         },
     };
+}
+
+export function transportFixture() {
+    const result = fixture();
+    result.app.preview = async (input) => result.app.prepare(input);
+    result.app.submit = (input, caller, consent) => result.app.dispatch(input, caller, consent);
+    return result;
 }
 
 export function adoObserverFixture(mode: "checkout" | "stale" | "fallback" = "checkout") {
