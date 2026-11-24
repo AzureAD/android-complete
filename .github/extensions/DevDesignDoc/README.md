@@ -121,49 +121,151 @@ session storage. A request to draft is not automatically requirements approval.
 7. Return the full JSON human gate packet, including the approved input, evidence,
    design artifact, validation/review history, fix count, rubric, reasons, next action
    and the paired publication-ready Markdown documents for the exact reviewed revision.
+   The package also contains lossless hash-bound JSON appendices; publish those with
+   both Markdown documents.
 
 The `design.sections` object and structured registers remain the authoritative
 detailed design; `design.humanReviewBrief` contains its derived human decision
 document. The workflow returns both rather than writing files into a repository.
 The runtime journals step outputs.
-`GO to Planning` and `reviewReady: true` are only automated recommendations when all
+`Ready for human review` and `reviewReady: true` are only automated recommendations when all
 structural checks, per-change checks and rubric criteria pass with no findings or
 blocking unknowns. Other packets contain diagnostic drafts, not validated deliverables.
 The packet always
-says `humanApproval: "pending"`. Humans review the brief first, drilling into linked
+says `humanApproval: "pending"` and `planningReady: false`. Humans review the brief first, drilling into linked
 detail as needed, and inspect provenance/remaining decisions before explicitly
 approving the precise pair for planning. `NO-GO` means validation/review failed or two fixes were exhausted.
 No ADO items, code changes, merges, deployments, or human approvals are created.
 `ctx.pause()` is not used.
 
+### One authoritative decision/status register
+
+This is workflow data, validation and document generation, not a dashboard or
+Android product UI. Each issue or proposed decision has one record with a stable
+`id`, `category`, `status` (`open` or `resolved`), `question`/obligation, accountable
+`owner`, `requirementIds`, `changeIds`, `sectionIds` and `evidenceIds`. Proposed
+acceptance decisions also require a `recommendation`, `rejectedAlternatives` and
+meaningful `tradeoffs`. All records include those fields (empty proposal fields
+are allowed for non-acceptance obligations) and `resolution`/`resolutionReference`
+(both empty while open).
+
+| Category | Blocking gate while open | Meaning |
+| --- | --- | --- |
+| `missing-requirement` | Drafting | A requirement needs owner clarification; it cannot be invented. |
+| `source-uncertainty` | Drafting | The affected baseline or conflicting evidence is unresolved. |
+| `design-acceptance` | Planning | A proposed design choice awaits human acceptance; drafting and independent review may proceed. |
+| `release-check` | Release | Later implementation, runtime testing, telemetry validation or release sign-off is still required; design generation may proceed. |
+
+The gate is derived from category, never an author-selected override. Research
+owns `evidence.decisionRegister`; authors add new records in
+`design.decisionRegister` without copying or overriding research records.
+`collectDecisionRegister` combines these disjoint contributions into the single
+canonical register. IDs must be globally unique, including across stages.
+There are no competing writable `openDecisions`, `conflicts`, `unknowns`,
+`blockingUnknowns` or `humanReviewBrief.decisions` lists in worker output; even
+empty legacy arrays are rejected. The approved Stage 0 input contract retains
+its existing `blockingUnknowns`: before any worker starts these are normalized
+into owned, open `missing-requirement` records in the diagnostic gate packet.
+An unconfirmed owner is an explicitly unassigned role, not an invented person.
+
+Scenario traces retain their verified/unresolved **source-proof** status but link
+uncertainties through `uncertaintyIds` to the same register, not separate prose
+unknowns. Before drafting, every baseline trace must be verified; any linked
+uncertainty must be a resolved requirements/source record. Relabeling an
+unresolved baseline as a release check cannot bypass trace validation.
+
+Resolving a source discrepancy requires a reconciliation rationale and a
+`resolutionReference` to a pinned source reference in that record's `evidenceIds`.
+Resolving a missing requirement requires the exact inspected Stage 0 approval
+reference and approved requirement IDs. Structural provenance is not enough:
+independent review must verify the resolution and classification. Workers cannot
+mark `design-acceptance` or `release-check` records resolved, invent approval, or
+certify future runtime checks.
+
+Reviewers return only newly discovered **open** records in
+`review.decisionRegister`; corrections to existing records are findings, not ID
+overwrites. Discoveries are preserved in `decisionDiscoveries` and incorporated
+into `availableEvidence.decisionRegister`, keeping original evidence intact.
+New requirements/source blockers stop for clarification. Other discoveries force
+an evidence-digest rebind and fresh independent review before readiness, even
+when all rubric checks in the discovering review pass. Immutable research
+corrections require new evidence, not an author-side override.
+Valid owned drafting blockers bound to the approved requirements/evidence stop
+even an incomplete author candidate; the workflow does not spend fix iterations
+asking the author to invent the missing answer.
+
+Both documents' summaries, the brief's decisions-needed section and the packet's
+`decisionRegister`/`decisionSummary` are derived from this canonical register.
+The packet adds derived `blockingGate` values; the summary groups open IDs by
+category and lists resolved IDs separately. Malformed register data yields null
+packet register/summary fields, never a misleading empty/all-clear register.
+The detailed document retains every record, resolution and supporting link;
+lossless original stage contributions and discovery provenance remain in the
+hash-bound appendices. Authored narrative references record IDs instead of
+maintaining separate counts or status lists; reviewers reject stale or
+contradictory claims.
+
+The state boundary is **Drafting -> independent review passed / Ready for human
+review -> externally recorded exact-revision human approval / Approved for
+planning**. This workflow stops at the middle state and never records the last
+one. Readiness is not planning permission, and design approval is not release
+permission. A genuine human approval must bind the complete published pair,
+reviewer and durable reference; it is recorded separately rather than editing
+the reviewed register or inheriting an AI recommendation.
+
+Register/schema and rendering changes use checkpoint namespace `v15` and
+document format 4. Previous checkpoints and reviews cannot be reused under the
+new schema. Existing reviewed artifacts remain unchanged; refresh the extension
+registration before a future run uses the changed implementation.
+
 ### Primary Human Design Review Brief and paired publication
 
-The separate brief is an engineer-facing **decision document**, not a compressed
-implementation spec. Its target is a ten-minute read / roughly two to three pages.
+The separate brief is an engineer- and PM-facing plain-English **decision document**,
+not a compressed implementation spec. Its target is a ten-minute read / roughly two to three pages.
 The measurable gate is **1,800 whitespace-delimited words and 16,000 JavaScript
 string characters** across the entire rendered document, including automatically
-copied baseline/delta records, assumptions, unknowns, links and change history.
+rendered behavior/change tables, assumptions, status summaries, links and change history.
 No physical-page estimate is enforced. Over-budget output returns for bounded
 revision, then fails closed if it still cannot fit; it is never truncated and
 approval-critical information must never be omitted to meet either budget.
 
-The brief puts decisions needed first, with recommendations, rejected alternatives,
-meaningful tradeoffs, accountable owners and approval-blocker declarations covering
-every change. It then shows customer outcome, changed/unchanged behavior, scope and
-non-goals; proposed architecture in plain language and a simple flow diagram;
-supported evidence versus assumptions and unresolved questions; and consequential
-security/authentication, accessibility, compatibility/cross-repo, default-off and
-rollback risks/safeguards. All five risk categories require owned substantive impact
-and safeguards or explicit justified N/A. Role owners may be proposed when people
-are unconfirmed; do not invent assigned people or approval.
+The brief puts decisions needed first as crisp **Decision → Proposal → Tradeoff**
+blocks (`Proposal`, `Tradeoff`, `Rejected alternatives`, `Owner`, `Status`, `Changes`,
+`Detail`) derived from pending `design-acceptance` records in `decisionRegister`
+covering every change. It then shows customer outcome, a plain-language
+**Situation | Behavior** table (`humanReviewBrief.behaviorSummary`), a compact
+scannable **Change | Baseline → Proposed | Flag / Scope | Detail** table linking
+each change to `#change-<id>` in `detailed-design.md`, proposed architecture in
+plain language and a simple flow diagram, supported evidence versus assumptions
+and canonical decision/status summary, and consequential security/authentication,
+accessibility, compatibility/cross-repo, default-off and rollback risks/safeguards.
+Raw class/file paths, commit SHA hashes, and exhaustive registers stay in
+`detailed-design.md` via links rather than cluttering brief prose. All five risk
+categories require owned substantive impact and safeguards or explicit justified N/A.
+Role owners may be proposed when people are unconfirmed; do not invent assigned
+people or approval.
 
 Content, decisions and risks link via section/evidence IDs into **the same**
 authoritative detailed design. The renderer generates its stable section/evidence
-anchors and copies every baseline/delta, design/evidence assumption, evidence unknown
-and open design decision verbatim so those cannot silently disappear from the brief.
-These copies count against the budget. Consequential risks must be visible in the
+anchors and renders every change baseline/delta and design/evidence assumption, then
+derives decision/status summaries from the canonical register so open obligations
+cannot silently disappear from the brief.
+These elements count against the budget. Consequential risks must be visible in the
 brief, not concealed behind links. Empty evidence IDs are allowed for clearly labeled
 proposals/N/A; independent review must reject unsupported claims presented as facts.
+
+Supporting links use deduplicated Markdown reference definitions (`[label][d1]` ...
+`[d1]: detailed-design.md#...`) at the bottom of the brief. All labels and
+destinations remain available, and the complete definitions still count toward the
+word/character budgets; repeated URLs do not crowd out decision content.
+Each change row links to its full anchored necessity record (`#change-<id>`) in
+the same detailed design, retaining all source, trace, counterevidence and
+verification fields without repeating every support link in the short document.
+The brief lists pending human approval decisions separately from unresolved
+requirements/source blockers. A recommendation awaiting approval does not prevent
+drafting or independent review. Disabled behavior refers to the linked isolation
+and compatibility contracts rather than asserting unconditional baseline preservation;
+authors and reviewers must surface any intentional exception explicitly.
 
 `humanDesignReviewBrief` and all five Boolean `review.briefChecks` must pass with a
 substantive rationale, as well as existing gates. The reviewer compares both
@@ -172,12 +274,14 @@ it rejects omissions, contradictions, link-only safeguards, invented certainty,
 unjustified N/A and stale change explanations. These are independent agent judgments,
 not keyword-based semantic certification.
 
-Only a GO packet supplies `pairedDocuments` and `approvalRevision`; diagnostic
+Only a `Ready for human review` packet supplies `pairedDocuments` and `approvalRevision`; diagnostic
 drafts supply neither. `pairedDocuments` contains exactly
 `human-design-review-brief.md` (the primary document) and `detailed-design.md`, their
-UTF-8 Markdown byte SHA-256 hashes, common revision and prior-review context. The
+UTF-8 Markdown byte SHA-256 hashes, common revision and prior-review context in
+`documents`, plus the required `appendices` described below. The
 pair revision binds the entire structured design **including the brief**, exact
-evidence digest, requirements revision and prior-review identity. Both documents
+evidence digest, requirements revision, document-format version, appendix paths/hashes
+and prior-review identity. Both documents
 display that revision and cross-link. Publish the complete pair together in one
 revision-scoped private artifact collection/commit, preserving these relative names
 and exact bytes; never publish just one or mix revisions. The workflow itself has
@@ -189,6 +293,43 @@ missing documents, mixed revisions and post-review edits even if someone recalcu
 the edited file's hash. Publishers should use this check before displaying an approval
 surface and after reading back their durable publication.
 Publication failure must not become human approval or planning permission.
+
+#### Readable detailed design and provenance appendices
+
+The detailed Markdown retains the complete authored narrative, a contents list and
+readable tables for change necessity/counterevidence, flags and guarded entry points,
+requirement traceability, decisions/uncertainty, source facts, trigger-to-terminal
+scenario traces, source pins/references and approval provenance. Existing section,
+change and evidence anchors remain stable; flag, decision and trace links resolve within the
+same document. Table rendering escapes pipes, HTML and line breaks rather than
+truncating fields. Focused JSON API/payload examples in authored sections are still
+allowed; generated full-register and evidence dumps are not repeated in the main file.
+
+`pairedDocuments.appendices` contains two required entries:
+
+| Path | Content |
+| --- | --- |
+| `appendices/design.json` | The complete structured design, including all sections, registers and derived brief. |
+| `appendices/evidence.json` | The complete available evidence, including original claims, discovered references, decision discoveries, approval verification and any supplemental reconciliation/external-context provenance. |
+
+Each entry has `path`, `mediaType: "application/json"`, `content` and `sha256`.
+The content is lossless compact `JSON.stringify` output, without a trailing newline;
+its UTF-8 byte hash equals the existing design/evidence digest. Do not pretty-print,
+normalize line endings or otherwise reserialize these files during publication.
+The detailed design links both appendices and displays their hashes. Supplemental
+evidence fields are indexed there and retained in full, never silently dropped or
+promoted to verified repository facts.
+
+The independent reviewer receives both exact rendered Markdown documents and the
+appendix manifest, alongside the full structured inputs. Publish **all four files**
+in their original relative layout as one revision-scoped collection. Missing,
+extra, renamed, mixed or edited appendices fail `validatePairedDocuments`, even with
+recomputed file hashes. A format change creates a new revision and requires fresh
+independent and human review; it does not rewrite or reuse earlier reviewed files.
+The workflow returns artifacts only; callers remain responsible for writing,
+read-back validation and complete publication. Refresh the extension registration
+before running changed workflow code; editing repository files does not hot-reload
+an already registered session alias.
 
 Human approval must record this exact `approvalRevision`, reviewer and durable
 approval reference. It remains pending in every workflow packet; no old approval
@@ -393,7 +534,7 @@ test cohort and attaches evidence. Broad production enablement is not required.
 This validation covers controlled happy-path/failure, missing/late-terminal and
 zero/low-sample cases, not just success-event arrival.
 The release owner separately approves prerequisites and rollback readiness.
-Document review, PBI completion and `GO to Planning` are not query validation,
+Document review, PBI completion and `Ready for human review` are not query validation,
 activation permission or rollout approval. These deferred gates do not waive
 missing evidence needed to specify current baseline behavior.
 
@@ -402,16 +543,16 @@ missing evidence needed to specify current baseline behavior.
 The workflow uses journaled `ctx.step` calls and sequential `ctx.agent` calls:
 one evidence worker, one author, up to three independent reviews and two fixes
 (seven agents maximum). Limits are one concurrent agent, seven total agents,
-1,800 seconds, and 20 AI credits. Do not raise limits to bypass the two-fix bound.
+7,200 seconds, and 20 AI credits. Do not raise limits to bypass the two-fix bound.
 Null/malformed ordinary worker output fails closed; cancellation and hard runtime
-errors propagate. An interrupted/limit-reached run does not imply a GO.
+errors propagate. An interrupted/limit-reached run does not imply review readiness.
 
 Worker prompts prohibit writes and side effects. These are behavioral constraints,
 **not a tool sandbox**: `ctx.agent` has no documented tool allow-list option.
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v12` and a digest of the
+Checkpoint keys use schema/prompt version `design-feature-v15` and a digest of the
 entire input, including source pins and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
@@ -425,7 +566,7 @@ so replay does not publish duplicate artifacts.
 The healthy-operation handoff does not reuse
 prior v5 outputs, accessibility-only v6, pre-mortem-only v7, design-time
 full-pre-mortem/default-off v8, pre-accessibility post-implementation v9, or earlier
-v10/v11 prompt outputs. Human-review snapshots likewise cannot reuse legacy unpaired artifacts.
+v10/v11 prompt outputs or pre-register v12-v14 outputs. Human-review snapshots likewise cannot reuse legacy unpaired artifacts.
 
 ## Checks
 
@@ -466,13 +607,26 @@ terminal chain, rejects unnecessary forwarding, and identifies the genuine gap.
 Separately verify extension discovery and a human-approved representative run in
 a compatible Copilot runtime; mocks do not validate live agent quality.
 
-Paired-brief regressions cover missing/unsupported content and risk categories,
-every-change decision coverage, exact word-budget edges, long unbroken content,
-copied assumptions/unknowns, rejected hidden/mismatched risks despite passing rubric,
+Paired-brief regressions cover missing/unsupported content, plain-language
+`behaviorSummary` rows, Decision → Proposal → Tradeoff blocks, compact change
+tables, deduplicated reference links, risk categories, every-change decision
+coverage, exact word-budget edges, long unbroken content, copied assumptions and
+canonical status summaries, rejected hidden/mismatched risks despite passing rubric,
 fresh review after repair, stale review digests, verified/unverified prior-review
-snapshots, accurate change metadata, same-revision Markdown/hashes/support anchors
-and v10 isolation/v11 journal replay without additional agents. They do not test an
-external publisher or run a paid live-design quality eval.
+snapshots, accurate change metadata, same-revision 4-file Markdown/appendix
+hashes/support anchors and legacy checkpoint isolation/v15 journal replay without
+additional agents. They do not test an external publisher or run a paid live-design
+quality eval.
+
+Decision/status regressions cover category-specific drafting/planning/release gates,
+Stage 0 normalization, required ownership/links, global ID uniqueness, rejection
+of legacy lists and gate overrides, resolved source/requirements provenance,
+pending human acceptance, unverified later checks, matching document/packet
+summaries, stale narrative repair, reviewer discoveries/rebinding/replay,
+`reviewDelta` tracking of `decisionRegister`, and rejection of format-3 reviews or
+v12-v14 checkpoints. AI workers never grant human approval or certify release
+readiness. These tests use synthetic records and mocked reviewers; they do not prove
+semantic classification or live agent quality.
 
 The same baseline/necessity requirements apply to the `design-author` skill and
 direct authoring. An interrupted or skipped independent review must be labeled

@@ -70,10 +70,15 @@ Never add requirements or numeric targets that the approved scope does not conta
     with cohorts/denominators/windows, and handoff rules for the dependent
     post-implementation pre-mortem PBI without fabricating production thresholds.
 13. Paired Human Design Review Brief when requested by the schema: derive a
-    concise engineer-facing decision document (owned decisions first, outcome,
-    architecture/flow, evidence vs. uncertainty, all five consequential risk
-    categories, and changes since prior review) strictly consistent with the
-    detailed design and within the caller's word/character budgets.
+    concise plain-English engineer/PM-facing decision document (owned
+    **Decision → Proposal → Tradeoff** blocks from the canonical
+    `decisionRegister` first, outcome with a plain-language
+    **Situation | Behavior** table and compact changes table, architecture/flow,
+    evidence vs. uncertainty and canonical status summary, all five
+    consequential risk categories, and changes since prior review) strictly
+    consistent with the readable detailed design and its hash-bound JSON
+    appendices, within the caller's word/character budgets, using deduplicated
+    reference links for deep technical detail.
 
 ## Android Auth Flighting Standard (Team Defaults)
 
