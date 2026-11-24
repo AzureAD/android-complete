@@ -25,6 +25,17 @@ Never add requirements or numeric targets that the approved scope does not conta
 - Do not splice revisions into a single execution path. Missing relevant source
   or an unresolved terminal path is a blocking unknown, not evidence that
   behavior is absent.
+- **Strictly source-only during design:** Never run Gradle builds, assemble
+  APKs/AARs, generate merged manifests or Dagger/DI graphs, or collect compiled
+  build artifacts during design. When build-time generated wiring (such as
+  merged manifests or generated DI graphs) cannot be proved from checked-in
+  source alone, record an explicit scope assumption or `release-check`
+  verification item for implementation/CI rather than blocking design authoring
+  demanding a local build.
+- **Baseline trace clarity:** Stage 1 `scenarioTraces` describe **current
+  baseline code behavior** only. Future design decisions (IPC contract shape,
+  timeouts, flag wiring, build-time verification) belong in `design-acceptance`
+  or `release-check` records, never as unresolved baseline trace blockers.
 - Include a visible necessity register for every implementation mandate
   (requirement, section, pinned baseline trace, existing behavior, requested
   delta, necessity, inspected counterevidence, and verification). Classify each

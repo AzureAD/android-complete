@@ -52,9 +52,84 @@ this argument shape:
   "sourceManifest": [
     { "repository": "Relevant repository identity", "revision": "0123456789abcdef0123456789abcdef01234567" }
   ],
-  "context": "Optional private input locations and prior review feedback; treated as untrusted data."
+  "context": "Optional private input locations and prior review feedback; treated as untrusted data.",
+  "humanDecisions": [
+    {
+      "id": "HD-1",
+      "topic": "IPC timeout policy",
+      "decision": "Use a 30-second client timeout with no automatic retry.",
+      "sourceReference": "human-review/comment-42",
+      "recordedAt": "2026-11-23T12:00:00Z",
+      "supersedesIds": []
+    }
+  ],
+  "continuation": {
+    "evidence": { "...": "Optional previously validated evidence snapshot matching sourceManifest and stage0" },
+    "design": { "...": "Optional previously authored design draft (requires continuation.evidence)" }
+  }
 }
 ```
+
+### Native continuation, flat `humanDecisions`, and bounded payloads
+
+- **Native continuation (`continuation.evidence` / `continuation.design`):**
+  - Supply `continuation.evidence` to reuse a previously validated evidence snapshot
+    directly without re-running the `Repository evidence` agent
+    (`continuationMode: "from-evidence"`). `validateStage0` and `validateEvidence`
+    verify exact `sourceManifest` pin matches, `approvalVerification`,
+    `sourceVerification`, `priorReviewVerification` (when `priorHumanReview` is
+    present), traces, and decision register provenance before any agent runs.
+  - Supply both `continuation.evidence` and `continuation.design` to jump straight
+    into a bounded `Design revision` turn incorporating current `stage0`, active
+    `humanDecisions`, and `context`, followed by fresh `Independent design review`
+    (`continuationMode: "from-draft"`). Continuation never skips independent review,
+    never imports prior human approval, and never bypasses `validateStage0`,
+    `validateEvidence`, or `validateDesign`.
+  - Mismatched `sourceManifest` pins, unverified approval/source verification,
+    malformed snapshots, mismatched `evidenceDigest` for an unchanged Stage 0
+    revision, or `continuation.design` without `continuation.evidence` fail closed
+    with `needs clarification` before spawning any agent.
+- **Flat, deduplicated `humanDecisions` ledger:**
+  - Optional top-level `humanDecisions` accepts flat objects with
+    `{ id, topic, decision, sourceReference, recordedAt?, supersedesIds? }`
+    (`additionalProperties: false`). Duplicate IDs, self-supersession, unknown
+    `supersedesIds`, supersession cycles, and nested recursive blobs
+    (`inheritedDecisions`, `previousAmendment`, `previousRequirements`) are
+    rejected in `validateStage0`.
+  - `normalizeHumanDecisions(decisions)` resolves `supersedesIds` into
+    `{ active, supersededIds }` so workers receive only active decisions plus a
+    compact retired-ID list — keeping payload size linear O(N) across arbitrary
+    rounds of human amendments.
+- **Bounded reviewer context (`buildReviewerPayload`):**
+  - The independent reviewer receives `stage0`, normalized `humanDecisions`,
+    `designDigest`, `evidenceDigest`, `pairRevision`, `appendixDescriptors`, the
+    exact rendered `human-design-review-brief.md` (`renderedBrief`), the complete
+    structured `design` (all 13 sections + registers), compact `evidence`
+    (canonical fields plus discovery provenance, omitting giant supplemental blobs
+    such as `summaryMarkdown`), `reviewDelta` (Round 2+), and compact
+    `priorReviews` summaries (findings, failed criteria/checks, `briefChecks`, and
+    new references/decisions).
+  - Instead of duplicating the multi-hundred-KB rendered `detailed-design.md`
+    prose alongside `design.sections`, the host deterministically verifies
+    `validatePairedDocuments` before calling the reviewer and passes a compact
+    `detailedDesignSummary` (`path`, `sha256`, `byteLength`, `sectionAnchors`,
+    `tableAnchors`, `itemAnchorCounts`, `hostVerified`). All `review.briefChecks`
+    and fixed-rubric gates remain intact.
+
+### Source-only design gates (no Gradle builds during design)
+
+- **Strictly source-only:** Workers never run Gradle builds, assemble APKs/AARs,
+  generate merged manifests or Dagger/DI graphs, or collect compiled build
+  artifacts during design. When build-time generated wiring (such as merged
+  manifests or generated DI graphs) cannot be proved from checked-in source
+  alone, record an explicit scope assumption or open `release-check` verification
+  item for implementation/CI rather than blocking design authoring demanding a
+  local build.
+- **Baseline trace clarity:** Stage 1 `evidence.scenarioTraces` describe **current
+  baseline code behavior** only. Future design decisions (IPC contract shape,
+  timeouts, flag wiring, build-time verification) belong in `design-acceptance`
+  or `release-check` records, never as unresolved baseline trace blockers that
+  fail Stage 1 validation.
 
 The caller supplies a genuine approval record. Matching strings are **not**
 authentication or proof of approval: the evidence worker must inspect the approval
@@ -213,10 +288,11 @@ permission. A genuine human approval must bind the complete published pair,
 reviewer and durable reference; it is recorded separately rather than editing
 the reviewed register or inheriting an AI recommendation.
 
-Register/schema and rendering changes use checkpoint namespace `v15` and
-document format 4. Previous checkpoints and reviews cannot be reused under the
-new schema. Existing reviewed artifacts remain unchanged; refresh the extension
-registration before a future run uses the changed implementation.
+Register/schema, continuation, bounded-payload, and source-only gate changes use
+checkpoint namespace `v16` and document format 4. Previous checkpoints (`v15` and
+earlier) and stale reviews cannot be reused under the new schema. Existing reviewed
+artifacts remain unchanged; refresh the extension registration before a future run
+uses the changed implementation.
 
 ### Primary Human Design Review Brief and paired publication
 
@@ -320,8 +396,11 @@ The detailed design links both appendices and displays their hashes. Supplementa
 evidence fields are indexed there and retained in full, never silently dropped or
 promoted to verified repository facts.
 
-The independent reviewer receives both exact rendered Markdown documents and the
-appendix manifest, alongside the full structured inputs. Publish **all four files**
+The independent reviewer receives the exact rendered `human-design-review-brief.md`,
+a compact `detailedDesignSummary` (with exact `sha256`, byte length, section/table
+anchor inventory, and host-verified `validatePairedDocuments`), and
+`appendixDescriptors` alongside the full structured `design` and compact `evidence`.
+Publish **all four files**
 in their original relative layout as one revision-scoped collection. Missing,
 extra, renamed, mixed or edited appendices fail `validatePairedDocuments`, even with
 recomputed file hashes. A format change creates a new revision and requires fresh
@@ -552,8 +631,8 @@ Worker prompts prohibit writes and side effects. These are behavioral constraint
 Run only with suitable host permission controls; never blanket-approve writes or
 external transmission. Repository contents and worker output are untrusted data.
 
-Checkpoint keys use schema/prompt version `design-feature-v15` and a digest of the
-entire input, including source pins and feedback context. Author/fix/review keys also
+Checkpoint keys use schema/prompt version `design-feature-v16` and a digest of the
+entire input, including source pins, `humanDecisions`, `continuation`, and feedback context. Author/fix/review keys also
 bind the current expanded evidence digest (including discovery provenance); review
 keys include the design digest; review and fix keys also bind the review/validation history.
 Journal replay rebuilds discoveries from validated review outputs without mutating
@@ -563,10 +642,8 @@ not recheck a mutable branch or re-read edited local snapshots; do not alter sna
 in place. Start a fresh run with new pins if the source/evidence changes; change the key version when workflow semantics,
 schemas, prompts, or rubric change. Steps have no intentional external side effects,
 so replay does not publish duplicate artifacts.
-The healthy-operation handoff does not reuse
-prior v5 outputs, accessibility-only v6, pre-mortem-only v7, design-time
-full-pre-mortem/default-off v8, pre-accessibility post-implementation v9, or earlier
-v10/v11 prompt outputs or pre-register v12-v14 outputs. Human-review snapshots likewise cannot reuse legacy unpaired artifacts.
+The workflow does not reuse prior v5-v15 journal outputs (including pre-continuation
+v15 outputs, pre-register v12-v14 outputs, and earlier v5-v11 prompt outputs). Human-review snapshots likewise cannot reuse legacy unpaired artifacts.
 
 ## Checks
 
@@ -614,7 +691,7 @@ coverage, exact word-budget edges, long unbroken content, copied assumptions and
 canonical status summaries, rejected hidden/mismatched risks despite passing rubric,
 fresh review after repair, stale review digests, verified/unverified prior-review
 snapshots, accurate change metadata, same-revision 4-file Markdown/appendix
-hashes/support anchors and legacy checkpoint isolation/v15 journal replay without
+hashes/support anchors and legacy checkpoint isolation/v16 journal replay without
 additional agents. They do not test an external publisher or run a paid live-design
 quality eval.
 
@@ -624,9 +701,16 @@ of legacy lists and gate overrides, resolved source/requirements provenance,
 pending human acceptance, unverified later checks, matching document/packet
 summaries, stale narrative repair, reviewer discoveries/rebinding/replay,
 `reviewDelta` tracking of `decisionRegister`, and rejection of format-3 reviews or
-v12-v14 checkpoints. AI workers never grant human approval or certify release
-readiness. These tests use synthetic records and mocked reviewers; they do not prove
-semantic classification or live agent quality.
+v12-v15 checkpoints. AI workers never grant human approval or certify release
+readiness. Continuation, bounded-payload, and source-only regressions cover native
+`from-evidence` and `from-draft` continuation without re-running repository research,
+fail-closed rejection of mismatched pins or unverified continuation snapshots,
+flat `humanDecisions` validation and linear `supersedesIds` normalization, bounded
+`buildReviewerPayload` (no duplicated `detailed-design.md` prose, stripped
+supplemental blobs, compact `priorReviews`, host-verified `detailedDesignSummary`),
+and strictly source-only / no-Gradle-build prompts and standards. These tests use
+synthetic records and mocked reviewers; they do not prove semantic classification
+or live agent quality.
 
 The same baseline/necessity requirements apply to the `design-author` skill and
 direct authoring. An interrupted or skipped independent review must be labeled
