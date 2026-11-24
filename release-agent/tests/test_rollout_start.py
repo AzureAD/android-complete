@@ -1,19 +1,25 @@
-"""Phase-5 Authenticator rollout-start notice."""
+"""Phase-5 Authenticator rollout-start workflow, stage-identifier, and verification tests."""
 from dataclasses import replace
 from datetime import datetime, timezone
-from argparse import Namespace
+from pathlib import Path
 
 import pytest
+import yaml
 
-from orchestrator import cli_common as C, delivery, mocks
-from orchestrator.commands.step_action import prepare_step
-from orchestrator.engine import Orchestrator
-from orchestrator.outcomes import Blocked, NeedsSkill
+from orchestrator import drain
+from orchestrator.outcomes import Blocked, Done, InProgress, NeedsSkill
 from orchestrator.state import ReleaseState, StepState
+from orchestrator.workflow import normalize_workflow_config
 from steps.rollout_start import (
-    beta_play_store, notice, signoff_start, upload_alpha, upload_whats_new)
-from tests._context import context, fresh_orchestrator
-from tests._harness import CONFIG, _active_phase
+    beta_play_store,
+    identify_auth_build,
+    signoff_start,
+    upload_alpha,
+    upload_whats_new,
+    verify_alpha_uploaded,
+)
+from tests._context import context, fresh_orchestrator, invoke
+from tests._harness import CONFIG, _active_phase, _active_step
 
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -62,132 +68,18 @@ def _state():
     return state
 
 
-def _manifest():
-    return {
-        "version": 1,
-        "branch": "release/2026/09/10",
-        "target_commit": COMMIT,
-        "baseline_branch": "release/2026/08/13",
-        "baseline_commit": "1" * 40,
-        "merge_base": "2" * 40,
-        "reachable_commit_count": 3,
-        "general": [
-            {"id": 101, "commit": "3" * 40, "title": "General <change>",
-             "url": "https://ado/pr/101", "components": ["Authenticator"], "mixed": False},
-        ],
-        "did": [
-            {"id": 102, "commit": "4" * 40, "title": "Shared change",
-             "url": "https://ado/pr/102", "components": ["Authenticator", "DID"], "mixed": True},
-            {"id": 103, "commit": "5" * 40, "title": "VID telemetry",
-             "url": "https://ado/pr/103", "components": ["DID"], "mixed": False},
-        ],
-        "generated_omitted": [{"commit": "6" * 40, "title": "OneLoc"}],
-        "flight_changes": {
-            "added": [{"name": "NewFlag", "key": "NewFlag", "default": "true"}],
-            "default_changed": [{
-                "name": "ExistingFlag", "key": "ExistingFlag",
-                "previous_default": "false", "default": "true",
-            }],
-        },
-    }
-
-
-def _inputs(**extra):
-    return {
-        "build": {
-            "build_id": 180500000,
-            "version": "6.2609.6000",
-            "commit": COMMIT,
-            "build_number": "20260910.5",
-        },
-        "manifest": _manifest(),
-        **extra,
-    }
-
-
 def _production_context(state, *, now=None):
     ctx = context(state, now=now)
     pipelines = replace(
         ctx.services.pipelines,
-        find_final_auth_build=lambda branch, **kwargs: (True, _inputs()["build"], ""),
-        release_change_manifest=lambda branch, commit: (True, _manifest(), ""),
+        find_final_auth_build=lambda branch, **kwargs: (True, {
+            "build_id": 180500000,
+            "version": "6.2609.6000",
+            "commit": COMMIT,
+            "build_number": "20260910.5",
+        }, ""),
     )
     return replace(ctx, services=replace(ctx.services, pipelines=pipelines))
-
-
-def test_notice_is_exact_html_email_with_deterministic_sections():
-    result = notice.build(_production_context(
-        _state(),
-        now=datetime(2026, 9, 15, 17, 0, tzinfo=timezone.utc),
-    ))
-    assert isinstance(result, NeedsSkill)
-    assert result.tool == "workiq_send_email" and result.record_as == "notice"
-    assert result.payload["to"] == ["MAuthenticatorRel@microsoft.com"]
-    assert result.payload["cc"] == ["windevxeng@microsoft.com"]
-    assert result.payload["isHtml"] is True
-    assert result.payload["subject"] == \
-        "Android Authenticator October 2026 release intent — 6.2609.6000"
-    html = result.payload["body"]
-    for value in (
-        "Android Authenticator — Release Intent", "6.2609.6000",
-        "October Authenticator", "release/2026/09/10", ">Authenticator</h3>",
-        "VID telemetry", "Authenticator + DID", "NewFlag", "ExistingFlag",
-        "Source defaults, not rollout intent", "Release Progression",
-    ):
-        assert value in html
-    assert "IDWiki" not in html and "EngHub" not in html
-    assert "Sign-offs" not in html and "General payload" not in html
-    assert "Broker test plan" not in html and "October Broker" not in html
-    assert "Run 180400001" in html and "buildId=180400001" in html
-    assert "path=%2F&amp;version=GBrelease%2F2026%2F09%2F10&amp;_a=contents" in html
-    assert html.count("Shared change") == 1
-    assert "General &lt;change&gt;" in html and "General <change>" not in html
-    assert "Initial Release Notification Email" in html
-    assert "background:#d1fadf" in html and ">Done</span>" in html
-    assert "TODO" not in html
-    assert result.notification["completion"]["status"] == "pass"
-    assert len(result.notification["state_matches"]) == 6
-
-
-def test_notice_test_redirect_clears_real_cc_and_tags_subject():
-    result = notice.build(context(_state(), inputs=_inputs(
-        send_to="pedroro@microsoft.com")))
-    assert isinstance(result, NeedsSkill)
-    assert result.payload["to"] == ["pedroro@microsoft.com"]
-    assert result.payload["cc"] == []
-    assert result.payload["subject"].startswith("[TEST → me] ")
-
-
-def test_identify_auth_build_records_final_pipeline_evidence():
-    from steps.rollout_start import identify_auth_build as S
-    build = {
-        "build_id": 180500000,
-        "version": "6.2609.6000",
-        "commit": COMMIT,
-        "build_number": "6.2609.6000",
-        "status": "completed",
-        "result": "succeeded",
-    }
-    state = _state()
-    result = S.build(context(state, inputs={"build": build}))
-    assert result.kind == "done"
-    evidence = result.updates[0].values["final_auth"]
-    assert evidence["authenticator_build_id"] == "180500000"
-    assert evidence["authenticator_version"] == "6.2609.6000"
-    assert evidence["authenticator_commit"] == COMMIT
-
-
-def test_identify_auth_build_blocks_when_no_run_found():
-    from steps.rollout_start import identify_auth_build as S
-    ctx = _production_context(_state())
-    pipelines = replace(
-        ctx.services.pipelines,
-        find_final_auth_build=lambda branch: (True, None, "no run on release branch"),
-    )
-    result = S.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
-    assert isinstance(result, Blocked)
-    assert "no final Authenticator build found" in result.reason
-    assert "email and Scout" in result.reason
 
 
 def _signoff_run(**extra):
@@ -199,7 +91,7 @@ def _signoff_run(**extra):
         "status": "completed",
         "result": "succeeded",
         "stage_name": "Release Sign Off",
-        "stage_ref": "ReleaseSignOff",
+        "stage_ref": "Sign_Off",
         "stage_id": "stage-1",
         "stage_state": "notStarted",
         "stage_result": None,
@@ -209,11 +101,93 @@ def _signoff_run(**extra):
     }
 
 
-def test_signoff_start_prepares_checked_stage_start():
+def test_rollout_start_dependency_graph_and_parallel_branches():
+    """Verify the approved 8-step `rollout_start` DAG and parallel fan-out after `identify_auth_build`."""
+    wf = normalize_workflow_config(yaml.safe_load(Path(CONFIG).read_text(encoding="utf-8")))
+    phase = next(p for p in wf["phases"] if p["id"] == "rollout_start")
+    deps = {s["id"]: list(s.get("depends_on") or []) for s in phase["steps"]}
+    assert list(deps.keys()) == [
+        "identify_auth_build",
+        "tag_authenticator",
+        "wiki_payload",
+        "signoff_start",
+        "upload_alpha",
+        "verify_alpha_uploaded",
+        "upload_whats_new",
+        "beta_play_store",
+    ]
+    assert deps == {
+        "identify_auth_build": ["finalize.integ_prs_merged"],
+        "tag_authenticator": ["identify_auth_build"],
+        "wiki_payload": ["identify_auth_build"],
+        "signoff_start": ["identify_auth_build"],
+        "upload_alpha": ["signoff_start"],
+        "verify_alpha_uploaded": ["upload_alpha"],
+        "upload_whats_new": ["verify_alpha_uploaded"],
+        "beta_play_store": ["upload_whats_new"],
+    }
+
+    # Once `identify_auth_build` completes, `tag_authenticator`, `wiki_payload`, and `signoff_start`
+    # are all simultaneously ready in parallel!
+    st = _state()
+    _active_phase(st, "rollout_start")
+    for s_id in deps:
+        st.set_step("rollout_start", s_id, StepState(status="pending"))
+    st.set_step("rollout_start", "identify_auth_build", StepState(status="done"))
+    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    ready = {
+        s.definition.id for s in orch.scheduling().steps
+        if s.definition.phase_id == "rollout_start" and not s.complete and s.prerequisites_met
+    }
+    assert ready == {"tag_authenticator", "wiki_payload", "signoff_start"}
+
+
+def test_rollout_notice_template_is_preserved_for_comms_rework():
+    """`rollout_start.notice` was removed from the active workflow, with its template kept in `templates/`."""
+    template_file = Path(CONFIG).resolve().parents[1] / "templates" / "rollout-start-notice.html"
+    assert template_file.is_file()
+    html = template_file.read_text(encoding="utf-8")
+    assert "Android Authenticator — Release Intent" in html
+    assert "{{app_version}}" in html and "{{progression_rows}}" in html
+
+
+def test_identify_auth_build_records_final_pipeline_evidence():
+    assert identify_auth_build.RECHECK_WHEN_BLOCKED is True
+    build = {
+        "build_id": 180500000,
+        "version": "6.2609.6000",
+        "commit": COMMIT,
+        "build_number": "6.2609.6000",
+        "status": "completed",
+        "result": "succeeded",
+    }
+    state = _state()
+    result = identify_auth_build.build(context(state, inputs={"build": build}))
+    assert result.kind == "done"
+    evidence = result.updates[0].values["final_auth"]
+    assert evidence["authenticator_build_id"] == "180500000"
+    assert evidence["authenticator_version"] == "6.2609.6000"
+    assert evidence["authenticator_commit"] == COMMIT
+
+
+def test_identify_auth_build_blocks_when_no_run_found():
     ctx = _production_context(_state())
     pipelines = replace(
         ctx.services.pipelines,
-        find_auth_signoff_run=lambda branch, **kwargs: (True, _signoff_run(), ""),
+        find_final_auth_build=lambda branch: (True, None, "no run on release branch"),
+    )
+    result = identify_auth_build.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
+    assert isinstance(result, Blocked)
+    assert "no final Authenticator build found" in result.reason
+    assert "email and Scout" in result.reason
+
+
+def test_signoff_start_prepares_checked_stage_start():
+    ctx = _production_context(_state())
+    calls = []
+    pipelines = replace(
+        ctx.services.pipelines,
+        find_auth_signoff_run=lambda branch, **kwargs: (calls.append(kwargs) or True, _signoff_run(), ""),
     )
     result = signoff_start.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
     assert isinstance(result, NeedsSkill)
@@ -221,19 +195,16 @@ def test_signoff_start_prepares_checked_stage_start():
     assert "--auto-approve" in result.payload["followup_command"]
     assert result.payload["plan"]["build_id"] == 397224001
     assert result.payload["plan"]["stage"] == "Release Sign Off"
+    assert result.payload["plan"]["stage_id"] == "Sign_Off"
+    assert calls[0]["stage_name"] == "Sign_Off"
 
 
-@pytest.mark.parametrize("module,stage,command", [
-    (upload_whats_new, "Upload What's New", "start-upload-whats-new"),
-    (upload_alpha, "Upload Alpha", "start-upload-alpha"),
+@pytest.mark.parametrize("module,stage_id,stage,command,previous", [
+    (upload_alpha, "Upload_To_Alpha_GPS", "Upload Alpha - Google Play", "start-upload-alpha", "signoff_start"),
+    (upload_whats_new, "Upload_Whats_New", "Upload What's New", "start-upload-whats-new", "verify_alpha_uploaded"),
 ])
-def test_release_upload_stage_prepares_checked_stage_start(module, stage, command):
+def test_release_upload_stage_prepares_checked_stage_start(module, stage_id, stage, command, previous):
     state = _state()
-    previous = (
-        "signoff_start"
-        if module is upload_whats_new
-        else "upload_whats_new"
-    )
     state.set_step("rollout_start", previous, StepState(
         status="done",
         links=[{
@@ -247,7 +218,7 @@ def test_release_upload_stage_prepares_checked_stage_start(module, stage, comman
         ctx.services.pipelines,
         find_auth_signoff_run=lambda branch, **kwargs: (
             calls.append(kwargs) or True,
-            _signoff_run(stage_name=stage, stage_ref=stage.replace(" ", "")),
+            _signoff_run(stage_name=stage, stage_ref=stage_id),
             ""),
     )
     result = module.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
@@ -256,27 +227,91 @@ def test_release_upload_stage_prepares_checked_stage_start(module, stage, comman
     assert "--auto-approve" in result.payload["followup_command"]
     assert result.payload["plan"]["build_id"] == 397224001
     assert result.payload["plan"]["stage"] == stage
-    assert calls[0]["stage_name"] == stage
+    assert result.payload["plan"]["stage_id"] == stage_id
+    assert calls[0]["stage_name"] == stage_id
     assert calls[0]["build_id"] == "397224001"
 
 
 @pytest.mark.extended
-@pytest.mark.parametrize("module,previous,label", [
-    (upload_whats_new, "signoff_start", "Release Sign Off"),
-    (upload_alpha, "upload_whats_new", "Upload What's New"),
+@pytest.mark.parametrize("module,label", [
+    (upload_alpha, "Release Sign Off"),
+    (upload_whats_new, "Verify Alpha APK upload"),
 ])
-def test_release_upload_stage_blocks_without_prior_build_identity(module, previous, label):
+def test_release_upload_stage_blocks_without_prior_build_identity(module, label):
     result = module.build(context(_state()))
     assert isinstance(result, Blocked)
     assert f"completed {label} evidence has no pipeline-397224 build identity" in result.reason
 
 
-def test_beta_stage_requires_owner_review_and_binds_exact_stage():
+def test_verify_alpha_uploaded_waits_blocks_and_resolves_cleanly():
+    """`verify_alpha_uploaded` stays `InProgress` while `Upload_To_Alpha_GPS` runs, blocks with
+    `RECHECK_WHEN_BLOCKED` on failure, and resolves `Done` with a pinned link once succeeded."""
+    assert verify_alpha_uploaded.RECHECK_WHEN_BLOCKED is True
     state = _state()
     state.set_step("rollout_start", "upload_alpha", StepState(
         status="done",
         links=[{
-            "name": "Upload Alpha run",
+            "name": "Upload Alpha - Google Play run",
+            "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+        }],
+    ))
+
+    in_prog = invoke(verify_alpha_uploaded.build, state) if False else verify_alpha_uploaded.build(context(
+        state,
+        inputs={"run": _signoff_run(
+            stage_name="Upload Alpha - Google Play",
+            stage_ref="Upload_To_Alpha_GPS",
+            stage_state="inProgress",
+            stage_result=None,
+        )},
+    ))
+    assert isinstance(in_prog, InProgress)
+    assert "Upload_To_Alpha_GPS" in in_prog.note
+
+    failed = verify_alpha_uploaded.build(context(
+        state,
+        inputs={"run": _signoff_run(
+            stage_name="Upload Alpha - Google Play",
+            stage_ref="Upload_To_Alpha_GPS",
+            stage_state="completed",
+            stage_result="failed",
+        )},
+    ))
+    assert isinstance(failed, Blocked)
+    assert "result='failed'" in failed.reason
+
+    orch = fresh_orchestrator(CONFIG, state, mocks={})
+    _active_step(state, "rollout_start", "verify_alpha_uploaded")
+    state.set_step("rollout_start", "verify_alpha_uploaded", StepState(status="blocked", note=failed.reason))
+    step_def = next(
+        s.definition for s in orch.scheduling().steps
+        if s.definition.phase_id == "rollout_start" and s.definition.id == "verify_alpha_uploaded"
+    )
+    assert drain._should_recheck_step(step_def, state.get_step("rollout_start", "verify_alpha_uploaded")) is True
+
+    succeeded = verify_alpha_uploaded.build(context(
+        state,
+        inputs={"run": _signoff_run(
+            stage_name="Upload Alpha - Google Play",
+            stage_ref="Upload_To_Alpha_GPS",
+            stage_state="completed",
+            stage_result="succeeded",
+        )},
+    ))
+    assert isinstance(succeeded, Done)
+    assert "397224001" in succeeded.note
+    assert succeeded.links == [{
+        "name": "Upload Alpha - Google Play run",
+        "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+    }]
+
+
+def test_beta_stage_requires_owner_review_and_binds_exact_stage():
+    state = _state()
+    state.set_step("rollout_start", "upload_whats_new", StepState(
+        status="done",
+        links=[{
+            "name": "Upload What's New run",
             "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
         }],
     ))
@@ -289,7 +324,7 @@ def test_beta_stage_requires_owner_review_and_binds_exact_stage():
             calls.append(kwargs) or True,
             _signoff_run(
                 stage_name="100% Beta - Play Store",
-                stage_ref="BetaPlayStore"),
+                stage_ref="Progress_Beta_100"),
             ""),
     )
     result = beta_play_store.build(replace(
@@ -301,10 +336,11 @@ def test_beta_stage_requires_owner_review_and_binds_exact_stage():
     assert result.tool == "start-beta-play-store"
     assert "--auto-approve" not in result.payload["followup_command"]
     assert result.payload["plan"]["stage"] == "100% Beta - Play Store"
+    assert result.payload["plan"]["stage_id"] == "Progress_Beta_100"
     assert result.payload["plan"]["release_owner_approval_required"] is True
     assert result.payload["plan"]["start_date"] == "2026-09-21"
     assert result.payload["plan"]["manager_approved_by"] is None
-    assert calls[0]["stage_name"] == "100% Beta - Play Store"
+    assert calls[0]["stage_name"] == "Progress_Beta_100"
     assert calls[0]["build_id"] == "397224001"
     assert "release owner" in result.payload["execution_instructions"]
 
@@ -327,7 +363,7 @@ def test_beta_stage_blocks_friday_without_manager_approval():
         model=beta_play_store.BuildParameters,
         inputs={"run": _signoff_run(
             stage_name="100% Beta - Play Store",
-            stage_ref="BetaPlayStore")},
+            stage_ref="Progress_Beta_100")},
     ))
     assert isinstance(approved, NeedsSkill)
     assert '--manager-approved-by "manager@microsoft.com"' in \
@@ -341,7 +377,7 @@ def test_beta_stage_blocks_without_prior_stage_build_identity():
         model=beta_play_store.BuildParameters,
     ))
     assert isinstance(result, Blocked)
-    assert "Upload Alpha evidence has no pipeline-397224 build identity" in result.reason
+    assert "Upload What's New evidence has no pipeline-397224 build identity" in result.reason
 
 
 def test_signoff_start_is_done_when_stage_already_started():
@@ -366,94 +402,54 @@ def test_signoff_start_blocks_when_no_release_build_found():
     assert "pipeline 397224" in result.reason
 
 
-def test_injected_source_evidence_cannot_target_production_recipients():
-    result = notice.build(context(_state(), inputs=_inputs()))
-    assert isinstance(result, Blocked)
-    assert "requires send_to" in result.reason
+def test_canonical_yaml_identifiers_survive_display_title_changes():
+    """Verify Phases 2, 4, and 5 match YAML `identifier`s even if `displayName` strings change."""
+    from tools.pipelines import auth_app as A, orchestrator as O
+    from steps.build_verify import orchestrator_health as OH
+    from steps.finalize import remove_rc_tags_gate as RG, publish_notes_gate as PG
 
+    # 1. Phase 2 checker job identifier (`TriggerMonthlyRelease`) with renamed displayName:
+    recs = [{"type": "Job", "identifier": "TriggerMonthlyRelease", "name": "Renamed Trigger Title", "result": "succeeded"}]
+    assert O.named_record(recs, O.TRIGGER_JOB_ID, aliases=(O.TRIGGER_JOB,)) is recs[0]
 
-def test_notice_blocks_incomplete_or_unbound_evidence():
-    state = _state()
-    bad_build = notice.build(context(
-        state, inputs=_inputs(
-            send_to="pedroro@microsoft.com",
-            build={"build_id": 1, "version": "not-a-version", "commit": COMMIT})))
-    assert isinstance(bad_build, Blocked) and "build identity" in bad_build.reason
+    # 2. Phase 2 orchestrator_health stage identifiers (`ValidateBranchesAndVersions`, `BranchSetup`, `TriggerRC`, `RemoveRCTags`):
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09")
+    renamed_stages = [
+        {"identifier": "ValidateBranchesAndVersions", "name": "Renamed Validate", "state": "completed", "result": "succeeded"},
+        {"identifier": "BranchSetup", "name": "Renamed Branches", "state": "completed", "result": "succeeded"},
+        {"identifier": "TriggerRC", "name": "Renamed Trigger RC", "state": "completed", "result": "succeeded"},
+        {"identifier": "RemoveRCTags", "name": "Renamed Gate", "state": "pending", "result": None},
+    ]
+    oh_res = OH.build(context(st, inputs={
+        "run": {"id": 5001, "tags": [
+            "AuthenticatorBranch=release-2026-09-09",
+            "NextCommonVersion=1.0.0", "NextMsalVersion=1.0.0", "NextBrokerVersion=1.0.0",
+        ]},
+        "stages": renamed_stages,
+    }))
+    assert oh_res.kind == "done"
 
-    state.set_step("rollout_start", "wiki_payload", StepState(status="done"))
-    no_payload = notice.build(context(
-        state, inputs=_inputs(send_to="pedroro@microsoft.com")))
-    assert isinstance(no_payload, Blocked) and "payload page link" in no_payload.reason
+    # 3. Phase 4 gates match `stage_id` (`RemoveRCTags` / `PublishGitHubReleaseNotes`) despite renamed display title:
+    rg_res = RG.build(context(st, inputs={
+        "approval": {"approval_id": "A1", "build_id": 5001, "stage": "Renamed Gate Title", "stage_id": "RemoveRCTags", "build_url": "u"},
+        "stage_state": {"state": "pending", "result": None},
+    }))
+    assert rg_res.kind == "needs_human" and "APPROVING submits" in rg_res.prompt
 
-    state = _state()
-    stale = _manifest()
-    stale["target_commit"] = "9" * 40
-    bad_manifest = notice.build(context(
-        state, inputs=_inputs(send_to="pedroro@microsoft.com", manifest=stale)))
-    assert isinstance(bad_manifest, Blocked) and "manifest" in bad_manifest.reason
+    pg_res = PG.build(context(st, inputs={
+        "approval": {"approval_id": "A2", "build_id": 5001, "stage": "Renamed Notes Title", "stage_id": "PublishGitHubReleaseNotes", "build_url": "u"},
+        "stage_state": {"state": "pending", "result": None},
+    }))
+    assert pg_res.kind == "needs_human" and "APPROVING submits" in pg_res.prompt
 
-    malformed = _manifest()
-    malformed["did"][0]["url"] = None
-    invalid_entry = notice.build(context(
-        _state(), inputs=_inputs(send_to="pedroro@microsoft.com", manifest=malformed)))
-    assert isinstance(invalid_entry, Blocked)
-    assert "invalid did entry" in invalid_entry.reason
+    # 4. Phase 5 `AndroidRelease.yml` stage identifiers (`Sign_Off`, `Upload_To_Alpha_GPS`, `Upload_Whats_New`, `Progress_Beta_100`):
+    auth_records = [
+        {"id": "s1", "type": "Stage", "identifier": "Sign_Off", "name": "Renamed Signoff", "state": "notStarted", "result": None},
+        {"id": "s2", "type": "Stage", "identifier": "Upload_To_Alpha_GPS", "name": "Upload Alpha - Google Play", "state": "notStarted", "result": None},
+        {"id": "s3", "type": "Stage", "identifier": "Upload_Whats_New", "name": "Renamed Whats New", "state": "notStarted", "result": None},
+        {"id": "s4", "type": "Stage", "identifier": "Progress_Beta_100", "name": "Renamed Beta", "state": "notStarted", "result": None},
+    ]
+    for stage_id in (A.AUTH_SIGNOFF_STAGE_ID, A.AUTH_ALPHA_STAGE_ID, A.AUTH_WHATS_NEW_STAGE_ID, A.AUTH_BETA_STAGE_ID):
+        info = A._signoff_info({"id": 777}, auth_records, match_basis="release_branch", stage_name=stage_id)
+        assert info is not None and info["stage_ref"] == stage_id
 
-    malformed_flight = _manifest()
-    del malformed_flight["flight_changes"]["default_changed"][0]["previous_default"]
-    invalid_flight = notice.build(context(
-        _state(), inputs=_inputs(
-            send_to="pedroro@microsoft.com", manifest=malformed_flight)))
-    assert isinstance(invalid_flight, Blocked)
-    assert "invalid changed-flight entry" in invalid_flight.reason
-
-    state = _state()
-    state.pipeline_runs = {}
-    no_release_build = notice.build(context(
-        state, inputs=_inputs(send_to="pedroro@microsoft.com")))
-    assert isinstance(no_release_build, Blocked)
-    assert "pipeline 475778" in no_release_build.reason
-
-
-def test_supplied_release_branch_blocks_without_successful_final_build():
-    """The September branch currently has no releasable version; never derive one."""
-    state = _state()
-    result = notice.build(context(state, inputs={
-        "send_to": "pedroro@microsoft.com", "build": None, "manifest": _manifest()}))
-    assert isinstance(result, Blocked)
-    assert "build identity/version/commit is incomplete" in result.reason
-
-
-def test_notice_preparation_binds_exact_state_and_rejects_drift(tmp_path, monkeypatch):
-    state = _state()
-    _active_phase(state, "rollout_start")
-    # _active_phase creates generic completed records; restore the exact notice sources.
-    sourced = _state()
-    for key in (
-        "bug_bash.clone_plans_auth",
-        "rollout_start.wiki_payload",
-    ):
-        phase, step = key.split(".", 1)
-        state.set_step(phase, step, sourced.get_step(phase, step))
-    state.set_step("rollout_start", "tag_authenticator", StepState(status="done"))
-    state.set_step("rollout_start", "identify_auth_build", StepState(status="done"))
-    spec = _inputs(send_to="pedroro@microsoft.com")
-    orch = fresh_orchestrator(
-        CONFIG, state, mocks={"rollout_start.notice": spec})
-    monkeypatch.setattr(mocks, "load_mocks",
-                        lambda: {"rollout_start.notice": spec})
-    args = Namespace(
-        phase="rollout_start", step="notice", release=state.release_id,
-        param=[], reserve=False, executor=None,
-    )
-    out = prepare_step(args, state, orch)
-    assert out["kind"] == "needs_skill" and out["ready_to_execute"] is True
-    assert "permission_to_send" not in out
-    assert len(out["notifications"]) == 1
-    item = out["notifications"][0]
-    assert item["tool"] == "workiq_send_email"
-    assert item["payload"]["to"] == ["pedroro@microsoft.com"] and item["payload"]["cc"] == []
-    delivery.offer(orch, item)
-    state.pipeline_runs["rcs"][-1]["auth"]["build"]["run_id"] = "180400002"
-    with pytest.raises(ValueError, match="source checkpoint changed"):
-        delivery.claim(orch, item["id"], item["hash"], "test-worker")

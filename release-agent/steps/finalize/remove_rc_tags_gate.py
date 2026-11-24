@@ -9,18 +9,21 @@ from steps.finalize._orchestrator_gate import (
     GATE_CONFIG,
     GATE_MOCKABLE,
     GATE_PARAMETERS,
+    approval_matches_stage,
     gate_links,
     pending_approval,
     prepare_expected_approval,
     reconcile_expected_approval,
     stage_state,
 )
+from tools.pipelines import ORCH_PARK_STAGE_ID
 
 WRITES = (WriteOperation.SUBMIT_PIPELINE_APPROVAL,)
 ID = "remove_rc_tags_gate"
 KIND = "gate"
 NAME = "Approve 'Remove RC Tags' gate"
 REQUIRED_TOOLS = ('az',)
+STAGE_ID = ORCH_PARK_STAGE_ID
 STAGE = "Remove RC Tags"
 APPROVAL_COMMAND = "approve-orchestrator-gate"
 CONFIG = dict(GATE_CONFIG)
@@ -40,12 +43,12 @@ def _links(info=None):
 
 
 def _stage_state(context):
-    return stage_state(context, STAGE, CONFIG)
+    return stage_state(context, STAGE_ID, CONFIG)
 
 
 def build(context: StepContext):
     approval_ok, info, approval_detail = _pending(context)
-    if approval_ok and info and info.get("stage") == STAGE:
+    if approval_ok and info and approval_matches_stage(info, STAGE_ID, STAGE):
         return NeedsHuman(
             f"Release Orchestrator build {info['build_id']} is parked at '{STAGE}'. "
             f"APPROVING submits the ADO approval, after which the orchestrator automatically "
@@ -105,6 +108,7 @@ def prepare_approval(context: StepContext[ApprovalParameters]):
         pending=_pending,
         config=CONFIG,
         expected_stage=STAGE,
+        expected_stage_id=STAGE_ID,
         comment=context.parameters.comment,
         default_comment="Approved via Scout (release-agent remove_rc_tags_gate).",
     )

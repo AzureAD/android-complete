@@ -15,7 +15,7 @@ from orchestrator.step_context import StepContext
 from orchestrator.outcomes import Done, Blocked
 from steps.lib.mockctx import MISSING
 from steps.build_verify import _common as K
-from tools.pipelines import CHECKER_DEF
+from tools.pipelines import CHECKER_DEF, TRIGGER_JOB, TRIGGER_JOB_ID
 
 from orchestrator.authority import PipelineScope, PipelineSlot
 
@@ -29,8 +29,9 @@ RECHECK_WHEN_BLOCKED = True
 
 CONFIG = {
     "org": K.ORG, "project": K.PROJECT, "def_id": CHECKER_DEF,
-    # "Trigger Monthly Release" is a JOB/PHASE (not a stage) — skipped daily, runs on CCD.
-    "trigger_job": "Trigger Monthly Release",
+    # Canonical YAML job identifier in code-complete-calendar-checker.yml; display label kept for messages.
+    "trigger_job_id": TRIGGER_JOB_ID,
+    "trigger_job": TRIGGER_JOB,
     "max_scan": 25,                              # cap timeline reads (daily cron)
 }
 
@@ -88,7 +89,7 @@ def build(context: StepContext):
         if not isinstance(recs, list) or any(not isinstance(row, dict) for row in recs):
             read_err = f"malformed timeline for checker run {run['id']}"
             continue
-        rec = P.named_record(recs, job)
+        rec = P.named_record(recs, cfg["trigger_job_id"], aliases=(job,))
         if rec is not None and rec.get("result") == "succeeded":
             return _verdict(context, run, "succeeded", job)
         last = run

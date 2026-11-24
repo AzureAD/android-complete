@@ -13,6 +13,7 @@ KIND = "agent"
 NAME = 'Identify final Authenticator build'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
+RECHECK_WHEN_BLOCKED = True
 EVIDENCE = (PipelineScope(PipelineSlot.FINAL_AUTH),)
 
 MOCKABLE = {
@@ -92,7 +93,7 @@ KNOWLEDGE = {'summary': 'Capture the final Authenticator build/version from pipe
         'email and Scout.\n',
  'where': ['pipeline: msazure/One AndroidBuildBroker1ES definition 475778',
            "branch: state.versions.authenticator ('release/YYYY/MM/DD')"],
- 'how': "Runs automatically. It never uses the Release Orchestrator's old AuthenticatorBuild "
-        'tags. It reads the latest run on the release branch, parses the numeric app version '
-        "from the run's build number, and stores it for tag_authenticator, wiki_payload and "
-        'rollout_start.notice.\n'}
+ 'how': "Runs automatically after Freeze PRs merge. It never uses the Release Orchestrator's "
+        'old AuthenticatorBuild tags. It reads the latest run on the release branch, parses the '
+        "numeric app version from the run's build number, and stores it for tag_authenticator, "
+        'wiki_payload and pipeline-397224 rollout stages.\n'}

@@ -8,56 +8,32 @@ they are not permission to send or start stages during a status request.
 
 ## `identify_auth_build` — final Authenticator build/version capture
 
-`rollout_start.identify_auth_build` is the first Phase-5 step. It reads pipeline
-475778 (`AndroidBuildBroker1ES`) on `state.versions.authenticator` (`release/YYYY/MM/DD`)
-and records the latest completed successful run into `state.pipeline_runs.final_auth`.
+`rollout_start.identify_auth_build` is the first Phase-5 step (`depends_on: [finalize.integ_prs_merged]`).
+It reads pipeline 475778 (`AndroidBuildBroker1ES`) on `state.versions.authenticator`
+(`release/YYYY/MM/DD`) and records the latest completed successful run into
+`state.pipeline_runs.final_auth`.
 
-If no run is found, the step blocks for release-owner investigation; the release digest
-contacts the owner by email and Scout. This step is the single source for the build id,
-app version, build number and built commit used by tag, payload and rollout notice.
+If no run is found, the step blocks (`RECHECK_WHEN_BLOCKED = True`) for release-owner
+investigation; `release-drainer` re-checks automatically and contacts the owner by
+email and Scout. Once `identify_auth_build` completes, three steps become eligible in
+parallel:
+- `tag_authenticator` (auto idempotent git tag on `final_auth.commit`)
+- `wiki_payload` (`create-payload-wiki` in IdentityWiki)
+- `signoff_start` (`start-release-signoff` on pipeline 397224)
 
-## `notice` — initial Authenticator rollout email
+*(Note: the former `rollout_start.notice` step was removed pending the release-comms
+rework; its HTML layout is preserved in `templates/rollout-start-notice.html`.)*
 
-`rollout_start.notice` sends to `MAuthenticatorRel@microsoft.com` and CCs
-`windevxeng@microsoft.com` (Intune AOSP). When `requires_approval: false`, deliver it
-directly in Python via `deliver-step --release <id> --phase rollout_start --step notice --json`
-(or `next --release <id> --deliver --json`). The `send_to` test mock redirects all delivery
-to the supplied address and clears the production CC.
+## `signoff_start`, `upload_alpha`, `verify_alpha_uploaded`, `upload_whats_new` — pipeline 397224 stages
 
-The model is deterministic and source-only:
-
-- App version/commit source: `state.pipeline_runs.final_auth`, captured by
-  `rollout_start.identify_auth_build` from pipeline 475778.
-- Release-build link: the exact `state.pipeline_runs.final_auth.authenticator_build_id`.
-- Release-branch link: the Authenticator repository contents view pinned to the exact
-  `state.versions.authenticator` branch.
-- Authenticator and DID payload: commits reachable from that exact built commit since
-  the previous successful dated release build. PR entries use the canonical ADO PR title
-  from the PR record rather than the merge-commit message; non-PR commits preserve their
-  commit title. Preserve source links. Any entry attributed to DID appears only in DID,
-  even when it also changed non-DID paths.
-- DID classification: canonical `VerifiableCredential-Wallet`,
-  `VerifiableCredential-SDK`, `WalletLibrary`, and FaceCheck-extension paths.
-- Generated OneLoc/LEGO localization commits are omitted.
-- Feature flags: exact `EcsFlight.kt` additions and code-default changes. These are
-  **not rollout intent**; default-true additions require owner review.
-- Authenticator test suite, payload page and SDK versions: completed Phase 3-4 evidence.
-
-Never infer Major/Minor classifications, expected rollout intent, Safe Fly approval,
-or future progression dates. The email states when these have no
-separate structured source.
-
-Missing a successful final build/version from `final_auth`, exact manifest,
-Authenticator suite, payload-page link, or SDK version blocks the step. A failed final
-build, branch date, or arbitrary pipeline build number is never an app-version source.
-
-## `signoff_start` — start Release Sign Off on pipeline 397224
-
-`rollout_start.signoff_start`, `rollout_start.upload_whats_new`, and
-`rollout_start.upload_alpha` are checked external writes, not human gates. Each locates
+`rollout_start.signoff_start`, `rollout_start.upload_alpha`, and
+`rollout_start.upload_whats_new` are checked external writes, not human gates. Each locates
 the Android Build Release run in msazure/One pipeline 397224 for
-`state.versions.authenticator` and starts exactly one stage:
-`Release Sign Off`, `Upload What's New`, or `Upload Alpha`.
+`state.versions.authenticator` and starts the stage by its canonical YAML `stage:` identifier:
+- `signoff_start` -> `Sign_Off` (`Release Sign Off`)
+- `upload_alpha` -> `Upload_To_Alpha_GPS` (`Upload Alpha - Google Play`)
+- `verify_alpha_uploaded` -> automated read-only check (`RECHECK_WHEN_BLOCKED = True`) confirming `Upload_To_Alpha_GPS` completed with `succeeded` before `upload_whats_new` and `beta_play_store` can run
+- `upload_whats_new` -> `Upload_Whats_New` (`Upload What's New`)
 
 Selection is deterministic:
 
@@ -67,25 +43,27 @@ Selection is deterministic:
   the Authenticator release branch.
 - After Release Sign Off starts, every downstream stage is pinned to the build ID in
   its completed prerequisite's durable run link; a newer pipeline run cannot redirect
-  Upload What's New, Upload Alpha, or Beta.
-- Each checked command binds the selected build id, stage identity and current stage
-  state in the review hash before it sends ADO's Run-stage request.
+  Upload Alpha, Verify Alpha, Upload What's New, or Beta.
+- Each checked command binds the selected build id, canonical stage identifier and current
+  stage state in the review hash before it sends ADO's Run-stage request.
 
 Run the follow-up with the matching command and fixed automation identity:
 `start-release-signoff --executor release-signoff-automation`,
-`start-upload-whats-new --executor upload-whats-new-automation`, or
-`start-upload-alpha --executor upload-alpha-automation`, always with
+`start-upload-alpha --executor upload-alpha-automation`, or
+`start-upload-whats-new --executor upload-whats-new-automation`, always with
 `--release <id> --execute --auto-approve`.
 If the run or stage cannot be found, the step blocks for release-owner investigation
 instead of starting a different run.
 
-## `beta_play_store` — owner-approved 100% Beta Play Store start
+## `beta_play_store` — owner-approved 100% Beta Play Store start (`Progress_Beta_100`)
 
 This is the final Phase-5 step. It targets the same deterministically selected
-pipeline-397224 run, but starts `100% Beta - Play Store` only after the release owner
+pipeline-397224 run, starting canonical stage `Progress_Beta_100` (`100% Beta - Play Store`)
+only after `verify_alpha_uploaded` and `upload_whats_new` complete AND the release owner
 reviews the exact build/stage plan and approves its review hash. It is deliberately
 excluded from the scheduled auto-writer allowlist. Its target build is parsed from the
-durable Upload Alpha completion link, so a newer pipeline run cannot redirect Beta.
+durable `upload_whats_new` (or prior stage) completion link, so a newer pipeline run cannot
+redirect Beta.
 
 Run `start-beta-play-store --release <id>` to preview. Show the preview with fresh
 status and ask the release owner Approve/Deny. Approval executes the same request with

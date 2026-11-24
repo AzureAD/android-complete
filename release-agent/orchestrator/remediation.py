@@ -153,7 +153,8 @@ def _classify_external_fix(
             )
         if step_id in (
             "localization", "cron", "checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-            "auth_ecs", "orchestrator_finalization", "verify_pub", "verify_release_notes", "identify_auth_build",
+            "auth_ecs", "orchestrator_finalization", "verify_pub", "verify_release_notes",
+            "identify_auth_build", "verify_alpha_uploaded",
         ):
             return (
                 "Azure Pipelines / Release Verification Check",

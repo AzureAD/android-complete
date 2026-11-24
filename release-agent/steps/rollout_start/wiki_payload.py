@@ -1,5 +1,5 @@
 """Step: `wiki_payload` — create/update the monthly release PAYLOAD wiki subpage (Phase 5,
-rollout_start, after `tag_authenticator` and before `notice`; checklist Phase 2.2 Step 6,
+rollout_start, in parallel after `identify_auth_build`; checklist Phase 2.2 Step 6,
 relocated to the rollout-start boundary once every version/commit/tag is final).
 
 This REPLACES the old Phase-0 `wiki` step (which only seeded an empty placeholder page). By the
@@ -241,8 +241,8 @@ KNOWLEDGE = {'summary': 'Create/update the monthly release payload wiki page (pr
          'release (derived from the auth working branch + release-branch bumps), and the SDK '
          'versions (Broker/Common/MSAL) — and leaves the hand-curated sections (release-notes '
          'email title, sign-offs, expected feature-flag rollouts) as clearly-marked '
-         'placeholders. This now runs in Phase 5 after tag_authenticator and before the '
-         'rollout-start notice, so the notice can link to the completed payload page. It '
+         'placeholders. This runs in Phase 5 in parallel after identify_auth_build once the '
+         'final Authenticator build and SDK versions are captured. It '
          "REPLACES the old Phase-0 'wiki' step (no more empty placeholder page created "
          'early).\n',
  'who': 'Scout composes and writes it as scheduled release automation. The checked command '
@@ -263,9 +263,8 @@ KNOWLEDGE = {'summary': 'Create/update the monthly release payload wiki page (pr
                  'owner completes by hand.\n',
  'faqs': [{'q': 'Why did this move from Phase 0 to Phase 5?',
            'a': 'The old Phase-0 step only created an empty placeholder page and relied on a '
-                'later manual fill. Doing it once at rollout start — when the version, commit, '
-                'tag and SDK versions are all final — is simpler, avoids the empty-note step, '
-                'and gives the rollout notice a real payload-page link.'},
+                'later manual fill. Doing it once at rollout start — when the version, commit '
+                'and SDK versions are all final — is simpler and avoids the empty-note step.'},
           {'q': 'Is the whole page auto-filled?',
            'a': 'No. App Version + build link, the merged-PR list, and the SDK versions are '
                 'derived; the release-notes email title, sign-offs, and expected feature-flag '

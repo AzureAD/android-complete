@@ -9,12 +9,14 @@ from steps.finalize._orchestrator_gate import (
     GATE_CONFIG,
     GATE_MOCKABLE,
     GATE_PARAMETERS,
+    approval_matches_stage,
     gate_links,
     pending_approval,
     prepare_expected_approval,
     reconcile_expected_approval,
     stage_state,
 )
+from tools.pipelines import ORCH_NOTES_STAGE_ID
 
 WRITES = (WriteOperation.SUBMIT_PIPELINE_APPROVAL,)
 ID = "publish_notes_gate"
@@ -22,6 +24,7 @@ KIND = "gate"
 NAME = "Approve 'Publish GitHub Release Notes' gate"
 REQUIRED_TOOLS = ('az',)
 APPROVAL_COMMAND = "approve-orchestrator-gate"
+STAGE_ID = ORCH_NOTES_STAGE_ID
 STAGE = "Publish GitHub Release Notes"
 CONFIG = dict(GATE_CONFIG)
 CONSEQUENCES = "publishes the GitHub release notes for MSAL and Common"
@@ -34,7 +37,7 @@ def _pending(context):
 
 
 def _stage_state(context):
-    return stage_state(context, STAGE, CONFIG)
+    return stage_state(context, STAGE_ID, CONFIG)
 
 
 def _links(info=None):
@@ -55,7 +58,7 @@ def build(context: StepContext):
             f"publish_notes_gate: couldn't read the orchestrator gate ({detail}). Check the "
             f"Release Orchestrator run for {context.release.release_id} manually before approving.",
             attest=False)
-    if info and info.get("stage") == STAGE:
+    if info and approval_matches_stage(info, STAGE_ID, STAGE):
         return NeedsHuman(
             f"Release Orchestrator build {info['build_id']} is parked at '{STAGE}'. APPROVING "
             f"submits the ADO approval, after which the orchestrator {CONSEQUENCES}. Make sure "
@@ -83,6 +86,7 @@ def prepare_approval(context: StepContext[ApprovalParameters]):
         pending=_pending,
         config=CONFIG,
         expected_stage=STAGE,
+        expected_stage_id=STAGE_ID,
         comment=context.parameters.comment,
         default_comment="Approved via Scout (release-agent publish_notes_gate).",
     )

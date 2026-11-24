@@ -20,13 +20,29 @@ ENGINEERING_PROJECT = coords.project("engineering")
 CHECKER_DEF = coords.pipeline_def("checker")            # Code Complete Calendar Checker
 ORCHESTRATOR_DEF = coords.pipeline_def("orchestrator")  # Release Orchestrator (the spine)
 MRWP_DEF = coords.pipeline_def("mrwp")                  # Monthly Release Work Pipeline (ECS + Local)
+TRIGGER_JOB_ID = "TriggerMonthlyRelease"
 TRIGGER_JOB = "Trigger Monthly Release"
-ORCH_REQUIRED_STAGES = [
-    "Validate Branch and Versions availability",
-    "Create Release Branches",
-    "Trigger RC Testing",
+ORCH_STAGE_LABELS = {
+    "ValidateBranchesAndVersions": "Validate Branch and Versions availability",
+    "BranchSetup": "Create Release Branches",
+    "TriggerRC": "Trigger RC Testing",
+    "RemoveRCTags": "Remove RC Tags",
+    "PublishInternal": "Publish Internal",
+    "PublishExternal": "Publish to Maven Central",
+    "UpdatePipelineVariables": "Update Pipeline Variables",
+    "CreateReleaseIntegrationBranches": "Create Release Integration Branches",
+    "PublishGitHubReleaseNotes": "Publish GitHub Release Notes",
+}
+ORCH_LABEL_TO_STAGE_ID = {label: sid for sid, label in ORCH_STAGE_LABELS.items()}
+ORCH_REQUIRED_STAGE_IDS = [
+    "ValidateBranchesAndVersions",
+    "BranchSetup",
+    "TriggerRC",
 ]
-ORCH_PARK_STAGE = "Remove RC Tags"
+ORCH_PARK_STAGE_ID = "RemoveRCTags"
+ORCH_NOTES_STAGE_ID = "PublishGitHubReleaseNotes"
+ORCH_REQUIRED_STAGES = [ORCH_STAGE_LABELS[sid] for sid in ORCH_REQUIRED_STAGE_IDS]
+ORCH_PARK_STAGE = ORCH_STAGE_LABELS[ORCH_PARK_STAGE_ID]
 
 
 def find_orchestrator_run(org, project, def_id, release_month, timeout=60, *, ccd=None):
@@ -213,10 +229,22 @@ def get_timeline(org, project, build_id, timeout=60):
     return (True, tl["records"], "")
 
 
-def named_record(records, name, types=("Job", "Phase", "Stage")):
-    """First timeline record matching `name` among the given record `types`, or None."""
+def named_record(records, ref, types=("Job", "Phase", "Stage"), *, aliases=()):
+    """First timeline record matching canonical YAML `identifier` `ref` among `types`.
+
+    Falls back to `name` matching against `(ref, *aliases)` only when a record omits
+    `identifier` (e.g. minimal offline test fixtures), so live ADO timelines always
+    resolve by stable YAML `identifier` rather than mutable display titles.
+    """
+    acceptable_names = {ref, *aliases}
     for r in records or []:
-        if r.get("type") in types and r.get("name") == name:
+        if r.get("type") not in types:
+            continue
+        ident = r.get("identifier")
+        if isinstance(ident, str) and ident.strip():
+            if ident == ref:
+                return r
+        elif r.get("name") in acceptable_names:
             return r
     return None
 
@@ -318,10 +346,12 @@ def _pending_checkpoint(records):
         cur = byid.get(parent_id) if isinstance(parent_id, str) else None
         if cur is None:
             return (False, None, "cannot identify the approval checkpoint's stage")
-    stage = cur.get("name")
+    stage_id = cur.get("identifier")
+    stage = cur.get("name") or stage_id
     if not isinstance(stage, str) or not stage.strip():
-        return (False, None, "approval checkpoint's stage has no name")
-    return (True, (checkpoint["id"], cur["id"], stage), "")
+        return (False, None, "approval checkpoint's stage has no identifier or name")
+    clean_stage_id = stage_id.strip() if isinstance(stage_id, str) and stage_id.strip() else None
+    return (True, (checkpoint["id"], cur["id"], stage, clean_stage_id), "")
 
 
 def find_orchestrator_pending_approval(org, project, release_month, timeout=90):
@@ -363,16 +393,36 @@ def find_orchestrator_pending_approval(org, project, release_month, timeout=90):
     if not checked or current_checkpoint != checkpoint:
         return (False, None, dc or "approval checkpoint changed during discovery; inspect the ADO gate")
     build_url = f"{org.rstrip('/')}/{project}/_build/results?buildId={bid}&view=results"
-    return (True, {"approval_id": approval_id, "build_id": bid, "stage": checkpoint[2],
-                   "build_url": build_url}, "")
+    result = {
+        "approval_id": approval_id,
+        "build_id": bid,
+        "stage": checkpoint[2],
+        "build_url": build_url,
+    }
+    if len(checkpoint) > 3 and checkpoint[3]:
+        result["stage_id"] = checkpoint[3]
+    return (True, result, "")
+
+
+def _match_orchestrator_stage(records, stage_ref):
+    canonical_id = ORCH_LABEL_TO_STAGE_ID.get(stage_ref, stage_ref)
+    acceptable_names = {stage_ref, canonical_id}
+    if canonical_id in ORCH_STAGE_LABELS:
+        acceptable_names.add(ORCH_STAGE_LABELS[canonical_id])
+    for r in records or []:
+        if r.get("type") != "Stage":
+            continue
+        ident = r.get("identifier")
+        if isinstance(ident, str) and ident.strip():
+            if ident.strip() in (stage_ref, canonical_id):
+                return r
+        elif r.get("name") in acceptable_names:
+            return r
+    return None
 
 
 def orchestrator_stage_state(org, project, release_month, stage_ref, timeout=90):
-    """Return the timeline state of a Release Orchestrator stage.
-
-    Prefer the stable YAML stage identifier. Display-name matching remains supported
-    for existing callers, but a display-name change cannot break identifier-based callers.
-    """
+    """Return the timeline state of a Release Orchestrator stage by canonical YAML `identifier`."""
     ok, run, detail = _pp.find_orchestrator_run(org, project, ORCHESTRATOR_DEF, release_month, timeout)
     if not ok:
         return (False, None, detail)
@@ -381,11 +431,10 @@ def orchestrator_stage_state(org, project, release_month, stage_ref, timeout=90)
     okt, recs, dt = _pp.get_timeline(org, project, run.get("id"), timeout)
     if not okt:
         return (False, None, dt)
-    for r in recs:
-        if (r.get("type") == "Stage"
-                and stage_ref in (r.get("identifier"), r.get("name"))):
-            return (True, {"state": r.get("state"), "result": r.get("result"),
-                           "build_id": run.get("id")}, "")
+    r = _match_orchestrator_stage(recs, stage_ref)
+    if r is not None:
+        return (True, {"state": r.get("state"), "result": r.get("result"),
+                       "stage_id": r.get("identifier"), "build_id": run.get("id")}, "")
     return (True, None, f"stage '{stage_ref}' not in the orchestrator timeline")
 
 
@@ -408,11 +457,7 @@ def orchestrator_finalization_status(org, project, release_month, stage_ref, tim
     okt, records, timeline_detail = _pp.get_timeline(org, project, build_id, timeout)
     if not okt:
         return (False, None, timeline_detail)
-    target = next((
-        record for record in records
-        if record.get("type") == "Stage"
-        and stage_ref in (record.get("identifier"), record.get("name"))
-    ), None)
+    target = _match_orchestrator_stage(records, stage_ref)
     checked, checkpoint, checkpoint_detail = _pending_checkpoint(records)
     if not checked:
         return (False, None, checkpoint_detail)
@@ -544,11 +589,12 @@ def get_build_status(org, project, build_id, timeout=60):
 
 def get_stages(org, project, build_id, timeout=60):
     """Return (ok, stages, detail). `stages` is an ORDER-sorted list of
-    {name, state, result, attempt} from the build's timeline (Stage records only)."""
+    {identifier, name, state, result, attempt} from the build's timeline (Stage records only)."""
     ok, recs, detail = _pp.get_timeline(org, project, build_id, timeout)
     if not ok:
         return (False, None, detail)
-    stages = [{"name": r.get("name"), "state": r.get("state"), "result": r.get("result"),
+    stages = [{"identifier": r.get("identifier"), "name": r.get("name"),
+               "state": r.get("state"), "result": r.get("result"),
                "attempt": r.get("attempt"), "order": r.get("order") or 0}
               for r in recs if r.get("type") == "Stage"]
     stages.sort(key=lambda s: s["order"])
@@ -593,4 +639,4 @@ def stage_completion(stages):
     return {"total": total, "ran": total - len(never), "never_ran": never,
             "failed": failed, "yellow": yellow, "complete": not never and total > 0}
 
-__all__ = ['CHECKER_DEF', 'ENGINEERING_ORG', 'ENGINEERING_PROJECT', 'IDENTITYDIVISION', 'MRWP_DEF', 'MSAZURE', 'ORCHESTRATOR_DEF', 'ORCH_PARK_STAGE', 'ORCH_REQUIRED_STAGES', 'TRIGGER_JOB', '_pending_approval_for_build', 'approval_owner_build_id', 'discover_versions', 'find_checker_runs', 'find_orchestrator_pending_approval', 'find_orchestrator_run', 'get_build_status', 'get_pipeline_approval', 'get_stages', 'get_timeline', 'mrwp_run_ids', 'named_record', 'orchestrator_finalization_status', 'orchestrator_stage_state', 'stage_completion', 'submit_pipeline_approval']
+__all__ = ['CHECKER_DEF', 'ENGINEERING_ORG', 'ENGINEERING_PROJECT', 'IDENTITYDIVISION', 'MRWP_DEF', 'MSAZURE', 'ORCHESTRATOR_DEF', 'ORCH_LABEL_TO_STAGE_ID', 'ORCH_NOTES_STAGE_ID', 'ORCH_PARK_STAGE', 'ORCH_PARK_STAGE_ID', 'ORCH_REQUIRED_STAGES', 'ORCH_REQUIRED_STAGE_IDS', 'ORCH_STAGE_LABELS', 'TRIGGER_JOB', 'TRIGGER_JOB_ID', '_pending_approval_for_build', 'approval_owner_build_id', 'discover_versions', 'find_checker_runs', 'find_orchestrator_pending_approval', 'find_orchestrator_run', 'get_build_status', 'get_pipeline_approval', 'get_stages', 'get_timeline', 'mrwp_run_ids', 'named_record', 'orchestrator_finalization_status', 'orchestrator_stage_state', 'stage_completion', 'submit_pipeline_approval']

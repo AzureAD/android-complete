@@ -358,26 +358,25 @@ def test_signoff_plan_binds_build_stage_and_state(monkeypatch):
                          signoff._plan_stage_start(orch, signoff.signoff_start)) != digest
 
 
-@pytest.mark.parametrize("step,stage,command,approver", [
-    (signoff.signoff_start, "Release Sign Off", "start-release-signoff", "release-signoff-automation"),
-    (signoff.upload_whats_new, "Upload What's New", "start-upload-whats-new", "upload-whats-new-automation"),
-    (signoff.upload_alpha, "Upload Alpha", "start-upload-alpha", "upload-alpha-automation"),
+@pytest.mark.parametrize("step,stage_id,stage,command,approver", [
+    (signoff.signoff_start, "Sign_Off", "Release Sign Off", "start-release-signoff", "release-signoff-automation"),
+    (signoff.upload_alpha, "Upload_To_Alpha_GPS", "Upload Alpha - Google Play", "start-upload-alpha", "upload-alpha-automation"),
+    (signoff.upload_whats_new, "Upload_Whats_New", "Upload What's New", "start-upload-whats-new", "upload-whats-new-automation"),
 ])
-def test_stage_start_commands_bind_their_stage(step, stage, command, approver, memory, monkeypatch):
+def test_stage_start_commands_bind_their_stage(step, stage_id, stage, command, approver, memory, monkeypatch):
     orch = make_orch("rollout_start", step.ID)
     memory[0](orch)
-    stage_ref = stage.replace(" ", "").replace("'", "")
     monkeypatch.setattr(step, "resolve_target", lambda ctx: (
-        True, _signoff_info(stage_name=stage, stage_ref=stage_ref), ""))
+        True, _signoff_info(stage_name=stage, stage_ref=stage_id), ""))
     plan = signoff._plan_stage_start(orch, step)
     assert plan.command == command
     assert plan.operations[0].content["stage"] == stage
-    assert plan.operations[0].target["stage_ref"] == stage_ref
+    assert plan.operations[0].target["stage_ref"] == stage_id
     assert W.review_hash(orch, "rollout_start", step.ID, plan)
 
     monkeypatch.setattr(signoff.P, "start_auth_signoff_stage", lambda build_id, ref: (True, "started"))
     monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id, **kw: (
-        True, _signoff_info(stage_name=kw["stage_name"], stage_ref=stage_ref,
+        True, _signoff_info(stage_name=stage, stage_ref=kw["stage_name"],
                             stage_state="pending", build_id=build_id), ""))
     args = arguments(command, "--execute", "--auto-approve", "--executor", approver)
     assert signoff._cmd_start_stage(args, step) == 0

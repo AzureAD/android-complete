@@ -77,14 +77,14 @@ phases:
     name: "Rollout Start"
     depends_on: [finalize]
     steps:
-      - { id: identify_auth_build, depends_on: [finalize.orchestrator_finalization] }
+      - { id: identify_auth_build, depends_on: [finalize.integ_prs_merged] }
       - { id: tag_authenticator, depends_on: [identify_auth_build] }
-      - { id: wiki_payload, depends_on: [tag_authenticator] }
-      - { id: notice, depends_on: [wiki_payload] }
-      - { id: signoff_start, depends_on: [notice] }
-      - { id: upload_whats_new, depends_on: [signoff_start] }
-      - { id: upload_alpha, depends_on: [upload_whats_new] }
-      - { id: beta_play_store, depends_on: [upload_alpha] }
+      - { id: wiki_payload, depends_on: [identify_auth_build] }
+      - { id: signoff_start, depends_on: [identify_auth_build] }
+      - { id: upload_alpha, depends_on: [signoff_start] }
+      - { id: verify_alpha_uploaded, depends_on: [upload_alpha] }
+      - { id: upload_whats_new, depends_on: [verify_alpha_uploaded] }
+      - { id: beta_play_store, depends_on: [upload_whats_new] }
 
   - id: monitor
     name: "Monitoring & Ring Advancement"

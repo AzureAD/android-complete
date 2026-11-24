@@ -14,7 +14,7 @@ def final_auth_build_id(context: StepContext):
     return final.get("authenticator_build_id")
 
 
-def resolve_target(context: StepContext, *, stage_name: str, pinned_build_id=None):
+def resolve_target(context: StepContext, *, stage_name: str, stage_id: str | None = None, pinned_build_id=None):
     injected = context.input("run", MISSING)
     if injected is not MISSING and injected:
         return (True, dict(injected), "")
@@ -25,17 +25,34 @@ def resolve_target(context: StepContext, *, stage_name: str, pinned_build_id=Non
         branch,
         final_auth_build_id=final_auth_build_id(context),
         build_id=pinned_build_id,
-        stage_name=stage_name,
+        stage_name=stage_id or stage_name,
     )
 
 
-def completed_stage_build_id(context: StepContext, step_id: str):
-    """Read the already-durable pipeline build identity from a prerequisite's link."""
-    record = context.evidence.step("rollout_start", step_id)
-    for link in record.links or ():
-        match = re.search(r"[?&]buildId=(\d+)(?:&|$)", str(link.get("url") or ""))
-        if match:
-            return match.group(1)
+_PRIOR_STAGE_FALLBACKS = {
+    "upload_alpha": ("signoff_start",),
+    "verify_alpha_uploaded": ("upload_alpha", "signoff_start"),
+    "upload_whats_new": ("verify_alpha_uploaded", "upload_alpha", "signoff_start"),
+    "beta_play_store": ("upload_whats_new", "verify_alpha_uploaded", "upload_alpha", "signoff_start"),
+}
+
+
+def completed_stage_build_id(context: StepContext, step_id: str, *, fallback_step_ids: tuple[str, ...] = ()):
+    """Read the already-durable pipeline-397224 build identity from a prerequisite's link."""
+    candidates = (step_id, *fallback_step_ids)
+    seen = set()
+    for sid in candidates:
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        try:
+            record = context.evidence.step("rollout_start", sid)
+        except Exception:  # noqa: BLE001
+            continue
+        for link in record.links or ():
+            match = re.search(r"[?&]buildId=(\d+)(?:&|$)", str(link.get("url") or ""))
+            if match:
+                return match.group(1)
     return None
 
 
@@ -51,14 +68,20 @@ def resolve_pinned_target(
     context: StepContext,
     *,
     stage_name: str,
+    stage_id: str | None = None,
     previous_step_id: str | None = None,
     previous_label: str | None = None,
     require_pin_in_resolve: bool = False,
+    for_step_id: str | None = None,
 ):
-    pinned = completed_stage_build_id(context, previous_step_id) if previous_step_id else None
+    fallbacks = _PRIOR_STAGE_FALLBACKS.get(for_step_id or "", ())
+    pinned = (
+        completed_stage_build_id(context, previous_step_id, fallback_step_ids=fallbacks)
+        if previous_step_id else None
+    )
     if require_pin_in_resolve and pinned is None and context.input("run", MISSING) is MISSING:
         return False, None, f"completed {previous_label} evidence has no pipeline-397224 build identity"
-    return resolve_target(context, stage_name=stage_name, pinned_build_id=pinned)
+    return resolve_target(context, stage_name=stage_name, stage_id=stage_id, pinned_build_id=pinned)
 
 
 def build_pinned_stage_action(
@@ -67,6 +90,7 @@ def build_pinned_stage_action(
     step_id: str,
     write_command: str,
     stage_name: str,
+    stage_id: str | None = None,
     label: str,
     previous_step_id: str | None = None,
     previous_label: str | None = None,
@@ -74,7 +98,11 @@ def build_pinned_stage_action(
     command_args: str = "",
     review_context: dict | None = None,
 ):
-    pinned = completed_stage_build_id(context, previous_step_id) if previous_step_id else None
+    fallbacks = _PRIOR_STAGE_FALLBACKS.get(step_id, ())
+    pinned = (
+        completed_stage_build_id(context, previous_step_id, fallback_step_ids=fallbacks)
+        if previous_step_id else None
+    )
     if previous_step_id and pinned is None and context.input("run", MISSING) is MISSING:
         return Blocked(
             f"{step_id}: completed {previous_label} evidence has no pipeline-397224 build identity.")
@@ -83,6 +111,7 @@ def build_pinned_stage_action(
         step_id=step_id,
         write_command=write_command,
         stage_name=stage_name,
+        stage_id=stage_id,
         label=label,
         auto_approve=auto_approve,
         command_args=command_args,
@@ -96,6 +125,7 @@ def make_chained_stage_step(
     step_id: str,
     write_command: str,
     stage_name: str,
+    stage_id: str | None = None,
     label: str,
     previous_step_id: str,
     previous_label: str,
@@ -103,7 +133,12 @@ def make_chained_stage_step(
     """Bind `(resolve_target, build)` for an automated stage launcher pinned to a prior stage's build."""
     def _resolve(context: StepContext):
         return resolve_pinned_target(
-            context, stage_name=stage_name, previous_step_id=previous_step_id)
+            context,
+            stage_name=stage_name,
+            stage_id=stage_id,
+            previous_step_id=previous_step_id,
+            for_step_id=step_id,
+        )
 
     def _build(context: StepContext):
         return build_pinned_stage_action(
@@ -111,6 +146,7 @@ def make_chained_stage_step(
             step_id=step_id,
             write_command=write_command,
             stage_name=stage_name,
+            stage_id=stage_id,
             label=label,
             previous_step_id=previous_step_id,
             previous_label=previous_label,
@@ -125,6 +161,7 @@ def build_stage_action(
     step_id: str,
     write_command: str,
     stage_name: str,
+    stage_id: str | None = None,
     label: str,
     auto_approve: bool = True,
     command_args: str = "",
@@ -136,7 +173,7 @@ def build_stage_action(
         return Blocked(f"{step_id}: {fail}")
 
     ok, info, detail = resolve_target(
-        context, stage_name=stage_name, pinned_build_id=pinned_build_id)
+        context, stage_name=stage_name, stage_id=stage_id, pinned_build_id=pinned_build_id)
     if not ok:
         hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
         return Blocked(f"{step_id}: couldn't inspect pipeline 397224 ({detail}){hint}.")
@@ -174,6 +211,7 @@ def build_stage_action(
         "build_id": build_id,
         "build_number": info.get("build_number"),
         "stage": stage_name,
+        "stage_id": stage_id or info.get("stage_ref") or stage_name,
         "stage_state": info.get("stage_state"),
         "match_basis": info.get("match_basis"),
         "url": info.get("url"),

@@ -20,7 +20,15 @@ from orchestrator import schedule
 from orchestrator.evidence import ReleaseVersions
 from steps.lib.mockctx import MISSING
 from steps.build_verify import _common as K
-from tools.pipelines import ORCHESTRATOR_DEF, ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE
+from tools.pipelines import (
+    ORCHESTRATOR_DEF,
+    ORCH_LABEL_TO_STAGE_ID,
+    ORCH_PARK_STAGE,
+    ORCH_PARK_STAGE_ID,
+    ORCH_REQUIRED_STAGES,
+    ORCH_REQUIRED_STAGE_IDS,
+    ORCH_STAGE_LABELS,
+)
 
 from orchestrator.authority import PipelineScope, PipelineSlot, VersionEvidence
 
@@ -34,6 +42,8 @@ RECHECK_WHEN_BLOCKED = True
 
 CONFIG = {
     "org": K.ORG, "project": K.PROJECT, "def_id": ORCHESTRATOR_DEF,
+    "required_stage_ids": ORCH_REQUIRED_STAGE_IDS,
+    "park_stage_id": ORCH_PARK_STAGE_ID,
     "required_stages": ORCH_REQUIRED_STAGES,
     "park_stage": ORCH_PARK_STAGE,
 }
@@ -97,22 +107,28 @@ def build(context: StepContext):
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"orchestrator_health: could not read orchestrator stages ({detail}){hint}.", links=links)
     if not isinstance(stages, list) or any(
-            not isinstance(stage, dict) or not isinstance(stage.get("name"), str) for stage in stages):
+            not isinstance(stage, dict)
+            or (not isinstance(stage.get("identifier"), str) and not isinstance(stage.get("name"), str))
+            for stage in stages):
         return Blocked("orchestrator_health: malformed stage evidence", links=links)
-    by_name = {}
-    relevant = set(cfg["required_stages"]) | {cfg["park_stage"]}
+    by_id = {}
+    relevant_ids = set(cfg["required_stage_ids"]) | {cfg["park_stage_id"]}
     for stage in stages:
-        name = stage["name"]
-        if name in relevant and name in by_name:
-            return Blocked(f"orchestrator_health: ambiguous duplicate stage '{name}'", links=links)
-        by_name[name] = stage
+        raw_id = stage.get("identifier")
+        sid = (raw_id.strip() if isinstance(raw_id, str) and raw_id.strip()
+               else ORCH_LABEL_TO_STAGE_ID.get(stage.get("name"), stage.get("name")))
+        if sid in relevant_ids and sid in by_id:
+            label = ORCH_STAGE_LABELS.get(sid, sid)
+            return Blocked(f"orchestrator_health: ambiguous duplicate stage '{label}'", links=links)
+        by_id[sid] = stage
 
     # Required pre-gate stages must all be green; hold InProgress while genuinely still executing.
-    for name in cfg["required_stages"]:
-        st = by_name.get(name)
+    for sid in cfg["required_stage_ids"]:
+        name = ORCH_STAGE_LABELS.get(sid, sid)
+        st = by_id.get(sid)
         if st is None:
             return Blocked(
-                f"Release Orchestrator run {bid} is missing the '{name}' stage — "
+                f"Release Orchestrator run {bid} is missing the '{name}' stage ({sid}) — "
                 f"the run may have aborted early.{K.UNBLOCK_HELP}", links=links)
         if st.get("state") in ("inProgress", "notStarted", "pending") and st.get("result") is None:
             return InProgress(
@@ -123,13 +139,13 @@ def build(context: StepContext):
             )
         if st.get("state") != "completed" or st.get("result") != "succeeded":
             return Blocked(
-                f"Release Orchestrator stage '{name}' did not succeed "
+                f"Release Orchestrator stage '{name}' ({sid}) did not succeed "
                 f"(state={st.get('state')}, result={st.get('result')}) in run {bid}. "
                 f"RC testing can't be trusted until this is green.{K.UNBLOCK_HELP}", links=links)
 
     # The park stage should be PENDING (waiting for the owner). If it already ran, the
     # gate was approved — surface it (out of the expected Phase-2 state), don't hard-fail.
-    park = by_name.get(cfg["park_stage"])
+    park = by_id.get(cfg["park_stage_id"])
     if park is None:
         return Blocked(
             f"Release Orchestrator run {bid} is missing the '{cfg['park_stage']}' stage; "

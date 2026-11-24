@@ -74,12 +74,25 @@ def payload_versions(context) -> dict:
     return dict(getattr(context.release, "versions", {}) or {})
 
 
+def approval_matches_stage(info: Mapping, expected_stage_id: str, expected_stage_label: str) -> bool:
+    """Match an approval checkpoint by canonical YAML `stage_id` when present, falling back
+    to `stage` only for synthetic/injected test fixtures without `stage_id`."""
+    if not isinstance(info, Mapping):
+        return False
+    raw_id = info.get("stage_id")
+    if isinstance(raw_id, str) and raw_id.strip():
+        return raw_id.strip() == expected_stage_id
+    actual = info.get("stage")
+    return actual in (expected_stage_id, expected_stage_label)
+
+
 def prepare_expected_approval(
     context,
     *,
     pending: Callable,
     config: dict,
     expected_stage: str,
+    expected_stage_id: str | None = None,
     comment: str,
     default_comment: str,
 ) -> ApprovalRequest | Blocked:
@@ -102,8 +115,9 @@ def prepare_expected_approval(
         )
     if not isinstance(info, Mapping):
         return Blocked("Malformed pending approval data; inspect the ADO gate before retrying.")
-    actual_stage = info.get("stage")
-    if actual_stage != expected_stage:
+    stage_id = expected_stage_id or P.ORCH_LABEL_TO_STAGE_ID.get(expected_stage, expected_stage)
+    if not approval_matches_stage(info, stage_id, expected_stage):
+        actual_stage = info.get("stage") or info.get("stage_id")
         return Blocked(
             f"The orchestrator is parked at '{actual_stage}', not '{expected_stage}' — "
             "NOT approving. Resolve that gate first."

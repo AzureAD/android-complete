@@ -129,7 +129,10 @@ def _apply(operation, step):
     may_have_written = result[2] if len(result) > 2 else True
     if not ok:
         raise StageStartError(detail, may_have_written=may_have_written)
-    ok, current, detail = P.read_auth_signoff_run(target["build_id"], stage_name=step.STAGE_NAME)
+    ok, current, detail = P.read_auth_signoff_run(
+        target["build_id"],
+        stage_name=getattr(step, "STAGE_ID", step.STAGE_NAME),
+    )
     if not ok or not current:
         raise ValueError(f"could not verify {step.STAGE_NAME} start after PATCH: {detail}")
     if current.get("stage_id") != operation.preconditions.get("stage_id"):

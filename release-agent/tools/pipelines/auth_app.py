@@ -22,10 +22,31 @@ AUTH_BUILD_DEF = coords.pipeline_def("auth_build")   # AndroidBuildBroker1ES —
 AUTH_TEST_DEF = coords.pipeline_def("auth_test")     # Authenticator Post-Build UI Tests
 AUTH_RELEASE_APP_DEF = coords.pipeline_def("auth_release_app")  # AndroidBuild-1ES — release-branch app build
 AUTH_SIGNOFF_DEF = coords.pipeline_def("auth_signoff")  # Android Build Release — Release Sign Off
+AUTH_SIGNOFF_STAGE_ID = "Sign_Off"
+AUTH_ALPHA_STAGE_ID = "Upload_To_Alpha_GPS"
+AUTH_WHATS_NEW_STAGE_ID = "Upload_Whats_New"
+AUTH_BETA_STAGE_ID = "Progress_Beta_100"
+
 AUTH_SIGNOFF_STAGE_NAME = "Release Sign Off"
+AUTH_ALPHA_STAGE_NAME = "Upload Alpha - Google Play"
 AUTH_WHATS_NEW_STAGE_NAME = "Upload What's New"
-AUTH_ALPHA_STAGE_NAME = "Upload Alpha"
 AUTH_BETA_STAGE_NAME = "100% Beta - Play Store"
+
+AUTH_STAGE_LABELS = {
+    AUTH_SIGNOFF_STAGE_ID: AUTH_SIGNOFF_STAGE_NAME,
+    AUTH_ALPHA_STAGE_ID: AUTH_ALPHA_STAGE_NAME,
+    AUTH_WHATS_NEW_STAGE_ID: AUTH_WHATS_NEW_STAGE_NAME,
+    AUTH_BETA_STAGE_ID: AUTH_BETA_STAGE_NAME,
+}
+_AUTH_STAGE_ALIASES = {
+    AUTH_SIGNOFF_STAGE_ID.casefold(): {AUTH_SIGNOFF_STAGE_NAME.casefold(), "releasesignoff"},
+    AUTH_ALPHA_STAGE_ID.casefold(): {AUTH_ALPHA_STAGE_NAME.casefold(), "upload alpha", "uploadalpha"},
+    AUTH_WHATS_NEW_STAGE_ID.casefold(): {AUTH_WHATS_NEW_STAGE_NAME.casefold(), "uploadwhatsnew"},
+    AUTH_BETA_STAGE_ID.casefold(): {AUTH_BETA_STAGE_NAME.casefold(), "betaplaystore"},
+}
+for _sid, _lbl in list(AUTH_STAGE_LABELS.items()):
+    _AUTH_STAGE_ALIASES[_lbl.casefold()] = {_sid.casefold(), *_AUTH_STAGE_ALIASES[_sid.casefold()]}
+_AUTH_STAGE_ALIASES["upload alpha"] = {AUTH_ALPHA_STAGE_ID.casefold(), AUTH_ALPHA_STAGE_NAME.casefold()}
 # The final Auth App version tag format on the release-app build, e.g. '6.2608.5658'.
 _AUTH_RELEASE_VERSION = _re_mod.compile(r"^\d+\.\d+\.\d+$")
 _ZERO_SHA = "0" * 40                                 # ADO "create ref" sentinel (no old object)
@@ -181,13 +202,25 @@ def find_final_auth_build(auth_branch, timeout=90, *, build_id=None):
     }, "")
 
 
-def _stage_record(records, stage_name=AUTH_SIGNOFF_STAGE_NAME):
-    desired = str(stage_name or "").casefold()
+def _stage_record(records, stage_name=AUTH_SIGNOFF_STAGE_ID):
+    desired = str(stage_name or "").strip().casefold()
+    if not desired:
+        return None
+    canonical_targets = {desired, *_AUTH_STAGE_ALIASES.get(desired, set())}
+    # 1. Exact canonical YAML `identifier` match first.
     for record in records or []:
         if record.get("type") != "Stage":
             continue
-        names = (record.get("identifier"), record.get("name"))
-        if any(str(name or "").casefold() == desired for name in names):
+        ident = str(record.get("identifier") or "").strip().casefold()
+        if ident and ident == desired:
+            return record
+    # 2. Alias / fallback match (e.g. synthetic test records or display-name callers).
+    for record in records or []:
+        if record.get("type") != "Stage":
+            continue
+        ident = str(record.get("identifier") or "").strip().casefold()
+        name = str(record.get("name") or "").strip().casefold()
+        if (ident and ident in canonical_targets) or (not ident and name in canonical_targets) or (name == desired):
             return record
     return None
 
@@ -239,11 +272,13 @@ def _signoff_build_url(build_id) -> str:
     return f"{AUTH_ORG.rstrip('/')}/{AUTH_PROJECT}/_build/results?buildId={build_id}&view=results"
 
 
-def _signoff_info(build, records, *, match_basis, stage_name=AUTH_SIGNOFF_STAGE_NAME,
+def _signoff_info(build, records, *, match_basis, stage_name=AUTH_SIGNOFF_STAGE_ID,
                   linked_build_ids=None):
     record = _stage_record(records, stage_name)
     if record is None:
         return None
+    ident = record.get("identifier")
+    default_label = AUTH_STAGE_LABELS.get(str(ident or stage_name), str(stage_name))
     return {
         "build_id": build.get("id"),
         "build_number": build.get("buildNumber"),
@@ -252,8 +287,8 @@ def _signoff_info(build, records, *, match_basis, stage_name=AUTH_SIGNOFF_STAGE_
         "status": build.get("status"),
         "result": build.get("result"),
         "definition_id": AUTH_SIGNOFF_DEF,
-        "stage_name": record.get("name") or AUTH_SIGNOFF_STAGE_NAME,
-        "stage_ref": record.get("identifier") or record.get("name") or AUTH_SIGNOFF_STAGE_NAME,
+        "stage_name": record.get("name") or default_label,
+        "stage_ref": ident or record.get("name") or stage_name,
         "stage_id": record.get("id"),
         "stage_state": record.get("state"),
         "stage_result": record.get("result"),
@@ -275,7 +310,7 @@ def signoff_stage_failed(info):
     return state == "canceled" or result in {"failed", "canceled"}
 
 
-def read_auth_signoff_run(build_id, timeout=60, *, stage_name=AUTH_SIGNOFF_STAGE_NAME):
+def read_auth_signoff_run(build_id, timeout=60, *, stage_name=AUTH_SIGNOFF_STAGE_ID):
     """Read pipeline-397224 signoff run state for a known build/run id."""
     if not _positive_build_id(build_id):
         return (False, None, f"invalid signoff build id: {build_id!r}")
@@ -303,7 +338,7 @@ def find_auth_signoff_run(
     final_auth_build_id=None,
     build_id=None,
     scan=100,
-    stage_name=AUTH_SIGNOFF_STAGE_NAME,
+    stage_name=AUTH_SIGNOFF_STAGE_ID,
 ):
     """Find the pipeline-397224 run that owns the release's Release Sign Off stage.
 
@@ -997,4 +1032,4 @@ def create_lightweight_tag(org, project, repo, tag_name, commit, timeout=60):
     why = entry.get("customMessage") or d or "tag ref create rejected"
     return (False, None, why)
 
-__all__ = ['AUTH_ALPHA_STAGE_NAME', 'AUTH_BETA_STAGE_NAME', 'AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_SIGNOFF_DEF', 'AUTH_SIGNOFF_STAGE_NAME', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', 'AUTH_WHATS_NEW_STAGE_NAME', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_final_auth_build', 'find_auth_signoff_run', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'read_auth_signoff_run', 'release_change_manifest', 'signoff_stage_failed', 'signoff_stage_started', 'start_auth_signoff_stage']
+__all__ = ['AUTH_ALPHA_STAGE_ID', 'AUTH_ALPHA_STAGE_NAME', 'AUTH_BETA_STAGE_ID', 'AUTH_BETA_STAGE_NAME', 'AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_SIGNOFF_DEF', 'AUTH_SIGNOFF_STAGE_ID', 'AUTH_SIGNOFF_STAGE_NAME', 'AUTH_STAGE_LABELS', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', 'AUTH_WHATS_NEW_STAGE_ID', 'AUTH_WHATS_NEW_STAGE_NAME', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_final_auth_build', 'find_auth_signoff_run', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'read_auth_signoff_run', 'release_change_manifest', 'signoff_stage_failed', 'signoff_stage_started', 'start_auth_signoff_stage']

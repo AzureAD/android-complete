@@ -595,11 +595,9 @@ def test_monthly_owner_assignment_errors_visible_nonblocking(provider, monkeypat
 
 def test_v2_invitation_and_rollout_links_require_complete_fill(provider, monkeypatch):
     from steps.bug_bash import send_invite as I
-    from steps.rollout_start import notice as N
     from steps.lib import mockctx
     st, _, record = ready_fill(provider, monkeypatch)
     assert invoke(I.build, st).kind == "blocked"
-    assert N._plans(context(st))[0] is None
     assert invoke(U.build, st).kind == "done"
     with mockctx.active({"now": "2026-09-11T10:00:00-07:00", "flags": "{}"}):
         invitation = invoke(I.build, st)
@@ -609,10 +607,8 @@ def test_v2_invitation_and_rollout_links_require_complete_fill(provider, monkeyp
     assert escape(link["url"], quote=True) in invitation.payload["body"]
     assert ["steps", "bug_bash.clone_plans_auth", "data", "monthly", "suite_id"] in [
         p["path"] for p in invitation.notification["state_matches"]]
-    plans, detail = N._plans(context(st))
-    assert plans["monthly"] == link, detail
     st.steps["bug_bash." + U.ID]["data"]["result"]["monthly"]["status"] = "incomplete"
-    assert invoke(I.build, st).kind == "blocked" and N._plans(context(st))[0] is None
+    assert invoke(I.build, st).kind == "blocked"
 
 
 def test_v2_progress_reads_actual_monthly_testers_and_resolution_once(provider, monkeypatch):

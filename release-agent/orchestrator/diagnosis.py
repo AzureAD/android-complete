@@ -72,21 +72,28 @@ PIPELINE_WORKSPACE_MAP: dict[str, dict[str, Any]] = {
     "auth_build": {
         "org_key": "one",
         "def_key": "auth_build",
-        "yaml": "authenticator/.pipelines/AndroidBuildBroker1ES.yml",
+        "yaml": "authenticator/.pipelines/AndroidBuildUnified.yml",
         "scripts": ["AuthClientAndroidPipelines/templates/build/brokerApps/build-authenticator.yml"],
         "skills": ["release-helper", "codebase-researcher"],
     },
     "auth_test": {
         "org_key": "one",
         "def_key": "auth_test",
-        "yaml": "authenticator/.pipelines/PostBuildUITests.yml",
+        "yaml": "authenticator/.pipelines/run-authenticator-post-build-tests.yml",
         "scripts": [],
         "skills": ["release-helper", "codebase-researcher", "kusto-analyst"],
+    },
+    "auth_signoff": {
+        "org_key": "one",
+        "def_key": "auth_signoff",
+        "yaml": "authenticator/.pipelines/AndroidRelease.yml",
+        "scripts": [],
+        "skills": ["release-helper"],
     },
     "localization": {
         "org_key": "one",
         "def_key": "localization",
-        "yaml": "authenticator/.pipelines/OneLocBuild.yml",
+        "yaml": "authenticator/.pipelines/OneLoc.yml",
         "scripts": [],
         "skills": ["release-helper"],
     },
@@ -194,7 +201,11 @@ def _default_pipeline_key(phase_id: str, step_id: str) -> str:
             return "auth_build"
     if phase_id == "ccd" and step_id in ("localization", "localization_pr"):
         return "localization"
-    return "auth_build" if phase_id in ("ccd", "sign_off", "play_store") else "orchestrator"
+    if phase_id == "rollout_start" and step_id in (
+        "signoff_start", "upload_alpha", "verify_alpha_uploaded", "upload_whats_new", "beta_play_store"
+    ):
+        return "auth_signoff"
+    return "auth_build" if phase_id in ("ccd", "rollout_start", "sign_off", "play_store") else "orchestrator"
 
 
 def _resolve_build_targets_for_step(

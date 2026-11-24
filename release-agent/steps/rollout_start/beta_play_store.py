@@ -14,9 +14,12 @@ NAME = 'Start 100% Beta - Play Store (release-owner approval)'
 REQUIRED_TOOLS = ('az',)
 REQUIRES_APPROVAL = True
 WRITE_COMMAND = "start-beta-play-store"
+STAGE_ID = P.AUTH_BETA_STAGE_ID
 STAGE_NAME = P.AUTH_BETA_STAGE_NAME
 AUTOMATION_LABEL = "beta-play-store"
 REQUIRES_OWNER_APPROVAL = True
+PREVIOUS_STEP_ID = "upload_whats_new"
+PREVIOUS_LABEL = "Upload What's New"
 
 MOCKABLE = release_stage.MOCKABLE
 stage_started = release_stage.stage_started
@@ -39,9 +42,11 @@ def resolve_target(context: StepContext):
     return release_stage.resolve_pinned_target(
         context,
         stage_name=STAGE_NAME,
-        previous_step_id="upload_alpha",
-        previous_label="Upload Alpha",
+        stage_id=STAGE_ID,
+        previous_step_id=PREVIOUS_STEP_ID,
+        previous_label=PREVIOUS_LABEL,
         require_pin_in_resolve=True,
+        for_step_id=ID,
     )
 
 
@@ -76,9 +81,10 @@ def build(context: StepContext[BuildParameters]):
         step_id=ID,
         write_command=WRITE_COMMAND,
         stage_name=STAGE_NAME,
+        stage_id=STAGE_ID,
         label=AUTOMATION_LABEL,
-        previous_step_id="upload_alpha",
-        previous_label="Upload Alpha",
+        previous_step_id=PREVIOUS_STEP_ID,
+        previous_label=PREVIOUS_LABEL,
         auto_approve=False,
         command_args=command_args,
         review_context={

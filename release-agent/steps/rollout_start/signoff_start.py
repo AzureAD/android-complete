@@ -11,6 +11,7 @@ NAME = 'Start Release Sign Off'
 REQUIRED_TOOLS = ('az',)
 REQUIRES_APPROVAL = False
 WRITE_COMMAND = "start-release-signoff"
+STAGE_ID = P.AUTH_SIGNOFF_STAGE_ID
 STAGE_NAME = P.AUTH_SIGNOFF_STAGE_NAME
 AUTOMATION_LABEL = "release-signoff"
 
@@ -20,7 +21,8 @@ stage_failed = release_stage.stage_failed
 
 
 def resolve_target(context: StepContext):
-    return release_stage.resolve_pinned_target(context, stage_name=STAGE_NAME)
+    return release_stage.resolve_pinned_target(
+        context, stage_name=STAGE_NAME, stage_id=STAGE_ID, for_step_id=ID)
 
 
 def build(context: StepContext):
@@ -29,6 +31,7 @@ def build(context: StepContext):
         step_id=ID,
         write_command=WRITE_COMMAND,
         stage_name=STAGE_NAME,
+        stage_id=STAGE_ID,
         label=AUTOMATION_LABEL,
     )
 
