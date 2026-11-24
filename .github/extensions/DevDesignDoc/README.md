@@ -257,6 +257,35 @@ non-runtime/documentation, regression-only and deferred work requires a reasoned
 no-runtime-impact declaration with no flag mapping. Small/single-repo features
 cannot be exempted. Independent review challenges false non-runtime declarations.
 
+#### Android Auth Flighting Standard (Team Defaults)
+
+Authors adopt these team defaults automatically without inventing bespoke
+flighting mechanics or asking the human to reconfirm standard behavior:
+
+- **Single controlling-boundary flag by default:** Use one default-off Boolean
+  flag owned by the initiating/controlling boundary (for example, `Broker` for
+  Broker→Authenticator flows, using its source-verified framework such as
+  `BrokerFlight`, `CommonFlight`, or `EcsFlight`) unless approved requirements
+  or a verified cross-boundary safety/isolation gap justifies a second flag.
+- **Default-off everywhere:** `defaultValue`, `configurationFailureValue`, and
+  `productionDefaultValue` are all Boolean `false`.
+- **Single boundary evaluation (local state, no per-request network fetch):**
+  Evaluate the latest locally received/cached ECS/flight value once at the
+  converging entry boundary, extract non-trivial flight-on logic into a
+  dedicated helper, and avoid redundant nested or mid-flow re-checks and
+  per-request network fetches.
+- **Immediate OFF on new/uncommitted boundaries (zero grace buffer):** Receiving
+  an `OFF` update takes effect immediately for new/uncommitted boundaries with
+  no grace period or TTL buffer; already-dispatched requests cannot be recalled.
+  Keep zero new allocations, callbacks, navigation changes, state writes, or
+  telemetry on the disabled path.
+- **Exception-only human escalation:** Surface a human flighting decision or
+  question **only** when a feature intentionally deviates from these defaults
+  (for example, needing a second flag across process boundaries, intentionally
+  running compatibility/sanitization logic like reserved-header stripping while
+  disabled, or requiring a custom staleness/TTL cap), and document the deviation
+  explicitly in `featureFlagsAndIsolation` and `humanReviewBrief`.
+
 Each flag has `id`, `key`, pinned owning `repository`, source-verified `framework`,
 `owner`, `evidenceIds`, guarded `entryPoints` (repository, entry point, placement,
 disabled behavior and source evidence), `configurationPolicy`,
@@ -273,7 +302,13 @@ side effects except the minimal flag read, missing/invalid/unavailable/expired
 configuration and cache/override precedence. Contracts name owners, separately
 approved production enablement, approved enabled E2E cohort, rollback propagation,
 active attempts and persisted state, and later code-review/CI evidence. Turning
-a flag off does not automatically cancel admitted work.
+a flag off does not automatically cancel admitted work. Under
+`defaultOffFeatureIsolation`, the independent reviewer also challenges
+unnecessary multi-flag proliferation, invented TTL/grace buffers, per-request
+flight network fetches, and unprompted mid-flow re-checks as over-engineering
+findings while still enforcing strict default-off isolation, verified framework
+pins, and explicit justification for any accepted deviation or off-path
+exception.
 
 The human packet carries these contracts into planning/PBI coding acceptance
 criteria. Missing/contradictory scope returns for approval, not silent flag
@@ -413,8 +448,9 @@ criteria, repair/re-review, owned pre-flight gaps without production activation,
 happy-path scenario/query handoff, mandatory healthy-operation review and repair,
 and stale v5-v11 checkpoint isolation. Default-off regressions cover missing/
 non-false contracts, invalid mappings/source ownership, non-runtime declarations,
-shared/multiple flags, schema/prompt handoff, mandatory independent criteria and
-repair/re-review. Synthetic executable completion fixtures
+shared/multiple flags, schema/prompt handoff, Android Auth Flighting Standard
+defaults/exception-only escalation/anti-over-engineering guidance, mandatory
+independent criteria and repair/re-review. Synthetic executable completion fixtures
 also cover new pinned reviewer references, repair/re-review, invalid discoveries,
 stale digest rejection and journal replay with preserved provenance. Completion fixtures
 cover indirect handling (reuse/regression-only) and a genuinely missing handler

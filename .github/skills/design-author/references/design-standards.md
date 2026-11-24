@@ -48,7 +48,9 @@ Never add requirements or numeric targets that the approved scope does not conta
    change maps to a source-verified flag contract with Boolean `false` code,
    configuration-failure, and production defaults, guarded converging entry
    points, and zero new side effects on the disabled path; non-runtime work
-   declares an explicit reasoned non-runtime justification.
+   declares an explicit reasoned non-runtime justification. Adopt the
+   [Android Auth Flighting Standard (Team Defaults)](#android-auth-flighting-standard-team-defaults)
+   below automatically and escalate only intentional deviations.
 8. Telemetry events/spans/attributes, customer-visible success/failure signals,
    and measurable verification without invented thresholds, disabled-path
    telemetry, or collection of sensitive data.
@@ -72,6 +74,39 @@ Never add requirements or numeric targets that the approved scope does not conta
     architecture/flow, evidence vs. uncertainty, all five consequential risk
     categories, and changes since prior review) strictly consistent with the
     detailed design and within the caller's word/character budgets.
+
+## Android Auth Flighting Standard (Team Defaults)
+
+Apply these team defaults automatically in every runtime design instead of
+inventing bespoke flighting mechanics or asking the human to reconfirm standard
+behavior:
+
+- **Single controlling-boundary flag by default:** Use one default-off Boolean
+  flag owned by the initiating/controlling boundary (for example, `Broker` for
+  Broker→Authenticator flows, or the owning `Common`/`Broker`/`Authenticator`
+  repository in its source-verified framework such as `BrokerFlight`,
+  `CommonFlight`, or `EcsFlight`) unless approved requirements or a concrete,
+  verified cross-boundary safety/isolation requirement justifies a second flag.
+- **Default-off everywhere:** Code default, configuration-failure fallback, and
+  production default are all Boolean `false`.
+- **Single boundary evaluation (local state, no per-request network fetch):**
+  Evaluate the latest locally received/cached ECS/flight value once at the
+  converging entry boundary. Extract non-trivial flight-on logic into a
+  dedicated helper and avoid redundant nested or mid-flow re-checks and
+  per-request network fetches.
+- **Immediate OFF on new/uncommitted boundaries (zero grace buffer):** Receiving
+  an `OFF` update takes effect immediately for new/uncommitted boundaries with
+  no grace period or TTL buffer; already-dispatched requests cannot be recalled.
+  Keep zero new allocations, collaborator callbacks, navigation changes, state
+  writes, or telemetry on the disabled path.
+- **Exception-only human escalation:** Adopt the defaults above automatically
+  without asking the human to reconfirm standard flighting mechanics. Surface a
+  human flighting decision or question **only** when a feature intentionally
+  deviates from the standard (for example: needing a second flag across process
+  boundaries, intentionally running compatibility/sanitization logic such as
+  reserved-header stripping while disabled, or requiring a custom staleness/TTL
+  cap), and document the deviation explicitly in the feature-flags section and
+  Human Design Review Brief.
 
 ## Traceability and independent review
 
