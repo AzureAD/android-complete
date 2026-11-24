@@ -88,9 +88,26 @@ Detailed engineering standards for authoring code and pull requests across `comm
    - `common` / `common4j` / `msal` / `adal`: Include the standard Microsoft MIT license
      header block at the top of every new file.
    - `broker` / `broker4j`: Include `// Copyright (c) Microsoft Corporation. All rights reserved.`
-4. **Diff coverage**:
-   - CI enforces diff coverage (typically >= 80%) on modified classes. Exercise every new
-     overload, fallback branch, and error-mapping path in unit tests.
+4. **Diff coverage & Tiered UI / Automation Testing**:
+   - **Tier 1 — JVM / Robolectric Unit Tests (Always Required):** CI enforces diff coverage
+     (typically >= 80%) on modified classes. Exercise every new overload, ViewModel/state
+     reducer, IPC contract, fallback branch, flight-on + flight-off path, and error-mapping
+     path in unit tests.
+   - **Tier 2 — Hermetic In-Process UI Tests (`androidTest` Compose / Espresso with
+     fakes/mocks — Required when Android UI or navigation changes):** Whenever a PR adds or
+     modifies Android UI (Compose composables, Activities, Fragments, Dialogs, Views, XML
+     layouts, or navigation graphs), author hermetic `androidTest` Compose/Espresso UI tests
+     with local fakes/mocks covering key user flows, flight-on vs. flight-off UI states, and
+     accessibility/interaction semantics (no Lab API or live tenant dependency). Compile-verify
+     locally via `compile*AndroidTestKotlin` / `assemble*AndroidTest` (never boot local AVDs or
+     run `connected*AndroidTest` locally) and let remote CI execute them.
+   - **Tier 3 — Live E2E / Lab-API UI Automation (`msalautomationapp` /
+     `brokerautomationapp` / Authenticator E2E — Best-Effort with Structured Gap Reporting):**
+     Author E2E UI automation when existing Lab API fixtures support the scenario. When
+     ephemeral tenants unsupported by Lab API, external/non-rotatable IdP credentials, or
+     missing fixtures prevent automated E2E, do **not** silently omit it or fabricate broken
+     tests—record a structured **E2E automation gap** in `pr.testPlan` (reason, missing
+     Lab/tenant/IdP fixture, owner, and manual/staging verification alternative).
 
 ---
 

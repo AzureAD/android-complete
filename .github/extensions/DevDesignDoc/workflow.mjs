@@ -1831,6 +1831,22 @@ alone is not an acceptance case. Individually justify any inapplicable area.
 In testsAndEvals, carry requirement/scenario IDs, measurable expected outcomes, testing/review owner,
 planned evidence location, build/commit, device/Android, TalkBack/input and layout configurations,
 steps and outcomes, and explicit Passed-with-evidence, Unverified, Blocked or justified N/A status.
+Tiered UI & Automation Test Standard: whenever UI or E2E flows are in scope, explicitly classify
+testsAndEvals into three tiers:
+1. Tier 1 — JVM / Robolectric Unit Tests (mandatory): business logic, ViewModels, state reducers,
+   IPC contracts, flight-on + flight-off paths, configuration-failure defaults, and error/edge cases.
+2. Tier 2 — Hermetic In-Process UI Tests (androidTest Compose / Espresso with fakes/mocks; mandatory
+   whenever Android UI or navigation is added or modified): name concrete test class/screen targets
+   covering key user flows, flight-on vs. flight-off UI states, and accessibility/interaction semantics
+   using local fakes/mocks with zero Lab API or live tenant dependency (compile-verified locally via
+   compile*AndroidTestKotlin / assemble*AndroidTest and executed in CI).
+3. Tier 3 — Live E2E / Lab-API UI Automation (msalautomationapp / brokerautomationapp / Authenticator
+   E2E; best-effort with structured gap reporting): explicitly declare whether existing Lab API fixtures
+   and test accounts support automation for each scenario. When a scenario cannot be automated with
+   existing Lab API fixtures (for example: ephemeral tenant unsupported by Lab API, external or
+   non-rotatable IdP credentials, or missing device/service fixture), do NOT assume E2E automation or
+   silently omit it—record a structured E2E automation gap (reason, missing Lab/tenant fixture, owner,
+   and manual/staging verification alternative).
 Plan real-app TalkBack and separate keyboard-only verification from screen entry; runtime evidence
 may remain planned and Unverified at design approval. Compilation, screenshots, semantics assertions,
 navigation tests and forced-focus tests are supporting evidence, not runtime acceptance.
@@ -2007,6 +2023,18 @@ testing/review owners and release consequences. Planned or unavailable evidence 
 not Passed; source review, compilation, screenshots and forced-focus tests do not prove runtime acceptance.
 Do not block design authorship merely because planned runtime checks have not executed.
 Reject claims that design approval or documentation completion certifies accessibility or permits rollout.
+For testsEvalsAndDependencies, whenever UI or E2E flows are in scope, verify that testsAndEvals
+classifies test plans into the three tiers: (1) mandatory JVM/Robolectric unit tests (including
+flight-on/off, configuration-failure defaults, and error paths), (2) mandatory hermetic in-process
+androidTest Compose/Espresso UI tests with fakes/mocks and concrete test class/screen targets for any
+added or modified Android UI or navigation (compile-verified locally and run in CI, with no Lab API or
+live tenant dependency), and (3) best-effort live Lab-API E2E UI automation (msalautomationapp /
+brokerautomationapp / Authenticator E2E) that explicitly states whether existing Lab API fixtures support
+automation or records a structured E2E automation gap (reason, missing Lab/tenant fixture, owner, and
+manual/staging verification alternative) instead of assuming E2E automation or silently omitting it.
+Raise a finding if UI/navigation changes lack Tier 2 hermetic androidTest coverage plans or silently
+assume/omit Tier 3 Lab-API E2E feasibility, without failing a design merely because a documented
+ephemeral-tenant or non-rotatable-IdP constraint prevents live E2E automation.
 Independently read pinned sources and challenge EACH change's necessity, including claims
 that a callback/error/terminal outcome is missing. Follow the complete trigger-to-terminal chain,
 including indirect observers and result/completion handling. Actively seek counterevidence outside

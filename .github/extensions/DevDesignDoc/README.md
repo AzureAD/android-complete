@@ -458,6 +458,30 @@ justified N/A, concrete per-state coverage, source/requirement traceability and
 owned evidence plans; missing applicable coverage is a finding, not a pass.
 Substantive assessment is an agent judgment, not keyword-based certification.
 
+### Tiered UI and automation test matrix
+
+Whenever UI or E2E flows are in scope, `design.sections.testsAndEvals` and the
+independent `testsEvalsAndDependencies` review rubric classify test plans into
+three tiers:
+
+1. **Tier 1 — JVM / Robolectric Unit Tests (Mandatory):** Business logic,
+   ViewModels, state reducers, IPC contracts, flight-on + flight-off paths,
+   configuration-failure defaults, and failure/edge cases.
+2. **Tier 2 — Hermetic In-Process UI Tests (`androidTest` Compose / Espresso with
+   fakes/mocks — Mandatory for UI/navigation changes):** Concrete `androidTest`
+   test class/screen targets covering key user flows, flight-on vs. flight-off UI
+   states, and accessibility/interaction semantics using local fakes/mocks (no
+   Lab API or live tenant dependency; compile-verified locally via
+   `compile*AndroidTestKotlin` / `assemble*AndroidTest` and executed in CI).
+3. **Tier 3 — Live E2E / Lab-API UI Automation (`msalautomationapp` /
+   `brokerautomationapp` / Authenticator E2E — Best-Effort with Structured Gap
+   Reporting):** Explicitly states whether existing Lab API fixtures and test
+   accounts support automating each E2E scenario. When ephemeral tenants,
+   external/non-rotatable IdP credentials, or missing fixtures prevent automated
+   E2E, authors record a structured **E2E automation gap** (reason, missing
+   Lab/tenant fixture, owner, and manual/staging verification alternative) rather
+   than assuming E2E automation or silently omitting it.
+
 The packet preserves the original `evidence` unchanged. Validated reviewer sources
 remain in review history and `referenceDiscoveries` with their discovery round.
 `availableEvidence` combines the original references with those discoveries and

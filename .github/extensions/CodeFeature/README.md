@@ -551,6 +551,33 @@ Each workflow agent loads the repository's existing skill and instruction files:
 8. `unitTestsAndVerification`
 9. `prReadinessAndTraceability`
 
+### Tiered UI & automation test authoring and review
+
+`code-builder` and `code-reviewer` enforce a 3-tier UI & automation test contract:
+
+1. **Tier 1 — JVM / Robolectric Unit Tests (Always Required):** Business logic, ViewModels,
+   state reducers, IPC contracts, flight-on + flight-off paths, and error/edge cases.
+2. **Tier 2 — Hermetic In-Process UI Tests (`androidTest` Compose / Espresso with fakes/mocks
+   — Required when Android UI or navigation changes):** Whenever a target adds or modifies
+   Android UI source files (Compose screens/components, Activities, Fragments, Dialogs,
+   Views, XML layouts, or navigation graphs), `code-builder` authors hermetic `androidTest`
+   UI tests with local fakes/mocks (zero Lab API or live tenant dependency), compile-verifies
+   them locally (`compile*AndroidTestKotlin` / `assemble*AndroidTest` — never booting local
+   AVDs/emulators), and defers execution to remote CI. The workflow computes a deterministic
+   per-target `uiTestCoverage` summary (`isUiSourcePath` / `detectMissingUiTestCoverage`) and
+   passes it to `code-reviewer` so `unitTestsAndVerification` flags UI changes missing Tier 2
+   UI test code without triggering false positives on non-UI broker/common/controller/model
+   changes.
+3. **Tier 3 — Live E2E / Lab-API UI Automation (`msalautomationapp` / `brokerautomationapp` /
+   Authenticator E2E — Best-Effort with Structured Gap Reporting):** `code-builder` authors
+   E2E UI automation when existing Lab API fixtures support the scenario. When ephemeral
+   tenants unsupported by Lab API, external/non-rotatable IdP credentials, or missing fixtures
+   prevent automated E2E, `code-builder` records an explicit structured **E2E automation gap**
+   in `pr.testPlan` (reason, missing Lab/tenant/IdP fixture, owner, and manual/staging
+   verification alternative). `code-reviewer` never fails a PR merely because documented
+   Lab-API/ephemeral-tenant/IdP constraints prevent live E2E automation or because
+   `connected*AndroidTest` did not run on a headless local machine.
+
 ## Bounds, safety, and resume
 
 - Sequential journaled `ctx.step` and `ctx.agent` calls:
