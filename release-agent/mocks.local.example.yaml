@@ -12,8 +12,8 @@
 #        outcome: blocked         # hold for the owner (rehearse the block path)
 #        note: "..." / reason: "..."
 #
-#   2) Per-step payload overrides — only where a step DECLARES them (its MOCKABLE
-#      spec). These keep the action REAL but redirect it. Currently:
+#   2) Per-step & global partner-email overrides:
+#        status_email              send_to: ["me@microsoft.com"]   # redirects ALL 5 external partner emails!
 #        preflight.notice          send_to: ["me@microsoft.com"]   # real email, only to me
 #        preflight.flight_reminder send_to: me                     # real Teams post, my own chat
 #      Unknown keys are reported back as `unknown_overrides` so typos show.

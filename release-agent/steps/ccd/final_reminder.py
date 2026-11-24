@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from orchestrator import schedule
+from orchestrator import notifications as notif, schedule, status_email as SE
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
 
@@ -35,19 +35,11 @@ class BuildParameters:
 
 PARAMETERS = {"build": BuildParameters}
 
-# Step config (co-located). CCD-day "update" variant of the notice template, to the
-# real Android DL (redirect for tests via send_to). Eligible as soon as Phase 1 opens
-# on Code Complete Day so both interactive sessions and the 7:00 AM morning drain can
-# deliver it silently via Agency MCP.
 CONFIG = {
     "template": "templates/early-code-complete-notice.md",
     "variant": "update",                     # CCD-day reminder ("Today")
-    "recipients": [                          # the real DL (redirect for tests via send_to)
-        "androididentity@microsoft.com",     # "Azure Identity Android SDK"
-    ],
 }
 
-# Knobs this step exposes to mocks.local.yaml (see `mock-spec`).
 MOCKABLE = {
     "send_to": {
         "kind": "payload", "sets": "to", "as": "list", "tag_subject": True,
@@ -59,45 +51,18 @@ MOCKABLE = {
     },
 }
 
-HOTFIX_GUIDE_URL = ("https://eng.ms/docs/microsoft-security/identity/"
-                    "entra-developer-application-platform/auth-client/"
-                    "microsoft-authenticator/microsoft-authenticator/release/"
-                    "cherry-pick-to-hotfix-guidelines")
 
-
-def _html(ctx: dict, *, today: bool = True) -> str:
-    """Email-safe HTML with a date that stays accurate for catch-up delivery."""
-    when = "Today" if today else T.esc(ctx["ccd_long"])
-    return f"""\
-<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:680px;">
-  <p>Hi everyone,</p>
-  <p>This is a reminder that the Microsoft Android Authenticator app and Broker
-     libraries code complete date for the {T.esc(ctx['month'])} release is <strong>{when}</strong>.</p>
-  <p>Any check-ins made after code complete will require following
-     <a href="{HOTFIX_GUIDE_URL}" style="color:#0b5cad;">the hotfix cherry-pick guide</a>
-     and EM approval.</p>
-  <table role="presentation" cellpadding="0" cellspacing="0"
-         style="border-collapse:collapse;margin:14px 0;border:1px solid #d0d5dd;">
-    <tr style="background:#f2f4f7;">
-      <th style="text-align:left;padding:8px 14px;border:1px solid #d0d5dd;font-size:13px;">Month</th>
-      <th style="text-align:left;padding:8px 14px;border:1px solid #d0d5dd;font-size:13px;">Code Complete Date</th>
-      <th style="text-align:left;padding:8px 14px;border:1px solid #d0d5dd;font-size:13px;">Android Release Owner</th>
-    </tr>
-    <tr>
-      <td style="padding:8px 14px;border:1px solid #d0d5dd;">{T.esc(ctx['month'])}</td>
-      <td style="padding:8px 14px;border:1px solid #d0d5dd;">{T.esc(ctx['ccd_date'])}</td>
-      <td style="padding:8px 14px;border:1px solid #d0d5dd;">
-        <strong>Primary (Release Owner &mdash; covers Broker + Auth App):</strong> @{T.esc(ctx['owner_at'])}</td>
-    </tr>
-  </table>
-  <p>Thank you,</p>
-  <p>{T.esc(ctx['owner'])}</p>
-</div>"""
+def _resolve_dl(context) -> list[str]:
+    try:
+        return context.services.assets.status_recipients()
+    except ValueError as exc:
+        if "was not supplied" not in str(exc):
+            raise
+        return notif.partner_recipients()
 
 
 def build(context: StepContext[BuildParameters]):
-    """Resolve the CCD-day reminder into a NeedsSkill(workiq_send_email), or Blocked
-    if the release has no CCD / the template is missing."""
+    """Resolve the CCD-day reminder into a NeedsSkill(workiq_send_email) using the unified card."""
     variant = context.parameters.variant
     if not context.release.ccd:
         return Blocked("no CCD set for this release")
@@ -115,15 +80,25 @@ def build(context: StepContext[BuildParameters]):
     subject_tpl, body_tpl = parsed
 
     ctx = release_ctx(context)
+    is_update = variant.casefold() == "update"
+    today = is_update and context.clock.now().date() == ccd
     subject = T.fill(subject_tpl, ctx)
     body = T.fill(body_tpl, ctx)
-    today = variant.casefold() == "update" and context.clock.now().date() == ccd
     if not today:
-        subject = subject.replace(" (Today)", "")
+        subject = subject.replace(" (Today)", f" ({ctx['ccd_date']})" if is_update else "")
         body = body.replace("**Today**", f"**{ctx['ccd_long']}**")
-    html = _html(ctx, today=today)
 
-    recipients, rnote, prefix = resolve_recipients(context, cfg.get("recipients", []))
+    live_dl = _resolve_dl(context)
+    recipients, rnote, prefix = resolve_recipients(context, live_dl)
+    stage_mode = "ccd" if is_update else "preflight"
+    composed = SE.compose(
+        context.release,
+        [],
+        recipients,
+        stage=stage_mode,
+        ccd_today=today,
+        ccd_long=ctx["ccd_long"],
+    )
     subject_out = f"{prefix}{subject}"
 
     return NeedsSkill(
@@ -131,7 +106,7 @@ def build(context: StepContext[BuildParameters]):
         payload={
             "to": recipients,
             "subject": subject_out,
-            "body": html,
+            "body": composed["html"],
             "isHtml": True,
             "_plain_body": body,
         },

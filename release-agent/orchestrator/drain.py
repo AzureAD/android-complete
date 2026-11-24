@@ -956,7 +956,8 @@ def evaluate_risk_and_cta(
     actionable = _actionable_waiting_items(waiting)
     external_cutoff = detect_external_cutoff(orch)
     if not actionable:
-        state.drain_tracker = {}
+        existing_partner = (state.drain_tracker or {}).get("partner_status")
+        state.drain_tracker = {"partner_status": existing_partner} if existing_partner else {}
         return (
             {
                 "level": "cutoff_at_risk" if external_cutoff else "normal",
@@ -1459,6 +1460,17 @@ def run_drain(
         deliver=deliver,
         mcp_caller=mcp_caller,
     )
+    from orchestrator import status_email as SE
+    partner_status = SE.evaluate_and_deliver_partner_status(
+        orch,
+        waiting=waiting,
+        risk=risk,
+        runs_root=runs_root,
+        config_path=config_path,
+        now_utc=now_utc,
+        deliver=deliver,
+        mcp_caller=mcp_caller,
+    )
     finished_at = (
         now_utc + timedelta(milliseconds=elapsed_ms)
         if now is not None
@@ -1484,6 +1496,7 @@ def run_drain(
         "waiting": waiting,
         "risk": risk,
         "notification": notif_summary,
+        "partner_status": partner_status,
     }
     _append_drain_record(runs_root, release, record)
     C.elog(runs_root, release).log(

@@ -67,7 +67,7 @@ def test_completed_rc_milestone_uses_current_publication_and_quality_gate_steps(
     selection = Orchestrator(CONFIG, state, mocks={}).scheduling()
     milestone = next(
         item for item in status_email.milestones(state, _PHASE_ORDER, selection)
-        if item["label"] == "RC builds and test apks generated, automation run")
+        if item["label"] == "Automated Test Pass")
     assert (milestone["status"] == "complete") == (missing is None)
 
 

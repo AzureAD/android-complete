@@ -23,34 +23,70 @@ REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
 MOCKABLE = {
-    "send_to": {"kind": "input",
-                "desc": "Redirect the closing status email to these address(es) (owner → you)."},
+    "send_to": {
+        "kind": "input",
+        "desc": "Redirect the closing status email to these address(es) (DL → you).",
+    },
+    "changelogs": {
+        "kind": "input",
+        "desc": "Inject dict {common:[...], msal:[...], broker:[...]} to skip live changelog reads.",
+    },
 }
 
 
-def _broker_changes(context):
+def _sdk_changelogs(context) -> dict[str, list[dict]]:
+    injected = context.input("changelogs", MISSING)
+    if injected is not MISSING and isinstance(injected, dict):
+        return {k: list(v or []) for k, v in injected.items()}
+    out: dict[str, list[dict]] = {}
     try:
         from steps.finalize import integ_prs as IP
-        gh = (IP.CONFIG.get("broker") or {}).get("gh_repo")
-        bver = (getattr(context.release, "versions", None) or {}).get("broker")
-        if not (gh and bver):
-            return []
-        ok, ch, _d = context.services.repositories.broker_change_list(gh, bver)
-        return ch if ok else []
+        from tools import prs as PR
+        versions = getattr(context.release, "versions", None) or {}
+        reader = context.services.repositories.repo_change_list
+        for key in ("common", "msal", "broker"):
+            gh = (IP.CONFIG.get(key) or {}).get("gh_repo")
+            ver = versions.get(key)
+            path = PR.CHANGELOG_PATHS.get(key)
+            if not (gh and ver and path):
+                continue
+            if key == "broker" and reader is None:
+                ok, entries, _ = context.services.repositories.broker_change_list(gh, ver)
+            elif reader is not None:
+                ok, entries, _ = reader(gh, ver, changelog_path=path)
+            else:
+                ok, entries, _ = PR.repo_change_list(gh, ver, changelog_path=path)
+            if ok and entries:
+                out[key] = entries
     except Exception:  # noqa: BLE001
-        return []
+        return out
+    return out
 
 
 def build(context: StepContext):
     to = context.input("send_to", MISSING)
-    recipients = ([x.strip() for x in str(to).split(",") if x.strip()]
-                  if to is not MISSING and to else context.services.assets.status_recipients())
+    if to is not MISSING and to:
+        recipients = (
+            [str(x).strip() for x in to if str(x).strip()]
+            if isinstance(to, list)
+            else [x.strip() for x in str(to).split(",") if x.strip()]
+        )
+        prefix = "[TEST → me] "
+    else:
+        recipients = context.services.assets.status_recipients()
+        prefix = ""
     if not recipients:
         return Blocked("final_status_email: no status-email recipients configured "
                        "(config/notifications.yaml status_email.recipients).")
 
-    res = context.services.assets.status_email(recipients, changes=_broker_changes(context))
-    subject = res["subject"].replace("Daily Status", "Final Status")
+    changelogs = _sdk_changelogs(context)
+    res = context.services.assets.status_email(
+        recipients,
+        changes=changelogs.get("broker") or [],
+        changelogs=changelogs,
+        stage="final",
+    )
+    subject = f"{prefix}{res['subject']}"
     month_year = res["model"].get("month_year", "")
     return NeedsSkill(
         tool="workiq_send_email",

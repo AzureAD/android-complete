@@ -280,23 +280,29 @@ def _current_version_block(text: str, version: str) -> str:
     return "\n".join(out)
 
 
-def broker_change_list(gh_repo: str, version: str, ref_candidates=None, timeout=60):
-    """(ok, changes, detail) — the broker release change list, read from the AUTHORITATIVE
-    `changes.txt` on the broker's release branch for `version`.
+CHANGELOG_PATHS = {
+    "common": "changelog.txt",
+    "msal": "changelog",
+    "broker": "changes.txt",
+}
 
-    The release branch is `working/release/<version>` (integ_prs.WORKING_PREFIX). `release/<version>`
-    carries the same changes.txt and is used as an equivalent fallback (override both with
-    `ref_candidates`). changes.txt has one section per version ('Version <X.Y.Z>' + dashes, then
-    '- [LEVEL] text (#PR)' bullets); we return THIS release's section only. Each change is
-    {level, text, pr}: `level` is PATCH|MINOR|MAJOR from the '[LEVEL]' prefix (None when a bullet
-    has none — never fabricated), `pr` is the trailing '(#N)'. Read-only (`gh api contents`)."""
-    if not (gh_repo and version):
-        return (False, [], "missing broker gh_repo/version")
+
+def repo_change_list(gh_repo: str, version: str, changelog_path: str = "changes.txt",
+                     ref_candidates=None, timeout=60):
+    """(ok, changes, detail) — release change list read from `changelog_path` on the library's
+    release branch (`working/release/<version>` with `release/<version>` fallback).
+
+    Works across `common` (`changelog.txt`), `msal` (`changelog`), and `broker` (`changes.txt`),
+    each formatted with `Version <X.Y.Z>` + dashes + `- [PATCH|MINOR|MAJOR] text (#PR)` bullets.
+    """
+    if not (gh_repo and version and changelog_path):
+        return (False, [], "missing gh_repo/version/changelog_path")
     host, ownerrepo = _gh_repo_parts(gh_repo)
     refs = ref_candidates or [f"working/release/{version}", f"release/{version}"]
     text, last_err = None, ""
+    clean_path = str(changelog_path).lstrip("/")
     for ref in refs:
-        args = ["gh", "api", f"repos/{ownerrepo}/contents/changes.txt?ref={ref}", "--jq", ".content"]
+        args = ["gh", "api", f"repos/{ownerrepo}/contents/{clean_path}?ref={ref}", "--jq", ".content"]
         if host:
             args += ["--hostname", host]
         rc, out, e = _run(args, timeout=timeout)
@@ -306,15 +312,15 @@ def broker_change_list(gh_repo: str, version: str, ref_candidates=None, timeout=
                 text = base64.b64decode(out).decode("utf-8", "replace")
                 break
             except (ValueError, TypeError):
-                last_err = "could not decode changes.txt content"
+                last_err = f"could not decode {clean_path} content"
                 continue
-        last_err = (e or "changes.txt not found").strip()
+        last_err = (e or f"{clean_path} not found").strip()
     if text is None:
-        return (False, [], f"changes.txt not found on any of {refs} ({last_err})")
+        return (False, [], f"{clean_path} not found on any of {refs} ({last_err})")
 
     block = _current_version_block(text, version)
     if not block.strip():
-        return (True, [], f"no 'Version {version}' section in changes.txt")
+        return (True, [], f"no 'Version {version}' section in {clean_path}")
     # Split into bullets on lines beginning with '- '. A bullet may wrap across lines, so join
     # each entry's continuation lines back into one logical entry (collapse whitespace).
     entries, cur = [], None
@@ -342,6 +348,14 @@ def broker_change_list(gh_repo: str, version: str, ref_candidates=None, timeout=
             text_e = lm.group(2).strip()
         changes.append({"level": level, "text": text_e, "pr": pr})
     return (True, changes, "")
+
+
+def broker_change_list(gh_repo: str, version: str, ref_candidates=None, timeout=60):
+    """(ok, changes, detail) — Broker release change list (`changes.txt`)."""
+    return repo_change_list(
+        gh_repo, version, changelog_path=CHANGELOG_PATHS["broker"],
+        ref_candidates=ref_candidates, timeout=timeout,
+    )
 
 
 # ------------------------------------------------------------------- Azure DevOps (az)

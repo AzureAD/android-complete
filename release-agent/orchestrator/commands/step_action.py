@@ -126,7 +126,7 @@ def prepare_step(args, st, orch):
     refreshing = intent == TransitionIntent.REFRESH
     pairs = getattr(args, "param", None)
     params = handler.parse_parameters(values=_parse_params(pairs), cli=True) if pairs and not force_reopen else None
-    spec = mocks_mod.load_mocks().get(f"{args.phase}.{args.step}") or {}
+    spec = mocks_mod.step_mock_spec(mocks_mod.load_mocks(), args.phase, args.step)
     outcome = orch.step_action_guard(args.phase, args.step)
     built = outcome is None
     if outcome is None:

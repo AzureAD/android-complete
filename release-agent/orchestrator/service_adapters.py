@@ -66,7 +66,7 @@ def production_services(*, status_email=None, status_recipients=None):
             PR.behind_count, PR.gradle_diff_files, PR.merge_conflict_preview,
             PR.gh_release_exists, PR.broker_change_list, OA.ahead_behind,
             OA.find_open_pr, OA.read_text, C.wiki_page_exists, C.fetch_cg_alerts,
-            PR.gh_pr_merge_state, PR.az_pr_merge_state,
+            PR.gh_pr_merge_state, PR.az_pr_merge_state, PR.repo_change_list,
         ),
         TestPlanReads(
             B.prepare_source, T.find_auth_query_suite, T.validate_auth_query_suite,

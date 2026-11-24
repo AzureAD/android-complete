@@ -51,13 +51,34 @@ def load_mocks(path: str | None = None) -> dict:
             if isinstance(v, dict) and k != "version"}
 
 
+_PARTNER_EMAIL_STEPS = frozenset({
+    "preflight.notice",
+    "ccd.final_reminder",
+    "finalize.final_status_email",
+})
+
+
+def step_mock_spec(mocks: dict, phase_id: str, step_id: str) -> dict:
+    """Return effective mock spec for `<phase>.<step>`, inheriting global `status_email`
+    overrides (such as `send_to` or `outcome`) on external partner-email steps."""
+    key = f"{phase_id}.{step_id}"
+    base = mocks.get("status_email") if key in _PARTNER_EMAIL_STEPS else None
+    specific = mocks.get(key)
+    out = {}
+    if isinstance(base, dict):
+        out.update(base)
+    if isinstance(specific, dict):
+        out.update(specific)
+    return out
+
+
 def outcome_for(mocks: dict, phase_id: str, step_id: str) -> Done | Blocked | None:
     """Return a canonical outcome for a step, or None if it isn't mocked.
 
     done marks the step complete; blocked holds it for the owner.
     """
-    spec = mocks.get(f"{phase_id}.{step_id}")
-    if not isinstance(spec, dict):
+    spec = step_mock_spec(mocks, phase_id, step_id)
+    if not spec:
         return None
     outcome = str(spec.get("outcome", "")).strip().lower()
     if outcome in _DONE:

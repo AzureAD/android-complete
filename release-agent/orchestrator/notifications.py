@@ -73,6 +73,30 @@ def channels(cfg: dict) -> dict:
     return dict(cfg.get("channels", {}))
 
 
+def partner_recipients(config_path: str | None = None) -> list[str]:
+    """Return the consolidated external partner DL (`status_email.recipients`) from `notifications.yaml`.
+
+    If an isolated `config_path` has its own sibling `notifications.yaml`, it is authoritative
+    (an empty `recipients` list raises `ValueError`, never falling back to production DLs).
+    When a temporary `phases.yaml` has no sibling `notifications.yaml`, falls back to canonical `config/`.
+    """
+    default_phases = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "config",
+        "phases.yaml",
+    )
+    effective_phases = (
+        config_path
+        if (config_path and os.path.exists(notifications_path(config_path)))
+        else default_phases
+    )
+    cfg = load_config(effective_phases) or {}
+    recipients = (cfg.get("status_email") or {}).get("recipients")
+    if not isinstance(recipients, list) or not recipients:
+        raise ValueError("Configure status_email.recipients as a non-empty list")
+    return [str(r).strip() for r in recipients if str(r).strip()]
+
+
 def teams_target(cfg: dict) -> str:
     """The configured Teams target string ('scout' or an explicit chat id)."""
     return (cfg.get("teams") or {}).get("target", "scout")

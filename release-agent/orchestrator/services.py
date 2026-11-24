@@ -50,6 +50,7 @@ class RepositoryReads:
     fetch_cg_alerts: Callable[..., tuple]
     gh_pr_merge_state: Callable[..., tuple] | None = None
     az_pr_merge_state: Callable[..., tuple] | None = None
+    repo_change_list: Callable[..., tuple] | None = None
 
 
 @dataclass(frozen=True)

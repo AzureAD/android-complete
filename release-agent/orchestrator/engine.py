@@ -185,29 +185,34 @@ class Orchestrator(StatusViewMixin):
         clock = self._clock or Clock(self.now_local)
         services = self._services
         if services is None:
+            from . import notifications
             status_email = None
+            status_recipients = lambda: notifications.partner_recipients(self.config_path)
             if handler.status_email:
                 from . import status_email as SE
-                from . import notifications
-                snapshot = freeze(SE.compose(
-                    self.state, [p.id for p in self.workflow.phases], [],
-                    selection=self.scheduling()))
+                phase_ids = [p.id for p in self.workflow.phases]
+                cur_sched = self.scheduling()
 
-                def status_email(recipients, *, changes):
-                    result = thaw(snapshot)
-                    result["to"] = list(recipients)
-                    result["model"]["changes"] = thaw(changes)
-                    result["html"] = SE.render_html(result["model"])
-                    return result
-
-                def status_recipients():
-                    cfg = notifications.load_config(self.config_path) or {}
-                    recipients = (cfg.get("status_email") or {}).get("recipients")
-                    if not isinstance(recipients, list) or not recipients:
-                        raise ValueError("Configure status_email.recipients as a non-empty list")
-                    return recipients
-            else:
-                status_recipients = None
+                def status_email(
+                    recipients,
+                    *,
+                    changes=None,
+                    changelogs=None,
+                    stage="daily",
+                    ccd_today=False,
+                    ccd_long="",
+                ):
+                    return SE.compose(
+                        self.state,
+                        phase_ids,
+                        recipients,
+                        changes=thaw(changes) if changes is not None else None,
+                        changelogs=thaw(changelogs) if changelogs is not None else None,
+                        selection=cur_sched,
+                        stage=stage,
+                        ccd_today=ccd_today,
+                        ccd_long=ccd_long,
+                    )
             services = service_adapters.production_services(
                 status_email=status_email, status_recipients=status_recipients)
         session = None

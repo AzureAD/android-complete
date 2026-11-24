@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from orchestrator import schedule
+from orchestrator import notifications as notif, schedule, status_email as SE
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
 
@@ -32,19 +32,11 @@ class BuildParameters:
 
 PARAMETERS = {"build": BuildParameters}
 
-# Step config (co-located). Filled from the local template and sent to the real DL
-# (redirect for tests with the send_to mock knob).
 CONFIG = {
     "template": "templates/early-code-complete-notice.md",
     "variant": "initial",                    # initial (CCD-7) | update (CCD-day)
-    "recipients": [                          # the real DL (redirect for tests via send_to)
-        "androididentity@microsoft.com",     # "Azure Identity Android SDK"
-    ],
 }
 
-# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
-#   payload knobs → rewrite the send (applied by step-action).
-#   input knobs   → replace an input so the real build logic runs on your value.
 MOCKABLE = {
     "send_to": {
         "kind": "payload", "sets": "to", "as": "list", "tag_subject": True,
@@ -56,51 +48,23 @@ MOCKABLE = {
     },
 }
 
-# Fixed external link inside the notice body (see EXTERNAL-REFERENCES.md).
-HOTFIX_GUIDE_URL = ("https://eng.ms/docs/microsoft-security/identity/"
-                    "entra-developer-application-platform/auth-client/"
-                    "microsoft-authenticator/microsoft-authenticator/release/"
-                    "cherry-pick-to-hotfix-guidelines")
 
-
-def _html(variant: str, ctx: dict) -> str:
-    """Email-safe HTML notice: clean hotfix-guide anchor + Outlook-friendly table."""
-    date_line = ("<strong>Today</strong>" if variant == "update"
-                 else f"<strong>{T.esc(ctx['ccd_long'])}.</strong>")
-    return f"""\
-<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:680px;">
-  <p>Hi everyone,</p>
-  <p>This is a reminder that the Microsoft Android Authenticator app and Broker
-     libraries code complete date for the {T.esc(ctx['month'])} release is {date_line}</p>
-  <p>Any check-ins made after code complete will require following
-     <a href="{HOTFIX_GUIDE_URL}" style="color:#0b5cad;">the hotfix cherry-pick guide</a>
-     and EM approval.</p>
-  <table role="presentation" cellpadding="0" cellspacing="0"
-         style="border-collapse:collapse;margin:14px 0;border:1px solid #d0d5dd;">
-    <tr style="background:#f2f4f7;">
-      <th style="text-align:left;padding:8px 14px;border:1px solid #d0d5dd;font-size:13px;">Month</th>
-      <th style="text-align:left;padding:8px 14px;border:1px solid #d0d5dd;font-size:13px;">Code Complete Date</th>
-      <th style="text-align:left;padding:8px 14px;border:1px solid #d0d5dd;font-size:13px;">Android Release Owner</th>
-    </tr>
-    <tr>
-      <td style="padding:8px 14px;border:1px solid #d0d5dd;">{T.esc(ctx['month'])}</td>
-      <td style="padding:8px 14px;border:1px solid #d0d5dd;">{T.esc(ctx['ccd_date'])}</td>
-      <td style="padding:8px 14px;border:1px solid #d0d5dd;">
-        <strong>Primary (Release Owner &mdash; covers Broker + Auth App):</strong> @{T.esc(ctx['owner_at'])}</td>
-    </tr>
-  </table>
-  <p>Thank you,</p>
-  <p>{T.esc(ctx['owner'])}</p>
-</div>"""
+def _resolve_dl(context) -> list[str]:
+    try:
+        return context.services.assets.status_recipients()
+    except ValueError as exc:
+        if "was not supplied" not in str(exc):
+            raise
+        return notif.partner_recipients()
 
 
 def build(context: StepContext[BuildParameters]):
-    """Resolve the notice into a NeedsSkill(workiq_send_email) action, or Blocked
-    if the release has no CCD / the template is missing."""
+    """Resolve the Phase-0 notice into a NeedsSkill(workiq_send_email) using the unified card."""
     variant = context.parameters.variant
     if not context.release.ccd:
         return Blocked("no CCD set for this release")
-    if schedule.parse_date(context.release.ccd) is None:
+    ccd = schedule.parse_date(context.release.ccd)
+    if ccd is None:
         return Blocked("invalid CCD for this release")
 
     cfg = CONFIG
@@ -114,11 +78,25 @@ def build(context: StepContext[BuildParameters]):
     subject_tpl, body_tpl = parsed
 
     ctx = release_ctx(context)
+    is_update = variant.casefold() == "update"
+    today = is_update and context.clock.now().date() == ccd
     subject = T.fill(subject_tpl, ctx)
     body = T.fill(body_tpl, ctx)
-    html = _html(variant, ctx)
+    if is_update and not today:
+        subject = subject.replace(" (Today)", f" ({ctx['ccd_date']})")
+        body = body.replace("**Today**", f"**{ctx['ccd_long']}**")
 
-    recipients, rnote, prefix = resolve_recipients(context, cfg.get("recipients", []))
+    live_dl = _resolve_dl(context)
+    recipients, rnote, prefix = resolve_recipients(context, live_dl)
+    stage_mode = "ccd" if is_update else "preflight"
+    composed = SE.compose(
+        context.release,
+        [],
+        recipients,
+        stage=stage_mode,
+        ccd_today=today,
+        ccd_long=ctx["ccd_long"],
+    )
     subject_out = f"{prefix}{subject}"
 
     return NeedsSkill(
@@ -126,9 +104,8 @@ def build(context: StepContext[BuildParameters]):
         payload={
             "to": recipients,
             "subject": subject_out,
-            "body": html,          # HTML body (has the rendered table + hotfix link)
+            "body": composed["html"],
             "isHtml": True,
-            # Preview metadata only; never replace the exact claimed HTML payload.
             "_plain_body": body,
         },
         record_as=ID,
@@ -137,19 +114,16 @@ def build(context: StepContext[BuildParameters]):
         outbound=True,
     )
 
-KNOWLEDGE = {'summary': 'Email the early code-complete notice to the Android distribution list.',
- 'what': "Sends a heads-up that code complete for the month's release is approaching, so teams "
-         'stop landing feature work and switch to the hotfix cherry-pick process after code '
-         'complete. Filled from a local template with the CCD and release owner.\n',
- 'how': 'Scout uses `notification prepare --release <id> --source step --phase preflight '
-        "--step notice`, reviews and claims the exact hash, sends only the claim's payload, "
-        'then acknowledges with `notification result`. Recipients are the configured '
-        'distribution list; for a test, redirect with the `send_to` mock knob.\n',
- 'links': [{'name': 'Hotfix cherry-pick guide (linked in the email)',
-            'url': 'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/microsoft-authenticator/microsoft-authenticator/release/cherry-pick-to-hotfix-guidelines'}],
+KNOWLEDGE = {'summary': 'Email the early code-complete notice using the unified partner status template.',
+ 'what': "Sends a heads-up to the consolidated partner DL that code complete for the month's "
+         'SDK release is approaching (showing the 4-milestone card with Code Complete ETA and '
+         'the hotfix cherry-pick policy, without versions or changelogs).\n',
+ 'how': 'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`) '
+        'to `status_email.recipients` from `config/notifications.yaml`. Redirect for local '
+        'testing with `status_email.send_to` or `preflight.notice.send_to` in `mocks.local.yaml`.\n',
  'faqs': [{'q': 'Who receives it?',
-           'a': 'The configured distribution list (androididentity@microsoft.com). Redirect '
-                'for a test with preflight.notice.send_to.'},
+           'a': 'The consolidated distribution list in config/notifications.yaml '
+                '(status_email.recipients). Redirect for testing with status_email.send_to.'},
           {'q': "What's the difference between the 'initial' and 'update' variant?",
-           'a': "'initial' is the CCD-7 heads-up; 'update' is the CCD-day reminder ('code "
-                "complete is Today'). Set via --param variant=update."}]}
+           'a': "'initial' is the CCD-7 heads-up (Scheduled); 'update' is the CCD-day reminder "
+                "('Code Complete is Today' / In Progress). Set via --param variant=update."}]}

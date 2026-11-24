@@ -17,33 +17,33 @@ Placeholders filled deterministically by `prepare-notice`:
 The hotfix cherry-pick guide link is a fixed external reference (see EXTERNAL-REFERENCES.md).
 
 ===INITIAL:SUBJECT===
-Android Authenticator App & Broker Libraries Code Completion Date - {month} Release
+Auth Client Android SDKs {month} Release — Code Complete Reminder ({ccd_date})
 ===INITIAL:BODY===
 Hi everyone,
 
-This is a reminder that the Microsoft Android Authenticator app and Broker libraries code complete date for the {month} release is **{ccd_long}.**
+This is a reminder that the Auth Client Android SDK libraries code complete date for the {month} release is **{ccd_long}.**
 
-Any check-ins made after code complete will require following [the hotfix cherry-pick guide](https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/microsoft-authenticator/microsoft-authenticator/release/cherry-pick-to-hotfix-guidelines) and EM approval.
+Any check-ins made after code complete will require following the hotfix cherry-pick process and EM approval.
 
 | **Month** | **Code Complete Date** | **Android Release Owner** |
 | --- | --- | --- |
-| {month} | {ccd_date} | **Primary (Release Owner — covers Broker + Auth App):** @{owner_at} |
+| {month} | {ccd_date} | **Primary (Release Owner — covers Common + MSAL + Broker):** @{owner_at} |
 
 Thank you,
 
 {owner}
 ===UPDATE:SUBJECT===
-Android Authenticator App & Broker Libraries Code Completion Date - {month} Release (Today)
+Auth Client Android SDKs {month} Release — Code Complete (Today)
 ===UPDATE:BODY===
 Hi everyone,
 
-This is a reminder that the Microsoft Android Authenticator app and Broker libraries code complete date for the {month} release is **Today**
+This is a reminder that the Auth Client Android SDK libraries code complete date for the {month} release is **Today**
 
-Any check-ins made after code complete will require following [the hotfix cherry-pick guide](https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/microsoft-authenticator/microsoft-authenticator/release/cherry-pick-to-hotfix-guidelines) and EM approval.
+Any check-ins made after code complete will require following the hotfix cherry-pick process and EM approval.
 
 | **Month** | **Code Complete Date** | **Android Release Owner** |
 | --- | --- | --- |
-| {month} | {ccd_date} | **Primary (Release Owner — covers Broker + Auth App):** @{owner_at} |
+| {month} | {ccd_date} | **Primary (Release Owner — covers Common + MSAL + Broker):** @{owner_at} |
 
 Thank you,
 

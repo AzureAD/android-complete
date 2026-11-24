@@ -536,7 +536,7 @@ def test_build_verify_mrwp_in_flight_when_run_still_executing():
         "mrwp_id": "999", "build_status": "inProgress"}})
     out = _bv_build(orch, st, "mrwp_ecs")
     assert out["kind"] == "in_progress"
-    assert "still running" in out["note"] and "poll" in out["note"].lower()
+    assert "still running" in out["note"] and "re-evaluate" in out["note"].lower()
     assert out["poll_in_min"] == 30
     # a completed run still runs the normal rule (control): injected stages, no in-flight
     st2, orch2 = _bv_state({})
@@ -860,8 +860,8 @@ def test_lockdown_completed_result_does_not_hide_malformed_new_input(lockdown_cl
 
 
 def test_notice_build_real_recipients_and_html():
-    """Real send: notice.build targets the REAL DL and renders a proper <table> +
-    clean hotfix anchor. (Redirect to yourself is the send_to mock knob, not automatic.)"""
+    """Real send: notice.build targets the consolidated DL and renders the unified 4-milestone
+    card + hotfix cherry-pick policy text (without the retired hyperlink)."""
     from steps.preflight import notice
     from steps.lib import templating as T
     st = ReleaseState(release_id="2026-08", ccd="2026-08-12", ccd_source="default",
@@ -869,9 +869,10 @@ def test_notice_build_real_recipients_and_html():
     out = _invoke(notice.build, st)
     html = out.payload["body"]
     assert "<table" in html and "</table>" in html
-    assert ">the hotfix cherry-pick guide</a>" in html          # clean anchor, no raw URL
+    assert "hotfix cherry-pick process and EM approval" in html
+    assert "cherry-pick-to-hotfix-guidelines" not in html
     assert "August" in html and "08/12/2026" in html and "@pedroro" in html
-    assert "androididentity@microsoft.com" in out.payload["to"]  # real DL by default
+    assert out.payload["to"] == ["authsdkrelease@microsoft.com", "androididentity@microsoft.com"]
     assert not out.payload["subject"].startswith("[TEST")
     assert T.ordinal(12) == "12th" and T.ordinal(21) == "21st"
 
