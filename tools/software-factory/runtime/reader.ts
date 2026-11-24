@@ -8,7 +8,7 @@ import type { Application } from "../core/application.ts";
 import { exactKeys, FactoryError, object, text } from "../core/contracts.ts";
 import { jsonValue } from "../core/lifecycle-contracts.ts";
 import { workerGuidance } from "./guidance.ts";
-import { fastFileReadToken, sourceInventory, sourceReceipt } from "./sources.ts";
+import { sourceInventory, sourceReceipt } from "./sources.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 export const MAX_WORKER_VIEW_LINES = 2000;
@@ -182,15 +182,11 @@ export function createReaderTools(application: () => Application, host: () => Re
             const featureId = text(args.featureId, "Feature ID");
             app.lifecycle.assertFresh(featureId, text(args.executionId, "Execution ID"));
             const before = await sourceReceipt(app.lifecycle, execution, target, featureId);
-            const preReadToken = definition.native === "view" && before ? fastFileReadToken(execution, target) : null;
             const name = definition.native === "grep" ? pipeline.grep : definition.native;
             const result = await session.rpc.tools.execute({ name, arguments: jsonValue(nativeArgs) });
             if (typeof result !== "string" && result.resultType !== "success") throw new FactoryError("worker_read_failed", result.textResultForLlm, 403);
             const freshExec = app.lifecycle.assertFresh(featureId, execution.id);
-            const postReadToken = preReadToken ? fastFileReadToken(freshExec, target) : null;
-            const after = preReadToken && postReadToken === preReadToken
-                ? before
-                : await sourceReceipt(app.lifecycle, freshExec, target, featureId);
+            const after = await sourceReceipt(app.lifecycle, freshExec, target, featureId);
             if (JSON.stringify(before) !== JSON.stringify(after)) throw new FactoryError("source_drift", "Source changed during the native read. Its result was discarded; no stale attestation was returned.", 409);
             const output = typeof result === "string" ? result : result.textResultForLlm;
             const bounded = output.length <= MAX_WORKER_OUTPUT_CHARS ? output : `${output.slice(0, MAX_WORKER_OUTPUT_CHARS)}\n[Output truncated; narrow the search or read a smaller range.]`;

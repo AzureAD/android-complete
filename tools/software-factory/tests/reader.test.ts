@@ -504,3 +504,52 @@ test("admitted observer repair worktrees under .software-factory-repairs are rea
         execFileSync("git", ["worktree", "remove", "--force", repairRoot], { cwd: f.workspace });
     } finally { f.cleanup(); }
 });
+
+test("viewing one tracked file rejects concurrent edits to another tracked file in the same repository as source_drift", async () => {
+    const f = fixture();
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+    try {
+        git(f.workspace, "init", "--quiet");
+        git(f.workspace, "config", "user.name", "Fixture");
+        git(f.workspace, "config", "user.email", "fixture@example.invalid");
+        const fileA = path.join(f.workspace, "A.kt");
+        const fileB = path.join(f.workspace, "B.kt");
+        writeFileSync(fileA, "fun a() = 1\n");
+        writeFileSync(fileB, "fun b() = 1\n");
+        git(f.workspace, "add", "A.kt", "B.kt");
+        git(f.workspace, "commit", "--quiet", "-m", "Initial tracked files");
+
+        const feature = f.app.execute({ kind: "create_feature", requestId: "sibling-file-drift", input: requirements() }, actor);
+        f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor,
+            { granted: true, revisionId: feature.current.id, actor });
+
+        const cleanPins = await sourcePins(f.app.lifecycle);
+        const checkExec = f.app.lifecycle.begin(feature.id, "check", actor, cleanPins);
+        let mutateSibling = false;
+        const session = {
+            sessionId: checkExec.sessionId,
+            rpc: {
+                tools: {
+                    initializeAndValidate: async () => ({ toolNames: [] }),
+                    getCurrentMetadata: async () => ({ tools: ["view", "glob", "grep"].map((name) => ({ name, description: "fixture" })) }),
+                    execute: async () => {
+                        if (mutateSibling) writeFileSync(fileB, "fun b() = 2\n");
+                        return "fun a() = 1\n";
+                    },
+                },
+            },
+        };
+        const readTool = createReaderTools(() => f.app, () => session)[0]!;
+
+        const cleanOutput = await readTool.handler({ featureId: feature.id, executionId: checkExec.id, path: fileA }) as string;
+        assert.match(cleanOutput, /"matchesAdmission":true/);
+        assert.match(cleanOutput, /"clean":true/);
+
+        mutateSibling = true;
+        await assert.rejects(
+            () => readTool.handler({ featureId: feature.id, executionId: checkExec.id, path: fileA }),
+            (error: unknown) => error instanceof FactoryError && error.code === "source_drift" && error.status === 409,
+            "viewing A.kt must reject concurrent edits to tracked sibling B.kt as source_drift (409)",
+        );
+    } finally { f.cleanup(); }
+});

@@ -22,16 +22,33 @@ export { sourcePins, repositorySourceRoot } from "./sources.ts";
 
 export interface NativeSession {
     sessionId: string;
-    workflow: Pick<CopilotSession["workflow"], "run" | "resume" | "pause" | "cancel" | "getRun" | "getRunDetail">;
+    on?: CopilotSession["on"];
+    workflow: Pick<CopilotSession["workflow"], "run" | "resume" | "pause" | "cancel" | "getRun" | "getRunDetail"> & {
+        waitForRun?: CopilotSession["workflow"]["waitForRun"];
+    };
     rpc: {
         extensions: Pick<CopilotSession["rpc"]["extensions"], "list" | "reload">;
         tools: Pick<CopilotSession["rpc"]["tools"], "execute" | "initializeAndValidate" | "getCurrentMetadata">;
+        workflow?: Pick<CopilotSession["rpc"]["workflow"], "run">;
     };
 }
 
+type NativeClient = ReturnType<typeof createClient>;
+
+export interface OwnedRuntimeClient {
+    start: NativeClient["start"];
+    stop: NativeClient["stop"];
+    createSession: (cfg: Parameters<NativeClient["createSession"]>[0]) => Promise<NativeSession>;
+    resumeSession: (sessionId: string, cfg: Parameters<NativeClient["resumeSession"]>[1]) => Promise<NativeSession>;
+    startAhpHost: NativeClient["startAhpHost"];
+}
+
+const TERMINAL_WORKFLOW_STATUSES = new Set<WorkflowRunResult["status"]>(["completed", "halted", "paused", "cancelled", "error"]);
+
 export class NativeRuntime {
     private readonly factory: Lifecycle;
-    private client?: ReturnType<typeof createClient>;
+    private client?: OwnedRuntimeClient;
+    private readonly customClient: boolean;
     private readonly ahpHosts = new Map<string, Awaited<ReturnType<ReturnType<typeof createClient>["startAhpHost"]>>>();
     private readonly sessions = new Map<string, NativeSession>();
     private readonly launching = new Set<string>();
@@ -46,13 +63,16 @@ export class NativeRuntime {
     private readonly timer: NodeJS.Timeout;
     private started = false;
     private polling = false;
+    private pollRequested = false;
     private stopping = false;
     private readonly pending = new Set<Promise<void>>();
 
-    constructor(factory: Lifecycle, joined?: NativeSession, shared?: SharedAuthority) {
+    constructor(factory: Lifecycle, joined?: NativeSession, shared?: SharedAuthority, client?: OwnedRuntimeClient) {
         this.factory = factory;
         this.joined = joined;
         this.shared = shared;
+        this.client = client;
+        this.customClient = Boolean(client);
         if (joined) {
             factory.store.heartbeat(joined.sessionId, this.ownerToken);
             this.leaseSessions.add(joined.sessionId);
@@ -116,7 +136,7 @@ export class NativeRuntime {
                 return;
             }
             this.factory.store.updateExecution(featureId, execution.id, { phase: this.joined ? "Using the current Copilot chat" : "Checking local Copilot runtime" });
-            if (execution.sessionKind !== "chat") {
+            if (execution.sessionKind !== "chat" && !this.customClient) {
                 const runtime = requireRuntime();
                 const { ownedRuntimeEnvironment } = await import("./host.ts");
                 const node = await resolveExtensionInterpreter(ownedRuntimeEnvironment(process.env));
@@ -200,9 +220,11 @@ export class NativeRuntime {
         this.heartbeats.set(execution.sessionId, Date.now());
         const { createClient: makeClient, ownedSessionHostOptions, sessionConfiguration } = await import("./host.ts");
         if (!this.started) {
-            requireRuntime();
-            this.client ??= makeClient(this.factory.store.registry.project.workspace, path.dirname(this.factory.store.registry.databasePath));
-            await this.client.start(); this.started = true;
+            if (!this.customClient) {
+                requireRuntime();
+                this.client ??= makeClient(this.factory.store.registry.project.workspace, path.dirname(this.factory.store.registry.databasePath));
+            }
+            await this.client!.start(); this.started = true;
             if (this.stopping) throw new FactoryError("runtime_stopping", "The host stopped during Copilot startup. No workflow was launched.", 409);
         }
         const evidence = path.join(path.dirname(this.factory.store.registry.databasePath), "approval-evidence");
@@ -283,11 +305,81 @@ export class NativeRuntime {
             this.factory.store.change(featureId, (state) => this.factory.store.event(state, "stale_chat_controller_rejected", executionId));
             return;
         }
+        const message = error instanceof Error ? error.message : "Native workflow execution failed.";
         this.factory.store.updateExecution(featureId, executionId, {
             status: "error", phase: existing.runtimeId ? "Workflow stopped" : "Could not start workflow",
             errorCode: error instanceof FactoryError ? error.code : "workflow_failed",
-            error: error instanceof Error ? error.message : "Native workflow execution failed.",
+            error: message,
         });
+        if (!existing.runtimeId) {
+            for (const control of this.factory.store.state(featureId).controls) {
+                if (control.executionId === executionId && control.status === "pending") {
+                    this.markControl(featureId, control.id, message);
+                }
+            }
+        }
+    }
+
+    private canAcquireOrOwnSession(execution: Execution): boolean {
+        if (execution.sessionKind === "chat") {
+            return this.joined?.sessionId === execution.sessionId &&
+                this.factory.store.ownsSession(execution.sessionId, this.ownerToken);
+        }
+        return this.factory.store.ownsSession(execution.sessionId, this.ownerToken) ||
+            !this.factory.store.ownerOnline(execution.sessionId);
+    }
+
+    private async acquireSessionForPoll(execution: Execution): Promise<NativeSession | null> {
+        if (!this.canAcquireOrOwnSession(execution)) return null;
+        try {
+            return await this.session(execution);
+        } catch (error) {
+            if (error instanceof FactoryError && (error.code === "session_owner_exists" || error.code === "runtime_stopping")) {
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    private async admitRun(featureId: string, executionId: string, session: NativeSession, admitted: WorkflowRunResult): Promise<WorkflowRunResult | null> {
+        const current = this.factory.store.execution(featureId, executionId);
+        if (["superseded", "cancelled", "completed"].includes(current.status)) {
+            this.factory.store.updateExecution(featureId, executionId, { runtimeId: admitted.runId });
+            if (!TERMINAL_WORKFLOW_STATUSES.has(admitted.status) && current.status !== "completed") {
+                return session.workflow.cancel(admitted.runId);
+            }
+            return admitted;
+        }
+        if (TERMINAL_WORKFLOW_STATUSES.has(admitted.status)) {
+            this.settle(featureId, executionId, admitted);
+            for (const control of this.factory.store.state(featureId).controls) {
+                if (control.executionId !== executionId || control.status !== "pending") continue;
+                if ((admitted.status === "cancelled" && control.action === "cancel") ||
+                    (admitted.status === "paused" && control.action === "pause")) {
+                    this.markControl(featureId, control.id);
+                } else if (admitted.status !== "paused") {
+                    this.markControl(featureId, control.id, "The workflow already settled before the control could run.");
+                }
+            }
+            if (admitted.status === "paused") {
+                await this.poll();
+                const latest = this.factory.store.execution(featureId, executionId);
+                if (latest.status === "cancelled") {
+                    return session.workflow.getRun(admitted.runId);
+                }
+            }
+            return admitted;
+        }
+        if (this.stopping) {
+            this.factory.store.updateExecution(featureId, executionId, { runtimeId: admitted.runId, status: "running" });
+            return session.workflow.pause(admitted.runId);
+        }
+        this.factory.store.updateExecution(featureId, executionId, {
+            runtimeId: admitted.runId,
+            status: "running",
+        });
+        await this.poll();
+        return null;
     }
 
     private async observeUsage(featureId: string, executionId: string, session: NativeSession, runId: string): Promise<WorkflowRunDetail | null> {
@@ -327,16 +419,53 @@ export class NativeRuntime {
         if (execution.kind !== "check") await this.shared?.assertRun(featureId, execution.id);
         this.factory.store.change(featureId, (state) => {
             const current = state.executions.find((item) => item.id === execution.id)!;
+            if (current.status !== "starting") {
+                throw new FactoryError("execution_authority_closed", "This execution is no longer awaiting startup.", 409);
+            }
             if (current.admissionClaim || current.runtimeId) throw new FactoryError("native_admission_exists", "This execution was already submitted or its admission is uncertain. Inspect the owning run; do not submit it twice.", 409);
             current.admissionClaim = this.ownerToken;
         }, { localOnly: true });
         this.activeRuns.add(execution.id);
         let result: WorkflowRunResult;
         try {
-            result = await session.workflow.run(names[execution.kind], {
-                args: { featureId, executionId: execution.id }, notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check", logPhaseNames: true,
-                limits: { maxAiCredits: null, ...execution.limits },
-            });
+            const notifyOnComplete = execution.sessionKind === "chat" && execution.kind !== "check";
+            const limits = { maxAiCredits: null, ...execution.limits };
+            if (session.rpc.workflow?.run && session.workflow.waitForRun) {
+                let admitted: WorkflowRunResult;
+                try {
+                    admitted = await session.rpc.workflow.run({
+                        name: names[execution.kind],
+                        args: { featureId, executionId: execution.id },
+                        options: { limits, notifyOnComplete, logPhaseNames: true },
+                    });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    throw new Error(`Failed to start workflow "${names[execution.kind]}": ${message}`, { cause: error });
+                }
+                const immediate = await this.admitRun(featureId, execution.id, session, admitted);
+                result = immediate ?? await session.workflow.waitForRun(admitted.runId);
+            } else {
+                let recordedRunId = false;
+                const unsubscribe = session.on?.("workflow.run_updated", (event) => {
+                    const runId = event.data?.runId;
+                    if (recordedRunId || typeof runId !== "string" || !runId) return;
+                    recordedRunId = true;
+                    const current = this.factory.store.execution(featureId, execution.id);
+                    if (["superseded", "cancelled", "completed"].includes(current.status)) {
+                        this.factory.store.updateExecution(featureId, execution.id, { runtimeId: runId });
+                        return;
+                    }
+                    this.factory.store.updateExecution(featureId, execution.id, { runtimeId: runId, status: "running" });
+                    void this.poll().catch(() => {});
+                });
+                try {
+                    result = await session.workflow.run(names[execution.kind], {
+                        args: { featureId, executionId: execution.id }, notifyOnComplete, logPhaseNames: true, limits,
+                    });
+                } finally {
+                    unsubscribe?.();
+                }
+            }
         } finally {
             this.activeRuns.delete(execution.id);
         }
@@ -351,11 +480,16 @@ export class NativeRuntime {
     async control(featureId: string, executionId: string, action: "pause" | "resume" | "cancel" | "refresh", actor: Actor, limits: WorkflowLimitOverrides = {}): Promise<Json> {
         const execution = this.factory.store.execution(featureId, executionId);
         if (action === "cancel" && execution.status === "starting" && !execution.runtimeId) {
-            this.factory.store.updateExecution(featureId, executionId, { status: "cancelled", phase: "Cancelled before native admission" });
-            if (this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
-                await this.shared?.releaseFailedRun(featureId, executionId).catch(() => {});
+            if (!execution.admissionClaim && !this.activeRuns.has(executionId)) {
+                this.factory.store.updateExecution(featureId, executionId, { status: "cancelled", phase: "Cancelled before native admission" });
+                if (this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                    await this.shared?.releaseFailedRun(featureId, executionId).catch(() => {});
+                }
+                return { executionId, status: "cancelled", agentsStarted: 0 };
             }
-            return { executionId, status: "cancelled", agentsStarted: 0 };
+            if (!this.activeRuns.has(executionId) && !this.factory.store.ownerOnline(execution.sessionId)) {
+                throw new FactoryError("native_admission_uncertain", "A prior controller claimed native admission without recording a run ID, and its session lease expired. Reconcile the session before cancelling or starting a successor.", 409);
+            }
         }
         if (action === "refresh") {
             if (!execution.runtimeId) return jsonValue(execution);
@@ -403,17 +537,29 @@ export class NativeRuntime {
     }
 
     private async poll(): Promise<void> {
-        if (this.polling || this.stopping) return;
+        if (this.stopping) return;
+        if (this.polling) {
+            this.pollRequested = true;
+            return;
+        }
         this.polling = true;
         try {
-            const nowMs = Date.now();
-            for (const id of this.leaseSessions) {
-                if (nowMs - (this.heartbeats.get(id) ?? 0) >= 5_000 || !this.factory.store.ownsSession(id, this.ownerToken)) {
-                    this.factory.store.heartbeat(id, this.ownerToken);
-                    this.heartbeats.set(id, nowMs);
-                }
+            do {
+                this.pollRequested = false;
+                await this.pollOnce();
+            } while (this.pollRequested && !this.stopping);
+        } finally { this.polling = false; }
+    }
+
+    private async pollOnce(): Promise<void> {
+        const nowMs = Date.now();
+        for (const id of this.leaseSessions) {
+            if (nowMs - (this.heartbeats.get(id) ?? 0) >= 5_000 || !this.factory.store.ownsSession(id, this.ownerToken)) {
+                this.factory.store.heartbeat(id, this.ownerToken);
+                this.heartbeats.set(id, nowMs);
             }
-            for (const feature of this.factory.store.registry.list()) {
+        }
+        for (const feature of this.factory.store.registry.list()) {
                 const state = this.factory.store.state(feature.id);
                 let sharedRecord: ReturnType<NonNullable<typeof this.shared>["cached"]> | undefined;
                 const getSharedRecord = () => {
@@ -421,56 +567,72 @@ export class NativeRuntime {
                     return sharedRecord;
                 };
                 for (const execution of state.executions) {
-                    const residentOwner = this.factory.store.ownsSession(execution.sessionId, this.ownerToken);
-                    if (residentOwner && execution.status === "starting" && !execution.runtimeId && !this.launching.has(execution.id)) {
+                    const hasPendingStop = state.controls.some((item) =>
+                        item.executionId === execution.id && item.status === "pending" && (item.action === "pause" || item.action === "cancel"));
+                    const canOwn = this.canAcquireOrOwnSession(execution);
+                    if (canOwn && execution.status === "starting" && !execution.runtimeId && !this.launching.has(execution.id) && !hasPendingStop) {
                         const cachedShared = execution.kind !== "check" ? getSharedRecord() : null;
                         const claimingShared = execution.phase === "Claiming shared execution" ||
                             Boolean(cachedShared && cachedShared.snapshot.lock?.id !== execution.id);
                         if (!claimingShared) this.launch(feature.id, execution);
                     }
-                    if (residentOwner &&
-                        execution.status === "running" && execution.runtimeId &&
-                        !this.activeRuns.has(execution.id)) {
-                        const session = await this.session(execution);
-                        const runState = await session.workflow.getRun(execution.runtimeId);
-                        if (runState.status === "halted" && execution.runtimeFingerprint === loadedWorkflowFingerprint) {
-                            this.activeRuns.add(execution.id);
-                            const recoverTask = (async () => {
-                                try {
-                                    this.factory.assertFresh(feature.id, execution.id);
-                                    await this.registration(feature.id, execution, session);
-                                    if (execution.kind !== "check") await this.shared?.assertRun(feature.id, execution.id);
-                                    const savedPhase = execution.phase;
-                                    this.factory.store.updateExecution(feature.id, execution.id, {
-                                        status: "running", phase: savedPhase, error: null, errorCode: null,
-                                    });
-                                    const result = await session.workflow.resume(execution.runtimeId!, {
-                                        notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check",
-                                        logPhaseNames: true,
-                                    });
-                                    this.settle(feature.id, execution.id, result);
-                                    await this.observeUsage(feature.id, execution.id, session, result.runId);
-                                    if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
-                                        this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
-                                        await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
-                                    }
-                                } catch (error) {
-                                    this.fail(feature.id, execution.id, error);
-                                    if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
-                                        this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
-                                        await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
-                                    }
-                                } finally {
-                                    this.activeRuns.delete(execution.id);
+                    if (canOwn &&
+                        (execution.status === "running" || execution.status === "starting") && execution.runtimeId &&
+                        !this.activeRuns.has(execution.id) && !hasPendingStop) {
+                        try {
+                            const session = await this.acquireSessionForPoll(execution);
+                            if (session) {
+                                const runState = await session.workflow.getRun(execution.runtimeId);
+                                if (runState.status === "halted" && execution.runtimeFingerprint === loadedWorkflowFingerprint) {
+                                    this.activeRuns.add(execution.id);
+                                    const recoverTask = (async () => {
+                                        try {
+                                            this.factory.assertFresh(feature.id, execution.id);
+                                            await this.registration(feature.id, execution, session);
+                                            if (execution.kind !== "check") await this.shared?.assertRun(feature.id, execution.id);
+                                            const savedPhase = execution.phase;
+                                            this.factory.store.updateExecution(feature.id, execution.id, {
+                                                status: "running", phase: savedPhase, error: null, errorCode: null,
+                                            });
+                                            const result = await session.workflow.resume(execution.runtimeId!, {
+                                                notifyOnComplete: execution.sessionKind === "chat" && execution.kind !== "check",
+                                                logPhaseNames: true,
+                                            });
+                                            this.settle(feature.id, execution.id, result);
+                                            await this.observeUsage(feature.id, execution.id, session, result.runId);
+                                            if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
+                                                this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                                await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                                            }
+                                        } catch (error) {
+                                            this.fail(feature.id, execution.id, error);
+                                            if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
+                                                this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                                await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                                            }
+                                        } finally {
+                                            this.activeRuns.delete(execution.id);
+                                        }
+                                    })();
+                                    this.pending.add(recoverTask);
+                                    void recoverTask.finally(() => this.pending.delete(recoverTask));
+                                    continue;
                                 }
-                            })();
-                            this.pending.add(recoverTask);
-                            void recoverTask.finally(() => this.pending.delete(recoverTask));
-                            continue;
-                        }
-                        if (runState.status !== "running" && runState.status !== "pending") {
-                            this.settle(feature.id, execution.id, runState);
-                            await this.observeUsage(feature.id, execution.id, session, runState.runId);
+                                if (runState.status !== "running" && runState.status !== "pending") {
+                                    this.settle(feature.id, execution.id, runState);
+                                    await this.observeUsage(feature.id, execution.id, session, runState.runId);
+                                    if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
+                                        this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
+                                        await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
+                                    }
+                                    continue;
+                                }
+                                if (execution.status === "starting" && runState.status === "running") {
+                                    this.factory.store.updateExecution(feature.id, execution.id, { status: "running" });
+                                }
+                            }
+                        } catch (error) {
+                            this.fail(feature.id, execution.id, error);
                             if (this.factory.store.execution(feature.id, execution.id).status === "error" &&
                                 this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) {
                                 await this.shared?.releaseFailedRun(feature.id, execution.id).catch(() => {});
@@ -478,7 +640,7 @@ export class NativeRuntime {
                             continue;
                         }
                     }
-                    if (residentOwner &&
+                    if (this.factory.store.ownsSession(execution.sessionId, this.ownerToken) &&
                         execution.status === "running" && execution.runtimeId &&
                         nowMs - (this.lastUsageObserved.get(execution.id) ?? 0) >= 5_000) {
                         this.lastUsageObserved.set(execution.id, nowMs);
@@ -490,10 +652,21 @@ export class NativeRuntime {
                     if (this.activeControls.has(control.id)) continue;
                     const execution = this.factory.store.execution(feature.id, control.executionId);
                     if (!execution.runtimeId) continue;
-                    if (execution.sessionKind === "chat" && execution.sessionId !== this.joined?.sessionId) continue;
-                    if (this.factory.store.ownerOnline(execution.sessionId) && !this.factory.store.ownsSession(execution.sessionId, this.ownerToken)) continue;
-                    // A resident owner handles running work. A cold owner may recover a settled run.
-                    if (execution.sessionKind !== "chat" && !this.sessions.has(execution.id) && ["starting", "running"].includes(execution.status)) continue;
+                    if (!this.canAcquireOrOwnSession(execution)) continue;
+                    let reopenedSession: NativeSession | null = null;
+                    try {
+                        reopenedSession = await this.acquireSessionForPoll(execution);
+                    } catch (error) {
+                        this.markControl(feature.id, control.id, error instanceof Error ? error.message : "Native control failed.");
+                        const current = this.factory.store.execution(feature.id, execution.id);
+                        if (!["superseded", "cancelled", "completed"].includes(current.status)) {
+                            this.factory.store.updateExecution(feature.id, execution.id, {
+                                status: "error", error: error instanceof Error ? error.message : "Control failed; refresh the actual native outcome.",
+                            });
+                        }
+                        continue;
+                    }
+                    if (!reopenedSession) continue;
                     const claimed = this.factory.store.change(feature.id, (current) => {
                         const request = current.controls.find((item) => item.id === control.id)!;
                         if (request.status !== "pending") return false;
@@ -502,9 +675,9 @@ export class NativeRuntime {
                     }, { localOnly: true });
                     if (!claimed) continue;
                     this.activeControls.add(control.id);
+                    const session = reopenedSession;
                     const task = (async () => {
                         try {
-                            const session = await this.session(execution);
                             if (!execution.runtimeId) throw new FactoryError("run_not_started", "The native run has not been admitted yet.", 409);
                             this.assertOwner(execution);
                             if (control.action === "resume") {
@@ -578,7 +751,6 @@ export class NativeRuntime {
                     if (!active) await this.start(feature.id, "monitor", state.schedule.actor);
                 }
             }
-        } finally { this.polling = false; }
     }
 
     private markControl(featureId: string, id: string, error: string | null = null) {
