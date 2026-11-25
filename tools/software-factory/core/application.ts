@@ -7,26 +7,12 @@ import { FactoryError, parseCommand, text, validateActor, type Actor, type Conse
 import { Registry } from "./registry.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import type { Provider } from "../providers/provider.ts";
-import type { NativeSession } from "../runtime/controller.ts";
-import type { DeliverySettings, Execution, ExecutionLimits, FactoryFeature, Json, WorkflowAdmission, WorkflowKind } from "./lifecycle-contracts.ts";
+import type { NativeRuntime, NativeSession } from "../runtime/controller.ts";
+import type { DeliverySettings, Execution, ExecutionLimits, FactoryFeature, WorkflowAdmission, WorkflowKind } from "./lifecycle-contracts.ts";
 import { dispatch, prepare } from "./commands.ts";
 import { SharedAuthority } from "./shared.ts";
 import type { SharedProvider } from "./shared-contracts.ts";
 import { object } from "./contracts.ts";
-
-export type { NativeSession };
-
-export interface RuntimeController {
-    launch(featureId: string, execution: Execution): void;
-    control(featureId: string, executionId: string, action: "pause" | "resume" | "cancel" | "refresh", actor: Actor, limits?: ExecutionLimits): Promise<Json>;
-    close(): Promise<void>;
-}
-
-export type RuntimeFactory = (
-    lifecycle: Lifecycle,
-    joinedSession: NativeSession | undefined,
-    shared: SharedAuthority,
-) => Promise<RuntimeController> | RuntimeController;
 
 export function defaultWorkspace(): string {
     return fileURLToPath(new URL("../../../", import.meta.url));
@@ -42,23 +28,14 @@ export class Application {
     readonly registry: Registry;
     readonly lifecycle: Lifecycle;
     readonly shared: SharedAuthority;
-    private native?: RuntimeController;
-    private runtimePending?: Promise<RuntimeController>;
-    private readonly createRuntime?: RuntimeFactory;
+    private native?: NativeRuntime;
     private joinedSession?: NativeSession;
     private closed = false;
 
-    constructor(options: {
-        database?: string;
-        workspace?: string;
-        provider?: Provider;
-        sharedProvider?: SharedProvider;
-        runtimeFactory?: RuntimeFactory;
-    } = {}) {
+    constructor(options: { database?: string; workspace?: string; provider?: Provider; sharedProvider?: SharedProvider } = {}) {
         this.registry = new Registry(options.database || defaultDatabase(), options.workspace || defaultWorkspace());
         this.lifecycle = new Lifecycle(this.registry, options.provider);
         this.shared = new SharedAuthority(this, options.sharedProvider);
-        this.createRuntime = options.runtimeFactory;
     }
 
     execute(input: unknown, actor: Actor, consent?: Consent): Feature {
@@ -176,24 +153,12 @@ export class Application {
         }
     }
 
-    async runtime(): Promise<RuntimeController> {
-        if (this.native) return this.native;
-        const factory: RuntimeFactory = this.createRuntime ?? (async (lifecycle, joinedSession, shared) => {
+    async runtime(): Promise<NativeRuntime> {
+        if (!this.native) {
             const { NativeRuntime } = await import("../runtime/controller.ts");
-            return new NativeRuntime(lifecycle, joinedSession, shared);
-        });
-        this.runtimePending ??= Promise.resolve(factory(this.lifecycle, this.joinedSession, this.shared)).then(
-            (controller) => {
-                this.native = controller;
-                this.runtimePending = undefined;
-                return controller;
-            },
-            (error) => {
-                this.runtimePending = undefined;
-                throw error;
-            },
-        );
-        return this.runtimePending;
+            this.native ??= new NativeRuntime(this.lifecycle, this.joinedSession, this.shared);
+        }
+        return this.native;
     }
 
     async startWorkflow(featureId: string, kind: WorkflowKind, actor: Actor, limits: ExecutionLimits,

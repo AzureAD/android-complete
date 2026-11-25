@@ -2,7 +2,7 @@
 
 import type { AhpHostOptions, SessionConfig } from "@github/copilot-sdk";
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultWorkspace } from "../core/application.ts";
@@ -33,8 +33,7 @@ export function ownedSessionHostOptions(sessionId: string): AhpHostOptions {
 }
 
 export function createClient(workspace = defaultWorkspace(), dataHome = process.env.SOFTWARE_FACTORY_HOME) {
-    const extensionFile = fileURLToPath(new URL("../../../.github/extensions/SoftwareFactory/extension.mjs", import.meta.url));
-    const entry = existsSync(extensionFile) ? realpathSync(extensionFile) : undefined;
+    const entry = realpathSync(fileURLToPath(new URL("../../../.github/extensions/SoftwareFactory/extension.mjs", import.meta.url)));
     const identity = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
     const environment = ownedRuntimeEnvironment(process.env);
     let interpreter: Promise<ExtensionInterpreter> | undefined;
@@ -47,7 +46,7 @@ export function createClient(workspace = defaultWorkspace(), dataHome = process.
         logLevel: "error",
         extensionLaunchProvider: {
             resolve: async (request) => {
-                if (!entry || identity(realpathSync(request.modulePath)) !== identity(entry)) return {};
+                if (identity(realpathSync(request.modulePath)) !== identity(entry)) return {};
                 interpreter ??= resolveExtensionInterpreter(environment);
                 const node = await interpreter;
                 return {

@@ -16,8 +16,9 @@ export function runtimeFingerprint(): string {
             else if (name.endsWith(".ts")) digest.update(file.slice(root.length)).update(readFileSync(file));
         }
     };
-    for (const directory of ["core", "runtime", "providers", "workflows"]) visit(path.join(root, directory));
+    for (const directory of ["core", "chat", "server", "runtime", "providers", "workflows"]) visit(path.join(root, directory));
     digest.update(readFileSync(path.join(root, "package-lock.json")));
+    digest.update(readFileSync(path.join(root, "mcp.ts")));
     digest.update(readFileSync(path.join(root, "evals", "design.mjs")));
     for (const relative of [
         "../../../.github/extensions/DevDesignDoc/workflow.mjs",
@@ -27,6 +28,7 @@ export function runtimeFingerprint(): string {
         "../../../.github/extensions/CodeFeature/status.mjs",
         "../../../.github/extensions/CodeFeature/verification.mjs",
         "../../../.github/extensions/CodeFeature/ado-snapshot.ps1",
+        "../../../.github/extensions/SoftwareFactory/extension.mjs",
         ...workerGuidanceFiles.map((file) => `../../../${file}`),
     ]) digest.update(readFileSync(fileURLToPath(new URL(relative, import.meta.url))));
     return digest.digest("hex");

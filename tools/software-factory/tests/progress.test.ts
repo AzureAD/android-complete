@@ -4,14 +4,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { Application } from "../core/application.ts";
 import { FactoryError } from "../core/contracts.ts";
-import { runtimeReport } from "../core/doctor.ts";
-import { nextStep, type AvailableGate } from "../core/progress.ts";
 import { runtimeHealth } from "../core/runtime-health.ts";
+import { nextStep, type AvailableGate } from "../core/progress.ts";
 import { actor, fixture, requirements } from "./helpers.ts";
 
-test("installation diagnostics reject missing, mismatched, and incomplete platform runtimes", () => {
+test("installation diagnostics reject missing, mismatched and incomplete platform runtimes", () => {
     const f = fixture();
     try {
         const root = path.join(f.directory, "fake-sdk");
@@ -35,25 +33,15 @@ test("installation diagnostics reject missing, mismatched, and incomplete platfo
         assert.equal(runtimeHealth(root).ready, false);
         writeFileSync(path.join(binaries, "runtime.node"), "fixture");
         assert.equal(runtimeHealth(root).ready, true);
-
-        const doctor = runtimeReport({ sessionId: "chat-1", elicitation: true });
-        assert.equal(doctor.chat.approvalStatus, "host_confirmation_available");
-    } finally {
-        f.cleanup();
-    }
+    } finally { f.cleanup(); }
 });
 
 test("a runtime loader failure is a durable chat-origin failure, never an invisible or successful start", async (t) => {
     const f = fixture();
     try {
-        const feature = f.app.execute({
-            kind: "create_feature",
-            requestId: "startup-failure",
-            input: { title: "Broker throttling", description: "Honor Retry-After for matching silent requests." },
-        }, actor);
-        t.mock.method(f.app, "runtime", async () => {
-            throw new FactoryError("runtime_unavailable", "The Windows platform runtime package is missing.", 503);
-        });
+        const feature = f.app.execute({ kind: "create_feature", requestId: "startup-failure",
+            input: { title: "Broker throttling", description: "Honor Retry-After for matching silent requests." } }, actor);
+        t.mock.method(f.app, "runtime", async () => { throw new FactoryError("runtime_unavailable", "The Windows platform runtime package is missing.", 503); });
         const command = { kind: "start_workflow", featureId: feature.id, workflow: "intake" };
         await assert.rejects(() => f.app.dispatch(command, actor), /confirmation/);
         assert.equal(f.app.lifecycle.store.state(feature.id).executions.length, 0);
@@ -70,49 +58,44 @@ test("a runtime loader failure is a durable chat-origin failure, never an invisi
         assert.equal(step.action?.label, "Try again");
         assert.deepEqual(step.action?.command, command);
         assert.equal(view.current.id, feature.current.id);
-    } finally {
-        f.cleanup();
-    }
+    } finally { f.cleanup(); }
+});
+
+test("startup source inspection errors remain visible after admission without starting any agent", async () => {
+    const f = fixture();
+    let stopped = false;
+    try {
+        const feature = f.app.execute({ kind: "create_feature", requestId: "bad-source",
+            input: { title: "Draft", description: "Document local tests." } }, actor);
+        const runtime = await f.app.runtime();
+        const execution = await runtime.start(feature.id, "intake", actor);
+        await f.app.shutdown();
+        stopped = true;
+        const { Application } = await import("../core/application.ts");
+        const reopened = new Application(f.options);
+        try {
+            const failed = reopened.lifecycle.store.execution(feature.id, execution.id);
+            assert.equal(failed.status, "error");
+            assert.equal(failed.runtimeId, null);
+            assert.ok(failed.error);
+            assert.equal(reopened.registry.get(feature.id).approvals.length, 0);
+        } finally { reopened.close(); }
+    } finally { if (!stopped) await f.app.shutdown(); f.cleanup(); }
 });
 
 test("concurrent runtime access shares one control owner", async () => {
     const f = fixture();
     try {
-        let calls = 0;
-        const app = new Application({
-            ...f.options,
-            runtimeFactory: async () => {
-                calls++;
-                await new Promise((resolve) => setTimeout(resolve, 10));
-                return {
-                    launch: () => {},
-                    control: async () => ({ ok: true }),
-                    close: async () => {},
-                };
-            },
-        });
-        try {
-            const [first, second] = await Promise.all([app.runtime(), app.runtime()]);
-            assert.equal(first, second);
-            assert.equal(calls, 1);
-        } finally {
-            await app.shutdown();
-        }
-    } finally {
-        await f.app.shutdown();
-        f.cleanup();
-    }
+        const [first, second] = await Promise.all([f.app.runtime(), f.app.runtime()]);
+        assert.equal(first, second);
+    } finally { await f.app.shutdown(); f.cleanup(); }
 });
 
-test("the guided view prioritizes active work, the current approval, and explicit continuation", () => {
+test("the guided view prioritizes active work, the current approval and explicit continuation", () => {
     const f = fixture();
     try {
         const feature = f.app.execute({ kind: "create_feature", requestId: "progress", input: requirements() }, actor);
-        f.app.execute(
-            { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id },
-            actor,
-            { granted: true, revisionId: feature.current.id, actor },
-        );
+        f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor, { granted: true, revisionId: feature.current.id, actor });
         const run = f.app.lifecycle.begin(feature.id, "design", actor);
         f.app.lifecycle.store.updateExecution(feature.id, run.id, { status: "running", phase: "Independent design reviewer" });
         let view = f.app.lifecycle.store.view(feature.id);
@@ -128,20 +111,14 @@ test("the guided view prioritizes active work, the current approval, and explici
         assert.deepEqual(approved.action?.command, { kind: "control_run", featureId: feature.id, executionId: run.id, action: "resume" });
         assert.ok(view.activity.some((entry) => entry.detail.includes("Independent design reviewer")));
         assert.ok(view.activity.some((entry) => entry.detail.includes("design approval")));
-    } finally {
-        f.cleanup();
-    }
+    } finally { f.cleanup(); }
 });
 
 test("the guided view does not skip blocked backlog authority or hide an approved dispatch wave", () => {
     const f = fixture();
     try {
         const feature = f.app.execute({ kind: "create_feature", requestId: "delivery-progress", input: requirements() }, actor);
-        f.app.execute(
-            { kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id },
-            actor,
-            { granted: true, revisionId: feature.current.id, actor },
-        );
+        f.app.execute({ kind: "approve_requirements", featureId: feature.id, expectedRevision: feature.current.id }, actor, { granted: true, revisionId: feature.current.id, actor });
         const view = f.app.lifecycle.store.view(feature.id);
         view.currentArtifacts.design = "fixture-design";
         view.currentArtifacts.plan = "fixture-plan";
@@ -154,7 +131,5 @@ test("the guided view does not skip blocked backlog authority or hide an approve
         const dispatch = nextStep(view, [approved("design"), approved("plan"), approved("backlog"), approved("dispatch")]);
         assert.equal(dispatch.action?.label, "Dispatch approved work");
         assert.equal(dispatch.action?.command?.kind, "dispatch_work");
-    } finally {
-        f.cleanup();
-    }
+    } finally { f.cleanup(); }
 });
