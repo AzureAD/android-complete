@@ -589,6 +589,56 @@ test("default-off contracts reach the human packet and author/reviewer schemas w
     assert.match(ctx.calls[0].prompt.split("\nDATA:\n")[0], /existing flag framework/);
 });
 
+test("author and reviewer prompts codify Android Auth Flighting Standard defaults and exception-only escalation", async () => {
+    const d = runtimeDesign();
+    const ctx = context([evidence(), d, review(d)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+
+    const author = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+    assert.match(author, /Android Auth Flighting Standard \(Team Defaults\)/);
+    assert.match(author, /Single controlling-boundary flag by default/i);
+    assert.match(author, /BrokerFlight.*CommonFlight.*EcsFlight/);
+    assert.match(author, /Single boundary evaluation \(local state, no per-request network fetch\)/i);
+    assert.match(author, /Immediate OFF on new\/uncommitted boundaries \(zero grace buffer\)/i);
+    assert.match(author, /Do NOT invent multi-flag setups, TTL\/grace buffers or mid-flow re-checks/i);
+    assert.match(author, /Exception-only human escalation/i);
+    assert.match(author, /sections\.featureFlagsAndIsolation and humanReviewBrief/);
+
+    const reviewer = ctx.calls[2].prompt.split("\nDATA:\n")[0];
+    assert.match(reviewer, /defaultOffFeatureIsolation[\s\S]*Android Auth Flighting Standard \(Team Defaults\)/);
+    assert.match(reviewer, /single controlling-boundary flag by\s+default/i);
+    assert.match(reviewer, /single boundary evaluation of locally received\/cached ECS\/flight state/i);
+    assert.match(reviewer, /immediate OFF on new\/uncommitted boundaries with zero grace\/TTL buffer/i);
+    assert.match(reviewer, /exception-only human escalation/i);
+    assert.match(reviewer, /Challenge unnecessary multi-flag proliferation, invented TTL\/grace buffers,[\s\S]*unprompted mid-flow\/nested re-checks as over-engineering findings/i);
+    assert.match(reviewer, /explicit justification in both featureFlagsAndIsolation and humanReviewBrief for any accepted\s+deviation or off-path exception/i);
+});
+
+test("over-engineering flighting findings trigger bounded repair carrying flighting standard guidance", async () => {
+    const d = runtimeDesign();
+    const failed = review(d);
+    const criterion = failed.criteria.find((c) => c.id === "defaultOffFeatureIsolation");
+    assert.ok(criterion, "Required flag criterion is missing");
+    criterion.pass = false;
+    failed.findings.push({
+        id: "FLAG_OVERENG", rubricId: "defaultOffFeatureIsolation", severity: "major",
+        location: "sections.featureFlagsAndIsolation",
+        evidence: "Design invents a 5-minute TTL grace buffer and redundant mid-flow re-checks without an approved requirement.",
+        requiredChange: "Adopt the Android Auth Flighting Standard: single controlling-boundary evaluation of local state with immediate OFF and zero grace buffer.",
+    });
+    const corrected = runtimeDesign();
+    corrected.featureFlags[0].rollback = "Immediate OFF for new/uncommitted boundaries with zero grace buffer; already-dispatched requests cannot be recalled.";
+    const ctx = context([evidence(), d, failed, corrected, review(corrected)]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, "GO to Planning");
+    assert.equal(packet.fixIterations, 1);
+    assert.equal(ctx.calls[3].options.label, "Design revision");
+    const revisionPrompt = ctx.calls[3].prompt.split("\nDATA:\n")[0];
+    assert.match(revisionPrompt, /Android Auth Flighting Standard \(Team Defaults\)/);
+    assert.match(revisionPrompt, /Do NOT invent multi-flag setups, TTL\/grace buffers or mid-flow re-checks/i);
+});
+
 test("omitted or failed default-off review criterion cannot authorize planning", async () => {
     const d = runtimeDesign();
     const missing = review(d);

@@ -1017,16 +1017,36 @@ Generate sections.featureFlagsAndIsolation and structured featureFlags for every
 For EVERY changes record set Boolean runtimeBehaviorChange, flagIds and noFlagReason.
 All required runtime behavior changes, including small/single-repo features, must map to one or more
 featureFlags IDs; no unflagged runtime-feature exemption. Reuse a suitable existing default-off flag
-only with verified scope/ownership; do not reuse an enabled flag or invent an API. Each flag records
-its proposed/verified key, owning repository, existing framework, owner, source evidence and guarded
-entryPoints with pinned repository evidence, guardPlacement and disabledBehavior.
-Set defaultValue, configurationFailureValue and productionDefaultValue to Boolean false, never
-true or the string "false". Production stays off until separately approved enablement; distinguish
-the binary default from remote configuration overrides and the effective resolved value.
+only with verified scope/ownership; do not reuse an enabled flag or invent an API.
+Adopt the Android Auth Flighting Standard (Team Defaults) automatically:
+- Single controlling-boundary flag by default: use one default-off Boolean flag owned by the
+  initiating/controlling boundary (e.g., Broker for Broker->Authenticator flows; Common/Broker/
+  Authenticator in its source-verified framework such as BrokerFlight, CommonFlight or EcsFlight)
+  unless approved requirements or a verified cross-boundary safety/isolation gap justifies a second flag.
+- Default-off everywhere: set defaultValue, configurationFailureValue and productionDefaultValue to
+  Boolean false, never true or the string "false".
+- Single boundary evaluation (local state, no per-request network fetch): evaluate the latest locally
+  received/cached ECS/flight value once at the converging entry boundary, extract non-trivial flight-on
+  logic into a dedicated helper, and avoid redundant nested or mid-flow re-checks and per-request network fetches.
+- Immediate OFF on new/uncommitted boundaries (zero grace buffer): receiving an OFF update takes effect
+  immediately for new/uncommitted boundaries with no grace period or TTL buffer; already-dispatched
+  requests cannot be recalled. Define zero new side effects on the disabled path: only the minimal flag
+  read may select behavior; no new initialization, allocations, callbacks, navigation changes, state
+  writes, network calls or telemetry before the guard or on the off path.
+- Do NOT invent multi-flag setups, TTL/grace buffers or mid-flow re-checks unless explicitly required
+  by approved requirements or a verified cross-boundary safety/isolation gap.
+- Exception-only human escalation: apply these team defaults automatically without asking the human to
+  reconfirm standard flighting mechanics. Surface a human flighting decision/question ONLY for an
+  intentional deviation from the team standard (e.g., needing a second flag across process boundaries,
+  intentionally running compatibility/sanitization logic like reserved-header stripping while disabled,
+  or requiring a custom staleness/TTL cap), and document any intentional deviation explicitly in
+  sections.featureFlagsAndIsolation and humanReviewBrief.
+Each flag records its proposed/verified key, owning repository, existing framework, owner, source
+evidence and guarded entryPoints with pinned repository evidence, guardPlacement and disabledBehavior.
+Production stays off until separately approved enablement; distinguish the binary default from remote
+configuration overrides and the effective resolved value.
 Specify configurationPolicy for missing/invalid/unavailable/expired configuration and override/cache
-precedence, preserving off unless a valid authorized cohort enablement applies. Define zero new side effects
-on the disabled path: only the minimal flag read may select behavior; no new initialization,
-allocations, navigation, state writes, network calls or telemetry before the guard or on the off path.
+precedence, preserving off unless a valid authorized cohort enablement applies.
 Cover all converging entry points, direct callers and cross-repo/IPC consumers; do not assume a UI
 guard protects the shared worker. Record productionEnablement owner/approval, an approved enabled E2E
 test cohort, rollback owner/triggers/propagation and active attempts/persisted state; a flag-off switch
@@ -1261,9 +1281,18 @@ solely because the frozen evidence.facts or evidence.scenarioTraces snapshot was
 For defaultOffFeatureIsolation, independently challenge every non-runtime declaration against the
 requirements, full narrative, source traces and proposed changes; documentation/regression-only work
 may have justified N/A, but size, a single repo or convenience cannot exempt a runtime feature.
+Enforce the Android Auth Flighting Standard (Team Defaults): single controlling-boundary flag by
+default, single boundary evaluation of locally received/cached ECS/flight state (no per-request
+network fetch), immediate OFF on new/uncommitted boundaries with zero grace/TTL buffer, zero
+disabled-path side effects, and exception-only human escalation.
+Challenge unnecessary multi-flag proliferation, invented TTL/grace buffers, per-request flight
+network fetches or unprompted mid-flow/nested re-checks as over-engineering findings unless explicitly
+required by approved requirements or a verified cross-boundary safety/isolation gap.
 Verify all runtime changes map to suitable flags using existing source-verified frameworks, all relevant
 entry points/direct callers are guarded before new side effects, and disabled behavior preserves the
-baseline including initialization, navigation, state, IPC/network and telemetry.
+baseline including initialization, allocations, callbacks, navigation, state, IPC/network and telemetry.
+Require explicit justification in both featureFlagsAndIsolation and humanReviewBrief for any accepted
+deviation or off-path exception (such as compatibility/sanitization logic like reserved-header stripping).
 Check code-default, configuration-failure and production defaults are Boolean false and consistent in
 prose/records. Challenge cached/remote overrides, expired config and any implicit activation; production
 remains off until separate authorized enablement, not merely until the compiled default is false.

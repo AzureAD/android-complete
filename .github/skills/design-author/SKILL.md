@@ -71,7 +71,36 @@ design-time pre-mortem authoring brief and the later post-implementation pre-mor
 ### Required default-off feature flags
 
 Every runtime feature, including small/single-repo features, needs the
-[default-off contract](../feature-planner/references/pbi-template.md#required-default-off-feature-contract).
+[default-off contract](../feature-planner/references/pbi-template.md#required-default-off-feature-contract)
+and must follow the **Android Auth Flighting Standard (Team Defaults)** in
+[design-standards.md](references/design-standards.md#android-auth-flighting-standard-team-defaults):
+
+- **Single controlling-boundary flag by default:** Use one default-off Boolean
+  flag owned by the initiating/controlling boundary (e.g., `Broker` for
+  Broker→Authenticator flows, in its source-verified framework such as
+  `BrokerFlight`, `CommonFlight`, or `EcsFlight`) unless a concrete
+  cross-boundary safety/isolation requirement justifies a second flag.
+- **Default-off everywhere:** Code default, configuration-failure fallback, and
+  production default are all Boolean `false`.
+- **Single boundary evaluation (local state, no per-request network fetch):**
+  Evaluate the latest locally received/cached ECS/flight value once at the
+  converging entry boundary. Extract non-trivial flight-on logic into a
+  dedicated helper and avoid redundant nested/mid-flow re-checks or per-request
+  network fetches.
+- **Immediate OFF on new/uncommitted boundaries (zero grace buffer):** Receiving
+  an `OFF` update takes effect immediately for new/uncommitted boundaries with
+  no grace period or TTL buffer (already-dispatched requests cannot be recalled),
+  with zero new allocations, callbacks, navigation changes, state writes, or
+  telemetry on the disabled path.
+- **Exception-only human escalation:** Apply these team defaults automatically
+  without asking the human to reconfirm standard flighting mechanics. Only raise
+  a human flighting decision/question when a feature intentionally deviates from
+  the standard (for example: needing a second flag across process boundaries,
+  intentionally running compatibility/sanitization logic such as reserved-header
+  stripping while disabled, or requiring a custom staleness/TTL cap), and
+  document the deviation explicitly in **Feature flags and isolation** and the
+  **Human Design Review Brief**.
+
 Retain a **Feature flags and isolation** section: source-verified owning framework,
 flag key/owner, Boolean false code/configuration-failure/production defaults, all
 guarded entry points, zero new off-path side effects, override/cache behavior,
