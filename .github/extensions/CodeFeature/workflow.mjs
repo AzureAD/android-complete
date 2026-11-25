@@ -333,6 +333,10 @@ const builderBoundaries = `You are the Android Auth implementation builder. Foll
 - Gate behavioral changes behind a default-off flight with ZERO unintended off-path side effects (when the flight is false, leave legacy routing, navigation, and telemetry untouched; however, if the approved design doc or reviewer finding explicitly specifies entry-tap admission, duplicate-tap suppression, or lifecycle callback invalidation across both enabled and disabled branches, implement that lifecycle/admission guard as part of the approved contract without blocking).
 - Preserve Java/Kotlin binary and source ABI (@JvmOverloads / @JvmStatic) and normalize boundary string inputs (trim/isNotBlank) consistently. In mixed Java/Kotlin modules (broker4j, common4j), compileKotlin runs before Lombok—declare explicit Java getters/setters when calling Lombok-annotated Java classes from Kotlin in the same module.
 - Emit flight-gated regression telemetry and update OpenTelemetry sampler expectation tests whenever a new SpanName is added.
+- Follow the Tiered UI & Automation Test Standard:
+  * Tier 1 (always required): JVM/Robolectric unit tests covering business logic, ViewModels, state reducers, IPC contracts, flight-on + flight-off paths, and error cases.
+  * Tier 2 (required whenever adding or modifying Android UI or navigation — Compose composables, Activities, Fragments, Dialogs, Views, XML layouts, navigation graphs): author hermetic in-process androidTest Compose/Espresso UI tests using local fakes/mocks (zero Lab API or live tenant dependency) covering key user flows, flight-on vs. flight-off UI states, and accessibility/interaction semantics; compile-verify locally via compile*AndroidTestKotlin / assemble*AndroidTest (never boot local AVDs/emulators) and defer execution to remote CI.
+  * Tier 3 (best-effort with structured gap reporting): author live Lab-API E2E UI automation (msalautomationapp / brokerautomationapp / Authenticator E2E) when existing Lab API fixtures support the scenario; when ephemeral tenants unsupported by Lab API, external/non-rotatable IdP credentials, or missing fixtures prevent automated E2E, do NOT silently skip or fabricate broken tests—record a structured E2E automation gap in pr.testPlan (reason, missing Lab/tenant/IdP fixture, owner, and manual/staging verification alternative).
 - Use the custom Logger class; never use android.util.Log or log PII/tokens/secrets.
 - Android Auth source layout (do not guess paths):
   * broker4j: broker/broker4j/src/{main,test}/com/microsoft/identity/broker4j/...
@@ -2519,6 +2523,130 @@ export function isSafeRelativeFilePath(filePath) {
         return false;
     }
     return true;
+}
+
+const PURE_JVM_MODULE_PATH_RE = /(?:^|\/)(?:common4j|broker4j)\//i;
+const TEST_SOURCE_PATH_RE = /(?:^|\/)src\/(?:test|androidTest)[^/]*\/|(?:Tests?|Spec)\.(?:kt|java)$/i;
+const ANDROID_UI_XML_RES_RE = /(?:^|\/)res\/(?:layout|navigation)(?:-[^/]+)?\/[^/]+\.xml$/i;
+const ANDROID_UI_EXPLICIT_FILE_RE = /(?:Activity|Fragment|Dialog|DialogFragment|BottomSheet|BottomSheetDialog|BottomSheetDialogFragment|Screen|ScreenContent|Composable|Composables|NavGraph|NavHost|NavigationGraph|ViewHolder|ComposeView|CustomView)\.(?:kt|java)$/;
+const ANDROID_UI_VIEW_SUFFIX_RE = /[A-Z][A-Za-z0-9]*View\.(?:kt|java)$/;
+const NON_UI_VIEW_SUFFIX_RE = /(?:Cache|Token|Data|State|ReadOnly|Byte|Buffer|Memory|Map|List|Set|Collection|Stream|Slice|Window|Snapshot|Record|Table|Index|Graph|Tree|Log|Metric|Span|Telemetry)View\.(?:kt|java)$/;
+const ANDROID_UI_COMPONENT_DIR_RE = /(?:^|\/)(?:compose|ui\/(?:components?|screens?|views?|dialogs?|widgets?|sheets?|navigation))\//i;
+const NON_UI_COMPONENT_SUFFIX_RE = /(?:ViewModel|UiState|State|UiEvent|Event|Action|Intent|UiModel|Model|Mapper|Repository|Service|Controller|Strategy|Manager|Provider|Factory|Helper|Util|Utils|Config|Configuration|Constants|Contract|Client|Exception|Error|Telemetry|Logger|Flight|Result|Request|Response|Parser|Validator|Interceptor|Handler|Receiver|Worker|UseCase|Interactor|Module|AdapterState|Tests?|Spec|Fake|Mock|Stub)\.(?:kt|java)$/;
+const JUSTIFIED_NON_UI_TEST_NOTE_RE = /\b(?:no\s+(?:android\s+)?ui\s+(?:behavior\s+)?changes?|non-ui\s+(?:only|scope|rationale|refactor)|tier\s*2[^.\n]*(?:n\/a|not\s+applicable)|ui\s+tests?\s+(?:not\s+applicable|n\/a)\s*(?:[:—–-]|because|since)|out\s+of\s+scope\s+for\s+(?:tier\s*2\s+)?ui\s+tests?)\b/i;
+const E2E_AUTOMATION_GAP_NOTE_RE = /\b(?:e2e\s+automation\s+gap|tier\s*3[^.\n]*(?:gap|not\s+automated|unsupported|blocked|manual)|lab\s*api[^.\n]*(?:unsupported|does\s+not\s+support|unavailable|gap|missing|cannot)|ephemeral\s+tenant|non-rotatable|external\s+idp)\b/i;
+
+export function isUiSourcePath(filePath) {
+    if (!nonempty(filePath)) return false;
+    const normalized = filePath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    if (PURE_JVM_MODULE_PATH_RE.test(normalized)) return false;
+    if (TEST_SOURCE_PATH_RE.test(normalized)) return false;
+    if (ANDROID_UI_XML_RES_RE.test(normalized)) return true;
+    if (!/\.(?:kt|java)$/.test(normalized)) return false;
+    const baseName = normalized.split("/").pop() || "";
+    if (ANDROID_UI_EXPLICIT_FILE_RE.test(baseName)) return true;
+    if (ANDROID_UI_VIEW_SUFFIX_RE.test(baseName) && !NON_UI_VIEW_SUFFIX_RE.test(baseName)) {
+        return true;
+    }
+    if (ANDROID_UI_COMPONENT_DIR_RE.test(normalized) && !NON_UI_COMPONENT_SUFFIX_RE.test(baseName)) {
+        return true;
+    }
+    return false;
+}
+
+export function isE2eAutomationTestPath(filePath) {
+    if (!nonempty(filePath)) return false;
+    const normalized = filePath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!/\.(?:kt|java)$/i.test(normalized)) return false;
+    if (/(?:^|\/)(?:msalautomationapp|brokerautomationapp)\/.*(?:Tests?|TestCase[A-Za-z0-9_]*)\.(?:kt|java)$/i.test(normalized)) {
+        return true;
+    }
+    return /(?:^|\/)src\/androidTest[^/]*\/.*(?:E2E|EndToEnd|LabApi)Tests?\.(?:kt|java)$/i.test(normalized);
+}
+
+export function isHermeticUiTestPath(filePath) {
+    if (!nonempty(filePath)) return false;
+    const normalized = filePath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    if (isE2eAutomationTestPath(normalized)) return false;
+    return /(?:^|\/)src\/androidTest[^/]*\/.*Tests?\.(?:kt|java)$/i.test(normalized);
+}
+
+export function detectMissingUiTestCoverage(files = [], prTestPlan = "") {
+    const entries = Array.isArray(files) ? files : [];
+    const seen = new Set();
+    const uiSourceFiles = [];
+    const hermeticUiTestFiles = [];
+    const e2eTestFiles = [];
+
+    for (const entry of entries) {
+        const rawPath = typeof entry === "string" ? entry : (record(entry) ? entry.path : "");
+        const action = record(entry) && typeof entry.action === "string" ? entry.action.toLowerCase() : "modify";
+        if (!nonempty(rawPath) || action === "delete") continue;
+        const normalized = rawPath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        if (isUiSourcePath(normalized)) {
+            uiSourceFiles.push(normalized);
+        } else if (isHermeticUiTestPath(normalized)) {
+            hermeticUiTestFiles.push(normalized);
+        } else if (isE2eAutomationTestPath(normalized)) {
+            e2eTestFiles.push(normalized);
+        }
+    }
+
+    const testPlanText = typeof prTestPlan === "string" ? prTestPlan : "";
+    const hasUiChanges = uiSourceFiles.length > 0;
+    const hasHermeticUiTests = hermeticUiTestFiles.length > 0;
+    const hasE2eTests = e2eTestFiles.length > 0;
+    const hasJustifiedNonUiNote = JUSTIFIED_NON_UI_TEST_NOTE_RE.test(testPlanText);
+    const hasE2eGapNote = E2E_AUTOMATION_GAP_NOTE_RE.test(testPlanText);
+    const missingHermeticUiTests = hasUiChanges && !hasHermeticUiTests;
+    const needsReviewerAttention = missingHermeticUiTests && !hasJustifiedNonUiNote;
+
+    let summary;
+    if (!hasUiChanges) {
+        summary = "No Android UI source changes detected; Tier 2 hermetic androidTest UI coverage is not required.";
+    } else if (hasHermeticUiTests) {
+        const tier3Note = hasE2eTests
+            ? `Tier 3 E2E automation tests also updated (${e2eTestFiles.length}).`
+            : hasE2eGapNote
+                ? "Tier 3 E2E automation gap documented in pr.testPlan."
+                : "Verify whether Tier 3 Lab-API E2E automation or a structured E2E automation gap note applies in pr.testPlan.";
+        summary = `Android UI source changes detected (${uiSourceFiles.length}) with Tier 2 hermetic androidTest UI tests (${hermeticUiTestFiles.length}). ${tier3Note}`;
+    } else if (hasJustifiedNonUiNote) {
+        summary = `Android UI source changes detected (${uiSourceFiles.length}) without Tier 2 hermetic androidTest UI tests; pr.testPlan includes a non-UI/scope rationale that the reviewer must verify.`;
+    } else {
+        summary = `Android UI source changes detected (${uiSourceFiles.length}: ${uiSourceFiles.slice(0, 5).join(", ")}) with NO Tier 2 hermetic androidTest Compose/Espresso UI tests and no non-UI/scope justification in pr.testPlan.`;
+    }
+
+    return {
+        hasUiChanges,
+        uiSourceFiles,
+        hermeticUiTestFiles,
+        e2eTestFiles,
+        hasHermeticUiTests,
+        hasE2eTests,
+        hasJustifiedNonUiNote,
+        hasE2eGapNote,
+        missingHermeticUiTests,
+        needsReviewerAttention,
+        summary,
+    };
+}
+
+export function buildUiTestCoverageByTarget(implementation) {
+    const targets = Array.isArray(implementation?.targets) ? implementation.targets : [];
+    return targets.filter(record).map((t) => ({
+        targetId: t.targetId,
+        repository: t.repository,
+        ...detectMissingUiTestCoverage(
+            [
+                ...(Array.isArray(t.files) ? t.files : []),
+                ...(Array.isArray(t.testsAddedOrUpdated) ? t.testsAddedOrUpdated : []),
+            ],
+            t.pr?.testPlan || "",
+        ),
+    }));
 }
 
 export function isProtectedPipelineOrQualityPath(filePath) {
@@ -5122,6 +5250,10 @@ CRITICAL OUTPUT-BUDGET RULES (to stay well within output-token and streaming lim
 - On fix revisions (round > 1), include ONLY files newly created or modified in this revision; unchanged files from previousImplementation are carried forward automatically, and SEARCH/REPLACE blocks on previously touched files apply against previousImplementation.
 The application applies your proposed changes and runs verification. Do not edit files on disk, invoke a shell, publish, launch agents, or change approvals.
 Follow the supplied coding standards and approved task exactly.${pbiScopeInstruction}
+Tiered UI & Automation Test Standard:
+- Tier 1 (always required): author JVM/Robolectric unit tests covering business logic, ViewModels, state reducers, IPC contracts, flight-on + flight-off paths, and error cases.
+- Tier 2 (required whenever adding or modifying Android UI screens, composables, Activities, Fragments, Dialogs, Views, XML layouts, or navigation): author hermetic in-process androidTest Compose/Espresso UI tests using local fakes/mocks (zero Lab API or live tenant dependency) covering key user flows, flight-on vs. flight-off UI states, and accessibility/interaction semantics; compile-verify via compile*AndroidTestKotlin / assemble*AndroidTest (never boot local AVDs/emulators) and run in CI.
+- Tier 3 (best-effort with structured gap reporting): author live Lab-API E2E UI automation (msalautomationapp / brokerautomationapp / Authenticator E2E) when existing Lab API fixtures support the scenario; when ephemeral tenants unsupported by Lab API, external/non-rotatable IdP credentials, or missing fixtures prevent automated E2E, do NOT silently skip or fabricate broken tests—record a structured E2E automation gap in pr.testPlan (reason, missing Lab/tenant/IdP fixture, owner, and manual/staging verification alternative).
 Use DATA.inspectedFiles and executionEnvironments; do not repeat broad discovery.
 Distinguish authored tests from executed verification. Preserve existing behavior, compatibility, flight-off isolation, and privacy.
 Report material ambiguity in blockingUnknowns; never invent missing approval or waive a finding.`
@@ -5132,6 +5264,10 @@ DATA.inspectedFiles already pre-loads the exact repo-relative file paths and num
 DATA.executionEnvironments provides the pre-validated buildRoot and JAVA_HOME (${primaryJavaHome}) for this host—use that exact JAVA_HOME and buildRoot when running .\\gradlew.bat in PowerShell so your shell environment matches the workflow verification gate.
 If you edit files directly on disk inside the target repository checkout, you may pass an empty string "" for targets[].files[].content for existing/large modified files (or return full content for small/new files).
 Include unit tests in testsAddedOrUpdated, requirement-to-file-and-test traceability rows covering every requirement ID, and complete PR metadata (title, summary, testPlan, breakingChanges, rolloutAndFlag).
+Tiered UI & Automation Test Standard:
+- Tier 1 (always required): author JVM/Robolectric unit tests covering business logic, ViewModels, state reducers, IPC contracts, flight-on + flight-off paths, and error cases.
+- Tier 2 (required whenever adding or modifying Android UI screens, composables, Activities, Fragments, Dialogs, Views, XML layouts, or navigation): author hermetic in-process androidTest Compose/Espresso UI tests using local fakes/mocks (zero Lab API or live tenant dependency) covering key user flows, flight-on vs. flight-off UI states, and accessibility/interaction semantics; compile-verify locally via compile*AndroidTestKotlin / assemble*AndroidTest (never boot local AVDs/emulators) and defer execution to CI.
+- Tier 3 (best-effort with structured gap reporting): author live Lab-API E2E UI automation (msalautomationapp / brokerautomationapp / Authenticator E2E) when existing Lab API fixtures support the scenario; when ephemeral tenants unsupported by Lab API, external/non-rotatable IdP credentials, or missing fixtures prevent automated E2E, do NOT silently skip or fabricate broken tests—record a structured E2E automation gap in pr.testPlan (reason, missing Lab/tenant/IdP fixture, owner, and manual/staging verification alternative).
 Verify new test helper names and overloads against existing repository declarations, and match mock stubs to actual call arguments (including account/tenant identifiers). Do not invent instrumentation launch helpers. Clearly distinguish authored tests, commands attempted, successful command exits, and deferred/failed checks in testPlan and evidence; a verdict "pass" is a source implementation handoff, not proof of tests passing.
 Never create AVDs or boot Android emulators (avdmanager, emulator.exe, connected*AndroidTest) locally—for androidTest files, verify compilation only (compile*AndroidTestKotlin / assemble*AndroidTest) and run JVM/Robolectric unit tests (test*UnitTest --tests "<Pattern>" --max-workers=2 --no-daemon '-Pkotlin.compiler.execution.strategy=in-process'); connected emulator tests run in CI.
 Always quote the entire '-Pkotlin.compiler.execution.strategy=in-process' argument alongside --no-daemon --max-workers=2 in PowerShell. Without quotes PowerShell can split it and Gradle reports Task '.compiler.execution.strategy=in-process' not found; this is a command-invocation failure, not a source-code failure.
@@ -5479,6 +5615,7 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
                                 : {}),
                         }))
                         : history;
+                    const uiTestCoverage = buildUiTestCoverageByTarget(implementation);
                     const reviewFingerprint = createHash("sha256").update(JSON.stringify(sourceBindings)).digest("hex");
                     const rawReview = await step(`independent-review-v2-${round}-${reviewFingerprint}`, () => ask(
                         `Independent code reviewer (round ${round + 1})`,
@@ -5487,7 +5624,11 @@ Return verdict "pass" when the manual repair is in scope and ready for review, "
 Independently review the builder's code changes, unit tests, diffs, and PR metadata against the approved task and evidence.${pbiScopeInstruction}
 Apply the fixed rubric: ${rubric.join(", ")}.
 Verify every approved requirement, every target acceptance criterion, Android IPC/API compatibility, lock/concurrency safety (including calls/callbacks under held locks), security/privacy/Logger rules, resource/performance bounds, telemetry, unit test coverage, and false-positive suppression.
-Evaluate unitTestsAndVerification by inspecting the authored unit tests and source diffs directly; connected Android device/emulator tests (androidTest when adb devices has no attached device), live multi-device/service E2E ceremonies, and local Gradle runs that were short-circuited, timed out, or deferred to remote CI are verified by the remote CI pipeline + pr-observer immediately after PR creation. Never raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over incomplete, timed-out, or short-circuited local Gradle execution or unrun physical-device/service E2E execution when the authored unit tests and production code are sound and the CI handoff is documented in pr.testPlan.
+Evaluate unitTestsAndVerification by inspecting DATA.uiTestCoverage, the authored unit and androidTest UI tests, source diffs, and pr.testPlan directly:
+- Tier 1 (always required): verify JVM/Robolectric unit tests cover business logic, ViewModels, state reducers, IPC contracts, flight-on + flight-off paths, and error cases.
+- Tier 2 (required when Android UI or navigation changes): when DATA.uiTestCoverage or the diff shows added/modified Android UI screens, composables, Activities, Fragments, Dialogs, Views, XML layouts, or navigation, verify that hermetic in-process androidTest Compose/Espresso UI tests using local fakes/mocks were added or updated (covering key flows, flight-on vs. flight-off UI states, and accessibility/interaction semantics). Raise a unitTestsAndVerification finding if UI/navigation changed with no Tier 2 hermetic androidTest UI test code and no justified non-UI/scope rationale in pr.testPlan.
+- Tier 3 (best-effort with structured gap reporting): verify live Lab-API E2E UI automation is either authored when existing Lab API fixtures support it or documented as an explicit structured E2E automation gap in pr.testPlan (reason, missing Lab/tenant/IdP fixture, owner, and manual/staging verification alternative).
+Connected Android device/emulator tests (androidTest when adb devices has no attached device), live multi-device/service E2E ceremonies (including documented ephemeral-tenant or non-rotatable-IdP Lab-API constraints), and local Gradle runs that were short-circuited, timed out, or deferred to remote CI are verified by the remote CI pipeline + pr-observer or manual/staging verification. Never raise a finding or fail unitTestsAndVerification / approvedScopeAndRequirements / prReadinessAndTraceability over incomplete, timed-out, or short-circuited local Gradle execution, unrun connected*AndroidTest on a headless local machine, or documented Lab-API/ephemeral-tenant/IdP E2E automation gaps when the authored unit/UI tests and production code are sound and the CI handoff / E2E gap is documented in pr.testPlan.
 If priorReviews are present, verify that every previous finding was genuinely resolved without introducing regressions; if the builder's summary/evidence provides a concrete technical justification for why a prior finding would violate flight-off preservation, the approved design doc, or headless local environment limits, accept that justification and do not re-raise the finding. Never require new tap-admission, debounce, or state-ownership guards on the flight=false (disabled) branch—when a feature flight is false, pass-through/no-op admission is required to preserve zero off-path side effects.
 Do not edit code or waive code-level defects. Return pass/findings=[] only when the code and unit tests are ready for human review.`,
                         useSlimSchemas ? slimReviewSchema : reviewSchema,
@@ -5504,6 +5645,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                     testsAddedOrUpdated: t.testsAddedOrUpdated,
                                     pr: t.pr,
                                 })),
+                                uiTestCoverage,
                                 diffsByTarget,
                                 rubric,
                                 skillGuides: reviewerGuides,
@@ -5515,6 +5657,7 @@ Do not edit code or waive code-level defects. Return pass/findings=[] only when 
                                 task,
                                 evidence,
                                 implementation,
+                                uiTestCoverage,
                                 diffsByTarget,
                                 rubric,
                                 skillGuides: reviewerGuides,

@@ -124,10 +124,26 @@ review or CI round-trips.
 - **License headers**:
   - Add the full repository license header to every new file (full MIT header in `common`,
     `common4j`, `msal`, `adal`; Microsoft copyright header in `broker`).
-- **Meaningful unit tests & diff coverage**:
-  - Test the real runtime boundary and state transitions (never tautological assertions on
-    pre-initialized constants). Ensure all new branches and overloads are covered so CI diff
-    coverage (>= 80%) passes on the first run.
+- **Tiered UI & automation test authoring**:
+  - **Tier 1 — JVM / Robolectric Unit Tests (Always Required):** Test the real runtime
+    boundary, ViewModels, state reducers, IPC contracts, flight-on + flight-off paths, and
+    error/edge cases (never tautological assertions on pre-initialized constants). Ensure all
+    new branches and overloads are covered so CI diff coverage (>= 80%) passes on the first run.
+  - **Tier 2 — Hermetic In-Process UI Tests (`androidTest` Compose / Espresso with fakes/mocks
+    — Required when Android UI or navigation changes):** Whenever a change adds or modifies
+    Android UI (Compose composables, Activities, Fragments, Dialogs, Views, XML layouts, or
+    navigation graphs), author hermetic `androidTest` Compose/Espresso UI tests using local
+    fakes/mocks (zero Lab API or live tenant dependency) covering key user flows, flight-on
+    vs. flight-off UI states, and accessibility/interaction semantics. Compile-verify locally
+    (`compile*AndroidTestKotlin` / `assemble*AndroidTest` — never boot local AVDs/emulators)
+    and defer execution to remote CI.
+  - **Tier 3 — Live E2E / Lab-API UI Automation (`msalautomationapp` / `brokerautomationapp` /
+    Authenticator E2E — Best-Effort with Structured Gap Reporting):** Author E2E UI automation
+    when existing Lab API fixtures and test accounts support the scenario. When ephemeral
+    tenants unsupported by Lab API, external/non-rotatable IdP credentials, or missing fixtures
+    prevent automated E2E, do **not** silently skip it or fabricate broken tests—record a
+    structured **E2E automation gap** in `pr.testPlan` (reason, missing Lab/tenant/IdP fixture,
+    owner, and manual/staging verification alternative).
 
 ### 6. Pull Request & Branch Hygiene
 - **Branch naming**: Use `<alias>/<feature-or-fix-slug>` (e.g.,

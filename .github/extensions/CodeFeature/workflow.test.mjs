@@ -41,9 +41,11 @@ import {
     buildGitHubTokenOverrides,
     buildInspectedFilesContext,
     buildNormalizedProcessEnv,
+    buildUiTestCoverageByTarget,
     capturePreBuilderBaselineBackups,
     collectBuildReceiptOnDisk,
     customAgents,
+    detectMissingUiTestCoverage,
     discoverChangedFilesFromGit,
     ensureIsolatedTargetWorktree,
     executePrerequisiteProbe,
@@ -53,10 +55,13 @@ import {
     formatPrTitle,
     isBuilderShortCircuitedToCi,
     isDefinitiveCodeOrTestFailure,
+    isE2eAutomationTestPath,
+    isHermeticUiTestPath,
     isInfrastructureGateFailure,
     isPipelineModificationAuthorized,
     isProtectedPipelineOrQualityPath,
     isSafeRelativeFilePath,
+    isUiSourcePath,
     normalizeEvidenceResponse,
     normalizeImplementationResponse,
     normalizeReviewResponse,
@@ -3320,4 +3325,280 @@ test("prepareCodeFeature preserves non-final batch blockingUnknowns across chunk
     } finally {
         rmSync(tmp, { recursive: true, force: true });
     }
+});
+
+test("isUiSourcePath and UI test classifiers distinguish Android UI source files from non-UI broker/common files without false positives", () => {
+    const uiPaths = [
+        "authenticator/PhoneFactor/app/src/main/res/layout/activity_number_matching.xml",
+        "authenticator/PhoneFactor/app/src/main/res/layout-land/fragment_passkey.xml",
+        "authenticator/PhoneFactor/app/src/main/res/navigation/signin_nav_graph.xml",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/signin/SignInScreen.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/compose/AccountPickerBanner.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/components/PrimaryActionButton.kt",
+        "common/common/src/main/java/com/microsoft/identity/common/internal/ui/AuthorizationActivity.java",
+        "common/common/src/main/java/com/microsoft/identity/common/internal/ui/webview/WebViewAuthorizationFragment.java",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/ConsentDialog.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/AccountBottomSheet.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/QrCodeView.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/AuthNavHost.kt",
+    ];
+    for (const filePath of uiPaths) {
+        assert.equal(isUiSourcePath(filePath), true, `Expected UI source path: ${filePath}`);
+    }
+
+    const nonUiPaths = [
+        "broker/broker4j/src/main/com/microsoft/identity/broker4j/BrokerService.java",
+        "broker/AADAuthenticator/src/main/java/com/microsoft/identity/broker/BrokerController.java",
+        "broker/AADAuthenticator/src/main/java/com/microsoft/identity/broker/AccountRepository.kt",
+        "common/common4j/src/main/com/microsoft/identity/common/java/exception/UiRequiredException.java",
+        "common/common4j/src/main/com/microsoft/identity/common/java/flighting/CommonFlight.java",
+        "common/common/src/main/java/com/microsoft/identity/common/internal/broker/ipc/BrokerAccountManagerStrategy.java",
+        "common/common/src/main/java/com/microsoft/identity/common/internal/ui/webview/EmbeddedWebViewAuthorizationStrategy.java",
+        "common/common/src/main/java/com/microsoft/identity/common/internal/ui/webview/AzureActiveDirectoryWebViewClient.java",
+        "msal/msal/src/main/java/com/microsoft/identity/client/PublicClientApplication.java",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/signin/SignInViewModel.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/signin/SignInUiState.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/compose/AccountPickerViewModel.kt",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/components/BannerUiMapper.kt",
+        "authenticator/PhoneFactor/app/src/main/res/values/strings.xml",
+        "broker/broker4j/src/main/com/microsoft/identity/broker4j/CacheView.java",
+        "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/CodePreview.kt",
+        "authenticator/PhoneFactor/app/src/androidTest/java/com/azure/authenticator/ui/signin/SignInScreenTest.kt",
+        "authenticator/PhoneFactor/app/src/test/java/com/azure/authenticator/ui/signin/SignInViewModelTest.kt",
+    ];
+    for (const filePath of nonUiPaths) {
+        assert.equal(isUiSourcePath(filePath), false, `Unexpected false positive UI source path: ${filePath}`);
+    }
+
+    assert.equal(
+        isHermeticUiTestPath("authenticator/PhoneFactor/app/src/androidTest/java/com/azure/authenticator/ui/signin/SignInScreenTest.kt"),
+        true,
+    );
+    assert.equal(
+        isHermeticUiTestPath("authenticator/PhoneFactor/app/src/androidTest/java/com/azure/authenticator/ui/signin/FakeSignInRepository.kt"),
+        false,
+    );
+    assert.equal(
+        isE2eAutomationTestPath("msalautomationapp/src/androidTest/java/com/microsoft/identity/client/msal/automationapp/testpass/broker/TestCase1234.java"),
+        true,
+    );
+    assert.equal(
+        isHermeticUiTestPath("msalautomationapp/src/androidTest/java/com/microsoft/identity/client/msal/automationapp/testpass/broker/TestCase1234.java"),
+        false,
+    );
+    assert.equal(
+        isE2eAutomationTestPath("authenticator/PhoneFactor/app/src/androidTest/java/com/azure/authenticator/e2e/SignInE2ETest.kt"),
+        true,
+    );
+});
+
+test("detectMissingUiTestCoverage reports missing Tier 2 androidTest UI tests, justified non-UI notes, and Tier 3 E2E gaps accurately", () => {
+    const nonUiCoverage = detectMissingUiTestCoverage(
+        [
+            { path: "broker/broker4j/src/main/com/microsoft/identity/broker4j/BrokerController.kt", action: "modify" },
+            { path: "broker/broker4j/src/test/com/microsoft/identity/broker4j/BrokerControllerTest.kt", action: "create" },
+        ],
+        "Tier 1 JVM unit tests pass.",
+    );
+    assert.equal(nonUiCoverage.hasUiChanges, false);
+    assert.equal(nonUiCoverage.missingHermeticUiTests, false);
+    assert.equal(nonUiCoverage.needsReviewerAttention, false);
+
+    const missingUiTests = detectMissingUiTestCoverage(
+        [
+            { path: "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/signin/SignInScreen.kt", action: "modify" },
+            { path: "authenticator/PhoneFactor/app/src/test/java/com/azure/authenticator/ui/signin/SignInViewModelTest.kt", action: "create" },
+        ],
+        "Ran JVM unit tests only.",
+    );
+    assert.equal(missingUiTests.hasUiChanges, true);
+    assert.equal(missingUiTests.hasHermeticUiTests, false);
+    assert.equal(missingUiTests.missingHermeticUiTests, true);
+    assert.equal(missingUiTests.needsReviewerAttention, true);
+    assert.match(missingUiTests.summary, /NO Tier 2 hermetic androidTest/i);
+
+    const justifiedNonUi = detectMissingUiTestCoverage(
+        [{ path: "common/common/src/main/java/com/microsoft/identity/common/internal/ui/AuthorizationActivity.java", action: "modify" }],
+        "Tier 2 N/A — non-UI refactor forwarding intent extras only with no UI behavior changes.",
+    );
+    assert.equal(justifiedNonUi.hasUiChanges, true);
+    assert.equal(justifiedNonUi.missingHermeticUiTests, true);
+    assert.equal(justifiedNonUi.hasJustifiedNonUiNote, true);
+    assert.equal(justifiedNonUi.needsReviewerAttention, false);
+
+    const fullTieredCoverage = detectMissingUiTestCoverage(
+        [
+            { path: "authenticator/PhoneFactor/app/src/main/java/com/azure/authenticator/ui/signin/SignInScreen.kt", action: "modify" },
+            { path: "authenticator/PhoneFactor/app/src/androidTest/java/com/azure/authenticator/ui/signin/SignInScreenTest.kt", action: "create" },
+        ],
+        "Tier 1: SignInViewModelTest. Tier 2: SignInScreenTest compiled via compileProductionDebugAndroidTestKotlin. Tier 3 E2E automation gap: ephemeral tenant unsupported by Lab API; manual staging verification owned by @shjameel.",
+    );
+    assert.equal(fullTieredCoverage.hasUiChanges, true);
+    assert.equal(fullTieredCoverage.hasHermeticUiTests, true);
+    assert.equal(fullTieredCoverage.missingHermeticUiTests, false);
+    assert.equal(fullTieredCoverage.hasE2eGapNote, true);
+    assert.equal(fullTieredCoverage.needsReviewerAttention, false);
+    assert.match(fullTieredCoverage.summary, /Tier 2 hermetic androidTest UI tests \(1\)/);
+    assert.match(fullTieredCoverage.summary, /Tier 3 E2E automation gap documented/);
+
+    const deletedUiOnly = detectMissingUiTestCoverage(
+        [{ path: "authenticator/PhoneFactor/app/src/main/res/layout/obsolete_screen.xml", action: "delete" }],
+        "Removed unused layout.",
+    );
+    assert.equal(deletedUiOnly.hasUiChanges, false);
+    assert.equal(deletedUiOnly.needsReviewerAttention, false);
+
+    const byTarget = buildUiTestCoverageByTarget({
+        targets: [{
+            targetId: "T1",
+            repository: "authenticator",
+            files: [{ path: "PhoneFactor/app/src/main/res/layout/activity_signin.xml", action: "modify" }],
+            testsAddedOrUpdated: ["PhoneFactor/app/src/androidTest/java/com/azure/authenticator/SignInActivityTest.kt"],
+            pr: { testPlan: "Compiled androidTest locally." },
+        }],
+    });
+    assert.equal(byTarget.length, 1);
+    assert.equal(byTarget[0].targetId, "T1");
+    assert.equal(byTarget[0].hasUiChanges, true);
+    assert.equal(byTarget[0].hasHermeticUiTests, true);
+    assert.equal(byTarget[0].needsReviewerAttention, false);
+});
+
+test("CodeFeature builder and reviewer prompts enforce Tier 2 hermetic androidTest UI tests, Tier 3 E2E gap reporting, and pass uiTestCoverage to reviewer", async () => {
+    const { prepareCodeFeature } = await import("./workflow.mjs");
+    const uiTargetTask = {
+        ...task(),
+        targets: [{
+            ...task().targets[0],
+            id: "T-UI",
+            repository: "common",
+            localPath: "common",
+            verificationCommands: [],
+        }],
+    };
+    const uiImpl = {
+        taskRevision: uiTargetTask.revision,
+        targets: [{
+            targetId: "T-UI",
+            repository: "common",
+            summary: "Updated AuthorizationActivity UI and added hermetic androidTest.",
+            files: [
+                {
+                    path: "common/src/main/java/com/microsoft/identity/common/internal/ui/AuthorizationActivity.java",
+                    action: "modify",
+                    content: "class AuthorizationActivity {}",
+                    summary: "Update UI layout wiring",
+                },
+                {
+                    path: "common/src/androidTest/java/com/microsoft/identity/common/internal/ui/AuthorizationActivityTest.kt",
+                    action: "create",
+                    content: "class AuthorizationActivityTest {}",
+                    summary: "Hermetic Espresso UI test with fakes",
+                },
+            ],
+            testsAddedOrUpdated: [
+                "common/src/androidTest/java/com/microsoft/identity/common/internal/ui/AuthorizationActivityTest.kt",
+            ],
+            verificationCommandsRun: ["./gradlew :common:compileLocalDebugAndroidTestKotlin"],
+            pr: {
+                title: "Add AuthorizationActivity UI update",
+                summary: "Updates UI with flight isolation.",
+                testPlan: "Tier 1: JVM tests. Tier 2: AuthorizationActivityTest compiled locally. Tier 3 E2E automation gap: external IdP credentials non-rotatable; manual verification owned by @shjameel.",
+                breakingChanges: "None",
+                rolloutAndFlag: "Default-off CommonFlight",
+            },
+        }],
+        traceability: uiTargetTask.requirements.map((req) => ({
+            requirementId: req.id,
+            targetIds: ["T-UI"],
+            filePaths: ["common/src/main/java/com/microsoft/identity/common/internal/ui/AuthorizationActivity.java"],
+            testLocations: ["common/src/androidTest/java/com/microsoft/identity/common/internal/ui/AuthorizationActivityTest.kt"],
+            verification: "Tier 2 hermetic androidTest compiled locally",
+        })),
+        assumptions: [],
+        openDecisions: [],
+        blockingUnknowns: [],
+    };
+
+    const capturedPrompts = [];
+    let reviewerData = null;
+    const packet = await prepareCodeFeature(
+        {
+            runId: "tiered-ui-test-run",
+            args: {
+                task: uiTargetTask,
+                options: {
+                    createPullRequests: false,
+                    observePullRequests: false,
+                    applyToWorkspace: false,
+                    manageWorkspace: false,
+                    allowLocalOnly: true,
+                    slimSchemas: false,
+                    pauseOnBlocker: false,
+                    verifyPrerequisites: false,
+                    iterativeIntake: false,
+                    requireBriefApproval: false,
+                    challengeBrief: false,
+                },
+            },
+            step: async (_key, fn) => fn(),
+            phase: () => {},
+            log: () => {},
+            agent: async (prompt, opts) => {
+                const [instructions, rawData] = prompt.split("\nDATA:\n");
+                capturedPrompts.push({ label: opts.label, instructions });
+                if (opts.label.startsWith("Repository evidence")) {
+                    return evidence(uiTargetTask);
+                }
+                if (opts.label.startsWith("Code builder")) {
+                    return uiImpl;
+                }
+                if (opts.label.startsWith("Independent code reviewer")) {
+                    reviewerData = JSON.parse(rawData);
+                    return review(uiTargetTask);
+                }
+                throw new Error(`Unexpected agent call: ${opts.label}`);
+            },
+        },
+        { verifyLocal: () => ({ ok: true, errors: [], deferredWarnings: [], commandsAttempted: [] }) },
+    );
+
+    assert.equal(packet.recommendation, "publication-ready");
+    const builderPrompt = capturedPrompts.find((p) => p.label.startsWith("Code builder"))?.instructions || "";
+    const reviewerPrompt = capturedPrompts.find((p) => p.label.startsWith("Independent code reviewer"))?.instructions || "";
+
+    assert.match(builderPrompt, /Tier 2/i);
+    assert.match(builderPrompt, /hermetic in-process androidTest Compose\/Espresso/i);
+    assert.match(builderPrompt, /compile\*AndroidTestKotlin/i);
+    assert.match(builderPrompt, /Tier 3/i);
+    assert.match(builderPrompt, /E2E automation gap/i);
+    assert.match(builderPrompt, /ephemeral tenants/i);
+
+    assert.match(reviewerPrompt, /DATA\.uiTestCoverage/);
+    assert.match(reviewerPrompt, /Tier 2/i);
+    assert.match(reviewerPrompt, /hermetic in-process androidTest Compose\/Espresso/i);
+    assert.match(reviewerPrompt, /Raise a unitTestsAndVerification finding if UI\/navigation changed with no Tier 2/i);
+    assert.match(reviewerPrompt, /documented Lab-API\/ephemeral-tenant\/IdP E2E automation gaps/i);
+    assert.match(reviewerPrompt, /unrun connected\*AndroidTest on a headless local machine/i);
+
+    assert.ok(Array.isArray(reviewerData?.uiTestCoverage), "Reviewer DATA must include deterministic uiTestCoverage");
+    assert.equal(reviewerData.uiTestCoverage.length, 1);
+    assert.equal(reviewerData.uiTestCoverage[0].targetId, "T-UI");
+    assert.equal(reviewerData.uiTestCoverage[0].hasUiChanges, true);
+    assert.equal(reviewerData.uiTestCoverage[0].hasHermeticUiTests, true);
+    assert.equal(reviewerData.uiTestCoverage[0].hasE2eGapNote, true);
+    assert.equal(reviewerData.uiTestCoverage[0].needsReviewerAttention, false);
+
+    const builderAgent = customAgents.find((a) => a.name === BUILDER_AGENT);
+    assert.match(builderAgent.prompt, /Tiered UI & automation test/i);
+    assert.match(builderAgent.prompt, /E2E automation gap/i);
+
+    const reviewerAgent = customAgents.find((a) => a.name === REVIEWER_AGENT);
+    assert.match(reviewerAgent.prompt, /DATA\.uiTestCoverage/);
+    assert.match(reviewerAgent.prompt, /E2E automation gap/i);
+
+    const readmeText = readFileSync(new URL("./README.md", import.meta.url), "utf8");
+    assert.match(readmeText, /Tiered UI & automation test authoring and review/);
+    assert.match(readmeText, /isUiSourcePath/);
+    assert.match(readmeText, /detectMissingUiTestCoverage/);
 });

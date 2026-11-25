@@ -116,6 +116,22 @@ Break the feature into PBIs following these rules:
    cohort enablement, rollback and verification in each runtime implementation PBI.
    Retain code-review/CI evidence and separate release approval as acceptance gates.
    Non-runtime items need a reasoned no-runtime-impact declaration, not blanket N/A.
+9. **Carry tiered UI & automation test criteria** — for any UI-touching
+   implementation PBI (adding or modifying Compose composables, Activities,
+   Fragments, Dialogs, Views, XML layouts, or navigation graphs), explicitly
+   inline the [3-tier UI & automation test contract](references/pbi-template.md#required-tiered-ui--automation-test-contract):
+   - **Tier 1 (Always Required):** JVM / Robolectric unit tests covering business
+     logic, ViewModels, state reducers, IPC contracts, and flight-on + flight-off paths.
+   - **Tier 2 (Required when UI/navigation changes):** Concrete hermetic in-process
+     `androidTest` Compose/Espresso UI test files and criteria using local fakes/mocks
+     (no Lab API or live tenant dependency), compile-verified locally via
+     `compile*AndroidTestKotlin` / `assemble*AndroidTest` and executed in CI.
+   - **Tier 3 (Best-Effort with Structured Gap Reporting):** Live Lab-API E2E UI
+     automation targets (`msalautomationapp` / `brokerautomationapp` / Authenticator
+     E2E) when existing Lab API fixtures support the scenario, OR an explicit
+     structured **E2E automation gap** note (reason, missing Lab/tenant/IdP fixture,
+     owner, and manual/staging verification alternative) when ephemeral tenants or
+     external/non-rotatable IdP credentials prevent automated E2E.
 
 ### Step 5: Write PBI Descriptions
 

@@ -70,9 +70,11 @@ Never add requirements or numeric targets that the approved scope does not conta
    states to TalkBack semantics/announcements, focus order/restoration,
    keyboard/D-pad navigation, 48dp by 48dp touch targets, font/display scaling,
    contrast/non-color cues, and planned verification evidence.
-10. Unit, instrumented, integration/E2E tests and evaluation scenarios, including
-    disabled paths, configuration-failure defaults, accessibility checks,
-    compatibility boundaries, and failure cases.
+10. Unit, hermetic instrumented UI, and live E2E tests and evaluation scenarios,
+    including disabled paths, configuration-failure defaults, accessibility
+    checks, compatibility boundaries, and failure cases, classified using the
+    [Tiered UI & Automation Test Standard](#tiered-ui--automation-test-standard)
+    whenever UI or E2E flows are in scope.
 11. Cross-repository dependencies, implementation order, owning teams, external
     OneAuth notifications where needed, assumptions, and open decisions.
 12. Post-implementation pre-mortem and operational readiness authoring brief:
@@ -123,6 +125,34 @@ behavior:
   reserved-header stripping while disabled, or requiring a custom staleness/TTL
   cap), and document the deviation explicitly in the feature-flags section and
   Human Design Review Brief.
+
+## Tiered UI & Automation Test Standard
+
+Whenever UI or E2E flows are in scope, classify `testsAndEvals` into three
+explicit tiers so planning and coding agents author deterministic UI test code
+without fabricating broken live-E2E suites:
+
+- **Tier 1 — JVM / Robolectric Unit Tests (Always Required):** Cover business
+  logic, ViewModels, state reducers, IPC contracts, flight-on and flight-off
+  paths, configuration-failure defaults, and error/edge cases.
+- **Tier 2 — Hermetic In-Process UI Tests (`androidTest` Compose / Espresso with
+  fakes/mocks — Required when Android UI or navigation changes):** Whenever a
+  design adds or modifies Android UI (Compose composables, Activities,
+  Fragments, Dialogs, Views, XML layouts, or navigation graphs), specify concrete
+  `androidTest` test class/screen targets covering key user flows, flight-on vs.
+  flight-off UI states, and accessibility/interaction semantics using local
+  fakes/mocks with no Lab API or live tenant dependency. Compile-verify locally
+  (`compile*AndroidTestKotlin` / `assemble*AndroidTest` — never boot local AVDs)
+  and execute in CI.
+- **Tier 3 — Live E2E / Lab-API UI Automation (`msalautomationapp` /
+  `brokerautomationapp` / Authenticator E2E — Best-Effort with Structured Gap
+  Reporting):** Explicitly state whether existing Lab API fixtures and test
+  accounts support automating each E2E scenario. When a scenario cannot be
+  automated with existing Lab API fixtures (for example: ephemeral tenant
+  unsupported by Lab API, external/non-rotatable IdP credentials, or missing
+  device/service fixture), do not assume automation or silently omit it — record
+  a structured **E2E automation gap** specifying the reason, missing Lab/tenant
+  fixture, accountable owner, and manual/staging verification alternative.
 
 ## Traceability and independent review
 

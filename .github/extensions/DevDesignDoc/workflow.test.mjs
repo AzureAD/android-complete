@@ -2963,3 +2963,51 @@ test("source-only and baseline-trace-clarity boundaries are enforced across work
     assert.match(standardsText, /never run Gradle builds/i);
     assert.match(standardsText, /Baseline trace clarity/i);
 });
+
+test("tiered UI and E2E automation test standard is enforced across DevDesignDoc prompts and design docs", async () => {
+    const ctx = context([evidence(), runtimeDesign(), review(runtimeDesign())]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, readyRecommendation);
+
+    const authorPrompt = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+    const reviewerPrompt = ctx.calls[2].prompt.split("\nDATA:\n")[0];
+
+    for (const prompt of [authorPrompt, reviewerPrompt]) {
+        assert.match(prompt, /JVM\s*\/\s*Robolectric/i);
+        assert.match(prompt, /hermetic in-process\s+androidTest|androidTest Compose\s*\/\s*Espresso/i);
+        assert.match(prompt, /fakes\/mocks/i);
+        assert.match(prompt, /Lab-API E2E|Lab API fixtures/i);
+        assert.match(prompt, /E2E automation gap/i);
+        assert.match(prompt, /ephemeral[- ]tenant|ephemeral tenant/i);
+        assert.match(prompt, /non-rotatable/i);
+    }
+    assert.match(reviewerPrompt, /testsEvalsAndDependencies/);
+    assert.match(reviewerPrompt, /without failing a design merely because a documented\s+ephemeral-tenant/i);
+
+    const readmeText = readFileSync(new URL("./README.md", import.meta.url), "utf8");
+    const standardsText = readFileSync(
+        new URL("../../skills/design-author/references/design-standards.md", import.meta.url),
+        "utf8",
+    );
+    const skillText = readFileSync(
+        new URL("../../skills/design-author/SKILL.md", import.meta.url),
+        "utf8",
+    );
+    const plannerText = readFileSync(
+        new URL("../../skills/feature-planner/SKILL.md", import.meta.url),
+        "utf8",
+    );
+    const pbiTemplateText = readFileSync(
+        new URL("../../skills/feature-planner/references/pbi-template.md", import.meta.url),
+        "utf8",
+    );
+
+    for (const docText of [readmeText, standardsText, skillText, plannerText, pbiTemplateText]) {
+        assert.match(docText, /Tier 1/i);
+        assert.match(docText, /Tier 2/i);
+        assert.match(docText, /Tier 3/i);
+        assert.match(docText, /androidTest/i);
+        assert.match(docText, /E2E automation gap/i);
+        assert.match(docText, /Lab API/i);
+    }
+});

@@ -65,6 +65,8 @@ test("ordinary authoring retains standards without a mandatory workflow launch",
     assert.match(coreRules, /Strict Flight Isolation/);
     assert.match(coreRules, /Regression-Attribution Telemetry/);
     assert.match(coreRules, /Java\/Kotlin ABI/);
+    assert.match(coreRules, /Tiered UI & automation test authoring/);
+    assert.match(coreRules, /E2E automation gap/);
     assert.match(coreRules, /Local Gradle vs\. CI pipeline verification/);
     assert.match(instructions, /\*\*code-author\*\*.*not an automatic dynamic-workflow launch/);
 });

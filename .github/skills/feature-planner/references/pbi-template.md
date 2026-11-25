@@ -63,7 +63,10 @@ Only non-runtime work may use a reasoned "N/A"; do not invent a flag API.]</p>
   <li>[ ] Runtime feature: actual flag default and configuration-failure fallback are false; production remains off until separately approved enablement</li>
   <li>[ ] Runtime feature: all entry points preserve existing behavior with zero new side effects when disabled</li>
   <li>[ ] Runtime feature: tests cover default/missing/invalid/unavailable/expired configuration, disabled/enabled behavior and rollback including active attempts</li>
-  <li>[ ] Unit tests added for new/modified logic</li>
+  <li>[ ] Unit tests added for new/modified logic (Tier 1 JVM/Robolectric)</li>
+  <li>[ ] UI-touching PBI (Tier 2): hermetic in-process <code>androidTest</code> Compose/Espresso UI tests added/updated using local fakes/mocks covering key flows, flight-on vs. flight-off UI states, and accessibility/interaction semantics (no Lab API or live tenant dependency)</li>
+  <li>[ ] UI-touching PBI (Tier 2): <code>androidTest</code> compilation passes locally (<code>./gradlew :[module]:compile[Variant]AndroidTestKotlin</code> or <code>assemble[Variant]AndroidTest</code>; executed in CI, never boot local AVDs)</li>
+  <li>[ ] E2E-applicable PBI (Tier 3, best-effort): live Lab-API E2E UI automation targets (<code>msalautomationapp</code> / <code>brokerautomationapp</code> / Authenticator E2E) added/updated when supported by existing Lab API fixtures, OR a structured E2E automation gap is recorded (reason, missing Lab/tenant/IdP fixture, owner, and manual/staging verification alternative)</li>
   <li>[ ] No new lint warnings introduced</li>
   <li>[ ] Compile check passes: <code>./gradlew :[module]:compile[Variant]Kotlin</code></li>
   <li>[ ] Unit tests pass: <code>./gradlew :[module]:test[Variant]UnitTest</code></li>
@@ -106,6 +109,35 @@ or activation permission. Non-runtime/documentation, regression-only and deferre
 work needs an explicit no-runtime-impact reason; size/convenience is not an exemption.
 Return missing/contradictory contracts to design/planning for approval rather than
 silently adding flags or changing an approved plan.
+
+## Required Tiered UI & Automation Test Contract
+
+Every implementation PBI that touches Android UI or E2E flows must explicitly
+classify its test deliverables and acceptance criteria into three tiers:
+
+1. **Tier 1 — JVM / Robolectric Unit Tests (Always Required):** Cover business
+   logic, ViewModels, state reducers, IPC contracts, flight-on + flight-off paths,
+   configuration-failure defaults, and error/edge cases.
+2. **Tier 2 — Hermetic In-Process UI Tests (`androidTest` Compose / Espresso with
+   fakes/mocks — Required when Android UI or navigation changes):** Whenever a PBI
+   adds or modifies Android UI (Compose composables, Activities, Fragments, Dialogs,
+   Views, XML layouts, or navigation graphs), list concrete `androidTest` test file
+   paths in **Files to Modify/Create** and require hermetic UI tests covering key
+   user flows, flight-on vs. flight-off UI states, and accessibility/interaction
+   semantics using local fakes/mocks (no Lab API or live tenant dependency). Verify
+   compilation locally (`./gradlew :[module]:compile[Variant]AndroidTestKotlin` or
+   `assemble[Variant]AndroidTest` — never boot local AVDs/emulators) and run on CI.
+3. **Tier 3 — Live E2E / Lab-API UI Automation (`msalautomationapp` /
+   `brokerautomationapp` / Authenticator E2E — Best-Effort with Structured Gap
+   Reporting):** Specify concrete E2E UI automation targets when existing Lab API
+   fixtures and test accounts support the scenario. When a scenario cannot be
+   automated with existing Lab API fixtures (for example: ephemeral tenant
+   unsupported by Lab API, external/non-rotatable IdP credentials, or missing
+   device/service fixture), do **not** silently omit E2E coverage or ask the coding
+   agent to fabricate non-working tests — record an explicit structured **E2E
+   automation gap** (reason, missing Lab/tenant/IdP fixture, accountable owner,
+   and manual/staging verification alternative) in the PBI acceptance criteria so
+   the coding agent carries it into `pr.testPlan`.
 
 ## Required Feature Pre-mortem PBI
 
