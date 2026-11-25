@@ -3,10 +3,13 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
     rubric, sections, designSectionHeadings, evidenceSchema, designSchema, reviewSchema,
+    humanDecisionSchema, continuationSchema,
     decisionCategories, collectDecisionRegister, summarizeDecisions, validateDecisionRegister,
+    validateHumanDecisions, normalizeHumanDecisions, buildReviewerPayload,
     readyRecommendation, runDesignFeature, validateStage0, validateDesign,
     validateEvidence, validateReview, workflowDefinition, digest,
     pairRevision, renderHumanReviewBrief, renderPairedDocuments, briefWordBudget, briefCharacterBudget, riskCategories,
@@ -457,12 +460,12 @@ test("stale, legacy or unverified prior-review pairing stops before claiming a r
     assert.equal(ctx.calls.length, 1);
 });
 
-test("v10-v14 journal artifacts are never reused and v15 replays the exact pair without paid calls", async () => {
+test("v10-v15 journal artifacts are never reused and v16 replays the exact pair without paid calls", async () => {
     const legacy = design();
     delete legacy.humanReviewBrief;
     const ctx = context([evidence(), design(), review()]);
     const journal = new Map();
-    for (const version of ["v10", "v12", "v13", "v14"]) {
+    for (const version of ["v10", "v12", "v13", "v14", "v15"]) {
         const oldPrefix = `design-feature-${version}-${digest(ctx.args)}`;
         journal.set(`${oldPrefix}-evidence`, evidence());
         journal.set(`${oldPrefix}-${digest(evidence())}-design`, version === "v10" ? legacy : design());
@@ -971,7 +974,7 @@ test("healthy-operation handoff does not reuse v5-v14 outputs", async () => {
     const packet = await runDesignFeature(ctx);
     assert.equal(packet.recommendation, readyRecommendation);
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v15-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v16-")));
     assert.ok(packet.design.sections.preMortemAndOperationalReadiness);
     assert.ok(packet.design.sections.accessibility);
 });
@@ -1131,7 +1134,7 @@ test("changed accessibility schema and rubric never replay pre-accessibility v5 
     };
     assert.equal((await runDesignFeature(ctx)).recommendation, readyRecommendation);
     assert.equal(ctx.calls.length, 3);
-    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v15-")));
+    assert.ok(ctx.keys.every((key) => key.startsWith("design-feature-v16-")));
 });
 
 test("ordinary agent failures explicitly fail closed at each stage", async () => {
@@ -1669,7 +1672,7 @@ test("an independently disputed gap must be corrected and re-reviewed", async ()
 test("checkpoint identity includes pinned sources, context, evidence, and schema version", async () => {
     const initial = context([evidence(), design(), review()]);
     await runDesignFeature(initial);
-    assert.match(initial.keys[0], /^design-feature-v15-/);
+    assert.match(initial.keys[0], /^design-feature-v16-/);
     assert.ok(initial.keys[1].includes(digest(evidence())));
     const changed = context([null]);
     changed.args.sourceManifest[0].revision = newerSourceRevision;
@@ -1680,6 +1683,12 @@ test("checkpoint identity includes pinned sources, context, evidence, and schema
     feedback.args.context = "Additional review feedback";
     await runDesignFeature(feedback);
     assert.notEqual(initial.keys[0], feedback.keys[0]);
+    const withDecision = context([null]);
+    withDecision.args.humanDecisions = [{
+        id: "HD-1", topic: "Timeout", decision: "Use 30s timeout.", sourceReference: "review/hd-1",
+    }];
+    await runDesignFeature(withDecision);
+    assert.notEqual(initial.keys[0], withDecision.keys[0]);
 });
 
 test("mutation of source pins during evidence gathering stops before authoring", async () => {
@@ -2063,14 +2072,19 @@ test("source pins are indexed once and every reference retains its exact reposit
     assert.ok(detailed.includes("Helper.kt"));
 });
 
-test("independent review receives both exact Markdown documents and hash-bound appendix descriptors", async () => {
+test("independent review receives exact brief, compact detailedDesignSummary, and hash-bound appendixDescriptors without duplicating detailed-design.md", async () => {
     const ctx = context([evidence(), runtimeDesign(), review(runtimeDesign())]);
     const packet = await runDesignFeature(ctx);
     assert.equal(packet.recommendation, readyRecommendation);
     const reviewerData = JSON.parse(ctx.calls[2].prompt.split("\nDATA:\n")[1]);
     assert.equal(reviewerData.renderedBrief, packet.pairedDocuments.documents[0].markdown);
-    assert.equal(reviewerData.renderedDetailedDesign, packet.pairedDocuments.documents[1].markdown);
-    assert.deepEqual(reviewerData.appendixManifest,
+    assert.equal(reviewerData.renderedDetailedDesign, undefined);
+    assert.equal(reviewerData.detailedDesignSummary.path, "detailed-design.md");
+    assert.equal(reviewerData.detailedDesignSummary.sha256, packet.pairedDocuments.documents[1].sha256);
+    assert.equal(reviewerData.detailedDesignSummary.byteLength, Buffer.byteLength(packet.pairedDocuments.documents[1].markdown, "utf8"));
+    assert.equal(reviewerData.detailedDesignSummary.sectionAnchors.length, sections.length);
+    assert.equal(reviewerData.detailedDesignSummary.hostVerified, true);
+    assert.deepEqual(reviewerData.appendixDescriptors,
         packet.pairedDocuments.appendices.map(({ path, sha256 }) => ({ path, sha256 })));
 });
 
@@ -2605,4 +2619,347 @@ test("buildDesignReviewDelta tracks decisionRegister changes alongside modified 
     assert.ok(delta.changedRegisters.includes("decisionRegister"));
     assert.equal(delta.changedSections.length, 0);
     assert.equal(delta.unchangedPassingSections.length, 13);
+});
+
+test("native continuation from validated evidence skips Repository evidence and runs author plus independent review", async () => {
+    const savedEvidence = evidence();
+    const authored = runtimeDesign();
+    const ctx = context([authored, review(authored)]);
+    ctx.args.continuation = { evidence: savedEvidence };
+    ctx.args.humanDecisions = [{
+        id: "HD-1",
+        topic: "Timeout budget",
+        decision: "Use a 30-second client timeout with no automatic retry.",
+        sourceReference: "human-review/comment-10",
+        recordedAt: "2026-11-23T12:00:00Z",
+    }];
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, readyRecommendation);
+    assert.equal(packet.continuationMode, "from-evidence");
+    assert.equal(packet.humanApproval, "pending");
+    assert.equal(packet.planningReady, false);
+    assert.equal(packet.reviewReady, true);
+    assert.ok(packet.pairedDocuments);
+    assert.equal(ctx.calls.length, 2);
+    assert.equal(ctx.calls[0].options.label, "Design author");
+    assert.equal(ctx.calls[1].options.label, "Independent design reviewer");
+    assert.ok(ctx.calls.every((call) => call.options.label !== "Repository evidence"));
+    const authorData = JSON.parse(ctx.calls[0].prompt.split("\nDATA:\n")[1]);
+    assert.deepEqual(authorData.humanDecisions.active.map((entry) => entry.id), ["HD-1"]);
+    assert.deepEqual(authorData.humanDecisions.supersededIds, []);
+    assert.equal(authorData.evidenceDigest, digest(savedEvidence));
+});
+
+test("native continuation from a prior design draft skips research, runs Design revision with updated humanDecisions, and requires fresh independent review", async () => {
+    const savedEvidence = evidence();
+    const priorDraft = runtimeDesign();
+    const revised = runtimeDesign();
+    revised.sections.stateFailuresRecoveryReversibility =
+        `${revised.sections.stateFailuresRecoveryReversibility}\nApply HD-2 timeout policy (15s timeout).`;
+    const ctx = context([revised, review(revised)]);
+    ctx.args.continuation = { evidence: savedEvidence, design: priorDraft };
+    ctx.args.humanDecisions = [
+        {
+            id: "HD-1",
+            topic: "Timeout budget",
+            decision: "Use a 30-second timeout.",
+            sourceReference: "human-review/comment-10",
+        },
+        {
+            id: "HD-2",
+            topic: "Timeout budget",
+            decision: "Tighten client timeout to 15 seconds.",
+            sourceReference: "human-review/comment-11",
+            supersedesIds: ["HD-1"],
+        },
+    ];
+    ctx.args.context = "Incorporate HD-2 timeout tightening from pilot review.";
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, readyRecommendation);
+    assert.equal(packet.continuationMode, "from-draft");
+    assert.equal(packet.humanApproval, "pending");
+    assert.equal(packet.planningReady, false);
+    assert.equal(packet.fixIterations, 0);
+    assert.equal(ctx.calls.length, 2);
+    assert.equal(ctx.calls[0].options.label, "Design revision");
+    assert.equal(ctx.calls[1].options.label, "Independent design reviewer");
+    const revisionData = JSON.parse(ctx.calls[0].prompt.split("\nDATA:\n")[1]);
+    assert.equal(revisionData.continuationMode, "from-draft");
+    assert.deepEqual(revisionData.humanDecisions.active.map((entry) => entry.id), ["HD-2"]);
+    assert.deepEqual(revisionData.humanDecisions.supersededIds, ["HD-1"]);
+    assert.deepEqual(revisionData.design, priorDraft);
+    const reviewerData = JSON.parse(ctx.calls[1].prompt.split("\nDATA:\n")[1]);
+    assert.deepEqual(reviewerData.humanDecisions.active.map((entry) => entry.id), ["HD-2"]);
+    assert.deepEqual(reviewerData.humanDecisions.supersededIds, ["HD-1"]);
+    assert.equal(reviewerData.designDigest, digest(revised));
+});
+
+test("native continuation from draft rebinds cleanly when Stage 0 revision updates and still fails closed if independent review rejects", async () => {
+    const oldDraft = runtimeDesign();
+    const updatedStage0 = {
+        ...stage0(),
+        revision: "requirements-v4",
+        approval: { approvedRevision: "requirements-v4", approvedBy: "human-owner", reference: "review/456" },
+    };
+    const updatedEvidence = evidence();
+    updatedEvidence.approvalVerification = {
+        verified: true,
+        revision: "requirements-v4",
+        reference: "review/456",
+        rationale: "Verified requirements-v4 approval.",
+    };
+    assert.notEqual(oldDraft.evidenceDigest, digest(updatedEvidence));
+
+    const rebound = runtimeDesign();
+    rebound.stage0Revision = "requirements-v4";
+    rebound.evidenceDigest = digest(updatedEvidence);
+    const passingReview = review(rebound);
+    const ctx = context([rebound, passingReview], updatedStage0);
+    ctx.args.continuation = { evidence: updatedEvidence, design: oldDraft };
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, readyRecommendation);
+    assert.equal(packet.continuationMode, "from-draft");
+    assert.equal(packet.design.stage0Revision, "requirements-v4");
+    assert.equal(packet.design.evidenceDigest, digest(updatedEvidence));
+    assert.equal(ctx.calls.length, 2);
+
+    const rejected = review(rebound);
+    rejected.criteria = rejected.criteria.map((c) =>
+        c.id === "securityPrivacyAndPerformance" ? { ...c, pass: false } : c,
+    );
+    rejected.findings.push({
+        id: "F-CONT-1",
+        rubricId: "securityPrivacyAndPerformance",
+        severity: "blocker",
+        location: "securityPrivacyPerformance",
+        evidence: "Missing PII guard on updated path.",
+        requiredChange: "Document PII scrubbing.",
+    });
+    const failCtx = context([rebound, rejected, rebound, rejected, rebound, rejected], updatedStage0);
+    failCtx.args.continuation = { evidence: updatedEvidence, design: oldDraft };
+    const failedPacket = await runDesignFeature(failCtx);
+    assert.equal(failedPacket.recommendation, "NO-GO");
+    assert.equal(failedPacket.continuationMode, "from-draft");
+    assert.equal(failedPacket.pairedDocuments, null);
+    assert.equal(failedPacket.fixIterations, 2);
+});
+
+test("fail-closed continuation rejects mismatched sourceManifest pins, design without evidence, unverified approvals, and malformed snapshots", async () => {
+    const mismatchedPinEvidence = evidence();
+    mismatchedPinEvidence.references[0].revision = newerSourceRevision;
+    mismatchedPinEvidence.sourceVerification[0].revision = newerSourceRevision;
+
+    const unverifiedApprovalEvidence = evidence();
+    unverifiedApprovalEvidence.approvalVerification.verified = false;
+
+    const unverifiedSourceEvidence = evidence();
+    unverifiedSourceEvidence.sourceVerification[0].verified = false;
+
+    const mismatchedDigestDraft = design();
+    mismatchedDigestDraft.evidenceDigest = "f".repeat(64);
+
+    const legacyDraft = { ...design(), openDecisions: ["legacy"] };
+    const brokenSectionsDraft = { ...design(), sections: { problemAndScope: "only one section" } };
+
+    for (const badContinuation of [
+        {},
+        { evidence: evidence(), extra: true },
+        { design: design() },
+        { evidence: "not-an-object" },
+        { evidence: mismatchedPinEvidence },
+        { evidence: unverifiedApprovalEvidence },
+        { evidence: unverifiedSourceEvidence },
+        { evidence: evidence(), design: mismatchedDigestDraft },
+        { evidence: evidence(), design: legacyDraft },
+        { evidence: evidence(), design: brokenSectionsDraft },
+        { evidence: evidence(), design: { ...design(), evidenceDigest: "not-a-sha256" } },
+    ]) {
+        const ctx = context([]);
+        ctx.args.continuation = badContinuation;
+        assert.ok(validateStage0(ctx.args).length > 0, `Expected failure for ${JSON.stringify(badContinuation)}`);
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "needs clarification");
+        assert.equal(packet.pairedDocuments, null);
+        assert.equal(ctx.calls.length, 0);
+    }
+});
+
+test("flat humanDecisions validation rejects nested recursive blobs, duplicates, self-supersession, unknown IDs, and cycles, while normalizeHumanDecisions stays linear", async () => {
+    assert.equal(workflowDefinition.meta.argsSchema.properties.humanDecisions.items.additionalProperties, false);
+    assert.equal(humanDecisionSchema.additionalProperties, false);
+    assert.equal(continuationSchema.additionalProperties, false);
+
+    for (const invalid of [
+        "not-an-array",
+        [{ id: "HD-1", topic: "T", decision: "D", sourceReference: "ref", inheritedDecisions: [] }],
+        [{ id: "HD-1", topic: "T", decision: "D", sourceReference: "ref", previousAmendment: {} }],
+        [{ id: "HD-1", topic: "T", decision: "D", sourceReference: "ref", previousRequirements: [] }],
+        [{ id: "HD-1", topic: "T", decision: "D", sourceReference: "ref", unexpectedField: "x" }],
+        [{ id: "", topic: "T", decision: "D", sourceReference: "ref" }],
+        [{ id: "HD-1", topic: "T", decision: "D", sourceReference: "ref", recordedAt: "  " }],
+        [
+            { id: "HD-1", topic: "T1", decision: "D1", sourceReference: "ref/1" },
+            { id: "HD-1", topic: "T2", decision: "D2", sourceReference: "ref/2" },
+        ],
+        [{ id: "HD-1", topic: "T", decision: "D", sourceReference: "ref", supersedesIds: ["HD-1"] }],
+        [{ id: "HD-1", topic: "T", decision: "D", sourceReference: "ref", supersedesIds: ["HD-UNKNOWN"] }],
+        [
+            { id: "HD-1", topic: "T1", decision: "D1", sourceReference: "ref/1", supersedesIds: ["HD-2"] },
+            { id: "HD-2", topic: "T2", decision: "D2", sourceReference: "ref/2", supersedesIds: ["HD-1"] },
+        ],
+    ]) {
+        assert.ok(validateHumanDecisions(invalid).length > 0, `Expected invalid humanDecisions: ${JSON.stringify(invalid)}`);
+        const ctx = context([]);
+        ctx.args.humanDecisions = invalid;
+        const packet = await runDesignFeature(ctx);
+        assert.equal(packet.recommendation, "needs clarification");
+        assert.equal(ctx.calls.length, 0);
+    }
+
+    const amendments = [];
+    for (let i = 1; i <= 20; i++) {
+        amendments.push({
+            id: `HD-${i}`,
+            topic: "Timeout budget",
+            decision: `Revision ${i}: client timeout is ${30 + i} seconds.`,
+            sourceReference: `human-review/comment-${i}`,
+            ...(i > 1 ? { supersedesIds: [`HD-${i - 1}`] } : {}),
+        });
+    }
+    amendments.push({
+        id: "HD-KEEP",
+        topic: "Flight ownership",
+        decision: "Keep single Broker controlling-boundary flag.",
+        sourceReference: "human-review/comment-keep",
+    });
+    assert.deepEqual(validateHumanDecisions(amendments), []);
+    const normalized = normalizeHumanDecisions(amendments);
+    assert.deepEqual(normalized.active.map((entry) => entry.id), ["HD-20", "HD-KEEP"]);
+    assert.equal(normalized.supersededIds.length, 19);
+    assert.equal(normalized.supersededIds[0], "HD-1");
+    assert.equal(normalized.supersededIds[18], "HD-19");
+    const serializedBytes = Buffer.byteLength(JSON.stringify(normalized), "utf8");
+    assert.ok(serializedBytes < 1024, `Expected compact linear normalized ledger, got ${serializedBytes} bytes`);
+});
+
+test("buildReviewerPayload avoids duplicating detailed-design.md, strips giant supplemental evidence blobs, and compacts priorReviews", () => {
+    const richEvidence = {
+        ...evidence(),
+        summaryMarkdown: "X".repeat(60000),
+        rawResearchDump: { giant: "Y".repeat(40000) },
+    };
+    const bigDesign = runtimeDesign();
+    bigDesign.evidenceDigest = digest(richEvidence);
+    for (const key of sections) {
+        bigDesign.sections[key] = `Detailed architecture narrative for ${key}: ${"A".repeat(4000)}`;
+    }
+    const renderedPair = renderPairedDocuments(bigDesign, richEvidence);
+    const priorRoundReview = review(bigDesign);
+    priorRoundReview.criteria = priorRoundReview.criteria.map((c) =>
+        c.id === "securityPrivacyAndPerformance" ? { ...c, pass: false } : c,
+    );
+    priorRoundReview.findings.push({
+        id: "F-1",
+        rubricId: "securityPrivacyAndPerformance",
+        severity: "major",
+        location: "securityPrivacyPerformance",
+        evidence: "Missing PII guard.",
+        requiredChange: "Add Logger PII scrubbing note.",
+    });
+    const delta = buildDesignReviewDelta(bigDesign, bigDesign, [{ round: 0, review: priorRoundReview }]);
+    const payload = buildReviewerPayload({
+        stage0: stage0(),
+        sourceManifest: sourceManifest(),
+        humanDecisions: [
+            { id: "HD-1", topic: "A", decision: "Old", sourceReference: "r/1" },
+            { id: "HD-2", topic: "A", decision: "New", sourceReference: "r/2", supersedesIds: ["HD-1"] },
+        ],
+        evidence: richEvidence,
+        design: bigDesign,
+        renderedPair,
+        priorReviews: [{ round: 0, review: priorRoundReview }],
+        reviewDelta: delta,
+        context: "Compact test context.",
+    });
+
+    assert.equal(payload.renderedDetailedDesign, undefined);
+    assert.equal(payload.renderedBrief, renderedPair.documents[0].markdown);
+    assert.deepEqual(payload.appendixDescriptors, renderedPair.appendices.map(({ path, sha256 }) => ({ path, sha256 })));
+    assert.equal(payload.detailedDesignSummary.path, "detailed-design.md");
+    assert.equal(payload.detailedDesignSummary.sha256, renderedPair.documents[1].sha256);
+    assert.equal(payload.detailedDesignSummary.byteLength, Buffer.byteLength(renderedPair.documents[1].markdown, "utf8"));
+    assert.equal(payload.detailedDesignSummary.sectionAnchors.length, sections.length);
+    assert.equal(payload.detailedDesignSummary.tableAnchors.length, 9);
+    assert.equal(payload.detailedDesignSummary.hostVerified, true);
+
+    assert.equal(payload.evidence.summaryMarkdown, undefined);
+    assert.equal(payload.evidence.rawResearchDump, undefined);
+    assert.equal(payload.evidenceDigest, digest(richEvidence));
+    assert.equal(payload.designDigest, digest(bigDesign));
+    assert.equal(payload.pairRevision, renderedPair.revision);
+    assert.deepEqual(payload.humanDecisions.active.map((d) => d.id), ["HD-2"]);
+    assert.deepEqual(payload.humanDecisions.supersededIds, ["HD-1"]);
+
+    assert.equal(payload.priorReviews.length, 1);
+    assert.equal(payload.priorReviews[0].review, undefined);
+    assert.deepEqual(payload.priorReviews[0].failedCriteria, ["securityPrivacyAndPerformance"]);
+    assert.deepEqual(payload.priorReviews[0].failedChangeChecks, []);
+    assert.equal(payload.priorReviews[0].findings.length, 1);
+    assert.equal(payload.priorReviews[0].briefChecks.consistent, true);
+    assert.deepEqual(payload.reviewDelta, delta);
+
+    const payloadBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+    const duplicatedBytes = payloadBytes + Buffer.byteLength(renderedPair.documents[1].markdown, "utf8") + 100000;
+    assert.ok(payloadBytes < duplicatedBytes - 120000, `Expected bounded reviewer payload, got ${payloadBytes} bytes`);
+});
+
+test("source-only and baseline-trace-clarity boundaries are enforced across worker prompts and docs", async () => {
+    const failedReview = review(runtimeDesign());
+    failedReview.criteria = failedReview.criteria.map((c) =>
+        c.id === "architectureAndCompatibility" ? { ...c, pass: false } : c,
+    );
+    failedReview.findings.push({
+        id: "F-ARCH-1",
+        rubricId: "architectureAndCompatibility",
+        severity: "minor",
+        location: "architectureAndDataControlFlow",
+        evidence: "Clarify DI graph release check.",
+        requiredChange: "Record DI graph verification as a release-check item.",
+    });
+    const ctx = context([evidence(), runtimeDesign(), failedReview, runtimeDesign(), review(runtimeDesign())]);
+    const packet = await runDesignFeature(ctx);
+    assert.equal(packet.recommendation, readyRecommendation);
+
+    const researchPrompt = ctx.calls[0].prompt.split("\nDATA:\n")[0];
+    const authorPrompt = ctx.calls[1].prompt.split("\nDATA:\n")[0];
+    const reviewerPrompt = ctx.calls[2].prompt.split("\nDATA:\n")[0];
+    const revisionPrompt = ctx.calls[3].prompt.split("\nDATA:\n")[0];
+
+    for (const prompt of [researchPrompt, authorPrompt, reviewerPrompt, revisionPrompt]) {
+        assert.match(prompt, /never run Gradle builds/i);
+        assert.match(prompt, /merged\s+manifests|Dagger\/DI graphs/i);
+        assert.match(prompt, /scope assumption or.*release-check/i);
+    }
+    assert.match(researchPrompt, /Scenario traces describe CURRENT baseline code behavior ONLY/);
+    assert.match(researchPrompt, /Never place future design decisions.*inside scenarioTraces as unresolved baseline blockers/s);
+    assert.match(reviewerPrompt, /Stage 1 evidence\.scenarioTraces describe current baseline code behavior/);
+    assert.match(reviewerPrompt, /detailedDesignSummary/);
+    assert.match(reviewerPrompt, /appendixDescriptors/);
+
+    const readmeText = readFileSync(new URL("./README.md", import.meta.url), "utf8");
+    assert.match(readmeText, /continuation\.evidence/);
+    assert.match(readmeText, /continuation\.design/);
+    assert.match(readmeText, /humanDecisions/);
+    assert.match(readmeText, /supersedesIds/);
+    assert.match(readmeText, /buildReviewerPayload/);
+    assert.match(readmeText, /design-feature-v16/);
+    assert.match(readmeText, /never run Gradle builds/i);
+
+    const standardsText = readFileSync(
+        new URL("../../skills/design-author/references/design-standards.md", import.meta.url),
+        "utf8",
+    );
+    assert.match(standardsText, /Strictly source-only during design/i);
+    assert.match(standardsText, /never run Gradle builds/i);
+    assert.match(standardsText, /Baseline trace clarity/i);
 });
