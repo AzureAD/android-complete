@@ -289,8 +289,10 @@ test("Factory design roles load specialist guidance without granting workers mut
         assert.deepEqual(worker.tools, readerToolNames);
         assert.match(worker.prompt!, /scoped (?:native|Factory)/);
     }
+    assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_RESEARCHER)!.prompt!, /codebase-researcher\.agent\.md/);
     assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_RESEARCHER)!.prompt!, /docs\/Templates\/requirements-template\.md/);
     assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_RESEARCHER)!.prompt!, /codebase-researcher\/references\/research-standards\.md/);
+    assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_DESIGN_AUTHOR)!.prompt!, /design-writer\.agent\.md/);
     assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_DESIGN_AUTHOR)!.prompt!, /design-author\/references\/design-standards\.md/);
     assert.match(readerAgents.find((candidate) => candidate.name === FACTORY_DESIGN_REVIEWER)!.prompt!, /independent-review rubric/);
     for (const name of [FACTORY_CODER, FACTORY_CODE_REVIEWER]) {
@@ -315,6 +317,23 @@ test("workers consume domain guidance, never phase-entry skills or mode-switchin
         const content = readFileSync(path.join(repositoryRoot, file), "utf8");
         assert.doesNotMatch(content, /Factory mode|standalone mode|askQuestion|state-utils|gh auth switch|software_factory_command/i, file);
     }
+});
+
+test("feature entry skills route only to Factory and legacy registrations/writers stay retired", () => {
+    for (const name of ["design-author", "design-reviewer", "feature-planner", "pbi-creator", "pbi-dispatcher"]) {
+        const content = readFileSync(path.join(repositoryRoot, ".github", "skills", name, "SKILL.md"), "utf8");
+        assert.ok(content.includes(".github/agents/software-factory.agent.md"), name);
+        assert.doesNotMatch(content, /Factory mode|standalone mode|askQuestion|state-utils\.js|gh auth switch/i, name);
+    }
+    for (const file of [
+        ".github/agents/feature-orchestrator.agent.md", ".github/agents/pbi-creator.agent.md",
+        ".github/agents/agent-dispatcher.agent.md", ".github/hooks/orchestrator.json",
+        ".github/hooks/subagent-start.js", ".github/hooks/subagent-stop.js", ".github/hooks/state-utils.js",
+        "feature-orchestrator-plugin/.github/plugin/plugin.json", "feature-orchestrator-plugin/hooks/hooks.json",
+        "feature-orchestrator-plugin/hooks/state-utils.js", "extensions/feature-orchestrator/package.json",
+        "extensions/feature-orchestrator/src/extension.ts",
+        ".github/skills/feature-planner/references/dispatch-workflow.md",
+    ]) assert.equal(existsSync(path.join(repositoryRoot, file)), false, `${file} must not reactivate the old pipeline`);
 });
 
 test("assigned guides and workflow dependencies change the runtime fingerprint and missing files fail closed", async () => {
