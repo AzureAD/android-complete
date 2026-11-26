@@ -43,52 +43,28 @@ def test_all_specs_are_complete_and_exact_tool_kwargs(tmp_path):
     assert '"prompt"' not in raw and '"provider_spec"' not in raw
 
 
-@pytest.mark.parametrize("owner,host,hhmm,expected", [
-    ("America/Los_Angeles", "America/Los_Angeles", "07:00", "every day at 7am"),
-    ("America/Los_Angeles", "America/Los_Angeles", "07:30", "every day at 7:30am"),
-    ("America/Los_Angeles", "UTC", "07:00", "every day at 3pm"),
-    ("UTC", "UTC", "00:00", "every day at 12am"),
-    ("UTC", "UTC", "12:00", "every day at 12pm"),
+@pytest.mark.parametrize("owner,host,window,expected", [
+    ("America/Los_Angeles", "America/Los_Angeles", "07:00-19:00/2h", "cron: 0 7-19/2 * * *"),
+    ("UTC", "UTC", "08:00-16:00/4h", "cron: 0 8-16/4 * * *"),
+    ("America/Los_Angeles", "UTC", "07:00-11:00/2h", "cron: 0 15,17,19 * * *"),
 ])
-def test_daily_schedule_formats_canonical_scout_nl_and_converts_timezone(owner, host, hhmm, expected):
-    assert A._daily_schedule(hhmm, owner_timezone=owner, scheduler_timezone=host, now=NOW) == expected
+def test_daily_window_cron_formats_and_converts_timezone(owner, host, window, expected):
+    assert A._daily_window_cron(window, owner_timezone=owner, scheduler_timezone=host, now=NOW) == expected
 
 
-@pytest.mark.parametrize("owner,host,ccd,fire,expected", [
-    ("America/Los_Angeles", "UTC", date(2026, 9, 9), "09:00", "cron: 0 16 9 9 *"),
-    ("America/Los_Angeles", "UTC", date(2026, 11, 4), "09:00", "cron: 0 17 4 11 *"),
-    ("Asia/Tokyo", "America/Los_Angeles", date(2026, 9, 9), "09:00", "cron: 0 17 8 9 *"),
-    ("America/Los_Angeles", "Asia/Tokyo", date(2026, 9, 9), "12:00", "cron: 0 4 10 9 *"),
-    ("UTC", "America/Los_Angeles", date(2026, 3, 7), "12:00", "cron: 0 4 7 3 *"),
-    ("UTC", "America/Los_Angeles", date(2026, 3, 9), "12:00", "cron: 0 5 9 3 *"),
-])
-def test_ccd_cron_converts_owner_instant_across_day_and_dst(owner, host, ccd, fire, expected):
-    assert A._ccd_cron(ccd, fire, owner_timezone=owner, scheduler_timezone=host, now=NOW) == expected
-
-
-@pytest.mark.parametrize("owner,host,ccd,fire,now", [
-    (None, "UTC", date(2026, 9, 9), "09:00", NOW),
-    ("UTC", None, date(2026, 9, 9), "09:00", NOW),
-    ("UTC", "invalid", date(2026, 9, 9), "09:00", NOW),
-    ("UTC", "UTC", date(2026, 1, 1), "00:00", NOW),
-    ("UTC", "UTC", date(2025, 9, 9), "09:00", NOW),
-    ("UTC", "UTC", date(2027, 9, 9), "09:00", NOW),
-    ("America/Los_Angeles", "UTC", date(2026, 3, 8), "02:30", NOW),
-    ("America/Los_Angeles", "UTC", date(2026, 11, 1), "01:30", NOW),
-    ("UTC", "America/Los_Angeles", date(2026, 11, 1), "09:30", NOW),
-])
-def test_unsafe_or_unknown_cron_time_fails_clearly(owner, host, ccd, fire, now):
+@pytest.mark.parametrize("window", ["", "bad", "07:00", "19:00-07:00/2h", "07:00-19:00/0h", "07:00-19:30/2h"])
+def test_invalid_daily_window_fails_clearly(window):
     with pytest.raises(ValueError):
-        A._ccd_cron(ccd, fire, owner_timezone=owner, scheduler_timezone=host, now=now)
+        A._daily_window_cron(window, owner_timezone="UTC", scheduler_timezone="UTC", now=NOW)
 
 
-def test_canonical_cli_allows_optional_morning_drain_and_enforces_on_demand(tmp_path, monkeypatch, capsys):
+def test_canonical_cli_plans_and_prepares_release_drainer(tmp_path, monkeypatch, capsys):
     from tests._context import fresh_orchestrator
     original = A.plan
     monkeypatch.setattr(A, "plan", lambda config, release, ccd, **kw:
                         original(config, release, ccd, **{**kw, "scheduler_timezone": "UTC", "now": NOW}))
     state = ReleaseState(release_id="2026-09", ccd="2026-09-09", timezone="America/Los_Angeles")
-    fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     C.save_state(state, str(tmp_path), state.release_id)
     base = ["--runs-root", str(tmp_path), "automation"]
     common = ["--release", state.release_id, "--json"]

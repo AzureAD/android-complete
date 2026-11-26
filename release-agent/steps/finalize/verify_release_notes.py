@@ -17,16 +17,16 @@ A not-yet-published release is IN-PROGRESS (poll again), NOT a failure. All thre
 A draft release, or an error that prevents checking (auth/network) -> surfaced (Blocked / pending)
 rather than assumed. Read-only `gh release view` -> `agent` step.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   versions : dict override {broker, msal, common} (else read from state.versions).
-  results  : dict key->'published'|'missing'|'error' to skip the live gh calls (tests).
+  results  : dict key->'published'|'missing'|'error' to skip the live gh calls.
 """
 from __future__ import annotations
 
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked, InProgress
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from steps.finalize import integ_prs as IP
 
 ID = "verify_release_notes"
@@ -45,26 +45,16 @@ TARGETS = [
 
 CONFIG = {"poll_in_min": 30}
 
-MOCKABLE = {
-    "versions": {"kind": "input", "desc": "dict override {broker, msal, common} (else state.versions)."},
-    "results": {"kind": "input",
-                "desc": "dict repoKey->'published'|'missing'|'error' (skip the live gh calls)."},
-}
-
-
 from steps.finalize._orchestrator_gate import payload_versions as _versions
-
 
 def _gh_repo(key):
     return IP.CONFIG[key]["gh_repo"]
 
-
 def _tag(version):
     return f"v{version}"
 
-
 def _check(context, key, version):
-    """(ok, published, url, detail) — mock-first, else a live `gh release view`."""
+    """(ok, published, url, detail) — configured `results` first, else a live `gh release view`."""
     inj = context.input("results", MISSING)
     if inj is not MISSING and isinstance(inj, dict) and key in inj:
         r = str(inj[key]).lower()
@@ -76,13 +66,11 @@ def _check(context, key, version):
     ok, pub, info, detail = context.services.repositories.gh_release_exists(_gh_repo(key), _tag(version))
     return (ok, pub, (info or {}).get("url"), detail)
 
-
 def _release_url(key, version):
     host_owner_repo = _gh_repo(key)
     base = ("https://" + host_owner_repo if "/" in host_owner_repo and "." in host_owner_repo.split("/")[0]
             else "https://github.com/" + host_owner_repo)
     return f"{base}/releases/tag/{_tag(version)}"
-
 
 def build(context: StepContext):
     versions = _versions(context)
@@ -91,7 +79,7 @@ def build(context: StepContext):
         return Blocked(
             f"verify_release_notes: missing release version(s) — need "
             f"{', '.join(missing_v).lower()} in state.versions (populated at Phase 2). "
-            f"Provide the `versions` mock for testing.")
+            f"Provide `versions` in `step_defaults` for rehearsals.")
 
     links, published, pending, errors = [], [], [], []
     for key, vkey, label in TARGETS:
@@ -139,8 +127,7 @@ KNOWLEDGE = {'summary': 'Verify the GitHub release notes are published for Broke
         'as published. An explicit release-not-found response or a draft stays pending; '
         'repository access errors, malformed evidence and mismatched tags block rather than '
         'pass. The repo slugs are REUSED from integ_prs.CONFIG (the single source for the '
-        'release repos). Test with the `results` mock (repoKey -> published|missing|error) and '
-        '`versions`.\n',
+        'release repos). Rehearse via `step_defaults` (`results` and `versions`).\n',
  'faqs': [{'q': 'How is this different from verify_pub?',
            'a': 'verify_pub checks the Maven Central ARTIFACTS (MSAL/Common/Common4j .pom); '
                 'verify_release_notes checks the GitHub RELEASES (Broker/MSAL/Common, tagged '

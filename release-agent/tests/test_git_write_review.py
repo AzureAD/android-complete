@@ -10,12 +10,13 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from orchestrator import cli_common as C, git_write_plans as P, revision, write_review as W
+from orchestrator import cli_common as C, git_write_plans as P, write_review as W
+from orchestrator import write_review as revision
 from orchestrator.commands import integ_prs_cmd as IC, oneauth_pr_cmd as OC
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState
 from steps.finalize import integ_prs as I
-from steps.lib.mockctx import MISSING
+from tests._fixtures import MISSING
 from tools import git_review as G, oneauth as OA, prs as PR
 from _write_progress import memory_progress
 from test_oneauth_merge_review import (
@@ -701,8 +702,7 @@ def bound_command(tmp_path, monkeypatch, step):
         encoding="utf-8")
     state = ReleaseState(release_id="r", ccd="2026-07-08", timezone="UTC",
                          versions={"common": "1", "msal": "2"})
-    orch = Orchestrator(str(config), state, mocks={}, as_of=date(2026, 7, 8))
-    revision.bind_initial(orch)
+    orch = Orchestrator(str(config), state, step_defaults={}, as_of=date(2026, 7, 8))
     path = tmp_path / "r" / "release-state.json"
     state.save(str(path))
     args = arguments(tmp_path)

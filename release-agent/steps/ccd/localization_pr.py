@@ -19,7 +19,7 @@ from orchestrator.evidence import StepData
 from orchestrator.outcomes import Blocked, Done, InProgress
 from orchestrator.step_context import StepContext
 from steps.ccd import localization as L
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 
 EVIDENCE = (OwnStepData(),)
 ID = "localization_pr"
@@ -29,24 +29,12 @@ REQUIRED_TOOLS = ("az",)
 EFFECT_MODE = "read_only"
 RECHECK_WHEN_BLOCKED = True
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     build_id: str | None = None
     pr_id: str | None = None
 
-
 PARAMETERS = {"build": BuildParameters}
-
-MOCKABLE = {
-    "build_id": {"kind": "input", "desc": "Override the OneLoc build id to inspect."},
-    "pr_id": {"kind": "input", "desc": "Override the Localization PR id to inspect."},
-    "status": {"kind": "input", "desc": "Inject OneLoc build status (completed | inProgress)."},
-    "result": {"kind": "input", "desc": "Inject OneLoc build result (succeeded | failed | canceled)."},
-    "logs": {"kind": "input", "desc": "Inject the complete OneLocBuild@3 plain-text task log."},
-    "pr_status": {"kind": "input", "desc": "Inject ADO PR status (completed | active | abandoned)."},
-}
-
 
 def _check_pr_merge(
     context: StepContext[BuildParameters],
@@ -58,9 +46,9 @@ def _check_pr_merge(
     pr_url: str,
 ):
     effective_pr_url = pr_url
-    mock_pr_status = context.input("pr_status", MISSING)
-    if mock_pr_status is not MISSING:
-        pr_status = str(mock_pr_status or "").strip().lower()
+    cfg_pr_status = context.input("pr_status", MISSING)
+    if cfg_pr_status is not MISSING:
+        pr_status = str(cfg_pr_status or "").strip().lower()
     else:
         pr_inspector = context.services.pipelines.inspect_localization_pr
         if pr_inspector is None:
@@ -104,7 +92,6 @@ def _check_pr_merge(
         updates=(StepData(payload),),
     )
 
-
 def build(context: StepContext[BuildParameters]):
     cfg = L.CONFIG
     trigger_step = context.evidence.step("ccd", "localization")
@@ -138,7 +125,7 @@ def build(context: StepContext[BuildParameters]):
         )
 
     # Fast path on retry: if we already extracted `pr_id` for this exact `build_id` (and no build/log
-    # mocks are overriding the build check), skip re-downloading the build log and check the PR directly.
+    # overrides are configured), skip re-downloading the build log and check the PR directly.
     if (
         bid
         and own_data.get("build_id") == bid
@@ -166,9 +153,9 @@ def build(context: StepContext[BuildParameters]):
     run_link = {"name": f"Localization build #{bid}", "url": run_url}
     started_at = tdata.get("started_at")
 
-    mock_status = context.input("status", MISSING)
-    if mock_status is not MISSING:
-        status = str(mock_status or "").strip()
+    cfg_status = context.input("status", MISSING)
+    if cfg_status is not MISSING:
+        status = str(cfg_status or "").strip()
         result = str(context.input("result", "") or "").strip()
         logs = context.input("logs", None)
         logs_complete = isinstance(logs, str)
@@ -254,7 +241,6 @@ def build(context: StepContext[BuildParameters]):
         f"did not confirm a PR or `/createpr: True` no-strings result ({detail or 'inspect task log'}).",
         links=[run_link],
     )
-
 
 KNOWLEDGE = {
     "summary": "Locate the OneLoc translations PR and verify it is merged (or confirm no PR was required).",

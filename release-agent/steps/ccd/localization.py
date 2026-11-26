@@ -110,19 +110,9 @@ CONFIG = {
     },
 }
 
-# Mock knobs (mocks.local.yaml). `send_to` redirects localization follow-up
-# posts to your own chat ('me'). `send_to` is applied by check-localization
-# (the post happens in the poll decider, not build()).
+# Localization follow-up posts resolve their target via `config/environment.yaml`
+# (`self` in `test` profile, Code Reviews chat in `prod` profile).
 from steps.lib.context import SELF_CHAT_ID as _SELF_CHAT_ID   # noqa: E402
-
-MOCKABLE = {
-    "send_to": {
-        "kind": "post", "sets": "chatId", "aliases": {"me": _SELF_CHAT_ID, "self": _SELF_CHAT_ID},
-        "desc": "Redirect localization PR posts to this chat ('me' = your own chat). "
-                "Applied by check-localization.",
-    },
-}
-
 
 # ----------------------------- pure helpers (testable) -----------------------------
 
@@ -137,7 +127,6 @@ def elapsed_minutes(started_iso: str, now) -> "int | None":
         now = now.replace(tzinfo=timezone.utc)
     return int((now - start).total_seconds() // 60)
 
-
 def poll_status(is_complete: bool, started_iso: str, now,
                 timeout_hours: float = 3) -> str:
     """'complete' | 'timeout' | 'wait' — the poll decision from run state + elapsed."""
@@ -147,7 +136,6 @@ def poll_status(is_complete: bool, started_iso: str, now,
     if mins is not None and mins >= timeout_hours * 60:
         return "timeout"
     return "wait"
-
 
 def extract_pr(logs: str, cfg: dict = None) -> tuple:
     """Return (pr_id, pr_url) from the OneLocBuild@3 log. The log prints the full PR
@@ -160,7 +148,6 @@ def extract_pr(logs: str, cfg: dict = None) -> tuple:
     url = (m.group(2) if m.lastindex and m.lastindex >= 2 else None) or pr_url(pr_id, cfg)
     return pr_id, url
 
-
 def extract_create_pr_enabled(logs: str) -> "bool | None":
     """Return the OneLoc task's create-PR flag when the complete task log exposes it."""
     m = re.search(r"/createpr:\s*(true|false)", logs or "", re.IGNORECASE)
@@ -168,11 +155,9 @@ def extract_create_pr_enabled(logs: str) -> "bool | None":
         return None
     return m.group(1).lower() == "true"
 
-
 def pr_url(pr_id: str, cfg: dict = None) -> str:
     cfg = cfg or CONFIG
     return cfg["pr_url_template"].format(id=pr_id)
-
 
 def merge_deadline(context, cfg: dict = None) -> "datetime | None":
     """The CCD-day localization merge deadline in its configured wall-clock zone."""
@@ -188,7 +173,6 @@ def merge_deadline(context, cfg: dict = None) -> "datetime | None":
         raise ValueError(f"timezone data unavailable for localization deadline: {zone_name}")
     return datetime.combine(ccd, deadline_time, tzinfo=zone)
 
-
 def merge_deadline_passed(context, now=None, cfg: dict = None) -> bool:
     deadline = merge_deadline(context, cfg)
     if deadline is None:
@@ -198,13 +182,11 @@ def merge_deadline_passed(context, now=None, cfg: dict = None) -> bool:
         now = now.replace(tzinfo=timezone.utc)
     return now >= deadline
 
-
 def omission_deadline_passed(context, now=None, cfg: dict = None) -> bool:
     cfg = cfg or CONFIG
     omission_cfg = dict(cfg)
     omission_cfg["merge_deadline_local"] = cfg.get("omission_deadline_local", "18:00")
     return merge_deadline_passed(context, now, omission_cfg)
-
 
 # ------------------------------- the poll decider ---------------------------------
 
@@ -221,7 +203,6 @@ def _timeout_email(context, cfg: dict, detail: str) -> dict:
         f"<a href=\"{doc}\">Localization instructions</a>.</p>")
     return {"to": to, "subject": subject, "body": body, "isHtml": True}
 
-
 def _owner_mention(context) -> tuple:
     owner_email = context.release.owner_email or ""
     display = context.release.owner_name or (owner_email.split("@")[0] if owner_email else "") or "release engineer"
@@ -237,7 +218,6 @@ def _owner_mention(context) -> tuple:
         who = escape(display)
     return who, mentions
 
-
 def _chat_payload(context, cfg: dict, content: str) -> dict:
     payload = {"chatId": cfg["code_reviews_chat_id"], "contentType": "html",
                "content": content}
@@ -245,7 +225,6 @@ def _chat_payload(context, cfg: dict, content: str) -> dict:
     if mentions:
         payload["mentions"] = mentions
     return payload
-
 
 def _review_post(context, cfg: dict, pr_id: str, url: str) -> dict:
     """Initial Code reviews post for a discovered localization PR."""
@@ -261,7 +240,6 @@ def _review_post(context, cfg: dict, pr_id: str, url: str) -> dict:
         f"translated strings.</p>")
     return _chat_payload(context, cfg, content)
 
-
 def _deadline_post(context, cfg: dict, pr_id: str, url: str) -> dict:
     """One Code reviews warning when the localization PR misses the 4 PM target."""
     who, _ = _owner_mention(context)
@@ -274,7 +252,6 @@ def _deadline_post(context, cfg: dict, pr_id: str, url: str) -> dict:
         f"otherwise localization will be omitted and these translated strings will not "
         f"be included in this release.</p>")
     return _chat_payload(context, cfg, content)
-
 
 def _no_strings_post(context, cfg: dict) -> dict:
     """Code reviews notice for a successful createPR=true run that produced no PR."""
@@ -290,7 +267,6 @@ def _no_strings_post(context, cfg: dict) -> dict:
         f"<a href=\"{escape(run_url, quote=True)}\">localization pipeline run</a>.</p>")
     return _chat_payload(context, cfg, content)
 
-
 def _run_link(context, cfg: dict) -> dict | None:
     """A proof link to the triggered pipeline RUN itself — always available once the
     build is recorded, whether or not a PR was created. Prefers the exact run_url
@@ -305,7 +281,6 @@ def _run_link(context, cfg: dict) -> dict | None:
         return None
     label = f"Localization pipeline run{f' (build {bid})' if bid else ''}"
     return {"name": label, "url": url}
-
 
 @dataclass(frozen=True)
 class RunEvidence:
@@ -330,7 +305,6 @@ class RunEvidence:
                 or not self.no_change_confirmation.strip()):
             raise ValueError("no-change confirmation requires an owner-reviewed explanation")
 
-
 def _wait_for_pr_status(pr_id, url, links, cfg):
     return {
         "decision": "wait_for_merge", "pr_id": pr_id, "pr_url": url,
@@ -338,7 +312,6 @@ def _wait_for_pr_status(pr_id, url, links, cfg):
         "note": f"localization PR #{pr_id}: current merge status is unavailable; "
                 "read the exact PR before deciding merge or omission",
     }
-
 
 def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = None,
            pr_status: str = None, *, evidence: RunEvidence = RunEvidence()) -> dict:
@@ -494,7 +467,6 @@ def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = N
                     "(successful run and complete task output reviewed by owner): "
                     + evidence.no_change_confirmation.strip()}
 
-
 # --------------------------------- stage 1: trigger --------------------------------
 
 def _links(cfg: dict) -> list:
@@ -506,7 +478,6 @@ def _links(cfg: dict) -> list:
         out.append({"name": "Auth App PRs (OneLoc PR lands here)", "url": lk["repo_prs"]})
     return out
 
-
 def _az_read(cfg: dict, build_id: str = "{build_id}", log_id: str = "{log_id}",
              pr_id: str = "{pr_id}") -> dict:
     """The concrete az read commands (templated) for the poller to read msazure/One."""
@@ -515,7 +486,6 @@ def _az_read(cfg: dict, build_id: str = "{build_id}", log_id: str = "{log_id}",
             "oneloc_task": cfg.get("oneloc_task", "OneLocBuild@3"),
             "build_id": build_id, "log_id": log_id, "pr_id": pr_id}
     return {k: v.format(**fill) for k, v in r.items()}
-
 
 def poll_target(context, cfg: dict = None) -> dict:
     """Return the next read-only ADO query with every persisted identifier exposed."""
@@ -536,7 +506,6 @@ def poll_target(context, cfg: dict = None) -> dict:
             "az": {k: reads[k] for k in ("status", "log_id", "log")},
         }
     return {"decision": "not_started", "note": "localization has not been triggered yet"}
-
 
 def build(context: StepContext):
     """Preparation is read-only; only the checked command may trigger a pipeline."""
@@ -589,7 +558,6 @@ def build(context: StepContext):
         note="Localization launch is automatic; launch-localization records a checked plan before queuing.",
         outbound=True,
     )
-
 
 KNOWLEDGE = {
     "summary": "Queue the OneLoc localization pipeline (405133) once and record its build receipt.",

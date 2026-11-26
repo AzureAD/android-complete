@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestrator import cli_common as C, revision, write_review as W
+from orchestrator import cli_common as C, write_review as W
+from orchestrator import write_review as revision
 from orchestrator.cli import build_parser
 from orchestrator.command_catalog import COMMAND_MODULES
 from orchestrator.engine import Orchestrator
@@ -37,8 +38,7 @@ def writer(request, tmp_path, monkeypatch):
         "id": definition.phase_id, "name": "Writer", "steps": [raw],
     }]}), encoding="utf-8")
     state = ReleaseState(release_id="new-version", timezone="UTC", owner_email="owner@example.test")
-    orch = Orchestrator(str(config), state, mocks={})
-    revision.bind_initial(orch)
+    orch = Orchestrator(str(config), state, step_defaults={})
     path = Path(C.state_path(str(tmp_path), state.release_id))
     state.save(str(path))
     args = Namespace(release=state.release_id, runs_root=str(tmp_path), config=str(config),

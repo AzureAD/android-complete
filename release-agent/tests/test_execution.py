@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestrator import cli, cli_common as C, delivery as D, mocks
+from orchestrator import cli, cli_common as C, delivery as D, environment as mocks
 from orchestrator.engine import Orchestrator
 from orchestrator.outcomes import NeedsSkill
 from orchestrator.state import ReleaseState, StepState
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def run(tmp_path, monkeypatch):
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     monkeypatch.setenv("RELEASE_AGENT_MOCKS", str(tmp_path / "absent.yaml"))
     st = ReleaseState(release_id="2000-01", ccd="2000-01-12", timezone="UTC")
     _active_step(st, "ccd", "final_reminder")
@@ -133,7 +133,7 @@ def test_interruption_stays_reserved_until_owner_review(run, capsys):
 def test_owner_can_confirm_interrupted_work_done_without_repeating_it(run, capsys):
     execution_id = reserve(run, capsys)
     st = ReleaseState.load(str(run[1]))
-    orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={})
     assert orch.complete_step("ccd", "final_reminder").kind == "idle"
     assert orch.complete_step("ccd", "final_reminder", "Owner found message; original runner stopped").kind == "idle"
     assert not st.is_done("ccd", "final_reminder")
@@ -188,7 +188,7 @@ def test_broker_plan_rerun_accepts_a_new_name_and_preserves_old_binding(run, cap
         status="done", note="First plan created", data={"plan_id": 100, "plan_name": "First plan"}))
     state.resources["broker_test_plan"] = {"plan_id": 100, "identity": {"name": "First plan"}}
     state.save(str(run[1]))
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {"bug_bash.clone_plans_broker": {"clone_id": 200}})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {"bug_bash.clone_plans_broker": {"clone_id": 200}})
     args = ["--runs-root", str(run[0]), "rerun", "--release", "2000-01",
             "--phase", "bug_bash", "--step", "clone_plans_broker",
             "--reason", "Build another named plan", "--param", "name=Owner's second plan"]
@@ -286,7 +286,7 @@ def test_reservation_requires_executor_and_preserves_builder_block(run, capsys):
     assert invoke(run, capsys, "step-action", "--reserve")[0] == 1
     assert run[1].read_bytes() == before
     st = ReleaseState.load(str(run[1]))
-    orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={})
     blocked = Blocked("Required input missing")
     assert orch.reserve_step("ccd", "final_reminder", blocked, "A") is blocked
     assert not orch.step_execution("ccd", "final_reminder")
@@ -326,7 +326,7 @@ def test_reservation_is_generic_for_every_outbound_action():
 def test_parallel_phase_waits_on_reserved_step_without_running_it(run):
     st = ReleaseState.load(str(run[1]))
     st.steps.pop("preflight.notice")
-    orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={})
     action = NeedsSkill(tool="workiq_send_email", payload={}, outbound=True, record_as="notice")
     assert orch.reserve_step("preflight", "notice", action, "A").kind == "needs_skill"
     result = orch.run_until_gate()[-1]
@@ -337,7 +337,7 @@ def test_parallel_phase_waits_on_reserved_step_without_running_it(run):
 def test_direct_engine_reservation_enforces_ownership(run):
     st = ReleaseState.load(str(run[1]))
     sid = "final_reminder"
-    orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={})
     action = NeedsSkill(tool="workiq_send_email", payload={}, outbound=True, record_as=sid)
     assert orch.reserve_step("ccd", sid, action, "A").kind == "needs_skill"
     before = copy.deepcopy(st.steps)
@@ -350,17 +350,16 @@ def test_direct_engine_reservation_enforces_ownership(run):
     assert sid not in orch.scout_pending_steps()
 
 
-@pytest.mark.parametrize("renderer", ["status_view", "notification", "notification_markdown", "notification_html"])
-def test_interrupted_execution_never_instructs_an_automatic_repeat(run, capsys, renderer):
+def test_interrupted_execution_never_instructs_an_automatic_repeat(run, capsys):
     from orchestrator import render
     execution_id = reserve(run, capsys)
     invoke(run, capsys, "record-step", "--status", "attention", "--execution-id", execution_id)
     st = ReleaseState.load(str(run[1]))
-    orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={})
     for s in orch.workflow.phase("ccd").steps:
         if s.id != "final_reminder":
             st.set_step("ccd", s.id, StepState(status="done"))
-    text = getattr(render, renderer)(orch.status_report())
+    text = render.status_view(orch.status_report())
     assert "Do not repeat" in text
     assert "do it, then mark" not in text and "Mark it done when complete" not in text
 

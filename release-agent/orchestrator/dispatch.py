@@ -27,7 +27,6 @@ def phase_plan(orch, selection, readiness):
         "permission_to_execute": False, "permission_to_send": False,
     }
     if selection.suspension in (
-        LifecycleStatus.WORKFLOW_REVISION.value,
         LifecycleStatus.HALTED.value,
         LifecycleStatus.CANCELLED.value,
         "denied",

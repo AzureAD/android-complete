@@ -61,9 +61,7 @@ def _canonical_policy(args, reg, spec, *, preparing=False):
         if ensuring:
             raise ValueError("Ensure cannot manage shared/manual automations")
         return
-    from orchestrator.revision import assert_current
     _, orch = C.load_orch(args.runs_root, args.release, args.config)
-    assert_current(orch)
     if ensuring:
         errors = [issue.message for issue in orch.invariant_violations() if issue.severity == "error"]
         if errors:
@@ -78,15 +76,9 @@ def _canonical_policy(args, reg, spec, *, preparing=False):
         if ensuring:
             raise ValueError("Ensure requires a declared canonical worker")
         return  # Custom workers still require the entire explicit provider spec.
-    if definition.get("on_demand") and args.on_demand != args.slug:
-        raise ValueError("On-demand workers require --on-demand <slug>; never provision at startup")
     st = C.load_state(args.runs_root, args.release)
-    if not definition.get("every") and not definition.get("daily_at") and not definition.get("daily_window"):
-        confirmed = (st.readiness_items.get("ccd_confirmed") or {}).get("status") == "pass"
-        if st.ccd_conflict or not confirmed:
-            raise ValueError("CCD workers require owner-confirmed CCD with no conflict")
     from orchestrator.engine import Orchestrator
-    selection = Orchestrator(config, st, mocks={}).scheduling()
+    selection = Orchestrator(config, st, step_defaults={}).scheduling()
     if selection.suspension in ("halted", "denied"):
         raise ValueError("Cannot create a worker while the release has an explicit hold")
     if selection.status == "cancelled" or selection.frontier is None:
@@ -211,7 +203,7 @@ def _dispatch_automation(args):
                 def terminal(release):
                     from orchestrator.engine import Orchestrator
                     st = C.load_state(args.runs_root, release)
-                    selection = Orchestrator(args.config, st, mocks={}).scheduling()
+                    selection = Orchestrator(args.config, st, step_defaults={}).scheduling()
                     return selection.status == "cancelled" or selection.frontier is None
                 entry = reg.abandon_prepared(
                     key, _observations(args), args.reason,
@@ -283,44 +275,25 @@ def _cmd_plan(args):
     config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
     st = C.load_state(args.runs_root, args.release)
     result = auto_plan.plan(config_path, args.release, st.ccd, owner_timezone=st.timezone)
-    wanted = getattr(args, "on_demand", None)
-    if wanted:
-        result["automations"] = [
-            a for a in result["automations"] if a["on_demand"] and a["slug"] == wanted]
-        if not result["automations"]:
-            result["problems"].append(f"no on-demand automation named '{wanted}'")
-    elif getattr(args, "slug", None):
+    if getattr(args, "slug", None):
         result["automations"] = [a for a in result["automations"] if a["slug"] == args.slug]
         if not result["automations"]:
             result["problems"].append(f"Unknown automation slug '{args.slug}'")
-    else:
-        result["automations"] = [a for a in result["automations"] if not a["on_demand"]]
     for entry in result["automations"]:
         result["problems"].extend(f"{entry['slug']}: {p}" for p in entry["problems"])
-        if entry["one_shot"] and (
-            st.ccd_conflict or (st.readiness_items.get("ccd_confirmed") or {}).get("status") != "pass"
-        ):
-            result["problems"].append(f"{entry['slug']}: CCD must be owner-confirmed without conflict")
     if args.json:
         print(_json.dumps(result, indent=2))
         return 1 if result["problems"] else 0
     if result["problems"]:
-        print("⚠ automation mapping problems (fix config/automations.yaml or step fire_at_local):")
+        print("⚠ automation mapping problems (fix config/automations.yaml):")
         for p in result["problems"]:
             print(f"  - {p}")
         print()
-    if not result["ccd"]:
-        print(f"Release {args.release} has no CCD yet — set it before provisioning CCD automations.")
     for a in result["automations"]:
         sched = a.get("schedule") or "(schedule unknown)"
-        mode_note = (
-            f"(one-shot; fires {a.get('fire_at')} on CCD {a.get('ccd_date')})"
-            if a.get("one_shot")
-            else "(optional recurring accelerator)"
-        )
         print(f"• {a['name']}")
         print(f"    slug:     {a['slug']}")
-        print(f"    schedule: {sched}   {mode_note}")
+        print(f"    schedule: {sched}   (optional recurring accelerator)")
         print(f"    drives:   {', '.join(a['steps']) or '(release-wide)'}")
         print(f"    purpose:  {a['purpose']}")
         print(f"    prepare: automation prepare --name \"{a['name']}\" "
@@ -532,10 +505,7 @@ def register(sub):
     au.add_argument("--slug", default=None,
                     help="For prepare/plan: the stable slug from automations.yaml, or an explicit custom slug")
     au.add_argument("--cleanup-when", action="append", default=None,
-                    help="Required for prepare: steps_done|steps_settled|phase_done:<id>|"
-                         "step_flag:<phase.step>:<key>|release_done|manual; repeat for OR")
-    au.add_argument("--on-demand", default=None, metavar="SLUG",
-                    help="Select or explicitly authorize the named on-demand worker")
+                    help="Required for prepare: release_done|manual; repeat for OR")
     au.add_argument("--json", action="store_true")
     observations = au.add_mutually_exclusive_group()
     observations.add_argument(

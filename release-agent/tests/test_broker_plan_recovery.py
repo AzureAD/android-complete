@@ -9,7 +9,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from orchestrator import cli, cli_common as C, mocks
+from orchestrator import cli, cli_common as C, environment as mocks
 from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.state import ReleaseState, StepState
 from steps.bug_bash import clone_plans_broker as step
@@ -149,7 +149,7 @@ def fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(P, "_ado_rest_get", ado.get)
     monkeypatch.setattr(P, "_ado_rest_send", ado.send)
     monkeypatch.setattr(B, "_snapshot", lambda timeout, rc=None: (True, copy.deepcopy(SOURCE), ""))
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     return tmp_path, path, ado
 
 
@@ -163,7 +163,7 @@ def locked(fixture):
 
 def test_create_then_retry_and_reopen_reuses_resource(fixture):
     with locked(fixture) as st:
-        orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+        orch = Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={})
         phase = next(p for p in orch.config["phases"] if p["id"] == "bug_bash")
         spec = next(s for s in phase["steps"] if s["id"] == step.ID)
         assert orch._run_auto_step(phase, spec, block_holds=True).kind == "ran"
@@ -382,7 +382,7 @@ def test_uncertain_or_partial_creation_never_reposts_plan(fixture, failure):
         assert _invoke(step.build, st).kind == "blocked"
     ado.failure = None
     with locked(fixture) as st:
-        Orchestrator(C.DEFAULT_CONFIG, st, mocks={}).reopen_step("bug_bash", step.ID)
+        Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={}).reopen_step("bug_bash", step.ID)
         assert _invoke(step.build, st).kind == "blocked"
     assert len(ado.creates) == 1
     assert not any(method == "DELETE" for _, method, _ in ado.writes)

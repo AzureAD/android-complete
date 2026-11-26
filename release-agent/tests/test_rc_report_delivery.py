@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from orchestrator import cli, cli_common as C, delivery as D, mocks, schedule
+from orchestrator import cli, cli_common as C, delivery as D, environment as mocks, schedule
 from orchestrator.commands.delivery_cmd import finish
 from orchestrator.commands.step_action import prepare_step
 from orchestrator.state import ReleaseState, StepState
@@ -22,8 +22,8 @@ def ready(monkeypatch):
     _ready_for_rc_report(st)
     _seed_rc_pipeline(st, {"total": 100, "passed": 100, "failed": 0},
                       {"total": 100, "passed": 100, "failed": 0})
-    orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2026, 9, 11))
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    orch = Orchestrator(CONFIG, st, step_defaults={}, as_of=date(2026, 9, 11))
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     monkeypatch.setattr(schedule, "now_local", lambda zone: orch.now_local.astimezone(zone))
     return st, orch
 
@@ -69,7 +69,7 @@ def test_two_step_contract_completes_rc_notify_and_unlocks_human_gate(ready, tmp
     assert saved.get_step("build_verify", "rc_report_notify").data.get("report_lineage")
     assert not saved.is_done("build_verify", "rc_report_gate")
 
-    saved_orch = Orchestrator(CONFIG, saved, mocks={}, as_of=date(2026, 9, 11))
+    saved_orch = Orchestrator(CONFIG, saved, step_defaults={}, as_of=date(2026, 9, 11))
     assert saved_orch.approve_gate("Owner reviewed RC summary; proceed to Bug Bash").kind == "ran"
     assert saved.is_done("build_verify", "rc_report_gate")
     assert saved_orch.current_phase_id() == "bug_bash"

@@ -14,7 +14,7 @@ from tests._context import context, invoke
 from tests._context import fresh_orchestrator
 from tests._harness import _invite_state, _active_step, CONFIG
 from orchestrator.state import ReleaseState, StepState
-from steps.lib import mockctx
+from tests import _fixtures as mockctx
 from tools import invite as I
 from tools import bugbash_meeting as M
 from tests._meeting import seed_invite
@@ -237,7 +237,7 @@ def test_communication_claim_rejects_changed_plan_source(kind):
     sources = deepcopy(st.steps)
     _active_step(st, "bug_bash", S.ID if kind == "invitation" else N.ID)
     st.steps.update(sources)
-    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    orch = fresh_orchestrator(CONFIG, st, step_defaults={})
     result = invitation(st) if kind == "invitation" else invoke(
         N.build, st, engineer="engineer@example.test", engineer_source="owner and directory verified")
     step_id = S.ID if kind == "invitation" else N.ID

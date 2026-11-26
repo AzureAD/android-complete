@@ -11,7 +11,7 @@ import re
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator import schedule
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 
 ID = "breaking"
 KIND = "agent"
@@ -26,16 +26,6 @@ CONFIG = {
     "section": "vNext",          # scan the unreleased section only
     "breaking_tag": "[MAJOR]",   # breaking-change marker convention in this changelog
 }
-
-# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
-MOCKABLE = {
-    "changelog": {
-        "kind": "input",
-        "desc": ("Inject changelog text; the REAL [MAJOR] parse + comms draft runs "
-                 "on it — no network fetch."),
-    },
-}
-
 
 def parse_breaking(changelog_text: str, section: str = "vNext",
                    tag: str = "[MAJOR]") -> list:
@@ -64,7 +54,6 @@ def parse_breaking(changelog_text: str, section: str = "vNext",
         raise ValueError(f"changelog section '{section}' was not found")
     return entries
 
-
 def _draft_breaking_comms(entries: list, context=None) -> str:
     release = "this release"
     if context is not None:
@@ -79,13 +68,12 @@ def _draft_breaking_comms(entries: list, context=None) -> str:
         f"Thanks,\nRelease Orchestrator"
     )
 
-
 def build(context: StepContext):
     cfg = CONFIG
     url = cfg.get("changelog_url")
     section = cfg.get("section", "vNext")
     tag = cfg.get("breaking_tag", "[MAJOR]")
-    # Injected changelog (mocks.local.yaml) → run the REAL parse/draft on your text.
+    # Configured `changelog` input (`step_defaults` / scenarios) -> run the real parse/draft on it.
     injected = context.input("changelog", MISSING)
     if injected is not MISSING:
         text = injected

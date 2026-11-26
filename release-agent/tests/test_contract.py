@@ -124,7 +124,6 @@ def test_skill_defaults_to_guided_progression_and_preserves_approval_and_transpo
     assert "An external/Scout step is still agent-owned work" in skill
     assert '"only this' in skill and "without draining siblings" in skill
     assert "at most once per unchanged progress snapshot" in skill
-    assert "`invalidation.summary`" in skill
     assert "direct MCP mail tool" in skill and "never" in skill
     assert "browser/owa/outlook/manual" in skill.lower()
     assert "provider_receipt.transport" in skill
@@ -270,16 +269,14 @@ def test_skill_and_handoff_json_fit_within_inline_tool_output_budget(tmp_path, c
     import json
     from orchestrator import cli, cli_common as C
     from orchestrator.engine import Orchestrator
-    from orchestrator.revision import bind_initial
     from orchestrator.state import ReleaseState
 
     skill_bytes = len(open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read().encode("utf-8"))
     assert skill_bytes <= 17_500, f"SKILL.md is {skill_bytes} bytes (>17.5 KB risks m_get_skill truncation)"
 
     st = ReleaseState(release_id="2026-11", ccd="2026-11-18", ccd_source="manual", owner_email="owner@example.test")
-    bind_initial(Orchestrator(CONFIG, st, mocks={}))
     _active_phase(st, "preflight")
-    orch = Orchestrator(CONFIG, st, mocks={})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     for step_def in orch.workflow.phase("preflight").steps:
         if step_def.id != "vitals":
             st.set_step("preflight", step_def.id, StepState(status="done", note="ok"))
@@ -329,7 +326,7 @@ def test_external_steps_declare_requires_approval_order_gather_first_and_bound_e
         release_id="2026-11", ccd="2026-11-20", ccd_source="manual",
         owner_email="pedroro@microsoft.com", timezone="America/Los_Angeles",
     )
-    orch = Orchestrator(CONFIG, st, mocks=_safe(), as_of=date(2026, 11, 16))
+    orch = Orchestrator(CONFIG, st, step_defaults=_safe(), as_of=date(2026, 11, 16))
     _pass_scout_checks(orch)
     orch.gate.sign()
 

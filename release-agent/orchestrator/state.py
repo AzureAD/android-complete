@@ -125,8 +125,7 @@ class ReleaseState:
             )
         data = evidence_store.hydrate_records(data, os.path.dirname(os.path.abspath(path)))
         obj = cls(**data)
-        from orchestrator.revision import validate_binding, is_hash
-        validate_binding(obj.workflow_revision)
+        from orchestrator.write_review import is_hash
         obj._loaded_from_disk = True
         for name, value in (("cancellation", obj.cancellation), ("halt", obj.halt)):
             if value is not None and (
@@ -242,11 +241,13 @@ class ReleaseState:
                 from .approvals import validate_closed_approval
                 validate_closed_approval(step.data["last_approval"])
             review = step.data.get("last_write_review")
+            req_rev = {"execution_id", "hash", "approved_by", "approved_at"}
             if "last_write_review" in step.data and (
                 not isinstance(review, dict)
-                or set(review) != {"execution_id", "hash", "approved_by", "approved_at", "workflow_revision"}
+                or not req_rev.issubset(review)
+                or set(review) - req_rev - {"workflow_revision"}
                 or any(not isinstance(value, str) or not value.strip() for value in review.values())
-                or not is_hash(review["hash"]) or not is_hash(review["workflow_revision"])
+                or not is_hash(review["hash"])
             ):
                 raise ValueError(f"Invalid terminal write review for {key}")
             for timestamp in (

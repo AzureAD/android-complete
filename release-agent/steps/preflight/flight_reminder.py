@@ -6,8 +6,8 @@ Teams message to the Android Core Team. Posting to Teams needs the WorkIQ MCP th
 engine can't reach, so this is a `scout` step: `build()` resolves the message +
 target and returns a NeedsSkill(workiq_send_chat_message) for the skill to send.
 
-Posts to the configured Android Core Team group chat. To test, the engineer's
-`mocks.local.yaml` `send_to` knob redirects it to their own chat. See
+Posts to the configured Android Core Team target from `config/environment.yaml`
+(`self` in `test` profile, live group chat in `prod` profile). See
 EXTERNAL-REFERENCES.md for the fixed links.
 """
 from __future__ import annotations
@@ -27,8 +27,7 @@ REQUIRED_TOOLS = ('workiq',)
 REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
-# Step config (co-located). Posts to the real Android Core Team group chat
-# (redirect for tests with the send_to mock knob).
+# Step config (co-located). Target resolved via `config/environment.yaml` active profile.
 _CHAT = coords.team("android_core")
 CONFIG = {
     "live_chat_id": _CHAT["chat"],
@@ -38,15 +37,6 @@ CONFIG = {
         "premortem_example": "https://microsoft-my.sharepoint-df.com/:w:/p/rapong/cQpEZp0cXp1sQYo4A4M3PQWCEgUCDj364FJa-rq-msg59WlBsw",
         "localization": "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/localization",
         "ecs_flight_history": "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/PhoneFactor/ExperimentationLibrary/src/main/java/com/microsoft/authenticator/experimentation/ecs/entities/EcsFlight.kt&version=GBworking",
-    },
-}
-
-# Knobs this step exposes to mocks.local.yaml (see `mock-spec`). Keeps the Teams
-# post REAL but redirects it — the applier rewrites payload.chatId.
-MOCKABLE = {
-    "send_to": {
-        "kind": "payload", "sets": "chatId", "aliases": {"me": SELF_CHAT_ID, "self": SELF_CHAT_ID},
-        "desc": "Post to Teams for real, but to this chat ('me' = your own chat).",
     },
 }
 
@@ -68,7 +58,6 @@ def _html(ctx: dict, links: dict) -> str:
 </ol>
 <p>Thanks,<br>{T.esc(ctx['owner'])}</p>"""
 
-
 def build(context: StepContext):
     """Resolve the reminder into a NeedsSkill(workiq_send_chat_message), or Blocked
     if the release has no CCD."""
@@ -83,15 +72,18 @@ def build(context: StepContext):
     ctx["ccd7_date"] = schedule.anchor_date(ccd, "CCD-7").strftime("%m/%d/%Y")
 
     html = _html(ctx, cfg.get("links", {}) or {})
-    chat_id, target_note, prefix = resolve_chat_target(
-        context, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"))
+    chat_id, target_note, banner = resolve_chat_target(
+        context, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"),
+        team_key="android_core",
+    )
+    note_prefix = "[test-redirect] " if banner else ""
 
     return NeedsSkill(
         tool="workiq_send_chat_message",
-        payload={"chatId": chat_id, "content": html, "contentType": "html"},
+        payload={"chatId": chat_id, "content": banner + html, "contentType": "html"},
         record_as=ID,
         summary=f"Post the flight & string reminders to {target_note}",
-        note=f"posted to {target_note}",
+        note=f"{note_prefix}posted to {target_note}",
         outbound=True,
     )
 
@@ -102,7 +94,7 @@ KNOWLEDGE = {'summary': 'Post the combined feature-owner reminders to the Androi
  'how': 'Scout uses `notification prepare --release <id> --source step --phase preflight '
         '--step flight_reminder`, reviews and claims the hash, posts only the claimed payload, '
         'then acknowledges with `notification result`. A raw preview is not send permission. '
-        'For a test, redirect to your own chat with the `send_to: me` mock knob.\n',
+        'Under `active_profile: test` in `config/environment.yaml`, posts go to self-chat.\n',
  'links': [{'name': 'release variable group (local flights)',
             'url': 'https://identitydivision.visualstudio.com/Engineering/_library?itemType=VariableGroups&view=VariableGroupView&variableGroupId=40&path=release'},
            {'name': 'Localization instructions',

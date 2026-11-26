@@ -45,7 +45,7 @@ def test_closing_email_uses_this_invocations_recipient_config(tmp_path, monkeypa
     _active_step(state, "finalize", "final_status_email")
     state.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
     before = deepcopy(state.steps)
-    orch = Orchestrator(str(config), state, mocks={})
+    orch = Orchestrator(str(config), state, step_defaults={})
     if recipients:
         result = final_status_email.build(orch.context("finalize", "final_status_email"))
         assert result.kind == "needs_skill"
@@ -64,7 +64,7 @@ def test_completed_rc_milestone_uses_current_publication_and_quality_gate_steps(
         state.steps["build_verify." + missing]["status"] = "pending"
         state.gate_decisions = [
             item for item in state.gate_decisions if item["step"] != "build_verify.rc_report_gate"]
-    selection = Orchestrator(CONFIG, state, mocks={}).scheduling()
+    selection = Orchestrator(CONFIG, state, step_defaults={}).scheduling()
     milestone = next(
         item for item in status_email.milestones(state, _PHASE_ORDER, selection)
         if item["label"] == "Automated Test Pass")

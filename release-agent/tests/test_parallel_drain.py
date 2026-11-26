@@ -80,7 +80,7 @@ def _orch(tmp_path, *, execution="parallel", effect_mode=None, recovery="frozen"
     state = ReleaseState(release_id="r", timezone="UTC")
     state._checkpoint = lambda: checkpoints.append(state.get_step("phase", "slow"))
     orch = Orchestrator(
-        str(path), state, mocks={},
+        str(path), state, step_defaults={},
         now=datetime(2026, 9, 12, 12, tzinfo=timezone.utc),
         handler_resolver=lambda _phase, step: modules.get(step),
     )
@@ -211,15 +211,3 @@ def test_step_limit_remains_bounded_during_parallel_wait(tmp_path):
     assert len(actions) == 1 and actions[0].continue_drain
     assert calls == [("slow", "build")]
     assert orch.state.get_step("phase", "fast").status == "pending"
-
-
-def test_simulation_respects_step_local_wait_without_inventing_completion(tmp_path):
-    from orchestrator.sim import _fast_forward
-
-    orch, calls, _, _ = _orch(tmp_path)
-    result = _fast_forward(orch, orch.config, "phase", "done", set())
-    assert result["kind"] == "waiting"
-    assert calls == [("slow", "build"), ("fast", "build"), ("fast_child", "build")]
-    assert result["forwarded"] == 2
-    assert not result["problems"]
-    assert orch.state.get_step("phase", "slow").status == "in_flight"

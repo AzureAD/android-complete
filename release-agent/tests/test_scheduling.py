@@ -20,7 +20,7 @@ def _step(sid, kind="auto", **kwargs):
     }
 
 
-def _engine(tmp_path, steps, *, execution="parallel", anchor=None, fire=None, mocks=None):
+def _engine(tmp_path, steps, *, execution="parallel", anchor=None, fire=None, step_defaults=None):
     calls, checkpoints = [], []
     control = {"outcome": Done("finished"), "input": "original"}
     modules = {}
@@ -72,7 +72,7 @@ def _engine(tmp_path, steps, *, execution="parallel", anchor=None, fire=None, mo
     state = ReleaseState(release_id="r", timezone="UTC", ccd="2026-09-12")
     state._checkpoint = lambda: checkpoints.append(deepcopy(state.steps))
     orch = Orchestrator(
-        str(path), state, mocks=mocks or {},
+        str(path), state, step_defaults=step_defaults or {},
         now=datetime(2026, 9, 12, 12, tzinfo=timezone.utc),
         handler_resolver=lambda _phase, sid: modules.get(sid),
     )
@@ -169,7 +169,7 @@ def test_timed_new_work_including_mocks_uses_one_readiness_boundary(
     orch, calls, _, _ = _engine(
         tmp_path, [_step("timed", kind)], execution=execution, anchor="CCD",
         fire={"timed": "13:00"},
-        mocks={"phase.timed": {"outcome": "done"}} if mocked else {},
+        step_defaults={"phase.timed": {"outcome": "done"}} if mocked else {},
     )
     intent = TransitionIntent.EXECUTE if kind == "auto" else TransitionIntent.PREPARE
     selection = _parity(orch)
@@ -296,7 +296,7 @@ def test_owned_effect_recovery_is_ordered_separate_and_once_per_drain(tmp_path, 
     record.status = status
     orch.state.set_step("phase", "owned", record)
     owned = deepcopy(record.execution)
-    orch.mocks["phase.owned"] = {"outcome": "done"}
+    orch.step_defaults["phase.owned"] = {"outcome": "done"}
     orch.now_local = orch.now_local.replace(hour=10)
     calls.clear()
     selection = _parity(orch)

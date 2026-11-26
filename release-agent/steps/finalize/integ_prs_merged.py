@@ -20,7 +20,7 @@ from orchestrator.evidence import StepData
 from orchestrator.outcomes import Blocked, Done
 from orchestrator.step_context import StepContext, thaw
 from steps.finalize import integ_prs as IP
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import prs as PR
 
 ID = "integ_prs_merged"
@@ -30,20 +30,6 @@ REQUIRED_TOOLS = ("gh", "az")
 EFFECT_MODE = "read_only"
 RECHECK_WHEN_BLOCKED = True
 EVIDENCE = (OwnStepData(),)
-
-MOCKABLE = {
-    "versions": {"kind": "input", "desc": "dict repo->version (override state.versions for testing)."},
-    "branches": {"kind": "input", "desc": "dict repo->{wr,r,ri,target} to override branch names."},
-    "repos": {"kind": "input", "desc": "list of repo keys to include (default all)."},
-    "prs": {
-        "kind": "input",
-        "desc": (
-            "dict '<repo>:<freeze|integration>' -> 'merged'|'open'|'closed'|'missing'|'error' "
-            "or {state, number, url} to bypass live gh/az reads in tests."
-        ),
-    },
-}
-
 
 def _recorded_receipts(context: StepContext) -> dict[tuple[str, str, str], dict]:
     """Extract acknowledged PR receipts keyed by (repo_key, head, base) from `finalize.integ_prs`."""
@@ -72,7 +58,6 @@ def _recorded_receipts(context: StepContext) -> dict[tuple[str, str, str], dict]
                 "url": receipt.get("url"),
             }
     return receipts
-
 
 def _check_pr(context: StepContext, repo_key: str, pr_kind: str, cfg: dict, head: str, base: str, receipt: dict | None):
     """Return (ok, info|None, detail) where info is {number, url, state}."""
@@ -106,7 +91,6 @@ def _check_pr(context: StepContext, repo_key: str, pr_kind: str, cfg: dict, head
     ado = cfg["ado"]
     fn = context.services.repositories.az_pr_merge_state or PR.az_pr_merge_state
     return fn(ado["org"], ado["project"], ado["repository"], head, base, number=rec_num)
-
 
 def build(context: StepContext):
     repos = IP._selected_repos(context)
@@ -199,7 +183,6 @@ def build(context: StepContext):
         links=done_links,
         updates=(step_update,),
     )
-
 
 KNOWLEDGE = {
     "summary": "Verify all 8 freeze and release-integration PRs are merged before publishing release notes.",

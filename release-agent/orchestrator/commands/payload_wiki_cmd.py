@@ -6,7 +6,7 @@ NOTHING. With `--execute` it create-or-updates the page (ETag-guarded update if 
 exists, else create) and records the `rollout_start.wiki_payload` step (pass, or attention on a
 write failure).
 
-Honors the release's `rollout_start.wiki_payload` mocks (version / prs / page_name) for offline tests.
+Honors the release's `rollout_start.wiki_payload` `step_defaults` (version / prs / page_name) for offline scenarios.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ PHASE = "rollout_start"
 
 def plan_payload_wiki(orch):
     ok, plan, detail = S.compose_payload(
-        orch.context(PHASE, S.ID, inputs=W.step_mocks(orch, PHASE, S.ID)))
+        orch.context(PHASE, S.ID, inputs=W.step_defaults(orch, PHASE, S.ID)))
     if not ok:
         raise ValueError(f"Could not compose the payload page: {detail}")
     org, project, wiki = S.CONFIG["org"], S.CONFIG["project"], S.CONFIG["wiki"]

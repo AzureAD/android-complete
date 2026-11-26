@@ -15,7 +15,7 @@ def test_remove_rc_tags_gate_build_shows_pending_brief():
     """build() with an injected pending approval → a needs_human brief naming the build, the
     stage, and the publish consequences."""
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     info = {"approval_id": "A1", "build_id": 1681228, "stage": "Remove RC Tags", "build_url": "u"}
@@ -34,7 +34,7 @@ def test_remove_rc_tags_gate_build_shows_pending_brief():
 def test_remove_rc_tags_gate_build_holds_when_not_parked():
     """No approval and an incomplete stage must hold; absence never skips the gate."""
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({
@@ -48,7 +48,7 @@ def test_remove_rc_tags_gate_build_holds_when_not_parked():
 
 def test_remove_rc_tags_gate_build_done_only_after_stage_succeeds():
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
 
     st = ReleaseState(release_id="2026-08")
@@ -62,7 +62,7 @@ def test_remove_rc_tags_gate_build_done_only_after_stage_succeeds():
 
 def test_remove_rc_tags_gate_build_blocks_failed_stage():
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
 
     st = ReleaseState(release_id="2026-08")
@@ -79,7 +79,7 @@ def test_remove_rc_tags_gate_build_blocks_failed_stage():
 def test_remove_rc_tags_gate_submit_approval_submits():
     """Preparation freezes the pending identity/comment; submission calls the injected writer."""
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tools import pipelines as P
     st = ReleaseState(release_id="2026-08")
     sent = {}
@@ -106,7 +106,7 @@ def test_remove_rc_tags_gate_submit_approval_submits():
 
 def test_remove_rc_tags_gate_submit_approval_rejects_different_stage():
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tools import pipelines as P
 
     st = ReleaseState(release_id="2026-08")
@@ -134,7 +134,7 @@ def test_remove_rc_tags_gate_submit_approval_rejects_different_stage():
 
 def test_remove_rc_tags_gate_submit_refuses_completed_stage_without_approval_identity():
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
 
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({
@@ -149,7 +149,7 @@ def test_remove_rc_tags_gate_submit_refuses_completed_stage_without_approval_ide
 
 def test_remove_rc_tags_gate_refuses_later_gate_even_when_original_stage_completed():
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
 
     st = ReleaseState(release_id="2026-08")
     later = {
@@ -172,7 +172,7 @@ def test_remove_rc_tags_gate_refuses_later_gate_even_when_original_stage_complet
 def test_remove_rc_tags_gate_submit_approval_skip_knob():
     """Legacy submit: skip blocks preparation; it never fabricates provider success."""
     from steps.finalize import remove_rc_tags_gate as gw
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"approval": {"approval_id": "A1", "build_id": 1, "stage": "x", "build_url": "u"},
                          "submit": "skip"}):
@@ -187,7 +187,7 @@ def test_remove_rc_tags_gate_submit_approval_skip_knob():
 def test_publish_notes_gate_brief_when_parked_at_notes():
     """build() with the notes stage parked → a needs_human brief naming the stage + consequence."""
     from steps.finalize import publish_notes_gate as PG
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     info = {"approval_id": "A2", "build_id": 1678611, "stage": "Publish GitHub Release Notes", "build_url": "u"}
@@ -203,7 +203,7 @@ def test_publish_notes_gate_brief_when_parked_at_notes():
 def test_publish_notes_gate_done_when_stage_completed():
     """If the notes stage already completed → Done (nothing to approve)."""
     from steps.finalize import publish_notes_gate as PG
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"stage_state": {"state": "completed", "result": "succeeded"}}):
@@ -216,7 +216,7 @@ def test_publish_notes_gate_done_when_stage_completed():
 def test_publish_notes_gate_warns_when_parked_elsewhere():
     """Parked at a DIFFERENT stage (e.g. Remove RC Tags) → holds with a warning, not the gate."""
     from steps.finalize import publish_notes_gate as PG
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     info = {"approval_id": "A1", "build_id": 1, "stage": "Remove RC Tags", "build_url": "u"}
@@ -231,7 +231,7 @@ def test_publish_notes_gate_warns_when_parked_elsewhere():
 def test_publish_notes_gate_waits_when_not_parked():
     """Nothing parked + notes not completed → holds ('isn't parked yet')."""
     from steps.finalize import publish_notes_gate as PG
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"approval": None, "stage_state": None}):
@@ -244,7 +244,7 @@ def test_publish_notes_gate_waits_when_not_parked():
 def test_publish_notes_gate_submit_verifies_stage():
     """Prepare/submit freezes ONLY the notes-stage approval and forwards its comment."""
     from steps.finalize import publish_notes_gate as PG
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tools import pipelines as P
     st = ReleaseState(release_id="2026-08")
     sent = {}
@@ -288,7 +288,7 @@ def test_publish_notes_gate_submit_verifies_stage():
 def test_integ_prs_reads_versions_from_state():
     """integ_prs uses state.versions as the source of truth (no versions mock, no re-discovery),
     and derives authenticator branches from its stored release branch."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import integ_prs as S
     from tools import prs as P
     restore = _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=[], conflicts=[])
@@ -313,7 +313,7 @@ def test_integ_prs_reads_versions_from_state():
 def test_integ_prs_plan_computes_8_prs_offline():
     """plan() computes 2 PRs for each of the 4 repos with the right head/base/labels and
     an RI-edit analysis for the integration PRs — all offline."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import integ_prs as S
     from tools import prs as P
     restore = _patch_pr_reads(P, exists=True, existing_pr=None, behind=3,
@@ -348,7 +348,7 @@ def test_integ_prs_plan_computes_8_prs_offline():
 
 def test_integ_prs_in_progress_when_branch_missing():
     """A missing required branch → InProgress (waiting on the orchestrator), not a crash."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import integ_prs as S
     from tools import prs as P
     restore = _patch_pr_reads(P, exists=False)
@@ -366,7 +366,7 @@ def test_integ_prs_in_progress_when_branch_missing():
 
 
 def test_orchestrator_finalization_monitors_stage_states():
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import orchestrator_finalization as S
 
     st = ReleaseState(release_id="2026-08")
@@ -406,86 +406,6 @@ def test_orchestrator_finalization_monitors_stable_stage_identifier(monkeypatch)
     assert S.STAGE_NAME == "Publish GitHub Release Notes"
 
 
-def test_orchestrator_finalization_poller_escalates_once_after_eight_hours(
-        monkeypatch, capsys):
-    import json
-    from datetime import datetime, timedelta, timezone
-    from types import SimpleNamespace
-    from orchestrator.commands import finalize_poll
-    from orchestrator.state import StepState
-
-    now = datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc)
-    st = ReleaseState(
-        release_id="2026-09", ccd="2026-09-09",
-        owner_email="owner@microsoft.com", timezone="UTC")
-    _active_step(st, "finalize", "orchestrator_finalization")
-    st.pipeline_runs["orchestrator"] = {"run_id": "1690355"}
-    st.set_step("finalize", "orchestrator_finalization", StepState(
-        status="in_flight",
-        data={
-            "in_flight_since": (now - timedelta(hours=9)).isoformat(),
-            "last_polled_at": (now - timedelta(hours=2)).isoformat(),
-            "poll_in_min": 120,
-        },
-    ))
-    orch = fresh_orchestrator(
-        CONFIG, st, mocks={"finalize.orchestrator_finalization": {"stage": "wait"}},
-        now=now)
-    monkeypatch.setattr(finalize_poll.C, "load_orch", lambda *_: (st, orch))
-    monkeypatch.setattr(finalize_poll.C, "save_state", lambda *_: None)
-    args = SimpleNamespace(
-        runs_root="", release="2026-09", config=CONFIG, now=now.isoformat(), as_of=None)
-
-    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result["decision"] == "escalate"
-    assert len(result["notifications"]) == 2
-    assert result["escalation"]["email"]["to"] == ["owner@microsoft.com"]
-    assert "every 2 hours" in result["escalation"]["teams"]["message"]
-
-    step = st.get_step("finalize", "orchestrator_finalization")
-    step.data["escalated_at"] = now.isoformat()
-    step.data["last_polled_at"] = (now - timedelta(hours=2)).isoformat()
-    st.set_step("finalize", "orchestrator_finalization", step)
-    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
-    assert json.loads(capsys.readouterr().out)["decision"] == "waiting"
-
-
-def test_orchestrator_finalization_missing_owner_does_not_crash_or_offer_delivery(
-        monkeypatch, capsys):
-    import json
-    from datetime import datetime, timedelta, timezone
-    from types import SimpleNamespace
-    from orchestrator.commands import finalize_poll
-    from orchestrator.state import StepState
-
-    now = datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc)
-    st = ReleaseState(
-        release_id="2026-09", ccd="2026-09-09", owner_email=None, timezone="UTC")
-    _active_step(st, "finalize", "orchestrator_finalization")
-    st.set_step("finalize", "orchestrator_finalization", StepState(
-        status="in_flight",
-        data={
-            "in_flight_since": (now - timedelta(hours=9)).isoformat(),
-            "last_polled_at": (now - timedelta(hours=2)).isoformat(),
-            "poll_in_min": 120,
-        },
-    ))
-    orch = fresh_orchestrator(
-        CONFIG, st, mocks={"finalize.orchestrator_finalization": {"stage": "wait"}},
-        now=now)
-    monkeypatch.setattr(finalize_poll.C, "load_orch", lambda *_: (st, orch))
-    monkeypatch.setattr(finalize_poll.C, "save_state", lambda *_: None)
-    args = SimpleNamespace(
-        runs_root="", release="2026-09", config=CONFIG, now=now.isoformat(), as_of=None)
-
-    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result["decision"] == "waiting"
-    assert result["notifications"] == []
-    assert "owner email is unresolved" in result["escalation_blocked"].lower()
-
-
 def test_orchestrator_finalization_ado_reads_respect_two_hour_cadence(monkeypatch):
     from datetime import datetime, timedelta, timezone
     from orchestrator.state import StepState
@@ -513,43 +433,8 @@ def test_orchestrator_finalization_ado_reads_respect_two_hour_cadence(monkeypatc
     assert len(calls) == 1
 
 
-def test_orchestrator_finalization_does_not_escalate_at_exactly_eight_hours(
-        monkeypatch, capsys):
-    import json
-    from datetime import datetime, timedelta, timezone
-    from types import SimpleNamespace
-    from orchestrator.commands import finalize_poll
-    from orchestrator.state import StepState
-
-    now = datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc)
-    st = ReleaseState(
-        release_id="2026-09", ccd="2026-09-09",
-        owner_email="owner@microsoft.com", timezone="UTC")
-    _active_step(st, "finalize", "orchestrator_finalization")
-    st.set_step("finalize", "orchestrator_finalization", StepState(
-        status="in_flight",
-        data={
-            "in_flight_since": (now - timedelta(hours=8)).isoformat(),
-            "last_polled_at": (now - timedelta(hours=2)).isoformat(),
-            "poll_in_min": 120,
-        },
-    ))
-    orch = fresh_orchestrator(
-        CONFIG, st, mocks={"finalize.orchestrator_finalization": {"stage": "wait"}},
-        now=now)
-    monkeypatch.setattr(finalize_poll.C, "load_orch", lambda *_: (st, orch))
-    monkeypatch.setattr(finalize_poll.C, "save_state", lambda *_: None)
-    args = SimpleNamespace(
-        runs_root="", release="2026-09", config=CONFIG, now=now.isoformat(), as_of=None)
-
-    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result["decision"] == "waiting"
-    assert result["notifications"] == []
-
-
 def test_integ_prs_build_only_prepares_pr_action():
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import integ_prs as S
     from tools import prs as P
 
@@ -574,7 +459,7 @@ def test_integ_prs_build_only_prepares_pr_action():
 
 def test_integ_prs_blocked_without_versions():
     """No versions resolved (and az blocked) → Blocked, no network crash."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import integ_prs as S
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"repos": ["msal"]}):
@@ -588,7 +473,7 @@ def test_step_action_persists_external_blocked_outcome():
 
     st = ReleaseState(release_id="2026-08")
     _active_step(st, "finalize", "integ_prs")
-    orch = Orchestrator(CONFIG, st, mocks={})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     out = prepare_step(
         Namespace(
             phase="finalize",
@@ -663,12 +548,11 @@ def _integration_provider(monkeypatch, *, behind=0, conflicts=()):
 def _run_integration_review(ns):
     from orchestrator import write_review as W
     from orchestrator.commands import integ_prs_cmd as CMD
-    from steps.lib import mockctx
 
     with C.state_lock(ns.runs_root, ns.release):
         _, orch = C.load_orch(ns.runs_root, ns.release, ns.config)
-        with mockctx.active(W.step_mocks(orch, "finalize", "integ_prs")):
-            plan = CMD.integration_plan(orch.context("finalize", "integ_prs"), ns)
+        step_inputs = W.step_defaults(orch, "finalize", "integ_prs")
+        plan = CMD.integration_plan(orch.context("finalize", "integ_prs", inputs=step_inputs), ns)
         ns.review_hash = W.review_hash(orch, "finalize", "integ_prs", plan)
         return CMD.cmd_create_integration_prs(ns)
 
@@ -736,7 +620,7 @@ def test_create_integration_prs_holds_pr_on_human_conflict(monkeypatch):
 def test_release_announcement_builds_channel_post_from_state_versions():
     """build() returns a needs_skill microsoft_teams channel post with the SDK table from
     state.versions and the correct title/target."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
@@ -763,7 +647,7 @@ def test_release_announcement_cc_grouped_by_team():
     """cc renders one line PER TEAM (bold group label + member @mentions), and the mentions
     array covers every member across groups."""
     import json as _json
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
@@ -783,7 +667,7 @@ def test_release_announcement_cc_grouped_by_team():
 def test_release_announcement_cc_mode_self_pings_only_you():
     """cc_mode='self' mentions ONLY self_email (safe test — never pings the real members)."""
     import json as _json
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0"})
@@ -798,7 +682,7 @@ def test_release_announcement_cc_mode_self_pings_only_you():
 def test_release_announcement_post_to_renders_plain_text_real_cc():
     """A test redirect (post_to) shows the FULL real cc grouped as PLAIN TEXT — real member
     names present, but NO mentions (nobody pinged), mirroring reality closely."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0"})
@@ -823,7 +707,7 @@ def test_release_announcement_post_to_renders_plain_text_real_cc():
 
 def test_release_announcement_cc_mode_off_is_plain_text():
     """cc_mode='off' lists member names grouped as plain text with NO mentions key."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0"})
@@ -839,7 +723,7 @@ def test_release_announcement_cc_mode_off_is_plain_text():
 
 def test_release_announcement_post_to_redirects_target():
     """The `post_to` mock redirects to a test channel while keeping the post real."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
@@ -853,7 +737,7 @@ def test_release_announcement_post_to_redirects_target():
 
 def test_release_announcement_blocks_without_versions():
     """No SDK versions anywhere -> Blocked (never posts an empty table)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")   # no versions recorded
     with mockctx.active({}):
@@ -865,7 +749,7 @@ def test_release_announcement_blocks_without_versions():
 
 def test_release_announcement_month_year_from_release_id_without_ccd():
     """Title month/year matches the calendar month of release_id even when no CCD is set."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08")                     # no ccd
     st.record_versions({"common": "1.0.0"})
@@ -878,7 +762,7 @@ def test_release_announcement_month_year_from_release_id_without_ccd():
 
 def test_verify_pub_all_published_done():
     """All three artifacts present on Maven Central -> Done, with links."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_pub as VP
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
@@ -893,7 +777,7 @@ def test_verify_pub_all_published_done():
 
 def test_verify_pub_missing_is_in_progress():
     """A not-yet-published artifact -> InProgress (poll), never Blocked/failed."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_pub as VP
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
@@ -908,7 +792,7 @@ def test_verify_pub_missing_is_in_progress():
 
 def test_verify_pub_network_error_blocks():
     """A check that errors out -> Blocked (surface it; don't assume 'not published')."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_pub as VP
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
@@ -921,7 +805,7 @@ def test_verify_pub_network_error_blocks():
 
 def test_verify_pub_blocks_without_versions():
     """No versions in state -> Blocked (nothing to verify)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_pub as VP
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({}):
@@ -933,7 +817,7 @@ def test_verify_pub_blocks_without_versions():
 
 def test_verify_pub_common4j_uses_common_version():
     """Common4j is checked at the COMMON version (not a separate one)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_pub as VP
     from tools import maven as M
     st = ReleaseState(release_id="2026-08")
@@ -958,7 +842,7 @@ def test_verify_pub_common4j_uses_common_version():
 
 def test_verify_release_notes_all_published_done():
     """All three GitHub releases present → Done, with per-repo links (broker via GHE)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_release_notes as VR
     from orchestrator.outcomes import as_dict
     with mockctx.active({"results": {"broker": "published", "msal": "published", "common": "published"}}):
@@ -974,7 +858,7 @@ def test_verify_release_notes_all_published_done():
 
 def test_verify_release_notes_missing_is_in_progress():
     """A not-yet-published release → InProgress (poll), never failed."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_release_notes as VR
     with mockctx.active({"results": {"broker": "published", "msal": "published", "common": "missing"}}):
         out = _invoke(VR.build, _vrn_state())
@@ -987,7 +871,7 @@ def test_verify_release_notes_missing_is_in_progress():
 
 def test_verify_release_notes_error_blocks():
     """A gh error (auth/network/draft) → Blocked (surface it; don't assume 'not published')."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_release_notes as VR
     with mockctx.active({"results": {"broker": "error", "msal": "published", "common": "published"}}):
         out = _invoke(VR.build, _vrn_state())
@@ -998,7 +882,7 @@ def test_verify_release_notes_error_blocks():
 
 def test_verify_release_notes_blocks_without_versions():
     """Missing a version in state → Blocked (nothing to verify)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import verify_release_notes as VR
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})     # no broker
@@ -1023,7 +907,7 @@ def test_verify_release_notes_tags_v_prefixed_from_integ_config():
 def test_tag_authenticator_creates_tag():
     """Discovers the version+commit from the release-app build and creates a lightweight tag
     (no 'v' prefix) at the built commit."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     seen = {}
@@ -1056,7 +940,7 @@ def test_tag_authenticator_creates_tag():
 
 def test_tag_authenticator_idempotent_same_commit():
     """An existing tag AT the same commit → Done (idempotent), no error."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_final_auth_build, P.create_lightweight_tag
@@ -1072,7 +956,7 @@ def test_tag_authenticator_idempotent_same_commit():
 
 
 def test_tag_authenticator_blocks_when_captured_version_disagrees_with_build():
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
 
@@ -1095,7 +979,7 @@ def test_tag_authenticator_blocks_when_captured_version_disagrees_with_build():
 
 
 def test_tag_authenticator_recovery_uses_frozen_target():
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     from orchestrator import effects
@@ -1151,7 +1035,7 @@ def test_tag_authenticator_recovery_uses_frozen_target():
 
 def test_tag_authenticator_conflict_different_commit_blocks():
     """An existing tag pointing at a DIFFERENT commit → Blocked (human must reconcile)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_final_auth_build, P.create_lightweight_tag
@@ -1170,7 +1054,7 @@ def test_tag_authenticator_conflict_different_commit_blocks():
 
 def test_tag_authenticator_dry_run_does_not_write():
     """dry_run composes the tag but never calls create."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     called = {"create": False}
@@ -1194,7 +1078,7 @@ def test_tag_authenticator_dry_run_does_not_write():
 
 def test_tag_authenticator_injected_version_commit_skips_lookup():
     """version+commit mocks bypass the build lookup entirely (offline)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_final_auth_build, P.create_lightweight_tag
@@ -1215,7 +1099,7 @@ def test_tag_authenticator_injected_version_commit_skips_lookup():
 
 def test_tag_authenticator_blocks_without_branch():
     """No authenticator release branch on state.versions → Blocked."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     with mockctx.active({}):
         out = _invoke(TA.build, ReleaseState(release_id="2026-08"))
@@ -1226,7 +1110,7 @@ def test_tag_authenticator_blocks_without_branch():
 
 def test_tag_authenticator_blocks_when_build_not_run():
     """Release-app build hasn't run on the branch yet (info=None) → Blocked."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of = P.find_final_auth_build
@@ -1244,7 +1128,7 @@ def test_tag_authenticator_blocks_when_build_not_run():
 
 def test_oneauth_common_pr_preview_computes_plan():
     """build() is preview-first: reads versions, merge-needed, edits, existing PR → NeedsSkill."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import oneauth_common_pr as S
     from orchestrator.outcomes import as_dict
     from tools import oneauth as OA
@@ -1270,7 +1154,7 @@ def test_oneauth_common_pr_preview_computes_plan():
 
 def test_oneauth_common_pr_reuses_existing_pr_in_plan():
     """An existing open ingestion->dev PR is surfaced in the plan (idempotency)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import oneauth_common_pr as S
     from orchestrator.outcomes import as_dict
     from tools import oneauth as OA
@@ -1292,7 +1176,7 @@ def test_oneauth_common_pr_reuses_existing_pr_in_plan():
 
 def test_oneauth_common_pr_blocks_without_versions():
     """Missing Common/MSAL versions → Blocked."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import oneauth_common_pr as S
     with mockctx.active({}):
         out = _invoke(S.build, ReleaseState(release_id="2026-08"))
@@ -1303,7 +1187,7 @@ def test_oneauth_common_pr_blocks_without_versions():
 
 def test_oneauth_common_pr_blocks_on_missing_anchor():
     """If a file's bump anchor can't be found, build() blocks (no silent no-op)."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import oneauth_common_pr as S
     from tools import oneauth as OA
     o_ab, o_rt, o_fp = OA.ahead_behind, OA.read_text, OA.find_open_pr
@@ -1323,7 +1207,7 @@ def test_oneauth_common_pr_blocks_on_missing_anchor():
 def test_wiki_payload_composes_page_and_filters_noise():
     """compose_payload renders the App Version line, the merged-PR list (LEGO noise dropped),
     the SDK versions, and the hand-curated placeholders."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import wiki_payload as W
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
     st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
@@ -1350,7 +1234,7 @@ def test_wiki_payload_composes_page_and_filters_noise():
 def test_wiki_payload_build_reports_create_or_update():
     """build() is preview-first: it checks whether the page exists and names create vs update
     in a NeedsSkill(create-payload-wiki) with the composed content in the payload."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import wiki_payload as W
     from tools import checks
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
@@ -1372,7 +1256,7 @@ def test_wiki_payload_build_reports_create_or_update():
 
 
 def test_wiki_payload_requires_captured_final_authenticator_build(monkeypatch):
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.rollout_start import wiki_payload as W
     from tools import pipelines as P
 
@@ -1479,7 +1363,7 @@ def test_integ_prs_merged_blocks_until_all_prs_merge_and_rechecks_automatically(
     from orchestrator import drain
     from orchestrator.state import StepState
     from steps.finalize import integ_prs_merged as M
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
 
     assert M.RECHECK_WHEN_BLOCKED is True
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
@@ -1531,7 +1415,7 @@ def test_integ_prs_merged_blocks_until_all_prs_merge_and_rechecks_automatically(
     assert any("2140" in lnk["url"] for lnk in done.links)
 
     # Verify drain._should_recheck_step selects blocked `integ_prs_merged` AND `publish_notes_gate` stays gated!
-    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    orch = fresh_orchestrator(CONFIG, st, step_defaults={})
     _active_step(st, "finalize", "integ_prs_merged")
     st.set_step("finalize", "integ_prs_merged", StepState(status="blocked", note=blocked.reason))
     runnable_ids = {item.step.id for item in orch.scheduling().runnable}
@@ -1565,7 +1449,7 @@ def test_pr_merge_state_helpers_normalize_gh_and_ado(monkeypatch):
 
 
 def test_final_status_email_step_sends_and_closes():
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.finalize import final_status_email as FSE
     st = _status_state("finalize")
     with mockctx.active({"send_to": "me@microsoft.com"}):

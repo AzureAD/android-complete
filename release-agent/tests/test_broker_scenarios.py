@@ -703,7 +703,7 @@ def test_exact_uncertain_plan_and_suite_receipts_resume_without_duplicate_create
 
 
 def test_existing_broker_command_persists_exact_create_recovery_and_reports_success(monkeypatch, tmp_path, capsys):
-    from orchestrator import cli, mocks
+    from orchestrator import cli, environment as mocks
     from orchestrator.state import ReleaseState
     from tests._harness import _active_step
     ado = ADO(monkeypatch)
@@ -718,7 +718,7 @@ def test_existing_broker_command_persists_exact_create_recovery_and_reports_succ
     st.resources[B.RESOURCE] = record
     path = tmp_path / st.release_id / "release-state.json"
     st.save(str(path))
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     writes = len(ado.writes)
     assert cli.main(["--runs-root", str(tmp_path), "broker-plan", "--release", st.release_id,
                      "--recover-create", key, "--resource-id", str(rid),

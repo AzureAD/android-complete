@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 
-from orchestrator import cli_common as C, mocks as mocks_mod, revision, write_review as W
+from orchestrator import cli_common as C, environment as env_mod, write_review as W
+from orchestrator import write_review as revision
 from orchestrator.outcomes import Blocked, Done
 from orchestrator.step_context import thaw
 from steps.bug_bash import distribute_tests as S
@@ -34,10 +35,11 @@ def _inspect(args, orch, *, parameters=None, permit=None):
             "oof": [] if args.no_oof else args.oof, "oce": args.oce,
             "roster_file": roster_file,
         }
+        active_defaults = orch.step_defaults if getattr(orch, "step_defaults", None) else env_mod.load_step_defaults(orch.config_path)
         context = orch.context(
             "bug_bash", S.ID, parameters=parameters,
             permit=permit,
-            inputs=mocks_mod.load_mocks().get("bug_bash.distribute_tests", {}))
+            inputs=env_mod.step_config(active_defaults, "bug_bash", S.ID))
         return S.inspect_distribution(
             context, oof=(list(context.parameters.oof) if context.parameters.oof is not None else None),
             oce=context.parameters.oce, roster_file=context.parameters.roster_file)

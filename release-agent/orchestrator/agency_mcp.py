@@ -1,8 +1,8 @@
 """Direct Python stdio JSON-RPC client for Agency CLI MCP servers (mail, teams, calendar).
 
 Executes `requires_approval: false` outbound notifications directly inside Python via
-`agency.exe mcp <server>` with `shell=False`, honoring `mocks.local.yaml` redirects
-without routing through interactive LLM `workiq_send_*` tools.
+`agency.exe mcp <server>` with `shell=False`, honoring `config/environment.yaml` profile
+targets without routing through interactive LLM `workiq_send_*` tools.
 """
 from __future__ import annotations
 
@@ -439,18 +439,59 @@ def send_notification(
     owner_email: str | None = None,
     mcp_caller: MCPCaller = call_mcp_tool,
 ) -> dict[str, Any]:
-    """Dispatch a canonical notification descriptor payload through Agency MCP."""
+    """Dispatch a canonical notification descriptor payload through Agency MCP.
+
+    Also enforces the active `config/environment.yaml` profile at the wire boundary:
+    when `active_profile != 'prod'` and profile targets route to `@owner` / `self`,
+    no external email, calendar invite, group chat, channel post, or 1:1 DM can escape
+    to production targets.
+    """
+    from orchestrator import environment as env
+
+    prof_name, prof = env.load_profile()
+    redirect_emails: list[str] = []
+    redirect_teams: str | None = None
+    subj_prefix = str((prof.get("emails") or {}).get("subject_prefix") or "[TEST] ")
+    if prof_name != "prod":
+        raw_partner = (prof.get("emails") or {}).get("partner_status") or []
+        if raw_partner and owner_email:
+            redirect_emails = env.normalize_email_list(raw_partner, owner_email=owner_email)
+        teams_cfg = prof.get("teams") or {}
+        if all(
+            str(teams_cfg.get(k) or "self").strip().lower() in ("self", "me", env.SELF_CHAT_ID)
+            for k in ("android_core", "code_reviews", "general_announce")
+        ):
+            redirect_teams = env.SELF_CHAT_ID
+
     if tool == "workiq_send_email":
+        to_list = list(payload["to"])
+        cc_list = list(payload.get("cc") or [])
+        bcc_list = list(payload.get("bcc") or [])
+        subject = str(payload["subject"])
+        if redirect_emails:
+            allowed = {addr.casefold() for addr in redirect_emails}
+            if owner_email:
+                allowed.add(owner_email.strip().casefold())
+            has_external = any(
+                str(addr).strip().casefold() not in allowed
+                for addr in (*to_list, *cc_list, *bcc_list)
+            )
+            if has_external:
+                to_list = list(redirect_emails)
+                cc_list = []
+                bcc_list = []
+                if not subject.startswith("[TEST"):
+                    subject = f"{subj_prefix}{subject}"
         args: dict[str, Any] = {
-            "to": list(payload["to"]),
-            "subject": payload["subject"],
+            "to": to_list,
+            "subject": subject,
             "body": payload["body"],
             "contentType": "Text" if payload.get("isHtml") is False else "HTML",
         }
-        if payload.get("cc"):
-            args["cc"] = list(payload["cc"])
-        if payload.get("bcc"):
-            args["bcc"] = list(payload["bcc"])
+        if cc_list:
+            args["cc"] = cc_list
+        if bcc_list:
+            args["bcc"] = bcc_list
         resp = mcp_caller("mail", "SendEmailWithAttachments", args)
         return {"server": "mail", "mcp_tool": "SendEmailWithAttachments", "response": resp}
 
@@ -458,9 +499,16 @@ def send_notification(
         chat_id = str(payload.get("chatId") or "").strip()
         if not chat_id:
             raise ValueError("workiq_send_chat_message requires chatId")
-        content, mentions_json = _convert_teams_mentions(
-            str(payload.get("content") or ""), payload.get("mentions")
-        )
+        raw_content = str(payload.get("content") or "")
+        raw_mentions = payload.get("mentions")
+        if redirect_teams and not _is_self_target(chat_id, owner_email) and chat_id != redirect_teams:
+            orig_chat = chat_id
+            chat_id = redirect_teams
+            if _is_self_target(chat_id, owner_email):
+                raw_mentions = None
+            if "[TEST" not in raw_content:
+                raw_content = f"<p><b>[TEST → me (intended chat: {escape(orig_chat)})]</b></p>" + raw_content
+        content, mentions_json = _convert_teams_mentions(raw_content, raw_mentions)
         ctype = str(payload.get("contentType") or "html").lower()
         if _is_self_target(chat_id, owner_email):
             args = {"content": content, "contentType": ctype}
@@ -478,6 +526,11 @@ def send_notification(
         recipient = str(payload.get("userIdOrUpn") or payload.get("owner") or owner_email or "").strip()
         content = str(payload.get("content") or payload.get("message") or "")
         ctype = str(payload.get("contentType") or "html").lower()
+        if redirect_teams and not _is_self_target(recipient, owner_email):
+            orig_recipient = recipient
+            recipient = redirect_teams
+            if "[TEST" not in content:
+                content = f"<p><b>[TEST → me (intended user: {escape(orig_recipient)})]</b></p>" + content
         if _is_self_target(recipient, owner_email):
             resp = mcp_caller("teams", "SendMessageToSelf", {"content": content, "contentType": ctype})
             return {"server": "teams", "mcp_tool": "SendMessageToSelf", "response": resp}
@@ -489,9 +542,17 @@ def send_notification(
         return {"server": "teams", "mcp_tool": "SendMessageToUser", "response": resp}
 
     if tool == "microsoft_teams-SendMessageToChannel":
-        content, mentions_json = _convert_teams_mentions(
-            str(payload.get("content") or ""), payload.get("mentions")
-        )
+        raw_content = str(payload.get("content") or "")
+        if redirect_teams:
+            subj = str(payload.get("subject") or "").strip()
+            banner = f"<p><b>[TEST → me (intended channel: {escape(str(payload.get('channelId')))}){' · ' + escape(subj) if subj else ''}]</b></p>"
+            ctype = str(payload.get("contentType") or "html").lower()
+            if _is_self_target(redirect_teams, owner_email):
+                resp = mcp_caller("teams", "SendMessageToSelf", {"content": banner + raw_content, "contentType": ctype})
+                return {"server": "teams", "mcp_tool": "SendMessageToSelf", "response": resp}
+            resp = mcp_caller("teams", "SendMessageToChat", {"chatId": redirect_teams, "content": banner + raw_content, "contentType": ctype})
+            return {"server": "teams", "mcp_tool": "SendMessageToChat", "response": resp}
+        content, mentions_json = _convert_teams_mentions(raw_content, payload.get("mentions"))
         args = {
             "teamId": payload["teamId"],
             "channelId": payload["channelId"],
@@ -511,8 +572,17 @@ def send_notification(
             for addr in payload.get(extra_key) or []:
                 if addr not in attendees:
                     attendees.append(addr)
+        subject = str(payload["subject"])
+        if redirect_emails:
+            allowed = {addr.casefold() for addr in redirect_emails}
+            if owner_email:
+                allowed.add(owner_email.strip().casefold())
+            if any(str(addr).strip().casefold() not in allowed for addr in attendees):
+                attendees = list(redirect_emails)
+                if not subject.startswith("[TEST"):
+                    subject = f"{subj_prefix}{subject}"
         args = {
-            "subject": payload["subject"],
+            "subject": subject,
             "attendeeEmails": attendees,
             "startDateTime": payload["start"],
             "endDateTime": payload["end"],

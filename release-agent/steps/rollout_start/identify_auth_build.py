@@ -5,7 +5,7 @@ from orchestrator.authority import PipelineScope, PipelineSlot
 from orchestrator.evidence import PipelineEvidence
 from orchestrator.outcomes import Blocked, Done, InProgress
 from orchestrator.step_context import StepContext, thaw
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools.pipelines import auth_build_url
 
 ID = "identify_auth_build"
@@ -16,17 +16,8 @@ EFFECT_MODE = "read_only"
 RECHECK_WHEN_BLOCKED = True
 EVIDENCE = (PipelineScope(PipelineSlot.FINAL_AUTH),)
 
-MOCKABLE = {
-    "build": {
-        "kind": "input",
-        "desc": "Inject final Authenticator build {build_id, version, commit, build_number, status, result}.",
-    },
-}
-
-
 def _branch(context):
     return (getattr(context.release, "versions", None) or {}).get("authenticator")
-
 
 def _build_info(context):
     injected = context.input("build", MISSING)
@@ -39,7 +30,6 @@ def _build_info(context):
     if not ok:
         return None, detail
     return info, detail
-
 
 def build(context: StepContext):
     info, detail = _build_info(context)

@@ -19,30 +19,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # release-a
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from orchestrator.revision import StaticRevisionProvider, use_revision_provider
-
 pytest_plugins = ("tests._timeout", "tests._suite")
-_STATIC_REVISION_PROVIDER = StaticRevisionProvider.capture()
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "real_revision: use content-based runtime identity instead of the static unit-test provider",
+        "real_revision: retained marker for historical end-to-end tests",
     )
     config.addinivalue_line(
         "markers",
         "git_integration: builds real local Git repositories and exercises Git subprocesses",
     )
-
-
-@pytest.fixture(autouse=True)
-def _unit_revision_provider(request):
-    if request.node.get_closest_marker("real_revision"):
-        yield
-        return
-    with use_revision_provider(_STATIC_REVISION_PROVIDER):
-        yield
 
 
 def _offline_process(run, command, *args, **kwargs):
@@ -59,10 +47,12 @@ def _offline_process(run, command, *args, **kwargs):
 
 
 @pytest.fixture(autouse=True)
-def _no_real_network(monkeypatch):
-    """Block real ADO/az calls in tests. Any un-mocked network access raises with a hint
-    naming what to patch — this is what turns an accidental live call into a fast, clear
-    failure instead of a multi-minute hang."""
+def _no_real_network(monkeypatch, tmp_path_factory):
+    """Block real ADO/az calls in tests and isolate from developer local environment profile."""
+    if "RELEASE_AGENT_PROFILE" not in os.environ:
+        monkeypatch.setenv("RELEASE_AGENT_PROFILE", "prod")
+    if "RELEASE_AGENT_LOCAL_ENVIRONMENT_FILE" not in os.environ:
+        monkeypatch.setenv("RELEASE_AGENT_LOCAL_ENVIRONMENT_FILE", "")
     from tools import pipelines as P
     import socket
     import subprocess

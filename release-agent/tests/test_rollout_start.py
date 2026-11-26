@@ -134,21 +134,12 @@ def test_rollout_start_dependency_graph_and_parallel_branches():
     for s_id in deps:
         st.set_step("rollout_start", s_id, StepState(status="pending"))
     st.set_step("rollout_start", "identify_auth_build", StepState(status="done"))
-    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    orch = fresh_orchestrator(CONFIG, st, step_defaults={})
     ready = {
         s.definition.id for s in orch.scheduling().steps
         if s.definition.phase_id == "rollout_start" and not s.complete and s.prerequisites_met
     }
     assert ready == {"tag_authenticator", "wiki_payload", "signoff_start"}
-
-
-def test_rollout_notice_template_is_preserved_for_comms_rework():
-    """`rollout_start.notice` was removed from the active workflow, with its template kept in `templates/`."""
-    template_file = Path(CONFIG).resolve().parents[1] / "templates" / "rollout-start-notice.html"
-    assert template_file.is_file()
-    html = template_file.read_text(encoding="utf-8")
-    assert "Android Authenticator — Release Intent" in html
-    assert "{{app_version}}" in html and "{{progression_rows}}" in html
 
 
 def test_identify_auth_build_records_final_pipeline_evidence():
@@ -280,7 +271,7 @@ def test_verify_alpha_uploaded_waits_blocks_and_resolves_cleanly():
     assert isinstance(failed, Blocked)
     assert "result='failed'" in failed.reason
 
-    orch = fresh_orchestrator(CONFIG, state, mocks={})
+    orch = fresh_orchestrator(CONFIG, state, step_defaults={})
     _active_step(state, "rollout_start", "verify_alpha_uploaded")
     state.set_step("rollout_start", "verify_alpha_uploaded", StepState(status="blocked", note=failed.reason))
     step_def = next(

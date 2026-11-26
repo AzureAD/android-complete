@@ -40,7 +40,7 @@ respectively). Declare effect preparation inputs under `prepare_effect`; execute
 reconcile accept no live parameters and use only frozen `effect_input`.
 Document each field's default/type here: text `--param` values remain text, while
 booleans/numbers/collections require JSON. Unknown, irrelevant, duplicate or wrong-type
-inputs fail before IO/evidence changes. Mock knobs stay in `MOCKABLE` and
+inputs fail before IO/evidence changes. Scenario/profile overrides stay in `step_defaults` and
 `context.inputs`, separate from public inputs. See README for supported schema types
 and capability protocols; no new core parameter registry is needed.
 
@@ -60,8 +60,8 @@ request; reject missing/different-stage/ambiguous identities. Read recovery via
 request.approval_id)` requires matching id, build owner and approved status. Never
 rediscover a newer run, infer success from stage completion, or write during reconcile.
 Core owns persistence/receipts; handlers never mutate lifecycle state.
-Production rejects nonempty gate-local mocks during preview/submission/reconciliation.
-Keep useful BUILD mock inputs documented, and use directly injected fake provider
+Production rejects nonempty gate-local `step_defaults` during preview/submission/reconciliation.
+Keep useful BUILD `step_defaults` inputs documented, and use directly injected fake provider
 ports and `ApprovalContext` for offline lifecycle tests.
 
 ## Execution model

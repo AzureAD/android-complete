@@ -40,7 +40,7 @@ teams:
 #   - Phase 1 `ccd.final_reminder` (Code Complete Today)
 #   - Phases 2-4 `build_verify`, `bug_bash`, `finalize` (24h heartbeat / blocked status updates)
 #   - Phase 4 `finalize.final_status_email` (closing release-published email with changelogs)
-# For safe local testing, set `status_email: { send_to: ["you@microsoft.com"] }` in `mocks.local.yaml`.
+# Active profile (`test` vs `prod`) in `config/environment.yaml` governs actual recipients.
 status_email:
   phases: [build_verify, bug_bash, finalize]
   until_steps: [finalize.final_status_email]

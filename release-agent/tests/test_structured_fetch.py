@@ -9,7 +9,6 @@ import pytest
 
 from orchestrator import cli, cli_common as C, infra, m365_capabilities as M, structured_fetch as F
 from tests.test_m365_capabilities import evidence, state
-from tests.test_onboarding import complete, readiness, report, NOW
 
 
 def process(stdout="", code=0):
@@ -55,14 +54,6 @@ def test_missing_cli_and_mcp_requires_discovery_not_a_global_impossibility(launc
     result = F.discover_cli(str(profile))
     assert result["status"] == "missing"
     assert "do not infer" in result["detail"]
-    from orchestrator import onboarding
-    proof = complete()
-    proof["available_tools"].pop(F.FETCH_TOOL)
-    machine = report()
-    machine["m365_connectors"]["structured_fetch"] = result
-    held = onboarding.plan(machine, proof, readiness(), now=NOW)
-    assert held["status"] == "blocked"
-    assert "WorkIQ structured fetch" == held["action"]["integration"]
 
 
 @pytest.mark.parametrize("alias", sorted(F.FETCH_ALIASES))
@@ -242,36 +233,6 @@ def test_read_cli_never_discovers_loads_or_changes_release(launcher, monkeypatch
                      "--account", "owner@example.test", "--entity-url", "/groups"]) == 0
     assert json.loads(capsys.readouterr().out)["tool"] == F.FETCH_TOOL
     assert not root.exists()
-
-
-def test_record_routing_requires_verified_setup_and_contains_no_roster(launcher, monkeypatch, capsys):
-    profile, _ = launcher
-    machine = report()
-    machine["scout_root"] = str(profile)
-    monkeypatch.setattr(infra, "run", lambda *a, **kw: machine)
-    monkeypatch.setattr(infra, "load_requirements", lambda *a: readiness())
-    proof = complete()
-    actual = datetime.now(timezone.utc).isoformat()
-    proof["observed_at"] = actual
-    for key, value in proof["observations"].items():
-        for row in value if key in ("roster",) else [value]:
-            row["observed_at"] = actual
-    path = profile / "evidence.json"
-    path.write_text(json.dumps(proof), encoding="utf-8")
-    args = ["onboarding", "--scout-root", str(profile), "--observation-file", str(path),
-            "--record-routing", "--json"]
-    assert cli.main(args) == 0
-    result = json.loads(capsys.readouterr().out)
-    saved = json.loads(Path(result["routing_file"]).read_text())
-    assert saved["account"] == "owner@example.test"
-    assert saved["canonical_tool"] == F.FETCH_TOOL
-    assert "observations" not in saved and "member@example.test" not in json.dumps(saved)
-    (profile / "release-agent-routing.json").unlink()
-    proof["observations"].pop("roster")
-    path.write_text(json.dumps(proof), encoding="utf-8")
-    assert cli.main(args) == 1
-    capsys.readouterr()
-    assert not (profile / "release-agent-routing.json").exists()
 
 
 def test_agency_mcp_is_primary_and_falls_back_to_cli_only_on_transport_unavailability(launcher, monkeypatch):

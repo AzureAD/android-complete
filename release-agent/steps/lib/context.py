@@ -1,16 +1,15 @@
-"""Release context + recipient resolution — shared comms helpers for steps.
+"""Release context + target resolution — shared comms helpers for steps.
 
-Any step that emails or messages people needs the same two things:
-  1. a date/owner context to fill templates (`release_ctx`), and
-  2. recipient resolution (`resolve_recipients` / `resolve_chat_target`): runs are
-     real, so these return the configured distribution list / group chat. To
-     redirect for testing, use the step's `send_to` mock knob (never a hardcoded
-     recipient).
+Resolves outbound email recipients and Teams chat destinations directly from
+`config/environment.yaml` (`orchestrator/environment.py`).
 """
 from __future__ import annotations
 
-from orchestrator import schedule
+from orchestrator import environment as env, schedule
+from orchestrator.step_context import MISSING
 from steps.lib.templating import ordinal
+
+SELF_CHAT_ID = env.SELF_CHAT_ID
 
 
 def release_ctx(context) -> dict:
@@ -27,22 +26,41 @@ def release_ctx(context) -> dict:
     }
 
 
-def resolve_recipients(context, live_recipients):
-    """Return (recipients, note, prefix) — the configured real recipients.
+def resolve_recipients(context, live_recipients=None, *, group_key: str = "partner_status"):
+    """Return `(recipients, note, subject_prefix)` from `config/environment.yaml` (or step override)."""
+    override = context.input("send_to", MISSING)
+    if override is not MISSING and override:
+        recipients, prefix, label = env.resolve_email_targets(
+            group_key, owner_email=context.release.owner_email, override=override
+        )
+        return recipients, label, prefix
 
-    Runs are real: recipients default to the configured distribution list. To
-    redirect for testing, use the step's `send_to` mock knob (applied at the
-    step-action boundary), which keeps the send real but points it at you.
-    """
-    return list(live_recipients or []), "recipients", ""
+    prof_name = env.active_profile_name()
+    if prof_name != "prod" or not live_recipients:
+        recipients, prefix, label = env.resolve_email_targets(
+            group_key, owner_email=context.release.owner_email
+        )
+        return recipients, label, prefix
+
+    return list(live_recipients), "recipients", env.email_subject_prefix()
 
 
-# The signed-in user's own Teams chat ("You"), a well-known chat id. Referenced by
-# a step's `send_to: me` mock alias to redirect a real post to your own chat.
-SELF_CHAT_ID = "48:notes"
+def resolve_chat_target(context, live_chat_id=None, live_chat_name="the group chat", *, team_key: str | None = None):
+    """Return `(chat_id, target_note, banner_html)` from `config/environment.yaml` (or step override)."""
+    override = context.input("send_to", MISSING)
+    if override is not MISSING and override:
+        cid = env.normalize_chat_target(override)
+        is_self = cid == SELF_CHAT_ID
+        banner = f"<p><b>[TEST · intended: {live_chat_name}]</b></p>" if is_self else ""
+        return cid, live_chat_name, banner
 
+    if team_key is not None:
+        cid, label, is_self = env.resolve_teams_chat(team_key)
+        if is_self:
+            return cid, label, f"<p><b>[TEST · intended: {live_chat_name}]</b></p>"
+        return (live_chat_id or cid), live_chat_name, ""
 
-def resolve_chat_target(context, live_chat_id, live_chat_name="the group chat"):
-    """Return (chat_id, note, prefix) — the configured real group chat. Redirect
-    for testing via the step's `send_to` mock knob, not automatically."""
+    if env.active_profile_name() != "prod":
+        return SELF_CHAT_ID, f"self-chat (intended: {live_chat_name})", f"<p><b>[TEST · intended: {live_chat_name}]</b></p>"
+
     return live_chat_id, live_chat_name, ""

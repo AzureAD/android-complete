@@ -12,13 +12,13 @@ REPLIES), which the deterministic engine can't call — so this is a `scout` ste
 composes the message + target and returns NeedsSkill(microsoft_teams-SendMessageToChannel),
 which the skill executes, then records the step.
 
-Mock knobs (mocks.local.yaml / tests):
-  post_to  : {teamId, channelId} override — post to a TEST channel instead of General
-             (keeps the post real, points it elsewhere).
+Step defaults (`step_defaults` / offline scenarios):
+  post_to  : {teamId, channelId} override — post to an alternate channel instead of General.
+  send_to  : chat override (under `active_profile: test`, `config/environment.yaml` routes to `self`).
   versions : dict override for the SDK versions shown (else read from state.versions).
-  cc_members : list of {name,email} to cc instead of the registry (for tests).
-  cc_mode  : 'mention' (default, @-mention every registry member) | 'self' (mention only
-             self_email once — pings just you, for a safe test) | 'off' (plain-text names).
+  cc_members : list of {name,email} to cc instead of the registry.
+  cc_mode  : 'mention' (prod default, @-mention every registry member) | 'self' (mention only
+             self_email once) | 'off' (test default, plain-text names).
   self_email : the email/UPN to self-mention when cc_mode='self'.
 
 The cc groups (CP/Intune, LTW, OneAuth, Native Auth) are Teams TAGS the microsoft_teams tool
@@ -31,7 +31,7 @@ from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools.coordinates import coords
 
 ID = "release_announcement"
@@ -60,36 +60,16 @@ import os as _os
 _CC_PATH = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
                          "config", "announcement_cc.yaml")
 
-MOCKABLE = {
-    "post_to": {"kind": "input",
-                "desc": "{teamId, channelId} override — post to a TEST channel instead of General."},
-    "versions": {"kind": "input",
-                 "desc": "dict override for the SDK versions shown (else read from state.versions)."},
-    "cc_members": {"kind": "input",
-                   "desc": "flat [{name,email}] to cc as one unlabeled group (tests)."},
-    "cc_groups": {"kind": "input",
-                  "desc": "list of {group, members:[{name,email}]} to override the registry (tests)."},
-    "cc_mode": {"kind": "input",
-                "desc": "'mention' | 'self' (ping only self_email) | 'off' (plain text). "
-                        "Defaults to 'mention'; a post_to redirect defaults to 'off' so a test "
-                        "shows the full real cc as plain text (no pings)."},
-    "self_email": {"kind": "input",
-                   "desc": "the email/UPN to use as the single self-mention when cc_mode='self'."},
-}
-
-
 def _month_year(context) -> str:
     """The release's display month matching its calendar month, e.g. 'August 2026'."""
     from orchestrator import schedule
     return schedule.target_month_label(context.release) or str(context.release.release_id)
 
-
 def _sdk_versions(context) -> dict:
-    """{key: version} for the announcement — mock override first, else state.versions."""
+    """{key: version} for the announcement — `versions` input override first, else state.versions."""
     v = context.input("versions", MISSING)
     src = dict(v) if v is not MISSING and v else dict(getattr(context.release, "versions", {}) or {})
     return {k: src.get(k) for k, _label in CONFIG["sdks"]}
-
 
 def _target(context):
     """(team_id, channel_id, note) — the live General channel, or a test override via `post_to`."""
@@ -98,14 +78,12 @@ def _target(context):
         return (ov.get("teamId", CONFIG["team_id"]), ov["channelId"], "a test channel")
     return (CONFIG["team_id"], CONFIG["channel_id"], f"the '{CONFIG['channel_name']}' channel")
 
-
 def _rows_html(versions: dict) -> str:
     rows = []
     for key, label in CONFIG["sdks"]:
         val = versions.get(key)
         rows.append(f"<tr><td>{T.esc(label)}</td><td>{T.esc(val) if val else '—'}</td></tr>")
     return "".join(rows)
-
 
 def _load_groups(context):
     """Ordered [(group_name, [{name,email}])] from config/announcement_cc.yaml — empty groups
@@ -139,21 +117,24 @@ def _load_groups(context):
             out.append((group, cleaned))
     return out
 
-
 def _effective_cc_mode(context):
-    """Resolve the cc mode. Explicit `cc_mode` wins. Otherwise a TEST redirect (`post_to`)
-    defaults to 'off' — the FULL real cc (all teams + members) rendered as PLAIN TEXT, so a
-    test post mirrors reality without @-mentioning anyone. With no redirect, default 'mention'."""
-    m = context.input("cc_mode", MISSING)
-    if m is not MISSING and m:
-        return str(m).lower()
-    if context.input("post_to", MISSING) is not MISSING:       # test/redirect -> plain text, no pings
-        return "off"
-    return "mention"
+    """Resolve the cc mode from explicit input or `config/environment.yaml` (`announcement_cc_mode`)."""
+    from orchestrator import environment as env
 
+    m = context.input("cc_mode", MISSING)
+    ov_chan = context.input("post_to", MISSING)
+    ov_chat = context.input("send_to", MISSING)
+    target = env.resolve_general_announce(
+        override_chat=(None if ov_chat is MISSING else ov_chat),
+        override_channel=(None if ov_chan is MISSING else ov_chan),
+    )
+    return env.announcement_cc_mode(
+        explicit_mode=(None if m is MISSING else m),
+        is_redirect=bool(target.get("is_redirect")),
+    )
 
 def _groups_for_cc(context):
-    """The groups to render — a `cc_groups`/`cc_members` mock overrides the registry (for tests)."""
+    """The groups to render — a `cc_groups`/`cc_members` input overrides the registry."""
     g = context.input("cc_groups", MISSING)
     if g is not MISSING and g:
         return [(x.get("group"), list(x.get("members") or [])) for x in g]
@@ -161,7 +142,6 @@ def _groups_for_cc(context):
     if fm is not MISSING and fm:
         return [(None, list(fm))]                            # single unlabeled group
     return _load_groups(context)
-
 
 def _cc(context):
     """(html_block, mentions) — the cc block (one line PER TEAM) + the microsoft_teams
@@ -200,7 +180,6 @@ def _cc(context):
     lines.append("</p>")
     return ("".join(lines), mentions)
 
-
 def _html(context, versions: dict, cc_line: str) -> str:
     return (
         "<div><p>Hi all,</p>"
@@ -210,14 +189,13 @@ def _html(context, versions: dict, cc_line: str) -> str:
         f"{_rows_html(versions)}</table>"
         f"{cc_line}</div>")
 
-
 def build(context: StepContext):
     versions = _sdk_versions(context)
     if not any(versions.values()):
         return Blocked(
             "release_announcement: no SDK versions available in state.versions — Phase 2 "
-            "(orchestrator_health) should have populated them. Provide the `versions` mock "
-            "for testing, or re-run Phase 2 version discovery.")
+            "(orchestrator_health) should have populated them. Provide `versions` in `step_defaults` "
+            "for rehearsals, or re-run Phase 2 version discovery.")
 
     subject = f"Auth Client Android SDKs {_month_year(context)} Release"
     try:
@@ -225,7 +203,36 @@ def build(context: StepContext):
     except ValueError as exc:
         return Blocked(f"release_announcement: {exc}")
     html = _html(context, versions, cc_line)
-    team_id, channel_id, note = _target(context)
+    from orchestrator import environment as env
+
+    ov_chan = context.input("post_to", MISSING)
+    ov_chat = context.input("send_to", MISSING)
+    resolved_target = env.resolve_general_announce(
+        override_chat=(None if ov_chat is MISSING else ov_chat),
+        override_channel=(None if ov_chan is MISSING else ov_chan),
+    )
+    if resolved_target["mode"] == "chat":
+        chat_target = resolved_target["chat_id"]
+        redirected_html = (
+            f"<div><p><b>[TEST · intended channel: '{T.esc(resolved_target.get('intended', 'General'))}' "
+            f"· {T.esc(subject)}]</b></p></div>" + html
+        )
+        return NeedsSkill(
+            tool="workiq_send_chat_message",
+            payload={
+                "chatId": chat_target,
+                "content": redirected_html,
+                "contentType": "html",
+            },
+            record_as=ID,
+            summary=f"Post '{subject}' to {resolved_target['label']}",
+            note=f"[test-redirect] posted the release announcement to {resolved_target['label']}",
+            outbound=True,
+        )
+
+    team_id = resolved_target["team_id"]
+    channel_id = resolved_target["channel_id"]
+    note = resolved_target["label"]
 
     payload = {
         "teamId": team_id,
@@ -261,11 +268,11 @@ KNOWLEDGE = {'summary': "Post the release-complete announcement to the 'General'
            '19:715820c336d3454bbd75ef0bad68e460@thread.tacv2'],
  'how': 'Uses notification prepare (source step), claim, then the returned '
         'microsoft_teams-SendMessageToChannel payload and notification result. A ROOT channel '
-        'post needs the microsoft_teams MCP; WorkIQ only does channel replies. To test, '
-        'redirect with the `post_to` mock knob ({teamId, channelId}) to a test channel — keeps '
-        'the post real, points it elsewhere. The `versions` mock overrides the shown SDK '
-        'versions. Missing, unreadable or malformed config/announcement_cc.yaml blocks '
-        'preparation instead of silently dropping the CC members.\n',
+        'post needs the microsoft_teams MCP; WorkIQ only does channel replies. Under '
+        '`active_profile: test` in `config/environment.yaml`, `teams.general_announce: self` '
+        'routes to self-chat with `announcement_cc_mode: off`. `versions` in `step_defaults` '
+        'overrides the shown SDK versions. Missing, unreadable or malformed '
+        'config/announcement_cc.yaml blocks preparation instead of silently dropping the CC members.\n',
  'faqs': [{'q': 'Where do the versions come from?',
            'a': 'state.versions — populated at Phase 2 by build_verify.orchestrator_health '
                 'from the orchestrator run tags. The announcement shows Common/MSAL/Broker '
@@ -278,6 +285,7 @@ KNOWLEDGE = {'summary': "Post the release-complete announcement to the 'General'
            'a': "Those are Teams TAGS, and the microsoft_teams tool can't @-mention a tag (it "
                 "maps the id to an unknown user). So instead the step @-mentions the tags' "
                 'MEMBERS as individual users — maintained by hand in '
-                'config/announcement_cc.yaml ({name,email} per group). Mock knobs: cc_mode '
-                "'mention' (default), 'self' (ping only you via self_email — safe test), or "
-                "'off' (plain text); cc_members overrides the registry."}]}
+                'config/announcement_cc.yaml ({name,email} per group). Controlled by '
+                '`teams.announcement_cc_mode` in `config/environment.yaml`: '
+                "'mention' (`prod` default), 'self' (ping only self_email), or "
+                "'off' (`test` default, plain text); `cc_members` overrides the registry."}]}

@@ -102,7 +102,6 @@ def normalize_workflow_config(config: Any, resolver=None) -> Any:
                 isinstance(pid, str)
                 and isinstance(raw_step, Mapping)
                 and isinstance(raw_step.get("id"), str)
-                and raw_step.get("implementation") != StepImplementation.DUMMY.value
             ):
                 mod = resolver(pid, raw_step["id"])
                 step_copy = _hydrate_step_from_module(raw_step, mod) if mod is not None else dict(raw_step)
@@ -130,18 +129,12 @@ class StepKind(str, Enum):
     APPROVAL_GATE = "approval_gate"
 
 
-class StepImplementation(str, Enum):
-    HANDLER = "handler"
-    DUMMY = "dummy"
-
-
 @dataclass(frozen=True)
 class StepDefinition:
     phase_id: str
     id: str
     name: str
     kind: StepKind
-    implementation: StepImplementation
     owner: str
     source: Optional[str]
     approval_command: Optional[str]
@@ -293,7 +286,7 @@ class WorkflowDefinition:
                         "approval_command",
                         "write_command", "write_precondition", "manual_result", "repeatable",
                         "pollable", "refresh_invalidation", "effect_mode",
-                        "effect_recovery", "effect_retry", "implementation",
+                        "effect_recovery", "effect_retry",
                     },
                     f"step {phase_id}.{step_id}",
                 )
@@ -306,15 +299,6 @@ class WorkflowDefinition:
                 manual_result = raw_step.get("manual_result", False)
                 if type(manual_result) is not bool or manual_result and kind != StepKind.EXTERNAL:
                     raise WorkflowConfigError(f"Only external steps may declare manual_result: {phase_id}.{step_id}")
-                try:
-                    implementation = StepImplementation(
-                        raw_step.get("implementation", StepImplementation.HANDLER.value)
-                    )
-                except (TypeError, ValueError) as exc:
-                    raise WorkflowConfigError(
-                        f"Step {phase_id}.{step_id} has invalid implementation; "
-                        "expected handler or dummy."
-                    ) from exc
                 owner = (
                     "human"
                     if kind
@@ -423,13 +407,6 @@ class WorkflowDefinition:
                             f"{phase_id}.{step_id}"
                         )
                     effect_mode = None
-                if implementation == StepImplementation.DUMMY and (
-                    kind != StepKind.AUTO or effect_mode != EffectMode.READ_ONLY
-                ):
-                    raise WorkflowConfigError(
-                        f"Step {phase_id}.{step_id} dummy implementation requires "
-                        "a read_only auto step."
-                    )
                 raw_effect_recovery = raw_step.get("effect_recovery")
                 if effect_mode and effect_mode.writes_external_state:
                     try:
@@ -507,7 +484,6 @@ class WorkflowDefinition:
                     id=step_id,
                     name=step_name,
                     kind=kind,
-                    implementation=implementation,
                     owner=owner,
                     source=source,
                     approval_command=approval_command,

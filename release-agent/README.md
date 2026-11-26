@@ -139,7 +139,7 @@ python -m orchestrator.cli task-history --release 2026-12 --phase bug_bash --ste
 step's typed public inputs; steps without configurable inputs accept no `--param`.
 Effectful tasks accept **prepare** inputs, then freeze them before executing.
 Omitted inputs reuse the previous attempt's selected values; provide only changes.
-Test mocks such as `clone_id`, `fail`, or synthetic provider responses are not
+Internal scenario `step_defaults` such as `clone_id`, `fail`, or synthetic provider responses are not
 public inputs. Broker `name` names the **test plan**, not its individual suites.
 Authenticator creation exposes `name` for its release parent **suite**, plus `layout`.
 

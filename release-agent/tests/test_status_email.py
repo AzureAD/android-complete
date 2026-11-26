@@ -74,7 +74,7 @@ def test_unified_template_across_p0_p1_and_p4_final():
     }
     orch = fresh_orchestrator(
         CONFIG, st_fin,
-        mocks={"finalize.final_status_email": {"send_to": "me@x.com", "changelogs": changelogs}},
+        step_defaults={"finalize.final_status_email": {"send_to": "me@x.com", "changelogs": changelogs}},
     )
     p4_out = P4.build(orch.context(
         "finalize", "final_status_email",
@@ -119,7 +119,7 @@ def test_status_email_projection_does_not_complete_legacy_skipped_gate():
         "bugbash_complete",
         StepState(status="skipped", note="legacy override"),
     )
-    orch = Orchestrator(CONFIG, st, mocks={})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     result = SE.compose(
         st,
         _PHASE_ORDER,
@@ -150,7 +150,7 @@ def test_final_status_email_step_composes_closing_snapshot(monkeypatch):
     monkeypatch.setattr(prs, "repo_change_list", lambda *a, **k: (True, [], ""))
     st = _status_state("finalize")
     _active_phase(st, "finalize")
-    orch = Orchestrator(CONFIG, st, mocks={"finalize.final_status_email": {"send_to": "me@x.com"}})
+    orch = Orchestrator(CONFIG, st, step_defaults={"finalize.final_status_email": {"send_to": "me@x.com"}})
     outcome = final_status_email.build(orch.context(
         "finalize", "final_status_email", inputs={"send_to": "me@x.com"}))
     assert outcome.tool == "workiq_send_email"
@@ -166,7 +166,7 @@ def test_partner_24h_monitor_eod_blocked_and_offline_catchup(tmp_path, monkeypat
          `Automated Test Pass` to `🔴 Blocked` and sends on `milestone_state_changed`.
       4) If offline for >20h across a missed afternoon, recovers automatically at `09:00` (`offline_catchup_24h`).
     """
-    from orchestrator import cli_common as C, mocks as mocks_mod, status_email as SE
+    from orchestrator import cli_common as C, environment as env_mod, status_email as SE
     from tests._context import fresh_orchestrator
 
     sent_emails = []
@@ -175,16 +175,18 @@ def test_partner_24h_monitor_eod_blocked_and_offline_catchup(tmp_path, monkeypat
         sent_emails.append((server, tool_name, arguments))
         return {"status": "sent"}
 
-    monkeypatch.setattr(mocks_mod, "load_mocks", lambda: {"status_email": {"send_to": "pedroro@microsoft.com"}})
+    monkeypatch.setenv("RELEASE_AGENT_PROFILE", "test")
+    monkeypatch.setattr(env_mod, "load_step_defaults", lambda *_a, **_kw: {})
 
     runs_root = str(tmp_path)
     st = _status_state("build_verify")
+    st.owner_email = "pedroro@microsoft.com"
     _active_phase(st, "build_verify")
     st.timezone = "America/Los_Angeles"
 
-    # 1) Day 1 at 17:30 PT (Wed Aug 12, 2026) -> EOD heartbeat sends `🟡 In Progress` to redirected mock!
+    # 1) Day 1 at 17:30 PT (Wed Aug 12, 2026) -> EOD heartbeat sends `🟡 In Progress` to `@owner` in test profile!
     t1 = datetime.fromisoformat("2026-08-12T17:30:00-07:00")
-    orch1 = fresh_orchestrator(CONFIG, st, mocks={}, now=t1)
+    orch1 = fresh_orchestrator(CONFIG, st, step_defaults={}, now=t1)
     C.save_state(st, runs_root, st.release_id)
     r1 = SE.evaluate_and_deliver_partner_status(
         orch1,
@@ -199,12 +201,12 @@ def test_partner_24h_monitor_eod_blocked_and_offline_catchup(tmp_path, monkeypat
     assert r1["sent"] is True and r1["reason"] == "eod_daily_heartbeat"
     assert len(sent_emails) == 1
     assert sent_emails[-1][2]["to"] == ["pedroro@microsoft.com"]
-    assert sent_emails[-1][2]["subject"].startswith("[TEST → me] ")
+    assert sent_emails[-1][2]["subject"].startswith("[TEST] ")
     assert "🟡 In Progress" in sent_emails[-1][2]["body"]
 
     # 2) Same evening at 19:00 PT -> already sent today with unchanged milestone state -> skipped!
     t1b = datetime.fromisoformat("2026-08-12T19:00:00-07:00")
-    orch1b = fresh_orchestrator(CONFIG, st, mocks={}, now=t1b)
+    orch1b = fresh_orchestrator(CONFIG, st, step_defaults={}, now=t1b)
     r1b = SE.evaluate_and_deliver_partner_status(
         orch1b,
         waiting={"blocked_count": 0},
@@ -220,7 +222,7 @@ def test_partner_24h_monitor_eod_blocked_and_offline_catchup(tmp_path, monkeypat
 
     # 3) Next day at 16:00 PT (Thu Aug 13, >8 business hours with ZERO step progress) -> flips to `🔴 Blocked`!
     t2 = datetime.fromisoformat("2026-08-13T16:00:00-07:00")
-    orch2 = fresh_orchestrator(CONFIG, st, mocks={}, now=t2)
+    orch2 = fresh_orchestrator(CONFIG, st, step_defaults={}, now=t2)
     r2 = SE.evaluate_and_deliver_partner_status(
         orch2,
         waiting={"blocked_count": 0},
@@ -237,7 +239,7 @@ def test_partner_24h_monitor_eod_blocked_and_offline_catchup(tmp_path, monkeypat
 
     # 4) Offline all Friday afternoon -> wakes up Monday morning 09:00 PT (>20h elapsed) -> `offline_catchup_24h`!
     t3 = datetime.fromisoformat("2026-08-17T09:00:00-07:00")
-    orch3 = fresh_orchestrator(CONFIG, st, mocks={}, now=t3)
+    orch3 = fresh_orchestrator(CONFIG, st, step_defaults={}, now=t3)
     r3 = SE.evaluate_and_deliver_partner_status(
         orch3,
         waiting={"blocked_count": 0},
@@ -251,3 +253,40 @@ def test_partner_24h_monitor_eod_blocked_and_offline_catchup(tmp_path, monkeypat
     assert r3["sent"] is True and r3["reason"] == "offline_catchup_24h"
     assert len(sent_emails) == 3
 
+
+def test_partner_24h_monitor_routes_via_test_vs_prod_environment_profile(tmp_path, monkeypatch):
+    """Under `active_profile: test`, partner-status automatically resolves `@owner` and `[TEST] `;
+    under `active_profile: prod`, it uses the configured partner DLs."""
+    from orchestrator import cli_common as C, environment as env_mod, status_email as SE
+    from tests._context import fresh_orchestrator
+
+    monkeypatch.setattr(env_mod, "load_step_defaults", lambda *_a, **_kw: {})
+    for profile, expected_to, expected_prefix in (
+        ("test", ["pedroro@microsoft.com"], "[TEST] "),
+        ("prod", ["authsdkrelease@microsoft.com", "androididentity@microsoft.com"], "Auth Client Android SDKs"),
+    ):
+        monkeypatch.setenv("RELEASE_AGENT_PROFILE", profile)
+        sent_emails = []
+        runs_root = str(tmp_path / profile)
+        st = _status_state("build_verify")
+        st.owner_email = "pedroro@microsoft.com"
+        _active_phase(st, "build_verify")
+        st.timezone = "America/Los_Angeles"
+        t = datetime.fromisoformat("2026-11-25T09:19:00-08:00")
+        orch = fresh_orchestrator(CONFIG, st, step_defaults={}, now=t)
+        C.save_state(st, runs_root, st.release_id)
+
+        res = SE.evaluate_and_deliver_partner_status(
+            orch,
+            waiting={"blocked_count": 2},
+            risk={"level": "stalled", "unattended_business_hours": 10.0},
+            runs_root=runs_root,
+            config_path=CONFIG,
+            now_utc=t.astimezone(timezone.utc),
+            deliver=True,
+            mcp_caller=lambda s, tool, args: (sent_emails.append((s, tool, args)) or {"status": "sent"}),
+        )
+        assert res["sent"] is True
+        assert len(sent_emails) == 1
+        assert sent_emails[0][2]["to"] == expected_to
+        assert sent_emails[0][2]["subject"].startswith(expected_prefix)

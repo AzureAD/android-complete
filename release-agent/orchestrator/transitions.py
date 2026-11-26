@@ -28,7 +28,7 @@ class TransitionIntent(str, Enum):
     COMPLETE = "complete"
     SKIP = "skip"
     REOPEN = "reopen"
-    MOCK = "mock"
+    CONFIG_OVERRIDE = "config_override"
     EFFECT = "effect"
     WRITE = "write"
     RECOVER_EVIDENCE = "recover_evidence"
@@ -81,8 +81,6 @@ class EligibilityEvaluator:
         phase_id: str,
         step_id: str,
     ) -> Eligibility:
-        if self.projection.revision_problem:
-            return Eligibility(False, self.projection.revision_problem)
         phase = self.workflow.phase(phase_id)
         step = self.workflow.step(phase_id, step_id)
         if not phase or not step:
@@ -126,7 +124,7 @@ class EligibilityEvaluator:
         if (self.state.owner_task_active(phase_id, step_id)
                 and intent in (TransitionIntent.EXECUTE, TransitionIntent.PREPARE,
                                TransitionIntent.RESERVE, TransitionIntent.POLL,
-                               TransitionIntent.RECORD, TransitionIntent.MOCK)):
+                               TransitionIntent.RECORD, TransitionIntent.CONFIG_OVERRIDE)):
             problem = self.projection.owner_task_problem(step)
             if problem:
                 return Eligibility(False, problem, phase, step, execution)
@@ -141,8 +139,8 @@ class EligibilityEvaluator:
                 return Eligibility(False, "Only external tasks support this operation.", phase, step, execution)
             if intent == TransitionIntent.POLL and (not step.pollable or record.status != "in_flight"):
                 return Eligibility(False, "Only pollable in-flight work may be polled.", phase, step, execution)
-            if intent == TransitionIntent.MOCK and (step.is_gate or not step_readiness.mocked):
-                return Eligibility(False, "Only explicitly mocked non-gate tasks accept mock outcomes.", phase, step)
+            if intent == TransitionIntent.CONFIG_OVERRIDE and (step.is_gate or not step_readiness.overridden):
+                return Eligibility(False, "Only explicitly overridden non-gate tasks accept configured outcomes.", phase, step)
             return Eligibility(True, phase=phase, step=step, execution=execution)
 
         refresh_reservation = (
@@ -166,7 +164,6 @@ class EligibilityEvaluator:
 
         record_only = (
             step.is_human_action and intent in (TransitionIntent.PREPARE, TransitionIntent.COMPLETE)
-            or step.implementation.value == "dummy" and intent == TransitionIntent.COMPLETE
         )
         if record_only:
             if self.state.halt or self.state.cancellation:
@@ -359,8 +356,8 @@ class EligibilityEvaluator:
             )
         if intent == TransitionIntent.EXECUTE and step.kind != StepKind.AUTO:
             return Eligibility(False, "Only auto steps execute in-process.", phase, step, execution)
-        if intent == TransitionIntent.MOCK and (step.is_gate or not step_readiness.mocked):
-            return Eligibility(False, "Only explicitly mocked non-gate steps accept mock outcomes.", phase, step)
+        if intent == TransitionIntent.CONFIG_OVERRIDE and (step.is_gate or not step_readiness.overridden):
+            return Eligibility(False, "Only explicitly overridden non-gate steps accept configured outcomes.", phase, step)
         if intent == TransitionIntent.PREPARE and step.kind == StepKind.AUTO:
             return Eligibility(
                 False,
@@ -486,8 +483,6 @@ class TransitionKernel:
         self._approval_permits: dict[ApprovalPermit, tuple] = {}
 
     def _invalid(self, phase_id=None, step_id=None):
-        if problem := self.projection_factory().revision_problem:
-            return self._reject(problem, phase_id, step_id)
         issues = (validate_step(self.state, self.workflow, f"{phase_id}.{step_id}")
                   if phase_id and step_id else validate_snapshot(self.state, self.workflow))
         errors = [v.message for v in issues if v.severity == "error"]
@@ -577,7 +572,7 @@ class TransitionKernel:
         if self.projection_factory().workflow is not self.workflow:
             return self._reject("Workflow generation changed; invocation denied.", phase_id, step_id)
         if intent not in (
-            TransitionIntent.EXECUTE, TransitionIntent.MOCK, TransitionIntent.EFFECT,
+            TransitionIntent.EXECUTE, TransitionIntent.CONFIG_OVERRIDE, TransitionIntent.EFFECT,
             TransitionIntent.WRITE, TransitionIntent.RECOVER_EVIDENCE,
             TransitionIntent.PREPARE, TransitionIntent.POLL,
             TransitionIntent.REFRESH, TransitionIntent.RECORD,
@@ -676,7 +671,7 @@ class TransitionKernel:
         if not definition or definition.is_gate:
             return self._reject("Generic outcomes cannot complete approval gates.", pid, sid)
         if definition.kind != StepKind.EXTERNAL and permit.intent not in (
-            TransitionIntent.EXECUTE, TransitionIntent.MOCK, TransitionIntent.EFFECT, TransitionIntent.REFRESH,
+            TransitionIntent.EXECUTE, TransitionIntent.CONFIG_OVERRIDE, TransitionIntent.EFFECT, TransitionIntent.REFRESH,
         ):
             return self._reject("Human actions require done/skip, not generic outcomes.", pid, sid)
         if (
@@ -1093,9 +1088,6 @@ class TransitionKernel:
     def complete(
         self, phase_id: str, step_id: str, note: str, *, manual_confirmation=None,
     ) -> TransitionResult:
-        definition = self.workflow.step(phase_id, step_id)
-        if definition and definition.implementation.value == "dummy" and not note.strip():
-            return self._reject("Manual-only work requires an explicit completion note.", phase_id, step_id)
         progress = (self.state.get_step(phase_id, step_id).execution or {}).get("write_progress")
         if progress:
             if manual_confirmation is None:
@@ -1261,8 +1253,7 @@ class TransitionKernel:
 
     def record_write_recovery(self, phase_id, step_id, execution_id, progress):
         """Record a scoped owner-confirmed result, never a provider-write permit."""
-        from orchestrator.write_review import validate_progress
-        from orchestrator.revision import digest
+        from orchestrator.write_review import digest, validate_progress
         if rejected := self._owned_outcome_check(phase_id, step_id, execution_id):
             return rejected
         record = self.state.get_step(phase_id, step_id)
@@ -1337,7 +1328,7 @@ class TransitionKernel:
         if not check.allowed:
             return self._reject(check.reason, phase_id, step_id)
         if step.write_command:
-            from orchestrator.revision import is_hash
+            from orchestrator.write_review import is_hash
             if (not isinstance(write_review, dict) or set(write_review) != {"hash", "approved_by"}
                     or not is_hash(write_review["hash"])
                     or not isinstance(write_review["approved_by"], str)
@@ -1593,7 +1584,6 @@ class TransitionKernel:
 
     def reserve_approval(self, phase_id, step_id, request, approved_hash, approved_by, executor):
         from .approvals import request_hash
-        from .revision import revision_id
 
         if rejected := self.validate_approval_start(phase_id, step_id):
             return rejected
@@ -1601,8 +1591,7 @@ class TransitionKernel:
                 or not approved_by.strip() or not isinstance(executor, str) or not executor.strip()):
             return self._reject("Approval requires a frozen request, --approved-by and executor.", phase_id, step_id)
         key = f"{phase_id}.{step_id}"
-        binding = revision_id(self.state.workflow_revision)
-        if approved_hash != request_hash(self.state, key, request, binding):
+        if approved_hash != request_hash(self.state, key, request):
             return self._reject("Approval review hash changed; review the current request.", phase_id, step_id)
         from dataclasses import asdict
         record = self.state.get_step(phase_id, step_id)
@@ -1612,7 +1601,7 @@ class TransitionKernel:
             "id": uuid.uuid4().hex, "owner": executor.strip(), "started_at": self.now(),
             "approval": {
                 "request": asdict(request), "request_hash": approved_hash,
-                "workflow_revision": binding, "approved_by": approved_by.strip(),
+                "approved_by": approved_by.strip(),
                 "submission_started_at": None, "receipt": None,
             },
         }
@@ -2176,11 +2165,9 @@ class TransitionKernel:
         if execution and execution.get("write_progress"):
             data["last_write_progress"] = deepcopy(execution["write_progress"])
         if execution and execution.get("write_review"):
-            from orchestrator.revision import revision_id
             data["last_write_review"] = {
                 "execution_id": execution["id"], **deepcopy(execution["write_review"]),
                 "approved_at": execution["started_at"],
-                "workflow_revision": revision_id(self.state.workflow_revision),
             }
 
     @staticmethod

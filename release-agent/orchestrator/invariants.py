@@ -60,13 +60,15 @@ def validate_step(state: ReleaseState, workflow: WorkflowDefinition, key: str):
     if not isinstance(raw.get("data", {}), dict):
         add("invalid_step_data", "has non-mapping evidence data.")
     elif "last_write_review" in raw.get("data", {}):
-        from orchestrator.revision import is_hash
+        from orchestrator.write_review import is_hash
         review = raw["data"]["last_write_review"]
-        if (not isinstance(review, dict) or set(review) != {
-                "execution_id", "hash", "approved_by", "approved_at", "workflow_revision"}
+        req_fields = {"execution_id", "hash", "approved_by", "approved_at"}
+        if (not isinstance(review, dict)
+                or not req_fields.issubset(review)
+                or set(review) - req_fields - {"workflow_revision"}
                 or not all(_text(review.get(k)) for k in ("execution_id", "approved_by"))
                 or _timestamp(review.get("approved_at")) is None
-                or not is_hash(review.get("hash")) or not is_hash(review.get("workflow_revision"))):
+                or not is_hash(review.get("hash"))):
             add("invalid_closed_write_review", "has malformed closed write authorization evidence.")
     if isinstance(raw.get("data"), dict) and "last_approval" in raw["data"]:
         from .approvals import validate_closed_approval
@@ -94,7 +96,7 @@ def validate_step(state: ReleaseState, workflow: WorkflowDefinition, key: str):
         add("invalid_execution", "has non-mapping execution metadata.")
         return tuple(issues)
     if "write_review" in execution or definition.write_command:
-        from orchestrator.revision import is_hash
+        from orchestrator.write_review import is_hash
         review = execution.get("write_review")
         if (not definition.write_command or definition.kind != StepKind.EXTERNAL
                 or not isinstance(review, dict) or set(review) != {"hash", "approved_by"}

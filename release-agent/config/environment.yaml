@@ -1,0 +1,76 @@
+# Release Environment & Target Configuration
+#
+# Single configuration controlling where outbound communications (emails, Teams
+# chats/channels, calendar invites, @mentions) and created release artifacts
+# (cloned ADO test plans, Authenticator suites, payload wiki pages) are directed.
+#
+# Switch `active_profile` to `prod` (or run `python -m orchestrator.cli set-profile --profile prod`)
+# ONLY when ready to launch a live production release.
+#
+# Optional machine-local overrides can be placed in gitignored
+# `config/environment.local.yaml` (deep-merged on top of this file).
+
+active_profile: test
+
+profiles:
+  test:
+    emails:
+      subject_prefix: "[TEST] "
+      partner_status:
+        - "@owner"
+      bug_bash_invite:
+        - "@owner"
+    teams:
+      android_core: "self"
+      code_reviews: "self"
+      general_announce: "self"
+      bug_bash_updates: "self"
+      native_auth_dm: "self"
+      announcement_cc_mode: "off"     # renders full partner CC table as plain text (zero @-pings)
+    artifacts:
+      broker_plan_prefix: "[TEST] "
+      auth_suite_prefix: "[TEST] "
+      wiki_page_prefix: "[TEST] "
+    step_defaults:
+      build_verify.auth_ecs:
+        auth_build:
+          build_id: 189571744
+          rc: 1
+          version: "6.2611.7401"
+          build_number: "6.2611.7401-rc189571744"
+          status: completed
+          result: partiallySucceeded
+        test_build: 190270697
+      bug_bash.clone_plans_broker:
+        name: "test-november-broker"
+      bug_bash.clone_plans_auth:
+        name: "test-november-auth"
+
+  prod:
+    emails:
+      subject_prefix: ""
+      partner_status:
+        - "authsdkrelease@microsoft.com"
+        - "androididentity@microsoft.com"
+      bug_bash_invite:
+        - "androididentity@microsoft.com"
+        - "idnadevexciamdublin@microsoft.com"
+    teams:
+      android_core:
+        chat: "19:976a859f167f44e59c4ceca8b1d23581@thread.v2"
+        name: "Android Core Team"
+      code_reviews:
+        chat: "19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2"
+        name: "Code reviews"
+      general_announce:
+        team: "be33b3e7-c501-4225-9413-3b88046f3eb3"
+        channel: "19:715820c336d3454bbd75ef0bad68e460@thread.tacv2"
+        name: "General"
+      bug_bash_updates: "bound_meeting"
+      native_auth_dm: "resolved_engineer"
+      announcement_cc_mode: "mention"
+    artifacts:
+      broker_plan_prefix: ""
+      auth_suite_prefix: ""
+      wiki_page_prefix: ""
+    step_defaults: {}

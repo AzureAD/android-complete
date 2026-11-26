@@ -83,7 +83,7 @@ def _orchestrator(
         lambda phase, step: handler if (phase, step) == ("phase", "effect") else None,
     )
     return Orchestrator(
-        str(path), state or ReleaseState(release_id="r"), mocks={}
+        str(path), state or ReleaseState(release_id="r"), step_defaults={}
     )
 
 
@@ -606,7 +606,7 @@ def test_active_effect_ignores_outcome_mock_and_reconciles(
     orch = _orchestrator(
         tmp_path, monkeypatch, Handler, "transactional", state
     )
-    orch.mocks = {
+    orch.step_defaults = {
         "phase.effect": {
             "outcome": "blocked",
             "reason": "mock must not erase ownership",
@@ -622,7 +622,7 @@ def test_active_effect_ignores_outcome_mock_and_reconciles(
 
 def test_recovery_uses_frozen_effect_mocks_not_ambient_changes(
         tmp_path, monkeypatch):
-    from steps.lib.mockctx import mock_input, MISSING
+    from tests._fixtures import mock_input, MISSING
 
     seen = []
 
@@ -641,7 +641,7 @@ def test_recovery_uses_frozen_effect_mocks_not_ambient_changes(
 
     state = ReleaseState(release_id="r")
     prepared = effects.prepare(
-        _effect_descriptor(Handler), _context(state), frozen_mocks={"access": "granted"}
+        _effect_descriptor(Handler), _context(state), frozen_defaults={"access": "granted"}
     )
     state.set_step(
         "phase",
@@ -663,7 +663,7 @@ def test_recovery_uses_frozen_effect_mocks_not_ambient_changes(
     orch = _orchestrator(
         tmp_path, monkeypatch, Handler, "idempotent", state
     )
-    orch.mocks = {"phase.effect": {"access": "changed"}}
+    orch.step_defaults = {"phase.effect": {"access": "changed"}}
 
     assert orch.step_once().kind == "ran"
     assert seen == ["granted"]
@@ -671,8 +671,8 @@ def test_recovery_uses_frozen_effect_mocks_not_ambient_changes(
 
 def test_match_current_recovery_hashes_and_uses_persisted_mocks(
         tmp_path, monkeypatch):
-    from steps.lib import mockctx
-    from steps.lib.mockctx import mock_input, MISSING
+    from tests import _fixtures as mockctx
+    from tests._fixtures import mock_input, MISSING
 
     seen = []
 
@@ -694,7 +694,7 @@ def test_match_current_recovery_hashes_and_uses_persisted_mocks(
     state = ReleaseState(release_id="r")
     with mockctx.active({"target": "frozen"}):
         prepared = effects.prepare(
-            _effect_descriptor(Handler), _context(state), frozen_mocks={"target": "frozen"}
+            _effect_descriptor(Handler), _context(state), frozen_defaults={"target": "frozen"}
         )
     state.set_step(
         "phase",
@@ -721,7 +721,7 @@ def test_match_current_recovery_hashes_and_uses_persisted_mocks(
         state,
         effect_recovery="match_current",
     )
-    orch.mocks = {"phase.effect": {"target": "ambient-change"}}
+    orch.step_defaults = {"phase.effect": {"target": "ambient-change"}}
 
     assert orch.step_once().kind == "ran"
     assert seen == ["frozen"]
@@ -832,7 +832,7 @@ def test_missing_effect_handler_rejects_new_orchestrator_without_erasing_ownersh
     monkeypatch.setattr(engine_module.steps, "get_step", lambda *_args: None)
     before = deepcopy(state.steps)
     with pytest.raises(WorkflowConfigError, match="requires a handler module"):
-        Orchestrator(str(tmp_path / "phases.yaml"), state, mocks={})
+        Orchestrator(str(tmp_path / "phases.yaml"), state, step_defaults={})
 
     record = state.get_step("phase", "effect")
     assert state.steps == before

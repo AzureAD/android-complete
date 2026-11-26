@@ -12,11 +12,6 @@ def cmd_checklist(args):
         orch.gate.verify()
         C.save_state(st, args.runs_root, args.release)
     chk = orch.gate.checklist()
-    from orchestrator.readiness import dispatch_plan
-    from orchestrator.revision import mismatch_reason
-    revision_problem = mismatch_reason(orch)
-    if revision_problem:
-        chk["dispatch"] = dispatch_plan(chk, args.release, suspension=revision_problem)
     runtime_report = orch.status_report()
     chk = runtime_report.get("readiness", chk)
     attest = getattr(args, "attest_prompt", False)

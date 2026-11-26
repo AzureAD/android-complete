@@ -302,7 +302,7 @@ def test_native_proof_is_frozen_into_notification_claims(state, native):
     assert A.stored_chat_id(_context(state)) == binding["chat_id"]
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates",
              "state_matches": A.chat_state_matches(_context(state))}
-    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     item = D.descriptor(state, "native-update", scope, "workiq_send_chat_message",
                         {"chatId": binding["chat_id"], "content": "test"})
     D.offer(orch, item)
@@ -360,7 +360,7 @@ def test_prepared_update_stops_if_invite_changes_even_when_chat_id_does_not(stat
     seed_invite(state, "19:meeting_CURRENT@thread.v2")
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates",
              "state_matches": A.chat_state_matches(_context(state))}
-    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     item = D.descriptor(state, "update", scope, "workiq_send_chat_message",
                         {"chatId": A.stored_chat_id(_context(state)), "content": "test"})
     D.offer(orch, item)
@@ -371,16 +371,13 @@ def test_prepared_update_stops_if_invite_changes_even_when_chat_id_does_not(stat
         D.claim(orch, item["id"], item["hash"], "worker")
 
 
-def test_poller_rejects_stale_chat_before_gather(state, tmp_path, monkeypatch, capsys):
+def test_step_rejects_stale_chat_before_gather(state, monkeypatch):
     seed_invite(state, "19:meeting_CURRENT@thread.v2")
     binding = state.get_step("bug_bash", "activate_chat")
     binding.data.pop("invite")
     state.set_step("bug_bash", "activate_chat", binding)
-    state.save(str(tmp_path / state.release_id / "release-state.json"))
     monkeypatch.setattr(BU, "gather", lambda *_: pytest.fail("Stale chat gathered progress"))
-    assert cli.main(["--runs-root", str(tmp_path), "post-bugbash-update", "--release", state.release_id,
-                     "--force"]) == 0
-    assert json.loads(capsys.readouterr().out)["decision"] == "no_chat"
+    assert _invoke(BU.build, state).kind == "blocked"
 
 
 CHAT_LINK = "https://teams.microsoft.com/l/message/19%3Ameeting_CURRENT%40thread.v2/123"
@@ -412,7 +409,7 @@ def test_manual_preview_is_read_only_and_does_not_need_graph(state, tmp_path, mo
 
 def test_owner_confirmed_link_persists_without_graph_and_replays_without_changes(
         state, tmp_path, monkeypatch, capsys):
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tests._harness import _bb_updates_state
     from tests.test_bugbash_mentions import progress, people
 
@@ -538,7 +535,7 @@ def test_manual_provenance_is_required_and_bound_into_notification_claim(
         assert A.stored_chat_id(_context(changed)) is None
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates",
              "state_matches": A.chat_state_matches(_context(saved))}
-    orch = Orchestrator(C.DEFAULT_CONFIG, saved, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, saved, step_defaults={})
     item = D.descriptor(saved, "manual-update", scope, "workiq_send_chat_message",
                         {"chatId": A.stored_chat_id(_context(saved)), "content": "test"})
     D.offer(orch, item)
@@ -551,7 +548,7 @@ def test_changed_receipt_join_url_invalidates_prepared_chat_update(state):
     seed_invite(state, "19:meeting_CURRENT@thread.v2")
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates",
              "state_matches": A.chat_state_matches(_context(state))}
-    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     item = D.descriptor(state, "receipt-update", scope, "workiq_send_chat_message",
                         {"chatId": A.stored_chat_id(_context(state)), "content": "test"})
     D.offer(orch, item)

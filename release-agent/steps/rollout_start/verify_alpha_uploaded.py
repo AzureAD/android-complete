@@ -16,7 +16,7 @@ from orchestrator.authority import OwnStepData
 from orchestrator.evidence import StepData
 from orchestrator.outcomes import Blocked, Done, InProgress
 from orchestrator.step_context import StepContext
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from steps.rollout_start import release_stage
 from tools import pipelines as P
 
@@ -33,9 +33,6 @@ STAGE_NAME = P.AUTH_ALPHA_STAGE_NAME
 PREVIOUS_STEP_ID = "upload_alpha"
 PREVIOUS_LABEL = "Upload Alpha - Google Play"
 POLL_INTERVAL_MIN = 30
-
-MOCKABLE = release_stage.MOCKABLE
-
 
 def build(context: StepContext):
     fail = context.input("fail", MISSING)
@@ -95,7 +92,6 @@ def build(context: StepContext):
         links=links,
         updates=(step_update,),
     )
-
 
 KNOWLEDGE = {
     "summary": "Verify Google Play Alpha APK upload (`Upload_To_Alpha_GPS`) completed and succeeded.",

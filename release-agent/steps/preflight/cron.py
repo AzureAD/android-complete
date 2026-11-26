@@ -2,7 +2,7 @@
 
 Confirms pipeline 3155 is scheduled AND firing by finding a recent `schedule`-reason
 run within the staleness window. Live ADO evidence is aged against trusted wall-clock
-UTC, never a simulated release date. Injected mock evidence intentionally uses the
+UTC, never a simulated release date. Injected `step_defaults` evidence intentionally uses the
 simulation clock. Passes if fresh; BLOCKS if there's no scheduled run or it's stale.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools.pipelines import ENGINEERING_ORG, ENGINEERING_PROJECT
 from tools.coordinates import coords
 
@@ -30,20 +30,9 @@ CONFIG = {
     "max_staleness_days": 2,     # a daily cron should never be older than this
 }
 
-# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
-MOCKABLE = {
-    "run": {
-        "kind": "input",
-        "desc": ("Inject the latest scheduled-build dict (or null for 'none'); the "
-                 "REAL staleness logic runs against the simulation clock — no build-history read."),
-    },
-}
-
-
 def _trusted_utc_now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc)
-
 
 def _iso_age_days(iso: str, now):
     """Elapsed days, including fractions, or None if the timestamp is unparseable."""
@@ -59,11 +48,10 @@ def _iso_age_days(iso: str, now):
     except ValueError:
         return None
 
-
 def build(context: StepContext):
     cfg = CONFIG
     name = cfg.get("name", "Calendar Checker")
-    # Injected run (mocks.local.yaml) → run the REAL staleness logic on your data.
+    # Configured `run` input (`step_defaults` / scenarios) -> run the real staleness logic on it.
     injected = context.input("run", MISSING)
     if injected is not MISSING:
         run_ = injected

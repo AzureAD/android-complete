@@ -5,7 +5,7 @@ from orchestrator.outcomes import Done, Blocked, InProgress
 from steps.build_verify._common import (
     ORG, PROJECT, UNBLOCK_HELP, links_for, stash_mrwp, valid_counts,
 )
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import pipelines as P
 from tools.pipelines import ORCHESTRATOR_DEF
 from tools.pipelines.test_evidence import validate_snapshot_tests
@@ -17,7 +17,7 @@ def verify_mrwp(context, provider):
     Resolves this release's MRWP (def 2519) run for the provider — from the orchestrator
     run's RC-<provider>=<id> tag, or a log-parse fallback — then applies the release
     stage-completion rule (every stage must have executed; skipped/canceled/pending =
-    block) and attaches the Test-tab summary. Uses the step's mock knobs when present:
+    block) and attaches the Test-tab summary. Uses configured `step_defaults` inputs when present:
       mrwp_id : inject the MRWP build id (skip the orchestrator lookup)
       stages  : inject the stage list [{name,state,result}]
       tests   : inject the test summary {total,passed,failed[,runs]}
@@ -59,7 +59,7 @@ def verify_mrwp(context, provider):
     # 1.5) overall run status — an in-flight run is NOT a failure. If the MRWP run is
     # still notStarted/inProgress, its un-run stages just haven't run YET; hold the step
     # as in-flight and let the 30-min poller re-evaluate when it completes, instead of
-    # false-blocking it as an aborted release. `build_status` mock drives this in sim/tests;
+    # false-blocking it as an aborted release. `build_status` input drives this in scenarios;
     # when stages are injected (no live call) we assume the run is complete.
     bstatus = context.input("build_status", MISSING)
     if bstatus is MISSING and context.input("stages", MISSING) is MISSING:

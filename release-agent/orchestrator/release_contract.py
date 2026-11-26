@@ -24,7 +24,6 @@ class LifecycleStatus(str, Enum):
     READINESS_GATE = "readiness_gate"
     RUNNING = "running"
     SCHEDULED = "scheduled"
-    WORKFLOW_REVISION = "workflow_revision"
 
 
 class DispatchAction(str, Enum):
@@ -40,7 +39,6 @@ class DispatchAction(str, Enum):
 
 _SUSPENSION_TO_LIFECYCLE: dict[str, LifecycleStatus] = {
     "denied": LifecycleStatus.BLOCKED,
-    "workflow_revision": LifecycleStatus.BLOCKED,
     "halted": LifecycleStatus.HALTED,
     "cancelled": LifecycleStatus.CANCELLED,
     "readiness_gate": LifecycleStatus.READINESS_GATE,

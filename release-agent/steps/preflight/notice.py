@@ -1,11 +1,7 @@
 """Step: `notice` — the early code-complete notice email (Phase 0, maps to S0).
 
-ONE self-contained home for the whole step: logic (`build`), mock knobs
-(`MOCKABLE`), and config (`CONFIG`). Sending email needs the WorkIQ MCP the engine
-can't reach, so this is a `scout` step: `build()` resolves everything
-deterministically and returns a NeedsSkill action describing the exact
-`workiq_send_email` call for the skill to execute — no per-step skill
-instructions required.
+ONE self-contained home for the whole step: logic (`build`) and config (`CONFIG`).
+Recipients and subject prefixes are resolved from `config/environment.yaml`.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -24,11 +20,9 @@ REQUIRED_TOOLS = ('workiq',)
 REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     variant: str | None = None
-
 
 PARAMETERS = {"build": BuildParameters}
 
@@ -37,18 +31,6 @@ CONFIG = {
     "variant": "initial",                    # initial (CCD-7) | update (CCD-day)
 }
 
-MOCKABLE = {
-    "send_to": {
-        "kind": "payload", "sets": "to", "as": "list", "tag_subject": True,
-        "desc": "Send the email for real, but only to these address(es) (DL → you).",
-    },
-    "variant": {
-        "kind": "input",
-        "desc": "Force the notice variant: initial (CCD-7) | update (CCD-day).",
-    },
-}
-
-
 def _resolve_dl(context) -> list[str]:
     try:
         return context.services.assets.status_recipients()
@@ -56,7 +38,6 @@ def _resolve_dl(context) -> list[str]:
         if "was not supplied" not in str(exc):
             raise
         return notif.partner_recipients()
-
 
 def build(context: StepContext[BuildParameters]):
     """Resolve the Phase-0 notice into a NeedsSkill(workiq_send_email) using the unified card."""
@@ -87,7 +68,7 @@ def build(context: StepContext[BuildParameters]):
         body = body.replace("**Today**", f"**{ctx['ccd_long']}**")
 
     live_dl = _resolve_dl(context)
-    recipients, rnote, prefix = resolve_recipients(context, live_dl)
+    recipients, rnote, prefix = resolve_recipients(context, live_dl, group_key="partner_status")
     stage_mode = "ccd" if is_update else "preflight"
     composed = SE.compose(
         context.release,
@@ -97,7 +78,8 @@ def build(context: StepContext[BuildParameters]):
         ccd_today=today,
         ccd_long=ctx["ccd_long"],
     )
-    subject_out = f"{prefix}{subject}"
+    subject_out = f"{prefix}{subject}" if prefix and not subject.startswith("[TEST") else subject
+    note_prefix = "[test-redirect] " if prefix else ""
 
     return NeedsSkill(
         tool="workiq_send_email",
@@ -110,7 +92,7 @@ def build(context: StepContext[BuildParameters]):
         },
         record_as=ID,
         summary=f"Email the code-complete notice to {len(recipients)} recipient(s) ({rnote})",
-        note=f"sent to {', '.join(recipients) if recipients else '(no recipients)'}",
+        note=f"{note_prefix}sent to {', '.join(recipients) if recipients else '(no recipients)'}",
         outbound=True,
     )
 
@@ -119,8 +101,8 @@ KNOWLEDGE = {'summary': 'Email the early code-complete notice using the unified 
          'SDK release is approaching (showing the 4-milestone card with Code Complete ETA and '
          'the hotfix cherry-pick policy, without versions or changelogs).\n',
  'how': 'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`) '
-        'to `status_email.recipients` from `config/notifications.yaml`. Redirect for local '
-        'testing with `status_email.send_to` or `preflight.notice.send_to` in `mocks.local.yaml`.\n',
+        'to `emails.partner_status` from `config/environment.yaml` (`@owner` in `test` profile, '
+        'full DLs in `prod` profile).\n',
  'faqs': [{'q': 'Who receives it?',
            'a': 'The consolidated distribution list in config/notifications.yaml '
                 '(status_email.recipients). Redirect for testing with status_email.send_to.'},

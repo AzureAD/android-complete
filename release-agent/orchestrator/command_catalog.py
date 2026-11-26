@@ -13,7 +13,6 @@ class CommandModule:
 # Order is the public --help order. Command modules still own argument semantics.
 COMMAND_MODULES = (
     CommandModule("release"),
-    CommandModule("workflow_revision"),
     CommandModule("readiness"),
     CommandModule("pipeline"),
     CommandModule("notify"),
@@ -26,14 +25,12 @@ COMMAND_MODULES = (
     CommandModule("notice"),
     CommandModule("localization", external_writes=("launch-localization",)),
     CommandModule("rc_report"),
-    CommandModule("rc_poll"),
     CommandModule("telemetry_cmd"),
     CommandModule("distribute", external_writes=("distribute-tests",)),
     CommandModule("broker_plan"),
     CommandModule("bugbash_chat"),
     CommandModule("bugbash_update"),
     CommandModule("gate_approve", approvals=("approve-orchestrator-gate",)),
-    CommandModule("finalize_poll"),
     CommandModule("integ_prs_cmd", external_writes=("create-integration-prs",)),
     CommandModule("oneauth_pr_cmd", external_writes=("create-oneauth-common-pr",)),
     CommandModule("payload_wiki_cmd", external_writes=("create-payload-wiki",)),
@@ -42,15 +39,14 @@ COMMAND_MODULES = (
         external_writes=(
             "start-release-signoff", "start-upload-whats-new", "start-upload-alpha",
             "start-beta-play-store")),
-    CommandModule("sim"),
     CommandModule("logs"),
     CommandModule("automation"),
     CommandModule("infra_cmd"),
-    CommandModule("onboarding_cmd"),
     CommandModule("structured_read_cmd"),
     CommandModule("paths_cmd"),
     CommandModule("preview_cmd"),
     CommandModule("help_cmd"),
+    CommandModule("environment_cmd"),
 )
 
 APPROVAL_COMMANDS = frozenset(verb for item in COMMAND_MODULES for verb in item.approvals)

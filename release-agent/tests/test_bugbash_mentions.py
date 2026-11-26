@@ -12,7 +12,7 @@ from orchestrator.commands import step_action, bugbash_update
 from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.state import StepState
 from steps.bug_bash import bugbash_updates as U
-from steps.lib import mockctx
+from tests import _fixtures as mockctx
 from tests._harness import _active_phase, _bb_updates_state, CONFIG
 from tools import bugbash as B, distribution as G
 
@@ -63,7 +63,7 @@ def people():
 
 def state():
     st = _active_phase(_bb_updates_state(), "bug_bash")
-    phase = next(p for p in Orchestrator(CONFIG, st, mocks={}).config["phases"] if p["id"] == "bug_bash")
+    phase = next(p for p in Orchestrator(CONFIG, st, step_defaults={}).config["phases"] if p["id"] == "bug_bash")
     for step in phase["steps"]:
         if step["id"] == U.ID:
             break
@@ -236,17 +236,6 @@ def test_initial_and_periodic_directory_evidence_fail_closed_with_actionable_mis
         assert initial.payload["entityUrls"] == [B.mention_directory_path("a@example.test")]
     else:
         assert initial.kind == "blocked" and initial.reason
-    C.save_state(st, str(tmp_path), st.release_id)
-    args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=CONFIG,
-                     now="2026-09-11T10:00:00-07:00", force=True, members_file=str(path))
-    with command_inputs("bug_bash.bugbash_updates", {"progress": progress()}):
-        assert bugbash_update.cmd_post_bugbash_update(args) == 0
-    periodic = json.loads(capsys.readouterr().out)
-    assert periodic["decision"] == "error" and periodic["notifications"] == []
-    assert not periodic["permission_to_send"]
-    if failure == "missing":
-        assert periodic["connector_reads"] == initial.payload["_connector_reads"]
-        assert "directory_observations" in periodic["followup"]
 
 
 def test_missing_members_requests_read_before_initial_update_without_send(monkeypatch):
@@ -275,8 +264,8 @@ def test_both_producers_preserve_the_same_mentions_in_claimed_payload(
         path.write_text(json.dumps(observation), encoding="utf-8")
         members_file = str(path)
         params = [f"members_file={path}"]
-    monkeypatch.setattr(step_action.mocks_mod, "load_mocks", lambda: {"bug_bash.bugbash_updates": spec})
-    orch = Orchestrator(CONFIG, st, mocks={})
+    monkeypatch.setattr(step_action.env_mod, "load_step_defaults", lambda *_a, **_kw: {"bug_bash.bugbash_updates": spec})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     out = step_action.prepare_step(Namespace(phase="bug_bash", step=U.ID, release=st.release_id,
                                              param=params), st, orch)
     initial = out["notifications"][0]
@@ -285,30 +274,7 @@ def test_both_producers_preserve_the_same_mentions_in_claimed_payload(
     claimed = D.claim(orch, initial["id"], initial["hash"], "test-worker")
     assert claimed["payload"]["mentions"][0]["mentioned"]["user"]["id"] == ALICE
     assert claimed["payload"]["mentions"][0]["mentionText"] == "Alice & Co"
-    st = state()
-    C.save_state(st, str(tmp_path), st.release_id)
-    args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=CONFIG,
-                     now="2026-09-11T10:00:00-07:00", force=True, members_file=members_file)
-    with command_inputs("bug_bash.bugbash_updates", spec):
-        assert bugbash_update.cmd_post_bugbash_update(args) == 0
-    periodic = json.loads(capsys.readouterr().out)["notifications"][0]
-    assert periodic["payload"] == initial["payload"]
-    assert periodic["payload"]["content"].count("<li>") == 2
-    assert "[Broker]" in periodic["payload"]["content"] and "[Authenticator]" in periodic["payload"]["content"]
-    assert '<li>✅ <b>[Authenticator]</b>' in periodic["payload"]["content"]
-    assert "(Passed — resolved)" not in periodic["payload"]["content"]
-
-
-def test_resolution_failure_stages_no_periodic_notification(monkeypatch, tmp_path, capsys):
-    st = state()
-    C.save_state(st, str(tmp_path), st.release_id)
-    args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=CONFIG,
-                     now="2026-09-11T10:00:00-07:00", force=True)
-    before = deepcopy(st.notification_deliveries)
-    with command_inputs("bug_bash.bugbash_updates", {"progress": progress()}):
-        assert bugbash_update.cmd_post_bugbash_update(args) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["decision"] == "error" and out["notifications"] == []
-    assert out["chatId"] == "19:meeting_X@thread.v2" and "--members-file" in out["detail"]
-    assert out["connector_reads"] and not out["permission_to_send"]
-    assert C.load_state(str(tmp_path), st.release_id).notification_deliveries == before
+    assert initial["payload"]["content"].count("<li>") == 2
+    assert "[Broker]" in initial["payload"]["content"] and "[Authenticator]" in initial["payload"]["content"]
+    assert '<li>✅ <b>[Authenticator]</b>' in initial["payload"]["content"]
+    assert "(Passed — resolved)" not in initial["payload"]["content"]

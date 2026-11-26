@@ -18,7 +18,7 @@ from orchestrator.step_context import StepContext
 from orchestrator.outcomes import Done, Blocked, InProgress
 from orchestrator import schedule
 from orchestrator.evidence import ReleaseVersions
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from steps.build_verify import _common as K
 from tools.pipelines import (
     ORCHESTRATOR_DEF,
@@ -47,14 +47,6 @@ CONFIG = {
     "required_stages": ORCH_REQUIRED_STAGES,
     "park_stage": ORCH_PARK_STAGE,
 }
-
-MOCKABLE = {
-    "run": {"kind": "input",
-            "desc": "Inject the orchestrator run dict {id,tags,...} to skip the tag lookup."},
-    "stages": {"kind": "input",
-               "desc": "Inject the orchestrator stage list [{name,state,result}] to skip the timeline read."},
-}
-
 
 def build(context: StepContext):
     cfg = CONFIG

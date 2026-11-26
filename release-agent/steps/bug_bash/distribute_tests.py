@@ -42,7 +42,7 @@ Pass --roster-file (step-action: --param roster_file=<path>) containing {observa
 with a fresh release-owner-bound envelope for the exact mail lookup and every actual member
 page. Their sources and typed identities are reviewed and revalidated before tester writes.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   oce            : verified primary on-call UPN to exclude (skill normally uses ICM).
   roster         : team roster [{name, upn}] (offline connector substitute).
   broker_cases   : Broker selection [{id}] (skip ADO case selection).
@@ -54,8 +54,8 @@ Mock knobs (mocks.local.yaml / tests):
                    (skip live plan-tester reads). tester_id is an ADO identity ID.
   fail           : force a Blocked result with this detail.
 
-Case-selection mocks alone do NOT mock current ownership or plan testers: supply
-point_sets for fully offline validation. These input knobs do not
+Case-selection inputs alone do NOT supply current ownership or plan testers: supply
+point_sets for fully offline validation. These input keys do not
 stub apply writes. Tests must stub the writers explicitly and still confirm OOF via
 build(..., oof=[]), inspect_distribution(..., oof=[...]) or the CLI availability flags.
 """
@@ -66,7 +66,7 @@ from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import Done, Blocked, NeedsSkill
 from orchestrator.evidence import StepData
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import distribution as D, testplans as T
 from steps.bug_bash.ui_results import completed_result
 
@@ -82,28 +82,13 @@ REPEATABLE = True
 WRITE_PRECONDITION = 'command'
 WRITE_COMMAND = "distribute-tests"
 
-
 def point_work_key(group, point):
     """A shared case's manual and failure points can have different Current Testers."""
     return point["work_key"] if "work_key" in point else f"{group['prefix']}:{point['case_id']}"
 
-
-MOCKABLE = {
-    "oce": {"kind": "input", "desc": "Verified primary on-call UPN."},
-    "roster": {"kind": "input", "desc": "Team roster [{name, upn}] (offline connector substitute)."},
-    "broker_cases": {"kind": "input", "desc": "Broker cases [{id}] (skip ADO selection)."},
-    "auth_cases": {"kind": "input", "desc": "Authenticator cases [{id, tags}] (skip ADO selection)."},
-    "auth_automated": {"kind": "input", "desc": "Automated auth case IDs (offline result substitute)."},
-    "auth_failed": {"kind": "input", "desc": "Applied automated failures, with auth_automated."},
-    "point_sets": {"kind": "input", "desc": "ADO groups [{prefix,plan_id,suite_id,points:[{id,case_id,config_id,tester_id,tester_upn}]}]; skip point reads."},
-    "fail": {"kind": "input", "desc": "Force a blocked result."},
-}
-
-
 def _broker_plan_id(context):
     """The release's cloned Broker plan ID, or None; never fall back to the master."""
     return (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
-
 
 def _fill_input(context):
     """Completed-fill owner API; missing/partial evidence is never an empty automated set."""
@@ -113,7 +98,6 @@ def _fill_input(context):
         return ids, {"offline_automated_ids": ids}
     result = completed_result(context)
     return result["auth"]["automated_case_ids"], {"id": result["id"], "binding": result["binding"]}
-
 
 def _roster(context, cfg, roster_file=None):
     roster = context.input("roster", MISSING) if not roster_file else MISSING
@@ -134,7 +118,6 @@ def _roster(context, cfg, roster_file=None):
         source = {"source": "offline-input", "members": roster}
     return D.canonical_roster(roster), source
 
-
 def _oce(context, data):
     oce = data.get("oce", context.input("oce", None))
     if (not isinstance(oce, str) or oce.strip().count("@") != 1
@@ -143,7 +126,6 @@ def _oce(context, data):
         raise ValueError(f"Resolve the current primary on-call engineer (ICM team {team_id}) and pass "
                          "--oce <verified-upn> before showing availability choices or distributing tests.")
     return oce.strip().casefold()
-
 
 def _auth_cases(context):
     cases = context.input("auth_cases", MISSING)
@@ -155,7 +137,6 @@ def _auth_cases(context):
         if not ok:
             raise ValueError(f"Couldn't read Authenticator bug-bash cases: {detail}")
     return cases
-
 
 def _owner_triage(context, cases, cfg):
     result = None if context.input("auth_automated", MISSING) is not MISSING else completed_result(context)
@@ -186,7 +167,6 @@ def _owner_triage(context, cases, cfg):
                 "assignee": context.release.owner_email.strip().casefold(), "reasons": ["failed_automation"]}
     return dict(sorted(triage.items()))
 
-
 def _monthly_groups(context, completed):
     record = completed["monthly"]["target"]
     if not record["bindings"]:
@@ -210,7 +190,6 @@ def _monthly_groups(context, completed):
     if seen != set(expected):
         raise ValueError("Monthly owned points missing from live target")
     return groups
-
 
 def _point_sets(context, selected, cfg, broker_manual_ids, triage):
     injected = context.input("point_sets", MISSING)
@@ -312,7 +291,6 @@ def _point_sets(context, selected, cfg, broker_manual_ids, triage):
                 groups.append({**group, "prefix": "A", "workload": "triage", "points": points})
     return groups
 
-
 def inspect_distribution(context, *, oof=None, oce=None, roster_file=None):
     """Return an outcome and a transient report; persist only availability/workflow data."""
     data = thaw(context.evidence.step("bug_bash", ID).data or {})
@@ -347,7 +325,6 @@ def inspect_distribution(context, *, oof=None, oce=None, roster_file=None):
         report["error"] = outcome.reason
     outcome.updates = (StepData(data),)
     return outcome, report
-
 
 def _inspect(context, report, oof, data, roster_file=None):
     fail = context.input("fail", MISSING)
@@ -486,16 +463,13 @@ def _inspect(context, report, oof, data, roster_file=None):
         "targets": targets, "points": groups,
     }
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     oof: tuple[str, ...] | None = None
     oce: str | None = None
     roster_file: str | None = None
 
-
 PARAMETERS = {"build": BuildParameters}
-
 
 def build(context: StepContext[BuildParameters]):
     oof = list(context.parameters.oof) if context.parameters.oof is not None else None

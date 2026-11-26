@@ -12,7 +12,7 @@ Contract a step module exposes:
     def build(context: StepContext) -> Outcome # immutable inputs, typed evidence updates
     # agent steps also declare EFFECT_MODE; effectful agents declare EFFECT_RECOVERY,
     # prepare_effect and execute; transactional agents additionally declare reconcile.
-    # optional: NAME, MOCKABLE, KNOWLEDGE, CONFIG
+    # optional: NAME, KNOWLEDGE, CONFIG
     # Auto build/execute/reconcile return Done, Blocked, or InProgress directly.
 
 `discover()` returns {"<phase>.<step>": module} for every step module found.

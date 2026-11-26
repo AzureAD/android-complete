@@ -73,7 +73,7 @@ def stash_mrwp(context, provider, snapshot, rc=None):
     merges into the rcs entry with THAT number (created if absent), so the stored rc mirrors
     the pipeline exactly — and ECS/Local resolving in separate steps land in the same entry.
 
-    When `rc` is None (mock-injected id, or the log fallback where the tag isn't available),
+    When `rc` is None (configured id override, or the log fallback where the tag isn't available),
     it falls back to run_id-change detection: a changed run_id for this provider means RC
     Testing was re-triggered → append the next local rc (last+1)."""
     key = provider.lower()                       # 'ecs' | 'local'

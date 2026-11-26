@@ -15,7 +15,7 @@ from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.state import ReleaseState, StepState
 from steps.bug_bash import distribute_tests as step
-from steps.lib import mockctx
+from tests import _fixtures as mockctx
 from tools import distribution as D
 from tests._harness import _active_step
 
@@ -86,8 +86,8 @@ def inspect(state, inputs, **kwargs):
 
 
 def _review_hash(state, inputs):
-    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={})
-    with patch.object(command.mocks_mod, "load_mocks",
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
+    with patch.object(command.env_mod, "load_step_defaults",
                       return_value={"bug_bash.distribute_tests": inputs}):
         plan = command.plan_distribution(Namespace(no_oof=False, oof=None, oce=None), orch)
     return W.review_hash(orch, "bug_bash", step.ID, plan)
@@ -102,8 +102,8 @@ def cli(monkeypatch, state, inputs, *flags):
     saved = []
     monkeypatch.setattr(C, "load_state", lambda *_: state)
     monkeypatch.setattr(C, "save_state", lambda st, *_: saved.append(deepcopy(st)))
-    monkeypatch.setattr(C, "load_orch", lambda *_: (state, Orchestrator(C.DEFAULT_CONFIG, state, mocks={})))
-    monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
+    monkeypatch.setattr(C, "load_orch", lambda *_: (state, Orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})))
+    monkeypatch.setattr(command.env_mod, "load_step_defaults", lambda *_a, **_kw: {"bug_bash.distribute_tests": inputs})
     def read_points(url, timeout):
         for group in inputs["point_sets"]:
             if f"/Plans/{group['plan_id']}/Suites/{group['suite_id']}/points?" in url:
@@ -332,7 +332,7 @@ def test_validation_reports_mismatches_without_writes_or_saved_lists(state, inpu
 
 def test_preview_availability_is_transient_until_reviewed_apply(state, inputs, monkeypatch, tmp_path):
     from orchestrator.cli import main
-    monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
+    monkeypatch.setattr(command.env_mod, "load_step_defaults", lambda *_a, **_kw: {"bug_bash.distribute_tests": inputs})
     C.save_state(state, str(tmp_path), state.release_id)
     argv = ["--runs-root", str(tmp_path), "distribute-tests", "--release", state.release_id]
     assert main([*argv, "--oof", "Alice"]) == 0
@@ -342,7 +342,7 @@ def test_preview_availability_is_transient_until_reviewed_apply(state, inputs, m
 
 
 def test_engine_holds_until_actual_assignments_and_testers_are_valid(state, inputs):
-    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={"bug_bash.distribute_tests": inputs})
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, step_defaults={"bug_bash.distribute_tests": inputs})
     assert orch.step_once().kind == "reminder"
     _, report = inspect(state, inputs, oof=[])
     assert orch.step_once().kind != "ran"

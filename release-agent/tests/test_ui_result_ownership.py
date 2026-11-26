@@ -8,7 +8,7 @@ from orchestrator import cli_common as C
 from orchestrator.state import ReleaseState, StepState
 from steps.build_verify import rc_report as R, _rc_report_rendering as rendering
 from steps.bug_bash import ui_test_status as U, ui_results, distribute_tests as D, bugbash_updates as BU
-from steps.lib import mockctx
+from tests import _fixtures as mockctx
 from tests._auth_evidence import auth_snapshot, capture
 from tests._mrwp_evidence import current_rc, PROD
 from tests._ui_results import publish, checkpoint_memory, broker_fill, auth_fill
@@ -188,7 +188,7 @@ def test_same_source_new_fill_requires_distribution_review():
     from tests.test_distribution import _review_hash
 
     st = state()
-    fresh_orchestrator(C.DEFAULT_CONFIG, st, mocks={})
+    fresh_orchestrator(C.DEFAULT_CONFIG, st, step_defaults={})
     publish(st)
     inputs = distribution_inputs()
     with mockctx.active(inputs):

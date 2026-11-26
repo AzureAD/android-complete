@@ -25,7 +25,7 @@ def clock(monkeypatch):
 @pytest.fixture
 def orch(clock):
     st = _active_phase(_bb_updates_state(), "bug_bash")
-    return Orchestrator(C.DEFAULT_CONFIG, st, mocks={}, as_of=clock[0])
+    return Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={}, as_of=clock[0])
 
 
 def progress(orch, start="2026-09-11T12:00:00-07:00", hours=3, text="X" * 20000):
@@ -84,7 +84,7 @@ def test_compact_receipt_survives_process_reload(orch, tmp_path, clock):
     D.prune_progress(orch)
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
     st = C.load_state(str(tmp_path), orch.state.release_id)
-    restored = Orchestrator(C.DEFAULT_CONFIG, st, mocks={}, as_of=clock[0])
+    restored = Orchestrator(C.DEFAULT_CONFIG, st, step_defaults={}, as_of=clock[0])
     assert not D.claim(restored, item["id"], item["hash"], "second-process")["permission_to_send"]
     assert not D.result(restored, item["id"], attempt["execution_id"], "sent", "retried receipt")
 
@@ -271,16 +271,14 @@ def test_result_command_compacts_only_after_delivery_and_completion_are_saved(or
     assert not json.loads(capsys.readouterr().out)["recorded"]
 
 
-def test_off_hours_tick_still_removes_expired_never_sent_updates(orch, tmp_path, clock, capsys):
+def test_prune_progress_removes_expired_never_sent_updates(orch, tmp_path, clock):
     item = progress(orch)
     D.offer(orch, item)
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
     clock[0] = datetime.fromisoformat("2026-09-11T19:00:00-07:00")
-    args = Namespace(runs_root=str(tmp_path), release=orch.state.release_id, config=C.DEFAULT_CONFIG,
-                     now=clock[0].isoformat(), force=False)
-    assert bugbash_update.cmd_post_bugbash_update(args) == 0
-    assert json.loads(capsys.readouterr().out)["decision"] == "off_hours"
-    assert item["id"] not in C.load_state(str(tmp_path), orch.state.release_id).notification_deliveries
+    st, obj = C.load_orch(str(tmp_path), orch.state.release_id, C.DEFAULT_CONFIG, clock[0])
+    assert D.prune_progress(obj)
+    assert item["id"] not in st.notification_deliveries
 
 
 def test_compaction_save_failure_preserves_success_and_never_replays_transport(orch, tmp_path, monkeypatch, capsys):
@@ -305,7 +303,7 @@ def test_compaction_save_failure_preserves_success_and_never_replays_transport(o
     restored = C.load_state(str(tmp_path), orch.state.release_id)
     full = restored.notification_deliveries[item["id"]]
     assert not D.is_progress_receipt(full) and full["status"] == "sent"
-    obj = Orchestrator(C.DEFAULT_CONFIG, restored, mocks={}, as_of=orch.now_local)
+    obj = Orchestrator(C.DEFAULT_CONFIG, restored, step_defaults={}, as_of=orch.now_local)
     assert not D.claim(obj, item["id"], item["hash"], "restart")["permission_to_send"]
     monkeypatch.setattr(C, "save_state", real_save)
     assert delivery_cmd.cmd_notification(args) == 0

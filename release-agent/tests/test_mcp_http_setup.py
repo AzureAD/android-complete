@@ -5,8 +5,7 @@ import json
 import pytest
 import yaml
 
-from orchestrator import cli, cli_common as C, infra, onboarding as O
-from tests.test_onboarding import readiness
+from orchestrator import cli, cli_common as C, infra
 
 
 ENDPOINT = "https://connector.example.test/mcp"
@@ -54,14 +53,10 @@ def test_missing_http_is_read_only_preview_then_automatic_registration(setup):
     assert config.read_bytes() == after and list(profile.glob("m-mcp-servers.json.bak-*")) == backups
 
 
-def test_registration_plan_never_asks_to_inspect_or_fill_the_host_form(setup):
+def test_registration_requires_restart_and_never_fabricates_tool_inventory(setup):
     profile, _, path, _, _ = setup
     report = infra.run(str(path), register=False, scout_root=str(profile))
-    plan = O.plan(report, None, readiness())
-    assert plan["action"]["kind"] == "register_mcp" and plan["status"] == "checking"
-    assert plan["action"]["command"] == ["infra"]
-    assert "question" not in plan["action"]
-    assert not plan["permission_to_start_release"]
+    assert not report["ok"]
     registered = infra.run(str(path), register=True, scout_root=str(profile))
     assert registered["restart_needed"] and registered["infrastructure_ok"]
     # Registration alone never supplies a successful tool/access observation.

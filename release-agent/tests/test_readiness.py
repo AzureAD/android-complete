@@ -389,7 +389,6 @@ def test_init_json_persists_once_and_hands_off_to_entry_gate(
     assert "startup_complete" not in output
     assert not output["work_dispatch"]["pending_work"]
     assert output["checklist_command"] == "checklist --release 2026-11 --attest-prompt --json"
-    assert st.workflow_revision is not None
     events_path = path.parent / "events.jsonl"
     events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
     assert [event["event"] for event in events] == ["release_started"]
@@ -589,7 +588,7 @@ def test_terminal_gate_without_approval_is_projected_pending():
         "bugbash_complete",
         StepState(status="skipped", completed_at="legacy", note="old override", by="human"),
     )
-    reloaded = Orchestrator(CONFIG, st, mocks={})
+    reloaded = Orchestrator(CONFIG, st, step_defaults={})
     record = st.get_step("bug_bash", "bugbash_complete")
     assert record.status == "skipped"
     assert record.note == "old override"
@@ -631,74 +630,12 @@ def test_cli_done_and_skip_fail_without_mutating_gate(tmp_path, capsys):
     assert path.read_bytes() == before
 
 
-def test_notify_unsigned_readiness_is_silent():
-    """Readiness is interactive setup — it must NOT push (reversed from before)."""
-    from orchestrator import render
-    from datetime import date
-    _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-08", ccd="2026-08-12", ccd_source="default")
-    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 6))  # after CCD-7 but unsigned
-    assert render.notification(orch.status_report()) == ""
-
-
-
-
-def test_notify_digest_reports_gate_and_progress():
-    from orchestrator import render
-    st, orch = _orch()                   # signed, no CCD → phase due immediately
-    orch.run_until_gate()                # Holds at the Phase-2 RC quality decision gate
-    msg = render.notification(orch.status_report())
-    assert "Progress:" in msg
-    assert "your approval" in msg
-    assert "Decide RC quality gate" in msg
-
-
-
-
 def test_release_drainer_prompt_drives_unified_drain():
     """`release-drainer` uses the unified `drain` command + `scout_bot_cta` claim/result flow."""
     from orchestrator import automations as A
     by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
     assert "drain --release 2026-09 --trigger scheduled --deliver --json" in by["release-drainer"]["prompt"]
     assert "scout_bot_cta" in by["release-drainer"]["prompt"]
-
-
-def test_digest_uses_distinct_same_day_hold_ids():
-    from orchestrator.commands.notify import digest_logical_id
-    base = {"current_phase": "ccd", "pending_human": []}
-    assert digest_logical_id(base, "2026-09-17") == "digest:2026-09-17:phase:ccd"
-    action = {**base, "action": {"phase": "ccd", "step": "localization", "reason": "approval"}}
-    gate = {**base, "gate": {"phase": "finalize", "step": "publish_notes_gate", "kind": "gate"}}
-    assert digest_logical_id(action, "2026-09-17") != digest_logical_id(base, "2026-09-17")
-    assert digest_logical_id(gate, "2026-09-17") != digest_logical_id(base, "2026-09-17")
-
-
-def test_digest_contacts_owner_for_human_hold_after_scout_work_is_drained():
-    from orchestrator import render
-    report = {
-        "release_id": "r",
-        "status": "awaiting_action",
-        "readiness_signed": True,
-        "halted": False,
-        "blocked": False,
-        "gate": None,
-        "action": {"step_name": "Approve thing"},
-        "pending_human": ["phase.approve"],
-        "scout_pending": [],
-        "pipeline_runs": {},
-        "active_phase": {
-            "num": 1,
-            "name": "Phase",
-            "due": True,
-            "started": True,
-            "done": 1,
-            "total": 2,
-            "completed": [],
-            "outstanding": [],
-            "steps": [],
-        },
-    }
-    assert "Action needed now: Approve thing" in render.notification(report)
 
 
 def test_status_headline_prefers_gate_over_scout_pending():
@@ -772,59 +709,6 @@ def test_concurrent_record_check_both_persist(monkeypatch):
 
 
 
-def test_notification_renderers_share_one_silence_gate():
-    """All three digest renderers (plain/markdown/html) derive silence from the same
-    _digest_model — so they're empty together and non-empty together. Guards against
-    the three functions drifting apart."""
-    from orchestrator import render
-    from datetime import date
-    # unsigned setup release → all silent
-    st0 = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
-    r0 = Orchestrator(CONFIG, st0).status_report()
-    assert render.notification(r0) == "" and render.notification_markdown(r0) == "" \
-        and render.notification_html(r0) == ""
-    assert render._digest_model(r0) is None
-    # signed + due → all non-empty, and the model caps counts (shows totals)
-    _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default",
-                      owner_email="o@x.com")
-    orch = Orchestrator(CONFIG, st)
-    orch.gate.verify(); _pass_scout_checks(orch); orch.gate.sign()
-    orch.as_of = date(2026, 7, 8); orch.run_until_gate()
-    _drain_phase0_scout_only(orch)          # Scout's own steps done → digest is due
-    r = orch.status_report()
-    m = render._digest_model(r)
-    assert m is not None
-    assert m["completed_total"] == len(r["active_phase"].get("completed") or [])
-    assert len(m["completed"]) <= 8 and len(m["human"]) <= 6
-    assert render.notification(r) and render.notification_markdown(r) and render.notification_html(r)
-
-
-
-    """The Teams-bot markdown digest uses blank-line paragraph breaks (survive the
-    Scout bot's newline collapse), `-` bullets, and bold — unlike the plain text."""
-    from orchestrator import render
-    from datetime import date
-    _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default",
-                      owner_email="o@x.com")
-    orch = Orchestrator(CONFIG, st)
-    orch.gate.verify(); _pass_scout_checks(orch); orch.gate.sign()
-    orch.as_of = date(2026, 7, 8)
-    orch.run_until_gate()
-    _drain_phase0_scout_only(orch)          # Scout's own steps done → digest is due
-    r = orch.status_report()
-    md = render.notification_markdown(r)
-    assert md and "\n\n" in md              # paragraph breaks
-    assert md.startswith("**Release 2026-07 — Phase 0")
-    assert "\n- " in md                     # markdown bullets
-    # silent states → empty, same rule as notification()
-    st2 = ReleaseState(release_id="x")       # unsigned
-    assert render.notification_markdown(Orchestrator(CONFIG, st2).status_report()) == ""
-
-
-
-
 def test_build_verify_steps_pass_with_healthy_mocks():
     """With injected healthy inputs, all four build_verify agent steps return done —
     and mrwp steps surface the test summary + red/yellow counts in the note."""
@@ -862,7 +746,7 @@ def test_oncall_continuation_override_requires_started_release_and_owner(tmp_pat
     rid = "2026-11"
     st = ReleaseState(release_id=rid, owner_email="owner@example.test", ccd="2026-11-04")
     _stub_build_defs("pass")
-    orch = Orchestrator(CONFIG, st, mocks={})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
@@ -982,22 +866,6 @@ def test_auth_ui_projection_aggregates(monkeypatch):
 
 
 
-def test_sim_gate_mode_on_gateless_phase_reports_problem():
-    """`at: gate` on a gateless phase fails fast instead of traversing unrelated gates."""
-    import tempfile
-    from orchestrator import sim as SIM
-    scenario = {"name": "t_nogate", "release_id": "2026-08", "ccd": "2026-08-26",
-                "as_of": "CCD+30", "data": "mock",
-                "target": {"phase": "partner", "at": "gate"}}
-    with tempfile.TemporaryDirectory() as tmp:
-        res = SIM.run_scenario(scenario, runs_root=tmp)
-    assert not res.reached
-    assert res.steps_forwarded == 0
-    assert any("no gate" in p for p in res.problems)
-
-
-
-
 def test_timed_step_gated_until_fire_time(monkeypatch):
     """CCD steps are runnable immediately at 07:00 on CCD; if a step explicitly declares
     `fire_at_local`, the engine still gates it until that wall-clock time on its anchor day."""
@@ -1010,7 +878,7 @@ def test_timed_step_gated_until_fire_time(monkeypatch):
         st = ReleaseState(
             release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
         _active_phase(st, "ccd")
-        return Orchestrator(CONFIG, st, now=now_dt, mocks={})
+        return Orchestrator(CONFIG, st, now=now_dt, step_defaults={})
 
     # By default (state-driven hybrid model), CCD steps are immediately eligible at 07:00 on CCD.
     r0 = _ccd_active(datetime(2026, 8, 26, 7, 0, tzinfo=tz)).status_report()
@@ -1049,7 +917,7 @@ def test_readiness_mock_clears_auto_gate_offline():
     st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     mocks = {f"readiness.{i}": {"outcome": "pass"} for i in
              ("build_access", "mcp_servers", "silent_perms", "adx_access", "oncall_now", "teams_notify")}
-    orch = Orchestrator(CONFIG, st, as_of=date(2026, 7, 2), mocks=mocks)
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 7, 2), step_defaults=mocks)
     orch.gate.verify()                        # no _stub_build_defs → real verifier bypassed
     items = st.readiness_items
     assert items["build_access"]["status"] == "pass"      # python-auto mocked
@@ -1111,7 +979,7 @@ def _run_remove_rc_tags_command(command_module, cli_common, args, submit):
         "build_url": "https://example.invalid/build/555",
     }
     with (
-        patch("orchestrator.mocks.load_mocks", return_value={}),
+        patch("orchestrator.environment.load_step_defaults", return_value={}),
         patch.object(P, "find_orchestrator_pending_approval",
                      return_value=(True, pending, "")),
         patch.object(P, "orchestrator_finalization_status",
@@ -1256,7 +1124,7 @@ def test_approve_orchestrator_gate_command_holds_when_submit_fails():
     assert not after.is_done("finalize", "remove_rc_tags_gate")  # gate NOT recorded
     execution = after.get_step("finalize", "remove_rc_tags_gate").execution
     assert execution and execution["approval"]["receipt"] is None
-    after_orch = Orchestrator(CONFIG, after, mocks={})
+    after_orch = Orchestrator(CONFIG, after, step_defaults={})
     report = after_orch.status_report()
     assert report["current_step"] == "remove_rc_tags_gate"
     assert any(item["execution_id"] == execution["id"] for item in report["work_dispatch"]["held_work"])
@@ -1286,7 +1154,7 @@ def test_approve_orchestrator_gate_command_rejects_wrong_gate():
             _C.save_state(st, d, "t")
             ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
                                     as_of=None, comment="")
-            with patch("orchestrator.mocks.load_mocks", return_value={}):
+            with patch("orchestrator.environment.load_step_defaults", return_value={}):
                 rc = GA.cmd_approve_orchestrator_gate(ns)
     finally:
         gw.submit_approval = o

@@ -176,7 +176,7 @@ def test_fresh_source_is_required_and_test_only_name_is_supported(suites):
     assert invoke(C.build, st).kind == "blocked"
     assert suites.posts == []
     st = state()
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     with mockctx.active({"name": "TEST ONLY Auth categories"}):
         assert invoke(C.build, st).kind == "done"
     assert suites.posts[0]["name"] == "TEST ONLY Auth categories"
@@ -200,7 +200,7 @@ def test_real_engine_preserves_named_test_input_and_recovers_without_duplicate_p
     checkpoints = []
     st._checkpoint = lambda: checkpoints.append(deepcopy(st.steps))
     name = "TEST ONLY named engine categories"
-    orch = fresh_orchestrator(str(config), st, mocks={"bug_bash.clone_plans_auth": {"name": name}})
+    orch = fresh_orchestrator(str(config), st, step_defaults={"bug_bash.clone_plans_auth": {"name": name}})
     send = suites.send
 
     def lose_readback(url, method, body, timeout):
@@ -215,7 +215,7 @@ def test_real_engine_preserves_named_test_input_and_recovers_without_duplicate_p
     assert step.status == "blocked" and len(suites.posts) == 1
     assert execution_input_is_valid(C.ID, step.execution)
     original = deepcopy(step.execution)
-    assert original["effect_input"]["__effect_mocks__"] == {"name": name}
+    assert original["effect_input"]["__effect_defaults__"] == {"name": name}
     assert step.data["suite_id"] == 800
     assert step.data["creations"]["parent"]["status"] == "created"
     suites.read_failure = None
@@ -229,7 +229,7 @@ def test_real_engine_preserves_named_test_input_and_recovers_without_duplicate_p
 
 def test_domain_input_removes_only_engine_metadata_without_mutating_frozen_operation():
     frozen = {"layout": A.LAYOUT, "unknown_domain_key": "must still be rejected",
-              "__effect_mocks__": {"name": "TEST ONLY exact"}}
+              "__effect_defaults__": {"name": "TEST ONLY exact"}}
     execution = {"effect_input": deepcopy(frozen)}
     result = C._effect_input(execution)
     assert result == {"layout": A.LAYOUT, "unknown_domain_key": "must still be rejected"}
@@ -676,7 +676,7 @@ def test_distribution_reads_manual_work_and_exact_failed_auto_points(suites, mon
 
 def test_invitation_links_parent_and_binds_children_without_publishing(suites):
     st, data = created(suites)
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     with mockctx.active({"now": "2026-08-14T10:00:00-07:00", "flags": "{}"}):
         invitation = invoke(I.build, st)
     assert getattr(invitation, "outbound", False), invitation

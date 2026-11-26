@@ -5,26 +5,23 @@ import json
 
 from orchestrator import cli_common as C, write_review as W
 from orchestrator.git_write_plans import integration_plan, execute_integration, integration_progress
-from steps.lib import mockctx
 from steps.finalize import integ_prs as S
 
 
 def cmd_create_integration_prs(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     progress = None
-    mocks = W.step_mocks(orch, "finalize", S.ID)
+    step_inputs = W.step_defaults(orch, "finalize", S.ID)
 
     def planner():
-        with mockctx.active(mocks):
-            return integration_plan(orch.context("finalize", S.ID), args, progress=progress)
+        return integration_plan(orch.context("finalize", S.ID, inputs=step_inputs), args, progress=progress)
 
     authorization = None
     try:
-        with mockctx.active(mocks):
-            progress = (W.VerifiedProgress(orch, "finalize", S.ID, None, None)
-                        if getattr(args, "manual_completion", None) is not None else
-                        integration_progress(orch, orch.context("finalize", S.ID), args))
-            recovered = W.record_recovery(args, progress)
+        progress = (W.VerifiedProgress(orch, "finalize", S.ID, None, None)
+                    if getattr(args, "manual_completion", None) is not None else
+                    integration_progress(orch, orch.context("finalize", S.ID, inputs=step_inputs), args))
+        recovered = W.record_recovery(args, progress)
         if recovered is not None:
             print(json.dumps(recovered, indent=2))
             return 0

@@ -46,18 +46,7 @@ The **release label** always matches the **calendar month of the elected release
 Phases are anchored to the CCD (`CCD-7`, `CCD`, `CCD+1`). By default, CCD is the **2nd Wednesday** of `<release_id>`.
 `init` and `check-ccd` read ADO pipeline `3155` (`overrideCodeCompleteDate`) without silently adopting a differing date:
 - If pipeline `3155` has a different in-month date (`status: "conflict"`), present an `m_ask_user` card with **`Use pipeline date <override>`**, **`Keep release default <ccd>`**, and **`Use a different date`**.
-- Changing the pipeline CCD is a checked external write: run `set-ccd --release <id> [--date <YYYY-MM-DD> | --default] --reason "<why>"` (preview), then with `--confirm`. Re-run `check-ccd` and record `ccd_confirmed`.
-
-## Guided onboarding on request (`/release-agent check setup`)
-
-`onboarding --json` diagnoses the selected installation and its supported integrations without initializing a release, signing readiness, sending messages, uploading files, or creating workers. Use `--help` for `--scout-root`, `--agency-path`, and `--workiq-path` flags.
-
-1. Run `onboarding --json` from `<AGENT_ROOT>`. Preserve existing connections, authentication, and permissions; obtain required host/user consent before installation or configuration changes. Do not assume source edits synchronized an already-installed skill (`setup/bootstrap.ps1 -SkillOnly` refreshes the installed skill).
-2. A `register_mcp` action runs `infra --json` to register declared missing command-based MCP servers automatically (backed-up create-if-absent); never restore the removed custom remote Hosted WorkIQ registration.
-3. Discover actual loaded tools; missing MCP fetch does not prove native CLI fetch is absent. Keep verified `structured_fetch` routes (`workiq-read`) separate from `available_tools`. Execute exact owner-bound read requests (`workiq_get_my_profile`, calendar, configured `androididentity@microsoft.com` roster + all pages, Teams chat/members, SharePoint site/library, ICM, Kusto `print 1`) and pass `--observation-file <temp.json>`.
-4. After one real reconnect/reload and one retry, an unchanged failure stops with the returned `support` handoff (no retry loop or alternate account). On `complete`, save the compact recipe via `onboarding --observation-file <temp.json> --scout-root <profile> --record-routing --json` and state that no release was started.
-
-No blanket write authority comes from successful setup. Each owning write step still checks its target, required review, access, host consent, and receipt.
+- Changing the pipeline CCD is a checked external write: run `set-ccd --release <id> [--date <YYYY-MM-DD> | --default] --reason "<why>"` (preview), then with `--confirm` (use `--help` for flags). Re-run `check-ccd` and record `ccd_confirmed`. No blanket write authority comes from startup or readiness: each owning write step checks its target, required review, access, host consent, and receipt.
 
 ## Unified Release Drainer (`release-drainer`)
 
@@ -82,7 +71,7 @@ For `release-drainer`:
 3. Run `automation reconcile-create --release <id> --slug <slug> --ensure --claim --executor <session> --spec-file <spec.json> --observed-file <obs.json> --json` (adding `--on-demand <slug>` for on-demand pollers).
 4. Call `m_create_automation` **only** when `permission_to_create:true` (passing the exact returned `spec`), then immediately acknowledge with `automation create-result`. Unknown or uncertain outcomes retain their owning attempt and never authorize duplicate creation.
 
-Cleanup at phase/release close uses `automation cleanup` → `claim-delete` → `m_delete_automation` (only with `permission_to_delete:true`) → `delete-result`. Generated workers prefix release CLI calls with global `--scheduled`, drain non-approval steps + `tick --deliver`, park cleanly at human gates, and run `automation cleanup` in a `finally` block.
+Cleanup at phase/release close uses `automation cleanup` → `claim-delete` → `m_delete_automation` (only with `permission_to_delete:true`) → `delete-result`. Generated workers prefix release CLI calls with global `--scheduled`, run `drain --deliver`, park cleanly at human gates, and run `automation cleanup` in a `finally` block.
 
 ## No-progress boundary
 

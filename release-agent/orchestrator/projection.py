@@ -41,7 +41,7 @@ class StepReadiness:
     time_ready: bool
     reserved: bool
     recovery: bool
-    mocked: bool
+    overridden: bool
     available_at: Optional[str] = None
     unavailable_reason: Optional[str] = None
 
@@ -112,9 +112,8 @@ class StateProjection:
         now_local: datetime,
         readiness_signed: bool = True,
         readiness_blocked: bool = False,
-        is_mocked: Optional[Callable[[StepDefinition], bool]] = None,
+        is_overridden: Optional[Callable[[StepDefinition], bool]] = None,
         fire_at: Optional[Callable[[StepDefinition], Optional[str]]] = None,
-        revision_problem: Optional[str] = None,
     ):
         self.state = state
         self.workflow = workflow
@@ -122,10 +121,8 @@ class StateProjection:
         self.now_local = now_local
         self.readiness_signed = readiness_signed
         self.readiness_blocked = readiness_blocked
-        self.is_mocked = is_mocked or (lambda _step: False)
+        self.is_overridden = is_overridden or (lambda _step: False)
         self.fire_at = fire_at or (lambda _step: None)
-        self.revision_problem = revision_problem or (
-            "Workflow revision is unbound" if state.workflow_revision is None else "")
 
     def phase_included(self, phase: PhaseDefinition) -> bool:
         return not phase.conditional or phase.id in self.activated_conditionals()
@@ -144,8 +141,6 @@ class StateProjection:
         return bool(decision and decision.get("decision") == "approved")
 
     def step_complete(self, step: StepDefinition) -> bool:
-        if self.revision_problem and self.state.workflow_revision is None:
-            return False
         record = self.state.get_step(step.phase_id, step.id)
         if step.is_gate:
             return record.status == "done" and self.gate_approved(step)
@@ -273,12 +268,11 @@ class StateProjection:
                 readiness.append(StepReadiness(
                     step, self.step_complete(step), record.status,
                     self.prerequisites_met(phase, step), s_avail.available,
-                    bool(execution), recovery, self.is_mocked(step),
+                    bool(execution), recovery, self.is_overridden(step),
                     s_avail.available_at, s_avail.reason,
                 ))
         steps = tuple(readiness)
         suspension = (
-            "workflow_revision" if self.revision_problem else
             "cancelled" if self.state.cancellation else
             "halted" if self.state.halt else
             "blocked" if self.readiness_blocked else
@@ -312,7 +306,7 @@ class StateProjection:
                     RunnableCandidate(item.definition)
                     for item in ready
                     if item.definition.key not in attempted
-                    and (item.definition.kind == StepKind.AUTO or item.mocked)
+                    and (item.definition.kind == StepKind.AUTO or item.overridden)
                 )
                 actions = [
                     hold for item in ready
@@ -367,8 +361,6 @@ class StateProjection:
         if suspension:
             runnable = []
             actions = []
-            if suspension == "workflow_revision":
-                focus = None
         status = lifecycle_status(
             suspension=suspension,
             frontier_exists=frontier is not None,
@@ -410,7 +402,7 @@ class StateProjection:
             return HoldProjection(HoldKind.GATE.value, step.phase_id, step.id, "human")
         if record.status == "blocked":
             return HoldProjection(HoldKind.ACTION.value, step.phase_id, step.id, "human", "blocked")
-        if self.is_mocked(step):
+        if self.is_overridden(step):
             return None
         if step.kind in (StepKind.HUMAN_ACTION, StepKind.ATTESTATION):
             return HoldProjection(HoldKind.ACTION.value, step.phase_id, step.id, "human")

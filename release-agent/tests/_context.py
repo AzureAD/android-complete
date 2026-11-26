@@ -15,52 +15,33 @@ from orchestrator.handler_contracts import HookRole
 from orchestrator.parameters import NoParameters, ParameterSchema
 from orchestrator.transitions import OutcomePermit, TransitionIntent
 from orchestrator.state import ReleaseState
-from steps.lib import mockctx
+from tests import _fixtures as mockctx
 
 
 def fresh_orchestrator(*args, **kwargs):
-    """Construct an explicitly bound test workflow; never repair loaded unbound state."""
+    """Construct an isolated test orchestrator with in-memory checkpoints."""
     from orchestrator.engine import Orchestrator
-    from orchestrator.revision import bind_initial
 
     orch = Orchestrator(*args, **kwargs)
-    if orch.state.workflow_revision is None:
-        bind_initial(orch)
     if orch.state._checkpoint is None:
         orch.state._checkpoint = lambda: None
     return orch
 
 
 def adopt_test_revision(orch):
-    """Explicitly adopt a test's edited executable definition before reseeding work."""
-    from orchestrator import revision
-
-    plan = revision.adoption_preview(orch)
-    return revision.adopt(orch, plan["hash"], by="test-reviewer",
-                          reason="Adopt the test workflow configuration")
+    """No-op shim for isolated test setups now that source-hash locking is removed."""
+    return {"adopted": True}
 
 
 def bind_model_state(state, workflow):
-    """Bind standalone kernel/projection fixtures with explicit empty handler capabilities."""
-    from types import SimpleNamespace
-    from orchestrator.revision import bind_initial
-
-    descriptor = SimpleNamespace(
-        parameters={}, evidence=EvidenceAuthority(), writes=WriteCapabilities(),
-        notification=False, status_email=False, fire_at_local=None)
-    model = SimpleNamespace(
-        state=state, config_path=None, readiness_path=None,
-        _workflow_definition=lambda: workflow,
-        handlers=SimpleNamespace(get=lambda _phase, _step: descriptor))
-    if state.workflow_revision is None:
-        bind_initial(model)
+    """Return standalone kernel/projection test state."""
     return state
 
 
 @contextmanager
 def command_inputs(key, values):
     """Inject a command's engine inputs and the corresponding isolated unit context."""
-    with patch("orchestrator.mocks.load_mocks", return_value={key: values}), mockctx.active(values):
+    with patch("orchestrator.environment.load_step_defaults", return_value={key: values}), mockctx.active(values):
         yield
 
 

@@ -105,7 +105,7 @@ def test_orchestrator_invalid_evidence_cannot_reuse_old_versions_or_claim_park(p
 @pytest.mark.parametrize("result", ["succeeded", "succeededWithIssues"])
 def test_orchestrator_successfully_advanced_gate_is_not_claimed_still_parked(result):
     from steps.build_verify import orchestrator_health as OH
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
 
     run, stages = _healthy_orchestrator()
     stages[-1].update(state="completed", result=result)
@@ -156,13 +156,13 @@ def test_release_chain_discovery_keeps_month_filtering_and_newest_selection(monk
 def test_phase2_audited_chain_persists_exact_source_outputs_without_framework(
         tmp_path, monkeypatch, capsys, missing_park):
     from copy import deepcopy
-    from orchestrator import cli, mocks
+    from orchestrator import cli, environment as mocks
     from tools import pipelines as P
 
     run, stages = _healthy_orchestrator()
     if missing_park:
         stages.pop()
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     monkeypatch.setattr(P, "find_checker_runs", lambda *args: (
         True, [{"id": 101, "queueTime": "2026-10-16T08:00:00Z"}], ""))
     monkeypatch.setattr(P, "get_timeline", lambda *args: (
@@ -212,7 +212,7 @@ def test_rc_retriggered_reopens_phase2_rc_steps():
     from orchestrator.state import StepState
     from orchestrator import cli_common as _C
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
-    Orchestrator(CONFIG, st, mocks={})
+    Orchestrator(CONFIG, st, step_defaults={})
     for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
         st.set_step("build_verify", sid, StepState(status="done"))
     st.set_step("build_verify", "rc_report_gate", StepState(status="blocked", note="UI 88%"))
@@ -534,7 +534,7 @@ def test_rc_report_notifies_then_holds_for_human_gate(tmp_path):
         "--status", "pass", "--detail", "Sent RC summary",
     ]) == 0
     st = C.load_state(str(tmp_path), st.release_id)
-    orch = Orchestrator(CONFIG, st, mocks={})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     report = orch.status_report()
 
     assert report["current_phase"] == "build_verify"
@@ -854,69 +854,6 @@ def test_stash_mrwp_falls_back_to_local_counter_without_rc():
 
 
 
-def test_poll_rc_waits_then_nudges_once_at_6h():
-    """The RC poller returns `waiting` while the run is in-flight, sends ONE courtesy
-    nudge to the owner once it has been in-flight >= 6h, and does not repeat the nudge."""
-    import tempfile
-    from orchestrator.state import StepState
-    with tempfile.TemporaryDirectory() as d:
-        rid = "2026-08"
-        _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed",
-                          owner_email="dev@microsoft.com", owner_name="Dev")
-        _active_phase(st, "build_verify")
-        for sid in ("checker_fired", "orchestrator_health"):
-            st.set_step("build_verify", sid, StepState(status="done"))
-        st.set_step("build_verify", "mrwp_ecs",
-                    StepState(status="in_flight", note="RC running",
-                              data={"in_flight_since": "2026-08-28T00:00:00+00:00",
-                                    "poll_in_min": 30}))
-        C.save_state(st, d, rid)
-        # +2h → still waiting
-        dec = _run_poll_rc(d, rid, "2026-08-28T02:00:00+00:00")
-        assert dec["decision"] == "waiting" and dec["step"] == "mrwp_ecs"
-        assert abs(dec["elapsed_hours"] - 2.0) < 0.01 and dec["poll_in_min"] == 30
-        # +7h → nudge (once), addressed to the owner
-        dec = _run_poll_rc(d, rid, "2026-08-28T07:00:00+00:00")
-        assert dec["decision"] == "nudge"
-        assert dec["nudge"]["email"]["to"] == ["dev@microsoft.com"]
-        assert "polling" in dec["nudge"]["teams"]["text"]
-        _ack_notifications(d, rid, "2026-09-11T12:00:00Z", dec["notifications"])
-        # Per-channel acknowledgements → waiting again without a preview-time stamp.
-        dec = _run_poll_rc(d, rid, "2026-08-28T09:00:00+00:00")
-        assert dec["decision"] == "waiting"
-
-
-
-
-def test_poll_rc_resolved_blocked_idle():
-    """Once no verify step is in-flight, the poller reports the terminal verdict:
-    resolved (rc_report done) / blocked (rc_report blocked) / idle (nothing running)."""
-    import tempfile
-    from orchestrator.state import StepState
-    with tempfile.TemporaryDirectory() as d:
-        rid = "2026-08"
-        _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed")
-        Orchestrator(CONFIG, st, mocks={})
-        C.save_state(st, d, rid)
-        assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "idle"
-
-        st.set_step("build_verify", "rc_report_gate", StepState(status="done", note="UI CLEAN"))
-        st.gate_decisions.append(_gate_decision("build_verify.rc_report_gate"))
-        _ready_for_rc_report(st)
-        st.set_step("build_verify", "rc_report_notify", StepState(status="done"))
-        C.save_state(st, d, rid)
-        assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "resolved"
-
-        st.set_step("build_verify", "rc_report_gate", StepState(status="blocked", note="UI 80%"))
-        C.save_state(st, d, rid)
-        r = _run_poll_rc(d, rid, "2026-08-28T09:00:00+00:00")
-        assert r["decision"] == "blocked" and r["note"] == "UI 80%"
-
-
-
-
 def test_release_drainer_is_single_canonical_automation():
     """`config/automations.yaml` defines only the unified `release-drainer` (`07:00-19:00/2h`);
     phase steps run directly through the state machine without per-phase pollers."""
@@ -962,7 +899,7 @@ def test_stash_mrwp_appends_new_rc_on_id_change():
 
 def test_ui_test_status_blocks_without_rc_runs():
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = _uts_state(plan_id="900")     # plan present, but no pipeline_runs
     with mockctx.active({}):
@@ -972,71 +909,10 @@ def test_ui_test_status_blocks_without_rc_runs():
 
 
 
-def test_digest_shows_rc_line_when_build_verify_active():
-    """When a phase that opts in (show_pipeline_runs) is active and run ids are on state,
-    the daily digest carries a one-line RC summary; phases that don't opt in omit it."""
-    from orchestrator import render
-    r = {"release_id": "2026-08", "readiness_signed": True,
-         "active_phase": {"id": "build_verify", "name": "Build & RC", "num": 2,
-                          "show_pipeline_runs": True,
-                          "due": True, "started": True, "done": 2, "total": 5,
-                          "outstanding": [], "completed": ["checker_fired", "orchestrator_health"]},
-         "pipeline_runs": {
-             "checker": {"run_id": "1678599"},
-             "orchestrator": {"run_id": "1678611", "versions": {"Broker": "1.0.0"}},
-             "rcs": [{"rc": 1, "ecs": {"run_id": "900001"}, "local": {"run_id": "900002"}}]}}
-    text = render.notification(r)
-    md = render.notification_markdown(r)
-    assert "RC pipelines:" in text and "orchestrator 1678611" in text
-    assert "MRWP ECS 900001 / Local 900002" in md
-    # a phase that doesn't opt in omits the RC line
-    r2 = dict(r, active_phase=dict(r["active_phase"], id="prep", name="Prep",
-                                   show_pipeline_runs=False))
-    assert "RC pipelines:" not in render.notification(r2)
-
-
-
-
-def test_sim_fast_forwards_to_rc_gate_offline():
-    """The at_rc_gate scenario (fine input mocks, no az) fast-forwards Phases 0-1, runs the
-    build_verify steps for real on injected inputs, stashes the pipeline ids, publishes/emails
-    the report through mocks, and lands at the human RC decision gate — all offline."""
-    import tempfile
-    from orchestrator import sim as SIM
-    with tempfile.TemporaryDirectory() as tmp:
-        scenario = SIM.load_scenario("at_rc_gate")
-        auth = scenario.setdefault("mocks", {}).setdefault("build_verify.auth_ecs", {})
-        auth["capture"] = _auth_capture(auth.get("suites", _auth_suites(100)),
-                                      apk=auth.get("auth_build", {}).get("build_id", 900010),
-                                      build=auth.get("test_build", 900011))
-        auth["suites"] = auth["capture"]["suites"]
-        res = SIM.run_scenario(scenario, runs_root=tmp)
-    assert res.reached and res.stop_kind == "done"
-    st = res.state
-    # earlier phases complete
-    assert all(st.is_done("preflight", s) for s in
-               ("notice", "vitals", "cron"))
-    assert all(st.is_done("ccd", s) for s in ("final_reminder", "localization"))
-    # the verification + report steps ran (real build() on mocks) and the human gate remains.
-    for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-              "auth_ecs", "telemetry_verify", "rc_report_notify"):
-        assert st.is_done("build_verify", s), s
-    from tests._context import fresh_orchestrator as _O
-    assert _O(CONFIG, st).current_phase_id() == "bug_bash"
-    assert st.is_done("build_verify", "rc_report_gate")
-    # pipeline runs were stashed by the steps during the sim (nested RC schema)
-    assert st.pipeline_runs["orchestrator"]["run_id"] == "1678611"
-    assert st.pipeline_runs["rcs"][-1]["ecs"]["run_id"] == "1678863"
-    assert _O(CONFIG, st, mocks={}).gate.signed
-    assert _O(CONFIG, st, mocks={"readiness.m365_access": {"outcome": "pass"}}).gate.signed
-
-
-
-
 def test_orchestrator_health_populates_state_versions():
     """Phase 2 orchestrator_health fills state.versions from the run tags — common/msal/broker
     from Next*Version and authenticator as the release branch from AuthenticatorBranch."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.build_verify import orchestrator_health as OH
     st = ReleaseState(release_id="2026-08")
     run = {"id": 777, "tags": ["AuthenticatorBranch=release-2026-08-22",
@@ -1058,7 +934,7 @@ def test_orchestrator_health_populates_state_versions():
 def test_telemetry_verify_composes_kusto_needsskill():
     """build() resolves the bug-bash version and returns a NeedsSkill(kusto_query) with the
     checklist query + the record-telemetry follow-up."""
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from steps.build_verify import telemetry_verify as TV
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"version": "6.2608.5658"}):

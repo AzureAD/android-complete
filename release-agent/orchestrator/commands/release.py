@@ -93,9 +93,7 @@ def cmd_init(args):
     # Release label directly matches the calendar month of the elected release date (no +1 offset).
     st.target_month = schedule.default_target_month(args.release, st.ccd)
     from orchestrator.engine import Orchestrator
-    from orchestrator.revision import bind_initial
-    orch = Orchestrator(args.config, st, mocks={})
-    bind_initial(orch)
+    orch = Orchestrator(args.config, st, step_defaults={})
     st.save(sp)
     C.bind_automation_registry(orch, args.runs_root)
 
@@ -620,21 +618,18 @@ def register(sub):
 
 
 def cmd_inspect_state(args):
-    from orchestrator.revision import CURRENT_EXECUTION_CONTRACT
     from orchestrator.state import SCHEMA_VERSION
 
     with open(C.state_path(args.runs_root, args.release), encoding="utf-8-sig") as stream:
         data = _json.load(stream)
     if not isinstance(data, dict):
         raise ValueError("Release state must be a JSON object")
-    binding = data.get("workflow_revision")
-    contract = binding.get("execution_contract") if isinstance(binding, dict) else None
-    supported = data.get("schema_version") == SCHEMA_VERSION and contract == CURRENT_EXECUTION_CONTRACT
+    supported = data.get("schema_version") == SCHEMA_VERSION
     print(_json.dumps({
         "status": "done" if supported else "needs_input",
         "release_id": data.get("release_id"), "schema_version": data.get("schema_version"),
-        "execution_contract": contract, "supported": supported,
-        "required_schema": SCHEMA_VERSION, "required_execution_contract": CURRENT_EXECUTION_CONTRACT,
+        "supported": supported,
+        "required_schema": SCHEMA_VERSION,
         "step_count": len(data["steps"]) if isinstance(data.get("steps"), dict) else None,
         "permission_to_execute": False, "permission_to_send": False,
         "summary": ("Metadata inspected; no state or provider changes."

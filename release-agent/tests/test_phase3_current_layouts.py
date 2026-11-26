@@ -10,7 +10,6 @@ import yaml
 
 from orchestrator import cli_common as C
 from orchestrator.engine import Orchestrator
-from orchestrator.revision import bind_initial
 from orchestrator.state import ReleaseState
 from steps.bug_bash import ui_results, ui_test_status as U
 from tests._auth_evidence import auth_snapshot
@@ -168,11 +167,11 @@ def current_layouts(monkeypatch, tmp_path, request):
     runs = str(tmp_path / "runs")
     state = ReleaseState(release_id="2000-01", ccd="2000-01-01", owner_email=OWNER,
                          pipeline_runs={"rcs": [rc]})
-    bind_initial(Orchestrator(str(config), state, mocks=mocks))
+    Orchestrator(str(config), state, step_defaults=mocks)
     state.save(C.state_path(runs, state.release_id))
     with C.state_lock(runs, state.release_id):
         state = C.load_state(runs, state.release_id)
-        orch = Orchestrator(str(config), state, mocks=mocks)
+        orch = Orchestrator(str(config), state, step_defaults=mocks)
         orch.run_until_gate(max_steps=2)
         C.save_state(state, runs, state.release_id)
     assert state.get_step("bug_bash", "clone_plans_broker").status == "done"
@@ -183,7 +182,7 @@ def current_layouts(monkeypatch, tmp_path, request):
     def fill():
         with C.state_lock(runs, state.release_id):
             loaded = C.load_state(runs, state.release_id)
-            engine = Orchestrator(str(config), loaded, mocks=mocks)
+            engine = Orchestrator(str(config), loaded, step_defaults=mocks)
             engine.run_until_gate()
             C.save_state(loaded, runs, loaded.release_id)
         return loaded

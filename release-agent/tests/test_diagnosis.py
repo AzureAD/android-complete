@@ -31,8 +31,8 @@ def _mark_prior_phases_done(st: ReleaseState) -> None:
 def test_pipeline_block_pauses_cta_for_ai_diagnosis_then_delivers_enriched_cta_and_caches(
     tmp_path, monkeypatch, capsys
 ):
-    from orchestrator import mocks as _mocks_mod
-    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+    from orchestrator import environment as _mocks_mod
+    monkeypatch.setattr(_mocks_mod, "load_step_defaults", lambda *a, **k: {
         "build_verify.orchestrator_health": {
             "run": {
                 "id": 9002,
@@ -176,8 +176,9 @@ def test_pipeline_block_pauses_cta_for_ai_diagnosis_then_delivers_enriched_cta_a
         str(tmp_path), rid, CONFIG, finalize_run=first["run_id"], deliver=True, now=t1
     )
     assert finalized["finalized"] is True
-    assert len(sent_emails) == 1
-    email_html = sent_emails[0]["payload"]["body"]
+    cta_emails = [e for e in sent_emails if e["id"].startswith("drain-cta:")]
+    assert len(cta_emails) == 1
+    email_html = cta_emails[0]["payload"]["body"]
     assert "AI Root-Cause Triage" in email_html
     assert "Tag collision (`msal-8.5.0`)" in email_html
     assert "get_next_version.py" in email_html
@@ -202,12 +203,12 @@ def test_pipeline_block_pauses_cta_for_ai_diagnosis_then_delivers_enriched_cta_a
 
 @pytest.mark.real_revision
 def test_rc_test_failures_cluster_overlap_and_embed_into_rc_report_before_send(tmp_path, monkeypatch, capsys):
-    from orchestrator import mocks as _mocks_mod
+    from orchestrator import environment as _mocks_mod
     from steps.build_verify import _common as K
     from tests._harness import _pipeline, _ready_for_rc_report, _seed_auth
     from tests._mrwp_evidence import PROD, snapshot
 
-    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {})
+    monkeypatch.setattr(_mocks_mod, "load_step_defaults", lambda *a, **k: {})
     rid = "2026-09"
     st = ReleaseState(
         release_id=rid,
@@ -504,7 +505,7 @@ def test_blocked_mrwp_auto_rechecks_through_inflight_to_done_when_retried_in_ado
        both from `blocked -> in_flight` (quieting blocked CTAs while ADO runs).
     3. ADO runs finish -> next `run_drain` transitions both `in_flight -> done` automatically!
     """
-    from orchestrator import mocks as _mocks_mod
+    from orchestrator import environment as _mocks_mod
     from tests._mrwp_evidence import PROD, snapshot
 
     rid = "2026-11"
@@ -523,7 +524,7 @@ def test_blocked_mrwp_auto_rechecks_through_inflight_to_done_when_retried_in_ado
     C.save_state(st, str(tmp_path), rid)
 
     # Tick 1: ADO builds are now `inProgress` after owner clicked 'Retry stage' in ADO!
-    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+    monkeypatch.setattr(_mocks_mod, "load_step_defaults", lambda *a, **k: {
         "build_verify.mrwp_ecs": {"mrwp_id": "1725622", "build_status": "inProgress"},
         "build_verify.mrwp_local": {"mrwp_id": "1725623", "build_status": "inProgress"},
     })
@@ -538,7 +539,7 @@ def test_blocked_mrwp_auto_rechecks_through_inflight_to_done_when_retried_in_ado
     # Tick 2: Retried ADO builds complete -> both auto-transition `in_flight -> done`!
     ecs_done = snapshot("1725622", {PROD: [("test_1_Pass", "Passed")]})
     local_done = snapshot("1725623", {PROD: [("test_1_Pass", "Passed")]})
-    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+    monkeypatch.setattr(_mocks_mod, "load_step_defaults", lambda *a, **k: {
         "build_verify.mrwp_ecs": {
             "mrwp_id": "1725622",
             "rc": 1,

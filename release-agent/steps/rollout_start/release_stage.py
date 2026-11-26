@@ -5,14 +5,12 @@ import re
 
 from orchestrator.outcomes import Blocked, Done, NeedsSkill
 from orchestrator.step_context import StepContext
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import pipelines as P
-
 
 def final_auth_build_id(context: StepContext):
     final = (context.evidence.pipeline_runs or {}).get("final_auth") or {}
     return final.get("authenticator_build_id")
-
 
 def resolve_target(context: StepContext, *, stage_name: str, stage_id: str | None = None, pinned_build_id=None):
     injected = context.input("run", MISSING)
@@ -28,14 +26,12 @@ def resolve_target(context: StepContext, *, stage_name: str, stage_id: str | Non
         stage_name=stage_id or stage_name,
     )
 
-
 _PRIOR_STAGE_FALLBACKS = {
     "upload_alpha": ("signoff_start",),
     "verify_alpha_uploaded": ("upload_alpha", "signoff_start"),
     "upload_whats_new": ("verify_alpha_uploaded", "upload_alpha", "signoff_start"),
     "beta_play_store": ("upload_whats_new", "verify_alpha_uploaded", "upload_alpha", "signoff_start"),
 }
-
 
 def completed_stage_build_id(context: StepContext, step_id: str, *, fallback_step_ids: tuple[str, ...] = ()):
     """Read the already-durable pipeline-397224 build identity from a prerequisite's link."""
@@ -55,14 +51,11 @@ def completed_stage_build_id(context: StepContext, step_id: str, *, fallback_ste
                 return match.group(1)
     return None
 
-
 def stage_started(info: dict) -> bool:
     return P.signoff_stage_started(info)
 
-
 def stage_failed(info: dict) -> bool:
     return P.signoff_stage_failed(info)
-
 
 def resolve_pinned_target(
     context: StepContext,
@@ -82,7 +75,6 @@ def resolve_pinned_target(
     if require_pin_in_resolve and pinned is None and context.input("run", MISSING) is MISSING:
         return False, None, f"completed {previous_label} evidence has no pipeline-397224 build identity"
     return resolve_target(context, stage_name=stage_name, stage_id=stage_id, pinned_build_id=pinned)
-
 
 def build_pinned_stage_action(
     context: StepContext,
@@ -119,7 +111,6 @@ def build_pinned_stage_action(
         pinned_build_id=pinned,
     )
 
-
 def make_chained_stage_step(
     *,
     step_id: str,
@@ -153,7 +144,6 @@ def make_chained_stage_step(
         )
 
     return _resolve, _build
-
 
 def build_stage_action(
     context: StepContext,
@@ -230,10 +220,3 @@ def build_stage_action(
         note=summary,
         outbound=True,
     )
-
-
-MOCKABLE = {
-    "run": {"kind": "input",
-            "desc": "Inject release-pipeline stage evidence (skip the pipeline-397224 lookup)."},
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
-}

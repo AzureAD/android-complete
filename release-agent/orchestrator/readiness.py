@@ -166,9 +166,8 @@ class ReadinessGate:
         _validate_readiness_config(config)
         self.config = config
         self.state = state
-        # Local test mocks (set by the engine). `readiness.<item>` entries force an
-        # AUTO item pass/fail without the real ADO/config check.
-        self.mocks = {}
+        # Per-item defaults from config/environment.yaml (`readiness.<item>`).
+        self.step_defaults = {}
 
     def _window(self, it: dict):
         """Compute a CCD-relative window {start,end} for an item that declares
@@ -289,7 +288,7 @@ class ReadinessGate:
         Items with source: scout are skipped here — the skill runs those via its
         MCP tools and records the result with record_check()."""
         from phases.readiness_verifiers import get_verifier
-        from . import mocks as mocks_mod
+        from . import environment as env_mod
         if not self.config:
             return self.checklist()
         items = self.config.get("items", [])
@@ -303,11 +302,10 @@ class ReadinessGate:
                     (self.state.readiness_items.get(it["id"]) or {}).get("status", "pending")
                     not in ("pending", "pass", "degraded") or self._item_satisfied(it)):
                 continue
-            # Local test mock: force ANY auto item (python OR scout-assisted) pass/fail,
-            # skipping the real ADO/config/MCP check — lets a test clear the gate offline.
-            mock = mocks_mod.readiness_result(self.mocks, it["id"])
-            if mock is not None:
-                status, message = mock
+            # Configured override for auto items (`step_defaults`).
+            override = env_mod.readiness_override(self.step_defaults, it["id"])
+            if override is not None:
+                status, message = override
                 rec = {"status": status, "message": message, "at": _now()}
                 if it["id"] == "m365_access" and status == "pass":
                     from .m365_capabilities import binding
@@ -493,9 +491,9 @@ class ReadinessGate:
             return True
         if item["id"] == "m365_access":
             from .m365_capabilities import binding
-            from . import mocks as mocks_mod
-            mocked = mocks_mod.readiness_result(self.mocks, item["id"])
-            if mocked is None and record.get("capability_binding") != binding(self.state):
+            from . import environment as env_mod
+            overridden = env_mod.readiness_override(self.step_defaults, item["id"])
+            if overridden is None and record.get("capability_binding") != binding(self.state):
                 return False
         if item["id"] == "oncall_now" and status == "fail":
             override = record.get("override")

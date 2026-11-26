@@ -19,7 +19,7 @@ link, derives the PR list, and renders the markdown — then returns a NeedsSkil
 PREVIEWS the composed page before the `create-payload-wiki` command does the create-or-update
 write (`--dry-run` / `--execute`).
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   version   : inject the Authenticator version + build link (skip the ADO build lookup).
   prs       : inject the merged-PR list [{id,title}] (skip the live PR derivation).
   page_name : write to this exact page name instead of '<Month> <Year> Release' (a REAL page).
@@ -30,7 +30,7 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools.coordinates import coords
 
 ID = "wiki_payload"
@@ -53,45 +53,32 @@ CONFIG = {
 # Pure localization auto-checkins — noise the real payload pages curate out of the PR list.
 _NOISE_PREFIXES = ("LEGO: check in to working",)
 
-MOCKABLE = {
-    "version": {"kind": "input",
-                "desc": "Inject {version, build_number, build_url} (skip the ADO build lookup)."},
-    "prs": {"kind": "input",
-            "desc": "Inject the merged-PR list [{id,title}] (skip the live PR derivation)."},
-    "page_name": {"kind": "input",
-                  "desc": "Write to this exact page name instead of '<Month> <Year> Release'."},
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
-}
-
-
 def _month_year(context) -> str:
     from orchestrator import schedule
     return schedule.target_month_label(context.release) or str(context.release.release_id)
 
-
 def page_name(context) -> str:
-    """Payload page name: '<Ship Month> <Year> Release' (the release's display month, e.g.
-    'September 2026 Release')."""
+    """Payload page name: '<Ship Month> <Year> Release' (prefixed by `artifacts.wiki_page_prefix`
+    from `config/environment.yaml` in test profile)."""
     ov = context.input("page_name", MISSING)
     if ov is not MISSING and ov:
         return str(ov)
-    from orchestrator import schedule
+    from orchestrator import environment as env, schedule
+    prefix = env.artifact_prefix("wiki_page_prefix")
     label = schedule.target_month_label(context.release)
-    return f"{label} Release" if label else f"{context.release.release_id} Release"
-
+    base = f"{label} Release" if label else f"{context.release.release_id} Release"
+    return f"{prefix}{base}"
 
 def page_path(context) -> str:
     return f"{CONFIG['parent_path'].rstrip('/')}/{page_name(context)}"
-
 
 def wiki_url(path: str) -> str:
     from urllib.parse import quote
     return (f"{CONFIG['org'].rstrip('/')}/{CONFIG['project']}/_wiki/wikis/"
             f"{CONFIG['wiki']}?pagePath={quote(path or '')}")
 
-
 def _auth_build(context):
-    """(version, build_number, build_url, detail) — from a `version` mock, else the
+    """(version, build_number, build_url, detail) — from a `version` input override, else the
     captured final Authenticator build. version is None on failure."""
     ov = context.input("version", MISSING)
     if ov is not MISSING and ov:
@@ -135,9 +122,8 @@ def _auth_build(context):
         )
     return (info.get("version"), info.get("build_number"), auth_build_url(info.get("build_id")), "")
 
-
 def _prs(context):
-    """(prs, detail) — merged-PR list [{id,title}], noise-filtered. From a `prs` mock, else live."""
+    """(prs, detail) — merged-PR list [{id,title}], noise-filtered. From `prs` input, else live."""
     ov = context.input("prs", MISSING)
     if ov is not MISSING and ov is not None:
         rows = list(ov)
@@ -151,7 +137,6 @@ def _prs(context):
     clean = [p for p in rows
              if not any(str(p.get("title", "")).startswith(pfx) for pfx in _NOISE_PREFIXES)]
     return (clean, "")
-
 
 def _render(context, version, build_number, build_url, prs) -> str:
     run_link = ""
@@ -180,7 +165,6 @@ def _render(context, version, build_number, build_url, prs) -> str:
         f"_Feature owners: list the flags rolling out this release and their default states._\n"
     )
 
-
 def compose_payload(context):
     """Resolve everything and render the payload markdown. Returns (ok, plan, detail) where
     plan = {content, page_name, page_path, url, version, build_url, pr_count}. Read-only."""
@@ -195,7 +179,6 @@ def compose_payload(context):
     return (True, {"content": content, "page_name": page_name(context), "page_path": path,
                    "url": wiki_url(path), "version": version, "build_url": build_url,
                    "pr_count": len(prs)}, "")
-
 
 def build(context: StepContext):
     fail = context.input("fail", MISSING)
@@ -257,7 +240,7 @@ KNOWLEDGE = {'summary': 'Create/update the monthly release payload wiki page (pr
         '--release <id> --execute --auto-approve --executor payload-wiki-automation` to '
         'recompute and checkpoint the full composed markdown + target page (create vs update), '
         'then write. Create-or-update: an existing page is updated ETag-guarded; otherwise '
-        "it's created. Test with the `version` / `prs` / `page_name` inject mocks or `fail`.\n",
+        "it's created. Under `active_profile: test`, `artifacts.wiki_page_prefix` prefixes the page name.\n",
  'consequences': 'A real WRITE to the IdentityWiki payload page (create or content overwrite). '
                  'The email title, sign-offs and feature-flag sections are placeholders the '
                  'owner completes by hand.\n',

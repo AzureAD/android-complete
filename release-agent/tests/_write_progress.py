@@ -2,7 +2,8 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
-from orchestrator import revision, write_review as W
+from orchestrator import write_review as W
+from orchestrator import write_review as revision
 from orchestrator.git_write_plans import reconcile_operation
 
 

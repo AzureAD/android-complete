@@ -298,7 +298,7 @@ def _consumer_outputs(state):
         state, "storage-regression", {
             "kind": "release", "state_matches": rc_report.report_source_matches(ctx),
         }, "workiq_send_email", {"to": [state.owner_email], "subject": email[0], "body": email[1]})
-    orch = Orchestrator(CONFIG, state, mocks={}, as_of=date(2026, 9, 11), now=NOW)
+    orch = Orchestrator(CONFIG, state, step_defaults={}, as_of=date(2026, 9, 11), now=NOW)
     notify = N.build(orch.context("build_verify", "rc_report_notify"))
     return {
         "email": email, "lineage": lineage, "descriptor": descriptor,
@@ -556,7 +556,7 @@ def test_status_remains_bounded_without_evidence_io_or_detail(monkeypatch):
     sizes = []
     for count in (3, 300):
         state = _state(count)
-        orch = Orchestrator(CONFIG, state, mocks={}, as_of=date(2026, 9, 11), now=NOW)
+        orch = Orchestrator(CONFIG, state, step_defaults={}, as_of=date(2026, 9, 11), now=NOW)
         before = deepcopy(state.pipeline_runs)
 
         def no_io(*args, **kwargs):
@@ -583,7 +583,7 @@ def test_phase3_projections_and_effect_source_hash_are_identical_after_hydration
     monkeypatch.setattr(distribution, "validate_release_targets", lambda *a, **kw: None)
 
     state, path, _ = saved
-    Orchestrator(CONFIG, state, mocks={}, now=NOW)
+    Orchestrator(CONFIG, state, step_defaults={}, now=NOW)
     state.set_step("bug_bash", "clone_plans_broker", StepState(
         status="done", data={"plan_id": 501, "ui_suite_id": 502}))
     state.set_step("bug_bash", "clone_plans_auth", StepState(
@@ -605,7 +605,7 @@ def test_phase3_projections_and_effect_source_hash_are_identical_after_hydration
     state.save(path)
     loaded = ReleaseState.load(path)
     assert projections(loaded) == before
-    assert Orchestrator(CONFIG, loaded, mocks={}, now=NOW).status_report()["pipeline_runs"] == (
+    assert Orchestrator(CONFIG, loaded, step_defaults={}, now=NOW).status_report()["pipeline_runs"] == (
         _read(path)["pipeline_runs"])
 
 

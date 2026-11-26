@@ -88,7 +88,7 @@ def test_irrelevant_known_and_unknown_names_are_not_global_parameters(parameter)
 
 
 def test_default_model_has_no_fields_and_required_parameters_fail_without_input():
-    handler = _catalog(implementation="dummy").get("phase", "work")
+    handler = _catalog(kind="human_action").get("phase", "work")
     assert isinstance(handler.parse_parameters(), NoParameters)
 
     @dataclass(frozen=True)
@@ -254,8 +254,6 @@ def test_real_catalog_compiles_models_without_binding_any_provider(monkeypatch):
     workflow = WorkflowDefinition.compile(yaml.safe_load(config.read_text(encoding="utf-8")))
     catalog = HandlerCatalog.compile(workflow, steps.get_step)
     assert set(catalog.handler_by_key) == set(workflow.step_by_key)
-    assert sum(handler.definition.implementation.value == "dummy"
-               for handler in catalog.handler_by_key.values()) == 14
     assert catalog.get("preflight", "notice").parse_parameters(values={"variant": "update"}).variant == "update"
     assert catalog.get("bug_bash", "clone_plans_auth").parse_parameters(
         HookRole.RETRY, {"reason": "verified"}).reason == "verified"

@@ -50,7 +50,7 @@ def _public(tmp_path, *, mode=None):
         ],
     }]}), encoding="utf-8")
     state = ReleaseState(release_id="r", timezone="UTC")
-    orch = Orchestrator(str(path), state, mocks={},
+    orch = Orchestrator(str(path), state, step_defaults={},
                         now=datetime(2026, 9, 12, 12, tzinfo=timezone.utc),
                         handler_resolver=lambda _p, sid: module if sid == "job" else None)
     if mode:

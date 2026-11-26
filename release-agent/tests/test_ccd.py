@@ -66,7 +66,7 @@ def ccd_replay(tmp_path, monkeypatch, capsys):
     import json
     from types import SimpleNamespace
     from unittest.mock import Mock
-    from orchestrator import cli, delivery, engine, mocks, schedule
+    from orchestrator import cli, delivery, engine, environment as mocks, schedule
     from orchestrator.commands import localization as command
     from steps.ccd import localization as L
     from tools import checks, localization as provider, pipelines as P
@@ -89,7 +89,7 @@ def ccd_replay(tmp_path, monkeypatch, capsys):
         "ccd.final_reminder": {"send_to": ["owner@example.test"]},
         "ccd.pr_reminder": {"send_to": "19:ccd-replay@thread.v2"},
     }
-    monkeypatch.setattr(mocks, "load_mocks", lambda: deepcopy(redirects))
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: deepcopy(redirects))
     monkeypatch.setattr(checks, "read_pipeline_variable",
                         lambda *args: (True, "2026-09-09", "synthetic pipeline CCD"))
     definition = {
@@ -679,9 +679,9 @@ def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
 def test_localization_pr_ready_also_notifies_owner_scout_bot(tmp_path, capsys, monkeypatch):
     from argparse import Namespace
     import json
-    from orchestrator import mocks
+    from orchestrator import environment as mocks
     from orchestrator.commands import localization as lc
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     rid = "2026-09"
     st = ReleaseState(release_id=rid, ccd="2026-09-09",
                       owner_email="pedroro@microsoft.com")
@@ -722,9 +722,9 @@ def test_localization_unmerged_warning_also_notifies_owner_scout_bot(
         tmp_path, capsys, monkeypatch):
     from argparse import Namespace
     import json
-    from orchestrator import mocks
+    from orchestrator import environment as mocks
     from orchestrator.commands import localization as lc
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     rid = "2026-09"
     st = ReleaseState(release_id=rid, ccd="2026-09-09",
                       owner_email="pedroro@microsoft.com")
@@ -797,11 +797,11 @@ def test_localization_recovery_invalidates_timeout(
         tmp_path, delivery_status, recovery, initial_complete, monkeypatch):
     from argparse import Namespace
     from datetime import datetime
-    from orchestrator import delivery as D, mocks
+    from orchestrator import delivery as D, environment as mocks
     from orchestrator.commands import localization as lc
     from orchestrator.commands.delivery_cmd import finish
     from orchestrator.state import StepState
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     st = ReleaseState(release_id="2026-09", ccd="2026-09-09", owner_email="owner@example.com")
     _active_step(st, "ccd", "localization")
     st.set_step("ccd", "localization", StepState(
@@ -860,11 +860,11 @@ def test_localization_confirmed_merge_wins_over_unacknowledged_initial_post(
         tmp_path, monkeypatch, when, delivery_status):
     from argparse import Namespace
     from datetime import datetime
-    from orchestrator import delivery as D, mocks
+    from orchestrator import delivery as D, environment as mocks
     from orchestrator.commands import localization as lc
     from orchestrator.commands.delivery_cmd import finish
     from orchestrator.state import StepState
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     st = ReleaseState(release_id="2026-09", ccd="2026-09-09", owner_email="owner@example.com")
     _active_step(st, "ccd", "localization")
     st.set_step("ccd", "localization", StepState(
@@ -1141,11 +1141,11 @@ def test_localization_block_requires_reopen_and_preserves_run_history(
         tmp_path, monkeypatch, capsys, result):
     from argparse import Namespace
     from datetime import datetime
-    from orchestrator import mocks
+    from orchestrator import environment as mocks
     from orchestrator import write_review as W
     from orchestrator.commands import localization as lc
     from orchestrator.commands.step_action import prepare_step
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     rid = "2026-09"
     st = ReleaseState(release_id=rid, ccd="2026-09-09", owner_email="owner@example.com")
     _active_step(st, "ccd", "localization")
@@ -1240,9 +1240,9 @@ def test_localization_stale_poll_cannot_mutate_evidence(tmp_path):
 def test_localization_cli_log_proof_and_timeout(tmp_path, monkeypatch, capsys, log_kind):
     import argparse
     import json
-    from orchestrator import mocks
+    from orchestrator import environment as mocks
     from orchestrator.commands import localization as lc
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     st = ReleaseState(release_id="2026-09", ccd="2026-09-09", owner_email="owner@example.com")
     _active_step(st, "ccd", "localization")
     st.set_step("ccd", "localization", StepState(

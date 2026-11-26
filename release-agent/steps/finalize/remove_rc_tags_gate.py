@@ -7,7 +7,6 @@ from orchestrator.step_context import StepContext
 from steps.finalize._orchestrator_gate import (
     ApprovalParameters,
     GATE_CONFIG,
-    GATE_MOCKABLE,
     GATE_PARAMETERS,
     approval_matches_stage,
     gate_links,
@@ -30,21 +29,16 @@ CONFIG = dict(GATE_CONFIG)
 CONSEQUENCES = ("removes RC tags, publishes internal artifacts to the ADO Maven feed, publishes "
                 "MSAL/Common to Maven Central, creates release-integration/<version> branches, "
                 "updates the orchestrator pipeline variables, and prints GitHub PR compare links")
-MOCKABLE = dict(GATE_MOCKABLE)
 PARAMETERS = dict(GATE_PARAMETERS)
-
 
 def _pending(context):
     return pending_approval(context, CONFIG)
 
-
 def _links(info=None):
     return gate_links(info, CONFIG)
 
-
 def _stage_state(context):
     return stage_state(context, STAGE_ID, CONFIG)
-
 
 def build(context: StepContext):
     approval_ok, info, approval_detail = _pending(context)
@@ -100,7 +94,6 @@ def build(context: StepContext):
         attest=False,
     )
 
-
 def prepare_approval(context: StepContext[ApprovalParameters]):
     """Freeze the exact stage/approval/build and comment without submitting."""
     return prepare_expected_approval(
@@ -113,11 +106,9 @@ def prepare_approval(context: StepContext[ApprovalParameters]):
         default_comment="Approved via Scout (release-agent remove_rc_tags_gate).",
     )
 
-
 def submit_approval(context: StepContext) -> tuple[bool, str]:
     """Invoke only core's fenced writer for the already-frozen request."""
     return context.approval.submit()
-
 
 def reconcile_approval(context: StepContext) -> tuple[bool, str]:
     """Read the frozen approval; retain the hold without matching approved evidence."""

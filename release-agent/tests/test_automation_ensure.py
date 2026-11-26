@@ -21,8 +21,6 @@ def ensure_cli(root, capsys, worker, observations, *, claim=True):
         "--slug", worker["slug"], "--ensure", "--json", "--executor", "offline-controller",
         "--spec-json", json.dumps(worker["provider_spec"]), "--observed-json", json.dumps(observations),
     ]
-    if worker["on_demand"]:
-        args += ["--on-demand", worker["slug"]]
     if claim:
         args.append("--claim")
     code = cli.main(args)
@@ -221,7 +219,7 @@ def test_ensure_obeys_release_and_worker_lifecycle(tmp_path, capsys, state_kind)
     state = release(tmp_path)
     worker = current_worker(state)
     if state_kind == "objective_complete":
-        orch = Orchestrator(CONFIG, state, mocks={})
+        orch = Orchestrator(CONFIG, state, step_defaults={})
         for phase in orch.config["phases"]:
             if phase.get("conditional"):
                 continue
@@ -284,28 +282,3 @@ def test_obligations_revalidate_registered_driver_not_only_missing_entries(tmp_p
     result = json.loads(capsys.readouterr().out)
     assert result["required"] == []
     assert "release-drainer" in [worker["slug"] for worker in result["ensure"]]
-
-
-@pytest.mark.parametrize("change", ["none", "unapplied", "reopened", "new-generation", "different-owner"])
-def test_notification_trigger_requires_current_applied_producer(change):
-    from orchestrator.state import ReleaseState
-    state = ReleaseState(release_id=RID, owner_email="owner@example.test", ccd="2026-12-09")
-    worker = {"slug": "poller", "steps": ["phase.producer"]}
-    state.set_step("phase", "producer", StepState(status="done"))
-    state.notification_deliveries["receipt"] = {
-        "status": "sent", "completion": {"status": "applied"},
-        "descriptor": {
-            "scope": {"phase": "phase", "step": "producer", "generation": "initial",
-                      "release_matches": {"owner_email": state.owner_email, "ccd": state.ccd}},
-            "completion": {"automation": {"on_demand": "poller"}},
-        },
-    }
-    if change == "unapplied":
-        state.notification_deliveries["receipt"]["completion"] = {}
-    elif change == "reopened":
-        state.set_step("phase", "producer", StepState(status="pending"))
-    elif change == "new-generation":
-        state.set_step("phase", "producer", StepState(status="done", invalidated_at="new"))
-    elif change == "different-owner":
-        state.owner_email = "another-owner@example.test"
-    assert A._producer_applied(state, worker) == (change == "none")

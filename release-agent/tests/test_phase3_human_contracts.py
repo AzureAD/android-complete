@@ -5,7 +5,7 @@ import json
 import pytest
 
 from orchestrator.state import ReleaseState, StepState
-from orchestrator import cli, cli_common as C, mocks, delivery as D
+from orchestrator import cli, cli_common as C, environment as mocks, delivery as D
 from orchestrator.commands.delivery_cmd import finish
 from steps.bug_bash import native_auth_signoff as N, notify_native_auth as Notice
 from tests._context import invoke, fresh_orchestrator as Orchestrator
@@ -13,7 +13,9 @@ from tests._harness import CONFIG, _active_step
 
 
 def _config_with_optional_ui_failures(tmp_path=None):
+    import atexit
     import os
+    import shutil
     import tempfile
     import yaml
     with open(CONFIG, "r", encoding="utf-8") as fh:
@@ -30,10 +32,15 @@ def _config_with_optional_ui_failures(tmp_path=None):
                 p["steps"][-1]["depends_on"] = list(dict.fromkeys(
                     [*p["steps"][-1].get("depends_on", []), "ui_failures"]
                 ))
-    import atexit
-    fd, path = tempfile.mkstemp(prefix="phases-uifail-", suffix=".yaml", dir=os.path.dirname(CONFIG))
-    atexit.register(lambda p=path: os.path.exists(p) and os.remove(p))
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    tdir = tempfile.mkdtemp(prefix="release-agent-uifail-")
+    atexit.register(lambda d=tdir: shutil.rmtree(d, ignore_errors=True))
+    src_cfg = os.path.dirname(CONFIG)
+    for name in ("readiness.yaml", "automations.yaml", "notifications.yaml", "environment.yaml"):
+        src = os.path.join(src_cfg, name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(tdir, name))
+    path = os.path.join(tdir, "phases.yaml")
+    with open(path, "w", encoding="utf-8") as fh:
         yaml.safe_dump(doc, fh)
     return path
 
@@ -42,7 +49,7 @@ def _ready(step=N.ID):
     cfg = _config_with_optional_ui_failures() if step == "ui_failures" else CONFIG
     state = ReleaseState(release_id="2000-01", ccd="2000-01-12",
                          owner_email="owner@example.test")
-    orch_seed = Orchestrator(cfg, state, mocks={})
+    orch_seed = Orchestrator(cfg, state, step_defaults={})
     for p in orch_seed.workflow.phases:
         if p.id == "bug_bash":
             for s in p.steps:
@@ -59,7 +66,7 @@ def _ready(step=N.ID):
     state.set_step("bug_bash", "clone_plans_broker", StepState(
         status="done", data={"plan_id": 900, "ui_suite_id": 901}))
     state.set_step("bug_bash", "notify_native_auth", StepState())
-    orch = Orchestrator(cfg, state, mocks={})
+    orch = Orchestrator(cfg, state, step_defaults={})
     notice = orch.handler("bug_bash", Notice.ID).build(orch.context(
         "bug_bash", Notice.ID, parameters={"engineer": "engineer@example.test",
                                         "engineer_source": "synthetic verified directory"}))
@@ -155,7 +162,7 @@ def test_human_confirmation_is_retained_with_its_source_binding_and_changes_bloc
     path = tmp_path / "release-state.json"
     state.save(path)
     state = ReleaseState.load(path)
-    orch = Orchestrator(CONFIG, state, mocks={})
+    orch = Orchestrator(CONFIG, state, step_defaults={})
     assert orch.status_report()["current_step"] == "bugbash_complete"
     state.set_step("bug_bash", "notify_native_auth", StepState(
         status="done", data={"engineer": "replacement@example.test"}))
@@ -192,7 +199,7 @@ def test_missing_native_signoff_evidence_is_a_normal_blocked_prompt(tmp_path, mo
     state.set_step("bug_bash", "notify_native_auth", StepState(status="done"))
     C.save_state(state, str(tmp_path), state.release_id)
     before = (tmp_path / state.release_id / "release-state.json").read_bytes()
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     assert cli.main(["--runs-root", str(tmp_path), "step-action", "--release", state.release_id,
                      "--phase", "bug_bash", "--step", N.ID]) == 0
     result = json.loads(capsys.readouterr().out)
@@ -206,7 +213,7 @@ def test_done_cli_retains_unverified_claim_without_logging_success(tmp_path, mon
     C.save_state(state, str(tmp_path), state.release_id)
     path = tmp_path / state.release_id / "release-state.json"
     before = path.read_bytes()
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     assert cli.main(["--runs-root", str(tmp_path), "done", "--release", state.release_id,
                      "--phase", "bug_bash", "--step", N.ID, "--note", "Owner confirmed"]) == 0
     assert "sign-off needs" in capsys.readouterr().out
@@ -268,7 +275,7 @@ def test_legacy_human_done_without_a_source_confirmation_cannot_cover_new_genera
 def test_future_human_gate_and_scout_steps_are_pending_not_automatic_or_ready_for_approval():
     state = ReleaseState(release_id="2000-01", ccd="2000-01-12")
     _active_step(state, "bug_bash", "clone_plans_broker")
-    report = Orchestrator(CONFIG, state, mocks={}).status_report()
+    report = Orchestrator(CONFIG, state, step_defaults={}).status_report()
     steps = {step["id"]: step for step in report["current_steps"]}
     phase_steps = {step["id"]: step for step in report["active_phase"]["steps"]}
     for step in ("send_invite", "activate_chat", "notify_native_auth",

@@ -37,21 +37,21 @@ class EffectHandler:
     authorize_retry: RetryHook | None = None
 
 
-def prepare(handler: EffectHandler, context, frozen_mocks=None):
+def prepare(handler: EffectHandler, context, frozen_defaults=None):
     """Resolve and validate the immutable provider input before reserving a write."""
     value = handler.prepare(context)
     if isinstance(value, Blocked):
         return value
     if not isinstance(value, dict):
         raise ValueError("Effect handler prepare_effect() must return a mapping or Blocked")
-    frozen_mocks = {
+    frozen_defaults = {
         key: deepcopy(item)
-        for key, item in (frozen_mocks or {}).items()
+        for key, item in (frozen_defaults or {}).items()
         if key not in ("outcome", "note", "reason")
     }
-    if frozen_mocks:
+    if frozen_defaults:
         value = deepcopy(value)
-        value["__effect_mocks__"] = frozen_mocks
+        value["__effect_defaults__"] = frozen_defaults
     try:
         encoded = json.dumps(
             value, sort_keys=True, separators=(",", ":"), ensure_ascii=True

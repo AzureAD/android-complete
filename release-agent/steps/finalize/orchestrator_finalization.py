@@ -7,9 +7,8 @@ from orchestrator.outcomes import Blocked, Done, InProgress
 from orchestrator.authority import OwnStepData, PipelineScope, PipelineSlot
 from orchestrator.evidence import PipelineEvidence, StepData
 from orchestrator.step_context import StepContext, thaw
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import pipelines as P
-
 
 ID = "orchestrator_finalization"
 KIND = "agent"
@@ -23,18 +22,6 @@ STAGE_ID = "PublishGitHubReleaseNotes"
 STAGE_NAME = "Publish GitHub Release Notes"
 POLL_INTERVAL_MIN = 120
 ESCALATE_AFTER_HOURS = 8
-
-MOCKABLE = {
-    "stage": {
-        "kind": "input",
-        "desc": "Inject the stage state: 'ready'|'wait'|'failed'.",
-    },
-    "final": {
-        "kind": "input",
-        "desc": "Inject {mrwp_run_id}.",
-    },
-}
-
 
 def _stage_status(context):
     injected = context.input("stage", MISSING)
@@ -67,7 +54,6 @@ def _stage_status(context):
     status = status or {}
     return status.get("status", "wait"), detail, status
 
-
 def _poll_due(context):
     from orchestrator import schedule
     record = context.evidence.step("finalize", ID)
@@ -75,7 +61,6 @@ def _poll_due(context):
         return True
     last = schedule.parse_iso_utc(record.data.get("last_polled_at"))
     return last is None or context.clock.utc() >= last + timedelta(minutes=POLL_INTERVAL_MIN)
-
 
 def build(context: StepContext):
     if not _poll_due(context):
@@ -134,23 +119,6 @@ def build(context: StepContext):
         updates=(step_update, PipelineEvidence(runs)),
     )
 
-
-def automation_prompt(release: str, spec: dict) -> str:
-    return (
-        f"Release {release} — final Release Orchestrator poller (Phase 4, every "
-        f"{spec['interval']}).\n"
-        f"After {ESCALATE_AFTER_HOURS} hours without reaching the gate, escalate once to the "
-        "release owner and keep polling.\n"
-        f"Run `poll-orchestrator-finalization --release {release}` once and act on its decision:\n"
-        "  • idle / waiting → send nothing.\n"
-        "  • escalate → use source pending and the shared claim/result protocol for every "
-        "offered owner notification; never send raw escalation payloads.\n"
-        "  • resolved → report the captured final MRWP; "
-        "the cleanup planner removes this worker.\n"
-        "  • blocked → surface the pipeline failure to the owner and retain the evidence.\n"
-        f"Silently journal: `journal --release {release} --source scout --kind automation "
-        f"--text \"finalize-orchestrator-poller: <decision>\"`.")
-
 KNOWLEDGE = {'summary': 'Monitor final orchestration until the Publish GitHub Release Notes gate.',
  'what': "After 'Remove RC Tags', this read-only step follows the Release Orchestrator through "
          'final MRWP generation and release-integration branch creation until it parks at '
@@ -158,8 +126,8 @@ KNOWLEDGE = {'summary': 'Monitor final orchestration until the Publish GitHub Re
          'verifies the returned build ID and configured MRWP pipeline definition before '
          'accepting final success. Authenticator build/version capture happens later in '
          'rollout_start.identify_auth_build.\n',
- 'trigger': 'Runs after `remove_rc_tags_gate`. The dedicated Release Orchestrator poller '
-            'checks every 2 hours and binds to the stable YAML stage identifier '
+ 'trigger': 'Runs after `remove_rc_tags_gate`. `release-drainer` reconciles this step '
+            'every 2 hours and binds to the stable YAML stage identifier '
             "`PublishGitHubReleaseNotes`, whose display name is 'Publish GitHub Release "
             "Notes'.\n",
  'who': 'The release-agent performs the read-only Azure Pipelines checks automatically.',

@@ -5,7 +5,7 @@ verified current-RC mapping. Every create owns durable intent and acknowledgemen
 no shared cases or configuration pins change. Historical single-dynamic-suite
 records and frozen executions retain their original recovery path without migration.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   suite_id  : pretend the suite already exists (this id) — verifies + reports done.
   create_id : the id the create should "return" (skip the live create).
   existing  : id of an already-present same-named suite the name-scan should "find".
@@ -18,7 +18,7 @@ from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.evidence import RetryDecision, StepData
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import testplans as T
 from orchestrator import schedule
 from steps.build_verify._common import valid_id
@@ -35,7 +35,6 @@ REQUIRED_TOOLS = ('az',)
 EFFECT_RETRY = True
 EFFECT_MODE = "transactional"
 EFFECT_RECOVERY = "frozen"
-
 
 def prepare_effect(context):
     from tools import auth_partition as A
@@ -90,22 +89,18 @@ def prepare_effect(context):
         return {**identity, "query": T.auth_bugbash_query()}
     return auth_categories.prepare(context, identity, layout=layout)
 
-
 def execute(context: StepContext):
     return _dispatch(context, allow_create=True)
 
-
 def reconcile(context: StepContext):
     return _dispatch(context, allow_create=False)
-
 
 def _effect_input(execution):
     frozen = thaw(execution.get("effect_input"))
     if isinstance(frozen, dict):
         # The engine hashes its input overrides with the operation, not the domain schema.
-        frozen.pop("__effect_mocks__", None)
+        frozen.pop("__effect_defaults__", None)
     return frozen
-
 
 def _dispatch(context, *, allow_create):
     from . import auth_categories
@@ -125,7 +120,6 @@ def _dispatch(context, *, allow_create):
         return Blocked(f"clone_plans_auth: {exc}")
     return _build(context, allow_create=allow_create, frozen=frozen)
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     layout: str = "auth-manual-automated-v1"
@@ -135,14 +129,11 @@ class BuildParameters:
         if self.name is not None and (not self.name.strip() or self.name != self.name.strip()):
             raise ValueError("Suite name must be nonblank text without surrounding whitespace")
 
-
 @dataclass(frozen=True)
 class RetryParameters:
     reason: str
 
-
 PARAMETERS = {"build": BuildParameters, "prepare_effect": BuildParameters, "authorize_retry": RetryParameters}
-
 
 def authorize_retry(context: StepContext[RetryParameters]):
     """Authorize only after exhaustive discovery proves the frozen suite is absent."""
@@ -188,16 +179,6 @@ def authorize_retry(context: StepContext[RetryParameters]):
     data["creation"] = creation
     return RetryDecision(True, "No matching suite exists; retry authorized", (StepData(data),))
 
-MOCKABLE = {
-    "name": {"kind": "input", "desc": "Override the suite name (e.g. a 'TEST ...' name for a safe live run)."},
-    "layout": {"kind": "input", "desc": "Select an explicitly reviewed fresh Authenticator layout; never migrates a frozen clone."},
-    "suite_id": {"kind": "input", "desc": "Pretend the query-suite already exists (this id)."},
-    "create_id": {"kind": "input", "desc": "Id the create should return (skip the live create)."},
-    "existing": {"kind": "input", "desc": "Id an existing same-named suite the name-scan finds."},
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail (simulate an API failure)."},
-}
-
-
 def _links(suite_id, frozen=None):
     frozen = frozen or {}
     return [{"name": f"Authenticator bug-bash suite {suite_id}",
@@ -208,12 +189,10 @@ def _links(suite_id, frozen=None):
                  project=frozen.get("project", T.PROJECT),
              )}]
 
-
 def build(context: StepContext):
     if context.effect is None:
         raise ValueError("Authenticator creation requires an authorized effect context")
     return execute(context)
-
 
 def _build(context, *, allow_create, frozen=None):
     frozen = frozen or {}

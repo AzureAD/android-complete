@@ -88,10 +88,6 @@ def scope_reason(orch, scope, *, acknowledgement=False):
     Acknowledgements may retain evidence after halt/expiry, but never mutate a
     completed/skipped owner or advance a closed phase.
     """
-    from orchestrator.revision import mismatch_reason
-    revision_problem = mismatch_reason(orch)
-    if revision_problem:
-        return revision_problem
     st = orch.state
     if not isinstance(scope, dict):
         return "missing/invalid lifecycle scope"
@@ -161,6 +157,8 @@ def scope_reason(orch, scope, *, acknowledgement=False):
         if getattr(st, key, None) != value:
             return "release checkpoint changed"
     for match in scope.get("state_matches", []):
+        if match.get("path") == ["workflow_revision"]:
+            continue
         value = vars(st)
         try:
             for key in match["path"]:
@@ -206,10 +204,6 @@ def descriptor(st, logical_id, scope, tool, payload, completion=None):
            if k not in ("to", "attendees")):
         raise ValueError(f"{logical_id}: invalid {channel} destination")
     scope = deepcopy(scope)
-    if st.workflow_revision is not None:
-        scope.setdefault("state_matches", []).append({
-            "path": ["workflow_revision"], "hash": fingerprint(st.workflow_revision),
-        })
     value = {
         "id": f"{logical_id}:{channel}", "release": st.release_id,
         "scope": deepcopy(scope), "channel": channel, "target": target,
@@ -295,8 +289,6 @@ def available(orch, item):
 
 def offer(orch, item):
     """Refresh only never-claimed preparation; routine progress needs only its latest preview."""
-    from orchestrator.revision import assert_current
-    assert_current(orch)
     ledger = orch.state.notification_deliveries
     candidate = {"descriptor": deepcopy(item), "status": "prepared",
                  "prepared_at": now_iso(), "attempts": []}
@@ -334,8 +326,6 @@ def preview(orch, record):
 
 
 def claim(orch, notification_id, approved_hash, executor):
-    from orchestrator.revision import assert_current
-    assert_current(orch)
     record = orch.state.notification_deliveries.get(notification_id)
     if not record or (not is_progress_receipt(record) and (not record.get("descriptor") or "attempts" not in record)):
         raise ValueError("Missing/incomplete preparation; owner recovery required")
@@ -372,8 +362,6 @@ def claim(orch, notification_id, approved_hash, executor):
 
 
 def result(orch, notification_id, execution_id, outcome, evidence, receipt=None, review=False):
-    from orchestrator.revision import assert_current
-    assert_current(orch)
     """Record a transport result, never infer success from a lack of errors."""
     record = orch.state.notification_deliveries.get(notification_id)
     if is_progress_receipt(record):

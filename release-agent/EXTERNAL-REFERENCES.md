@@ -40,9 +40,9 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 | **`release` variable group 40** | https://identitydivision.visualstudio.com/Engineering/_library?...variableGroupId=40&path=release | Phase-0 `flight_reminder` (link only) | az/web | feature owners update local flights here — release engineer does NOT |
 | Flight pre-mortem example doc | https://microsoft-my.sharepoint-df.com/:w:/p/rapong/cQpEZp0cXp1sQYo4A4M3PQWCEgUCDj364FJa-rq-msg59WlBsw | Phase-0 `flight_reminder` (link only) | AAD-SSO | example shared with feature owners |
 | Localization instructions | https://eng.ms/docs/.../combined-release-checklist/localization | Phase-0 `flight_reminder` (link) · Phase-1 `localization` (manual-steps fallback + timeout email) | AAD-SSO | confirmed valid 2026-07-29 |
-| **Teams chat: "Android Core Team"** | thread `19:976a859f167f44e59c4ceca8b1d23581@thread.v2` | Phase-0 `flight_reminder` target | MCP (WorkIQ) | real target; redirect for tests via the `send_to` mock knob |
-| **Teams chat: "Code reviews"** | thread `19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2` | Phase-1 `pr_reminder` & `localization` target | MCP (WorkIQ / Teams) | CCD PR-merge reminder & OneLoc PR announcement; redirect for tests via `send_to` |
-| **Teams channel: "General" (Android DevX ↔ partner release sync)** | team `be33b3e7-c501-4225-9413-3b88046f3eb3` · channel `19:715820c336d3454bbd75ef0bad68e460@thread.tacv2` | Phase-4 `release_announcement` target | MCP (**microsoft_teams** — channel ROOT posts; WorkIQ only does replies) | "Auth Client Android SDKs <Month Year> Release" post; redirect for tests via the `post_to` mock knob |
+| **Teams chat: "Android Core Team"** | thread `19:976a859f167f44e59c4ceca8b1d23581@thread.v2` | Phase-0 `flight_reminder` target | MCP (WorkIQ) | `prod` target in `config/environment.yaml` (`self` in `test` profile) |
+| **Teams chat: "Code reviews"** | thread `19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2` | Phase-1 `pr_reminder` & `localization` target | MCP (WorkIQ / Teams) | CCD PR-merge reminder & OneLoc PR announcement (`self` in `test` profile) |
+| **Teams channel: "General" (Android DevX ↔ partner release sync)** | team `be33b3e7-c501-4225-9413-3b88046f3eb3` · channel `19:715820c336d3454bbd75ef0bad68e460@thread.tacv2` | Phase-4 `release_announcement` target | MCP (**microsoft_teams** — channel ROOT posts; WorkIQ only does replies) | "Auth Client Android SDKs <Month Year> Release" post (`self` in `test` profile) |
 | **CCD-delay / cherry-pick approver: Moumita Ghosh** | moghosh@microsoft.com | Phase-1 `pr_reminder` (named in message) | — | both a CCD delay and a post-CCD cherry-pick require her approval |
 | **EcsFlight.kt** (Auth App ECS flights) | https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/.../ecs/entities/EcsFlight.kt&version=GBworking | Phase-0 `flight_reminder` bullet 4 (link only) | az/web | reviewers check its history since last code complete |
 | Early code-complete notice template | https://eng.ms/docs/.../combined-release-checklist/early-code-complete-notice-email-template | Phase-0 `notice` | AAD-SSO | copied locally to `templates/early-code-complete-notice.md` — **re-sync if upstream edits** |
@@ -52,8 +52,8 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 
 ## Outbound email recipients
 
-> Runs are real — these recipients receive the notice. To test without emailing
-> the DL, redirect with the `send_to` mock knob (`mocks.local.yaml`).
+> Controlled by `active_profile` in `config/environment.yaml`: `test` (committed default) routes all
+> emails to `@owner` with `[TEST]` subject prefix; `prod` sends to the live DLs below.
 
 | Step | To | Notes |
 |---|---|---|

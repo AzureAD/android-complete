@@ -27,7 +27,7 @@ from tests._context import fresh_orchestrator as Orchestrator
 
 from orchestrator import cli_common as C
 
-from orchestrator import mocks as _mocks_mod
+from orchestrator import environment as _mocks_mod
 from tests._auth_evidence import capture as _auth_capture, auth_test as _auth_test
 
 
@@ -219,16 +219,16 @@ _SAFE_AGENTS["build_verify.auth_ecs"]["capture"] = _auth_capture(
 
 
 
-def _safe(mocks=None):
-    """Merge the safe-agent profile with a test's specific mocks (test wins)."""
-    return {**_SAFE_AGENTS, **(mocks or {})}
+def _safe(step_defaults=None):
+    """Merge the safe-agent profile with a test's specific step_defaults (test wins)."""
+    return {**_SAFE_AGENTS, **(step_defaults or {})}
 
 
 
 # Every test flow (incl. tests that build Orchestrator(CONFIG, st) directly) runs
 # with the safe-agent profile so agents never hit the network — replaces the
-# offline via injected inputs. Tests needing specific mocks pass mocks= explicitly.
-_mocks_mod.load_mocks = lambda *a, **k: dict(_SAFE_AGENTS)
+# offline via injected inputs. Tests needing specific mocks pass step_defaults= explicitly.
+_mocks_mod.load_step_defaults = lambda *a, **k: dict(_SAFE_AGENTS)
 
 
 
@@ -405,7 +405,7 @@ def _bv_state(mocks):
     _stub_build_defs("pass")
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
     _active_phase(st, "build_verify")
-    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 27), mocks=_safe(mocks))
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 27), step_defaults=_safe(mocks))
     return st, orch
 
 
@@ -414,9 +414,9 @@ def _bv_build(orch, st, sid):
     """Build a build_verify step outcome with its mock context active (as the engine
     does), so injected inputs apply instead of hitting live az."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
-    inputs = dict(orch.mocks.get(f"build_verify.{sid}", {}))
+    inputs = dict(orch.step_defaults.get(f"build_verify.{sid}", {}))
     if sid == "auth_ecs" and "suites" in inputs:
         inputs["capture"] = _auth_capture(inputs["suites"],
             rc=inputs["auth_build"]["rc"], apk=inputs["auth_build"]["build_id"],
@@ -484,31 +484,12 @@ def _auth_suites(e2e_pct, monthly_pct=100.0, e2e_present=True, monthly_present=T
 
 
 
-def _run_poll_rc(runs_root, rid, now_iso):
-    """Run `poll-rc` with the drain stubbed (no live az) and return the decision dict."""
-    import io, contextlib, json as _json
-    from unittest.mock import patch
-    from orchestrator.commands import rc_poll as RP
-
-    class A:
-        runs_root = None; release = None; config = CONFIG; as_of = None; now = None
-    A.runs_root, A.release, A.now = runs_root, rid, now_iso
-    buf = io.StringIO()
-    with patch("orchestrator.engine.Orchestrator.run_until_gate", lambda self, **k: []), \
-            patch("orchestrator.engine.Orchestrator.run_task", lambda *a, **k: None):
-        with contextlib.redirect_stdout(buf):
-            rc = RP.cmd_poll_rc(A)
-    assert rc == 0
-    return _json.loads(buf.getvalue().strip().splitlines()[-1])
-
-
-
 # ---- Phase 3: clone_plans_broker / clone_plans_auth ----
 
 def _bb_build(sid, mocks, release="2026-08", ccd="2026-08-13"):
     """Build a bug_bash step outcome offline with the given mock inputs active."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id=release, ccd=ccd)
     _enable_memory_checkpoints(st)
@@ -533,7 +514,7 @@ def _uts_state(plan_id="900", release="2026-08"):
 
 def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900", *, oof=None):
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
     st = ReleaseState(release_id="2026-08", owner_email=owner)
@@ -571,7 +552,7 @@ def _invite_state():
 def _na_state(release="2026-08", ccd="2026-08-13", broker_plan=3730001, owner="Pedro"):
     from orchestrator.state import StepState
     st = ReleaseState(release_id=release, ccd=ccd, owner_name=owner)
-    Orchestrator(CONFIG, st, mocks={})
+    Orchestrator(CONFIG, st, step_defaults={})
     st.set_step("bug_bash", "clone_plans_broker", StepState(status="done",
                                                             data={"plan_id": broker_plan}))
     return st
@@ -634,7 +615,7 @@ _NO_PR_CREATE_FALSE_LOG = (
 
 
 
-# ---- local step mocks (personal mocks.local.yaml, injected as mocks=) --------
+# ---- local step mocks (personal mocks.local.yaml, injected as step_defaults=) --------
 def _mock_orch(mocks, as_of="2026-07-02"):
     """Signed, Phase-0-open orchestrator with an explicit mocks map (isolated from
     any developer's mocks.local.yaml)."""
@@ -643,7 +624,7 @@ def _mock_orch(mocks, as_of="2026-07-02"):
     st = _enable_memory_checkpoints(
         ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     )
-    orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]), mocks=_safe(mocks))
+    orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]), step_defaults=_safe(mocks))
     orch.gate.verify()
     _pass_scout_checks(orch)
     orch.gate.sign()
@@ -676,17 +657,17 @@ def _integ_release(d, mocks):
     from orchestrator import cli_common as _C
     st = ReleaseState(release_id="2026-08")
     _active_step(st, "finalize", "integ_prs")
-    orch = Orchestrator(CONFIG, st, mocks={})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     _C.save_state(st, d, "2026-08")
-    o = _mocks_mod.load_mocks
-    _mocks_mod.load_mocks = lambda *a, **k: {"finalize.integ_prs": dict(mocks)}
+    o = _mocks_mod.load_step_defaults
+    _mocks_mod.load_step_defaults = lambda *a, **k: {"finalize.integ_prs": dict(mocks)}
     ns = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG, as_of=None,
                             execute=False, repos=None, pbi=None, pbi_title=None,
                             execution_id=None, reserve=False, review_hash=None,
                             approved_by="test-reviewer", executor="test-executor")
 
     def restore():
-        _mocks_mod.load_mocks = o
+        _mocks_mod.load_step_defaults = o
     return ns, restore
 
 
@@ -771,7 +752,7 @@ def _active_phase(st, phase):
     """Make an isolated domain fixture satisfy the shared lifecycle prerequisites."""
     from orchestrator.state import StepState
     _ready_state(st)
-    for p in Orchestrator(CONFIG, st, mocks={}).config["phases"]:
+    for p in Orchestrator(CONFIG, st, step_defaults={}).config["phases"]:
         if p["id"] == phase:
             break
         for s in p["steps"]:
@@ -787,7 +768,7 @@ def _active_step(st, phase_id, step_id):
     _active_phase(st, phase_id)
     phase = next(
         phase
-        for phase in Orchestrator(CONFIG, st, mocks={}).config["phases"]
+        for phase in Orchestrator(CONFIG, st, step_defaults={}).config["phases"]
         if phase["id"] == phase_id
     )
     for step in phase["steps"]:

@@ -9,7 +9,8 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from orchestrator import cli_common as C, git_write_plans as P, revision, write_review as W
+from orchestrator import cli_common as C, git_write_plans as P, write_review as W
+from orchestrator import write_review as revision
 from orchestrator.commands import integ_prs_cmd as IC, oneauth_pr_cmd as OC, step_action
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState
@@ -86,8 +87,7 @@ def compound(tmp_path, monkeypatch):
             "write_command": I.WRITE_COMMAND}]}]}), encoding="utf-8")
     state = ReleaseState(release_id="r", ccd="2026-07-08", timezone="UTC", owner_email="owner@example.test",
                          versions={key: "1" for key in I.REPO_ORDER})
-    orch = Orchestrator(str(config), state, mocks={}, as_of=date(2026, 7, 8))
-    revision.bind_initial(orch)
+    orch = Orchestrator(str(config), state, step_defaults={}, as_of=date(2026, 7, 8))
     path = tmp_path / "r" / "release-state.json"
     state.save(str(path))
     args = arguments(tmp_path)
@@ -109,7 +109,7 @@ def compound(tmp_path, monkeypatch):
 
     def load(*_args):
         state = ReleaseState.load(str(path))
-        orch = Orchestrator(str(config), state, mocks={}, as_of=date(2026, 7, 8))
+        orch = Orchestrator(str(config), state, step_defaults={}, as_of=date(2026, 7, 8))
         def checkpoint():
             if s.checkpoint:
                 s.checkpoint(state, lambda: state.save(str(path)))
@@ -140,8 +140,7 @@ def oneauth_compound(compound, monkeypatch):
             "write_command": O.WRITE_COMMAND}]}]}), encoding="utf-8")
     state = ReleaseState(release_id="r", ccd="2026-07-08", timezone="UTC", owner_email="owner@example.test",
                          versions={"common": "1", "msal": "1"})
-    orch = Orchestrator(str(config), state, mocks={}, as_of=date(2026, 7, 8))
-    revision.bind_initial(orch)
+    orch = Orchestrator(str(config), state, step_defaults={}, as_of=date(2026, 7, 8))
     state.save(str(s.path))
     s.command = OC.cmd_create_oneauth_common_pr
     s.args.repo_dir = str(s.path.parent.parent / "common")

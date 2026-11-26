@@ -60,7 +60,11 @@ def _runtime_config():
     for phase in config["phases"]:
         for step in phase["steps"]:
             if step["kind"] == "auto":
-                step["implementation"] = "dummy"
+                step["kind"] = "human_action"
+                step.pop("owner", None)
+                step.pop("effect_mode", None)
+                step.pop("effect_recovery", None)
+                step.pop("effect_retry", None)
     return config
 
 
@@ -277,7 +281,7 @@ def test_parallel_denied_gate_has_priority_and_blocks_dispatch(tmp_path, monkeyp
             "comment": "Evidence missing.",
         }
     ]
-    orch = Orchestrator(str(config_path), state, mocks={})
+    orch = Orchestrator(str(config_path), state, step_defaults={})
     projection = orch._projection()
     assert projection.current_hold().step_id == "denied_gate"
     assert projection.release_status() == "blocked"
@@ -318,7 +322,7 @@ def test_parameterless_done_uses_projected_hold_not_stale_cursor(tmp_path):
     config_path = tmp_path / "phases.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     state = ReleaseState(release_id="2026-09")
-    orch = Orchestrator(str(config_path), state, mocks={})
+    orch = Orchestrator(str(config_path), state, step_defaults={})
     action = orch.complete_step(note="completed projected hold")
     assert action.step == "first"
     assert state.get_step("parallel", "first").status == "done"
@@ -395,7 +399,7 @@ def test_gate_decision_is_rejected_while_release_is_suspended(tmp_path):
         halt={"reason": "test", "at": "2026-09-12T00:00:00Z"},
     )
     state.set_step("build", "compile", StepState(status="done"))
-    orch = Orchestrator(str(config_path), state, mocks={})
+    orch = Orchestrator(str(config_path), state, step_defaults={})
     assert orch.approve_gate("unsafe").kind == "idle"
     assert orch.deny_gate("unsafe").kind == "idle"
 
@@ -422,7 +426,7 @@ def test_denied_gate_report_preserves_reason_and_blocked_step(tmp_path):
             "comment": "Quality evidence is incomplete.",
         }
     ]
-    report = Orchestrator(str(config_path), state, mocks={}).status_report()
+    report = Orchestrator(str(config_path), state, step_defaults={}).status_report()
     assert report["status"] == "blocked"
     assert report["gate"]["kind"] == "denied"
     assert report["gate"]["reason"] == "Quality evidence is incomplete."
@@ -458,8 +462,8 @@ def test_delivery_scope_uses_projected_conditional_activation(tmp_path):
     state.set_step("build", "approve", StepState(status="done"))
     state.gate_decisions = [{"step": "build.approve", "decision": "approved"}]
     state.active_conditionals.append("hotfix")
-    orch = Orchestrator(str(config_path), state, mocks={})
-    assert orch._projection().release_status() == "running"
+    orch = Orchestrator(str(config_path), state, step_defaults={})
+    assert orch._projection().release_status() == "awaiting_action"
     assert delivery.scope_reason(orch, {"kind": "release"}) == ""
 
 
@@ -473,7 +477,7 @@ def test_status_report_uses_projection_without_mutating_legacy_state(tmp_path):
     state.set_step("build", "approve", StepState(status="skipped", note="legacy"))
     before = deepcopy(state.steps)
 
-    report = Orchestrator(str(config_path), state, mocks={}).status_report()
+    report = Orchestrator(str(config_path), state, step_defaults={}).status_report()
     assert report["status"] == "holding_gate"
     assert report["current_phase"] == "build"
     assert report["current_step"] == "approve"
@@ -481,7 +485,7 @@ def test_status_report_uses_projection_without_mutating_legacy_state(tmp_path):
     assert report["current_steps"][1]["state"] == "gate"
     assert state.steps == before
 
-    approved = Orchestrator(str(config_path), state, mocks={}).approve_gate("reviewed")
+    approved = Orchestrator(str(config_path), state, step_defaults={}).approve_gate("reviewed")
     assert approved.kind == "ran"
     assert state.get_step("build", "approve").status == "done"
 
@@ -492,7 +496,7 @@ def test_orchestrator_recompiles_after_in_memory_config_edit(tmp_path):
     config_path = tmp_path / "phases.yaml"
     config_path.write_text(yaml.safe_dump(_runtime_config()), encoding="utf-8")
     state = ReleaseState(release_id="2026-09")
-    orch = Orchestrator(str(config_path), state, mocks={})
+    orch = Orchestrator(str(config_path), state, step_defaults={})
     original = orch.workflow.fingerprint
 
     orch.config["phases"][0]["steps"][1]["depends_on"] = ["compile"]

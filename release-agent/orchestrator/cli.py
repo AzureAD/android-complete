@@ -51,8 +51,8 @@ def main(argv=None):
     # Serialize state read-modify-write per release so parallel CLI invocations
     # (e.g. the skill firing record-step calls at once) can't clobber each other.
     runs_root = getattr(args, "runs_root", None)
-    # Machine setup must remain usable before init and while old releases are pinned.
-    release = (None if args.cmd in ("infra", "onboarding", "paths", "workiq-read") else
+    # Machine setup & environment inspection must remain usable before init and while old releases are pinned.
+    release = (None if args.cmd in ("infra", "paths", "workiq-read", "environment", "set-profile") else
                C.effective_release(runs_root, getattr(args, "release", None)))
     if args.cmd == "automation":
         if args.action in ("claim-delete", "delete-result") and getattr(args, "id", None):
@@ -76,29 +76,6 @@ def main(argv=None):
                 except (EvidenceError, ValueError, OSError) as exc:
                     print(json.dumps({"status": "failed", "error": str(exc),
                                       "permission_to_execute": False}))
-                    return 1
-            diagnostics = {
-                "status", "list", "inspect-state", "workflow-adopt", "mock-spec",
-                "step-info", "gate-info", "task-history", "log", "drain-log", "diagnose",
-                "journal", "paths", "preview-release",
-                "bugbash-progress", "m365-capabilities",
-            }
-            pending_deliveries = (
-                args.cmd == "notification" and args.operation == "prepare" and args.source == "pending")
-            automation_inspection = (
-                args.cmd == "automation"
-                and args.action in ("list", "plan", "sync", "obligations", "cleanup"))
-            checklist_inspection = args.cmd == "checklist" and not getattr(args, "verify", False)
-            if (release and (os.path.isfile(C.state_path(runs_root, release)) or args.cmd == "automation")
-                    and args.cmd not in diagnostics
-                    and not pending_deliveries and not automation_inspection and not checklist_inspection):
-                from orchestrator.revision import assert_current
-                try:
-                    _, orch = C.load_orch(runs_root, release, args.config)
-                    assert_current(orch)
-                except (ValueError, OSError) as exc:
-                    import json
-                    print(json.dumps({"error": str(exc), "permission_to_execute": False}))
                     return 1
             try:
                 return args.func(args)

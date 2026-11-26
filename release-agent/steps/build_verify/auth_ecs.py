@@ -20,7 +20,7 @@ from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import Done, Blocked, InProgress
 from orchestrator.evidence import PipelineEvidence
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from steps.build_verify._common import latest_rc, stash_auth, valid_id, valid_counts
 from tools import pipelines as P
 from tools.pipelines import AUTH_ORG, AUTH_PROJECT, AUTH_UI_SUITES, AUTH_UI_PASS_THRESHOLD
@@ -35,33 +35,15 @@ REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 RECHECK_WHEN_BLOCKED = True
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     build_id: str | None = None
     test_build_id: str | None = None
 
-
 PARAMETERS = {"build": BuildParameters}
-
-# Mock knobs (mocks.local.yaml): consumed inside verify_auth_ecs via mock_input.
-MOCKABLE = {
-    "auth_build": {"kind": "input",
-                   "desc": "Inject the ECS auth build {build_id,rc,version,status,result} (skip the One lookup)."},
-    "test_build": {"kind": "input",
-                   "desc": "Inject the post-build UI-test run id (skip the resource-link scan)."},
-    "test_status": {"kind": "input",
-                   "desc": "Inject the UI-test build status; in-progress runs are not captured."},
-    "suites": {"kind": "input",
-               "desc": "Inject the Firebase suite rates {name:{present,passed,failed,total,pct}}."},
-    "capture": {"kind": "input", "desc": "Inject complete attributed Authenticator source evidence."},
-    "rc": {"kind": "input", "desc": "Override the RC iteration number (else from the auth build version)."},
-}
-
 
 def auth_build_url(build_id):
     return f"{AUTH_ORG}/{AUTH_PROJECT}/_build/results?buildId={build_id}"
-
 
 def auth_evidence_issues(model):
     auth = model.get("auth") or {}
@@ -96,13 +78,11 @@ def auth_evidence_issues(model):
         issues.append(detail)
     return issues
 
-
 def auth_pass_pct(suite):
     if not suite.get("present") or not valid_counts(suite):
         return None
     executed = suite["passed"] + suite["failed"]
     return suite["passed"] * 100.0 / executed if executed else None
-
 
 def auth_gate(suites) -> dict:
     """The Authenticator ECS quality bar — SEPARATE from the MRWP 90% UI gate. Both Firebase
@@ -142,7 +122,6 @@ def auth_gate(suites) -> dict:
                        f"\u2192 Investigate the failing Firebase suite(s), then re-run the "
                        f"post-build UI test. Scout re-evaluates when it completes.")}
 
-
 def verify_auth_ecs(context):
     """Body for the `auth_ecs` step — a DATA-AVAILABILITY check for the Authenticator ECS RC
     build + its post-build UI test (msazure/One, cross-org). Like the MRWP steps, it only
@@ -156,11 +135,11 @@ def verify_auth_ecs(context):
     Done; a green build -> find its post-build UI-test run (not run yet -> hold), read the two
     Firebase suites, snapshot everything + the informational verdict, and Done.
 
-    Mock knobs: auth_build ({build_id,rc,version,status,result}), test_build (id),
+    Configured `step_defaults` inputs: auth_build ({build_id,rc,version,status,result}), test_build (id),
     test_status, suites (the auth_ui_suite_rates map), rc (override the RC number)."""
     label = "Authenticator ECS"
 
-    # 1) resolve the current-RC ECS build (or take explicit parameter / injected mock)
+    # 1) resolve the current-RC ECS build (or take explicit parameter / configured input)
     param_bid = getattr(context.parameters, "build_id", None)
     param_tbid = getattr(context.parameters, "test_build_id", None)
     ab = context.input("auth_build", MISSING)
@@ -295,7 +274,6 @@ def verify_auth_ecs(context):
     return Done(
         f"{label} build {build_id} + UI tests captured — {bar}; the RC report consolidates "
         f"this with MRWP and decides go/hold.", links=links, updates=(evidence,))
-
 
 def build(context: StepContext):
     return verify_auth_ecs(context)

@@ -79,7 +79,7 @@ def _orch(tmp_path, *, mode="transactional", recovery="frozen", source_kind="hum
         state.gate_decisions = [{"step": "p.gate", "decision": "approved"}]
     if later:
         state.set_step("p", "other", StepState(status="done"))
-    orch = Orchestrator(str(path), state, mocks={}, now=NOW, handler_resolver=lambda pid, sid: (
+    orch = Orchestrator(str(path), state, step_defaults={}, now=NOW, handler_resolver=lambda pid, sid: (
         handler if (pid, sid) == (effect_phase, "effect") else (
             observer if sid == "source" and source_kind == "external" else None)))
     control.update(calls=calls, phase=effect_phase, mode=mode, recovery=recovery)
@@ -208,7 +208,7 @@ def test_known_always_invalidation_is_denied_before_invocation(tmp_path, policy,
     from orchestrator.commands import step_action
 
     orch, control = _orch(tmp_path, source_kind="external", policy=policy)
-    monkeypatch.setattr(step_action.mocks_mod, "load_mocks", lambda: {})
+    monkeypatch.setattr(step_action.env_mod, "load_step_defaults", lambda *_a, **_kw: {})
     before, permits = deepcopy(orch.state), _permits(orch)
     args = SimpleNamespace(phase="p", step="source", release="r", param=[], execution_id=None)
     if policy == "always":

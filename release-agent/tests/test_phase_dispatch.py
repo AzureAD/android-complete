@@ -49,7 +49,7 @@ def engine(tmp_path, phase, *, execution="parallel"):
             NeedsSkill(tool="fixture_read", payload={}, record_as="gather")),
     }
     st = ReleaseState(release_id="r", timezone="UTC")
-    orch = Orchestrator(str(path), st, mocks={}, handler_resolver=lambda _p, sid: modules.get(sid))
+    orch = Orchestrator(str(path), st, step_defaults={}, handler_resolver=lambda _p, sid: modules.get(sid))
     return orch, calls
 
 
@@ -88,7 +88,7 @@ def test_actual_phase_config_queue_matches_scheduler_and_frontier(phase):
     _active_phase(st, phase)
     if phase == "hotfix":
         st.active_conditionals.append("hotfix")
-    orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2027, 1, 30))
+    orch = Orchestrator(CONFIG, st, step_defaults={}, as_of=date(2027, 1, 30))
     selection = orch.scheduling()
     report = orch.status_report()
     assert selection.frontier.id == phase
@@ -172,7 +172,7 @@ def test_scheduled_real_phase_never_becomes_executable_to_satisfy_handoff():
     st = ReleaseState(release_id="2026-12", ccd="2026-12-09",
                       owner_email="owner@example.test", timezone="UTC")
     _active_phase(st, "preflight")
-    orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2026, 10, 21))
+    orch = Orchestrator(CONFIG, st, step_defaults={}, as_of=date(2026, 10, 21))
     report = orch.status_report()
     plan = report["work_dispatch"]
     assert plan["next_action"] == "scheduled" and plan["pending_work"] == []
@@ -221,20 +221,17 @@ def test_persisted_test6_guard_refuses_cg_handoff_before_independent_tasks(tmp_p
     assert path.read_bytes() == before
 
 
-def test_step_action_and_tick_expose_same_cross_phase_queue(tmp_path, monkeypatch, capsys):
+def test_step_action_exposes_cross_phase_queue(tmp_path, monkeypatch, capsys):
     from orchestrator import schedule
     st = seed_test6(tmp_path)
     monkeypatch.setattr(schedule, "now_local", lambda _tz=None:
                         datetime(2026, 12, 2, 12, tzinfo=timezone.utc))
-    for verb, extra in (
-        ("step-action", ["--phase", "preflight", "--step", "vitals"]),
-        ("tick", ["--json"]),
-    ):
-        assert cli.main(["--runs-root", str(tmp_path), verb, "--release", st.release_id, *extra]) == 0
-        result = json.loads(capsys.readouterr().out)
-        assert {item["step"] for item in result["work_dispatch"]["pending_work"]} == {
-            "notice", "flight_reminder", "lockdown"}
-        assert not result["work_dispatch"]["may_return_to_user"]
+    assert cli.main(["--runs-root", str(tmp_path), "step-action", "--release", st.release_id,
+                     "--phase", "preflight", "--step", "vitals"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert {item["step"] for item in result["work_dispatch"]["pending_work"]} == {
+        "notice", "flight_reminder", "lockdown"}
+    assert not result["work_dispatch"]["may_return_to_user"]
 
 
 @pytest.mark.parametrize("holds,code", [
@@ -272,7 +269,7 @@ def test_guarded_cli_input_boundaries_never_mutate_or_hide_independent_work(
 def test_guard_without_release_readiness_reuses_entry_exhaustion(tmp_path, capsys):
     st = ReleaseState(release_id="2026-12", owner_email="owner@example.test")
     # Binding through the normal test orchestrator does not sign readiness.
-    Orchestrator(CONFIG, st, mocks={})
+    Orchestrator(CONFIG, st, step_defaults={})
     C.save_state(st, str(tmp_path), st.release_id)
     from tests._automation import seed_driver
     seed_driver(tmp_path, st)
@@ -362,7 +359,7 @@ def test_guided_progression_continues_across_phases_until_the_actual_human_gate(
         return None
 
     state = ReleaseState(release_id="r", timezone="UTC")
-    orch = Orchestrator(str(path), state, mocks={}, handler_resolver=resolver)
+    orch = Orchestrator(str(path), state, step_defaults={}, handler_resolver=resolver)
     orch.run_until_gate()
     followup = C.guided_followup(orch)
     assert calls == ["first"] and followup["continue_automatically"]
@@ -440,7 +437,7 @@ def test_non_blocking_exhaustive_execution_isolates_tool_failures_and_reports_al
         return None
 
     st = ReleaseState(release_id="2026-11", timezone="UTC")
-    orch = Orchestrator(str(path), st, mocks={}, handler_resolver=resolver)
+    orch = Orchestrator(str(path), st, step_defaults={}, handler_resolver=resolver)
 
     # First drain: missing_cli fails with FileNotFoundError, NOT halting healthy_root or healthy_child!
     orch.run_until_gate()
@@ -469,7 +466,7 @@ def test_non_blocking_exhaustive_execution_isolates_tool_failures_and_reports_al
 def test_status_view_renders_contextual_quick_commands_footer_by_state(tmp_path):
     from datetime import date
     st = seed_test6(tmp_path)
-    orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2026, 12, 2))
+    orch = Orchestrator(CONFIG, st, step_defaults={}, as_of=date(2026, 12, 2))
     # Mark pending scout steps done so queue is exhausted and handoff is active
     for sid in ("notice", "flight_reminder", "lockdown"):
         st.set_step("preflight", sid, StepState(status="done", note="ok"))
@@ -510,7 +507,7 @@ def test_commands_cli_renders_starter_and_live_active_release_guides(tmp_path, c
     assert "No active release is initialized yet" in empty_payload["guide_markdown"]
     assert empty_payload["launcher_prompt"]["kind"] == "launcher_no_release"
     assert [a["action"] for a in empty_payload["launcher_prompt"]["answers"]] == [
-        "start_release", "check_setup", "list_releases", "show_commands",
+        "start_release", "environment", "list_releases", "show_commands",
     ]
 
     # 2. Active release -> auto-resolves release, fills concrete step names, builds active launcher
@@ -538,7 +535,7 @@ def test_checkpoint_owner_prompts_preserve_seamless_auto_resume(tmp_path):
     st = seed_test6(tmp_path)
     for sid in ("notice", "flight_reminder", "lockdown"):
         st.set_step("preflight", sid, StepState(status="done", note="ok"))
-    orch = Orchestrator(CONFIG, st, mocks={}, as_of=date(2026, 12, 2))
+    orch = Orchestrator(CONFIG, st, step_defaults={}, as_of=date(2026, 12, 2))
     blocked_report = decorate_handoff_contract(orch.status_report())
     assert blocked_report["handoff_ready"]
     bp = blocked_report["owner_prompt"]

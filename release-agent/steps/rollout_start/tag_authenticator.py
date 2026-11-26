@@ -20,7 +20,7 @@ matching the repo's existing release tags.
 Idempotent: if the tag already exists AT that commit -> Done; if it exists at a DIFFERENT commit
 -> Blocked (a human must reconcile). No release-app build on the branch yet -> Blocked.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   version : inject the version / tag name (skip the final-build lookup).
   commit  : inject the commit to tag (skip the final-build lookup).
   dry_run : compose the tag but DON'T write it (report what it would do) — safe live testing.
@@ -31,7 +31,7 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools.coordinates import coords
 
 from orchestrator.authority import WriteOperation
@@ -43,7 +43,6 @@ NAME = 'Tag the Authenticator release commit'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "idempotent"
 EFFECT_RECOVERY = "frozen"
-
 
 def prepare_effect(context):
     execution = context.evidence.step("rollout_start", ID).execution or {}
@@ -70,24 +69,14 @@ def prepare_effect(context):
         **target,
     }
 
-
 def execute(context: StepContext):
     return _apply_target(context, context.effect.execution["effect_input"])
 
 _REPO = coords.repo("authenticator")
 
-MOCKABLE = {
-    "version": {"kind": "input", "desc": "Inject the version / tag name (skip the build lookup)."},
-    "commit": {"kind": "input", "desc": "Inject the commit to tag (skip the build lookup)."},
-    "dry_run": {"kind": "input", "desc": "Compose the tag but DON'T write it (report only)."},
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
-}
-
-
 def _auth_release_branch(context):
     """The Auth App RELEASE branch ('release/YYYY/MM/DD') from state.versions, or None."""
     return (getattr(context.release, "versions", None) or {}).get("authenticator")
-
 
 def _tag_url(repository, tag_name):
     return (
@@ -95,12 +84,10 @@ def _tag_url(repository, tag_name):
         f"{repository['name']}?version=GT{tag_name}"
     )
 
-
 def build(context: StepContext):
     if context.effect is None:
         raise ValueError("Tagging requires an authorized effect context")
     return execute(context)
-
 
 def _resolve_target(context, branch):
     # 1) resolve the version + commit (injected, or from the captured final release build)
@@ -142,7 +129,6 @@ def _resolve_target(context, branch):
         "commit": str(commit).strip(),
         "dry_run": str(context.input("dry_run", "")).lower() in ("1", "true", "yes"),
     }
-
 
 def _apply_target(context, target):
     tag = target["tag"]
@@ -200,8 +186,8 @@ KNOWLEDGE = {'summary': "Tag the Auth App's released commit with its version (no
         'version + commit, and creates a lightweight git tag <version> at that commit. '
         'Idempotent: if the tag already exists AT that commit it passes (no-op); if it exists '
         'at a DIFFERENT commit it BLOCKS for a human to reconcile. If the final Authenticator '
-        "build hasn't been identified yet, it blocks. Test with the `version`/`commit` inject "
-        'mocks, `dry_run` (compose without writing), or `fail`.\n',
+        "build hasn't been identified yet, it blocks. Rehearse via `step_defaults` (`version`/`commit`), "
+        '`dry_run` (compose without writing), or `fail`.\n',
  'consequences': 'A real WRITE to the Authenticator repo: it creates the git tag ref. It never '
                  'force-updates an existing tag (an existing tag at a different commit blocks '
                  'instead), and it makes no other change.\n',

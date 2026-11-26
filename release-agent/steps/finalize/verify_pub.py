@@ -14,16 +14,16 @@ error that prevents checking -> Blocked (can't verify), so it's surfaced rather 
 
 Read-only anonymous HTTPS (Maven Central is public) -> `agent` step.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   versions : dict override {common, msal} (else read from state.versions).
-  results  : dict key->'published'|'missing'|'error' to skip the live HEADs (tests).
+  results  : dict key->'published'|'missing'|'error' to skip the live HEADs.
 """
 from __future__ import annotations
 
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked, InProgress
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import maven as M
 
 ID = "verify_pub"
@@ -42,18 +42,10 @@ TARGETS = [
 
 CONFIG = {"central": M.CENTRAL, "poll_in_min": 60}
 
-MOCKABLE = {
-    "versions": {"kind": "input", "desc": "dict override {common, msal} (else state.versions)."},
-    "results": {"kind": "input",
-                "desc": "dict artifactKey->'published'|'missing'|'error' (skip the live HEADs)."},
-}
-
-
 from steps.finalize._orchestrator_gate import payload_versions as _versions
 
-
 def _check(context, key, version):
-    """(ok, published, detail) — mock-first, else a live Maven Central HEAD."""
+    """(ok, published, detail) — configured `results` first, else a live Maven Central HEAD."""
     inj = context.input("results", MISSING)
     if inj is not MISSING and isinstance(inj, dict) and key in inj:
         r = str(inj[key]).lower()
@@ -64,13 +56,12 @@ def _check(context, key, version):
         return (False, False, "injected error")
     return context.services.assets.is_published(key, version)
 
-
 def build(context: StepContext):
     versions = _versions(context)
     if not versions.get("common") or not versions.get("msal"):
         return Blocked(
             "verify_pub: missing release versions (need common + msal in state.versions, "
-            "populated at Phase 2). Provide the `versions` mock for testing.")
+            "populated at Phase 2). Provide `versions` in `step_defaults` for rehearsals.")
 
     links, published, pending, errors = [], [], [], []
     for key, vkey, label in TARGETS:
@@ -116,8 +107,7 @@ KNOWLEDGE = {'summary': 'Verify MSAL / Common / Common4j are live on Maven Centr
         '(200 = live, 404 = not yet). New releases can take a few HOURS to propagate to '
         "repo1.maven.org, so a 404 is 'not yet' (keep polling), not a failure. The "
         'search.maven.org UI can lag ~a day — the repo1 direct links above update within hours '
-        'and are what this step checks. Test with the `results` mock (artifactKey -> '
-        'published|missing|error) and `versions`.\n',
+        'and are what this step checks. Rehearse via `step_defaults` (`results` and `versions`).\n',
  'links': [{'name': 'Publish to Maven Central (internal checklist)',
             'url': 'https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/publish-to-maven-central'}],
  'faqs': [{'q': "Why does it stay 'in progress' for a while?",

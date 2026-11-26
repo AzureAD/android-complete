@@ -22,17 +22,6 @@ REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 RECHECK_WHEN_BLOCKED = True
 
-# Mock knobs (mocks.local.yaml): mrwp_id (inject build id), stages (inject stage list),
-# tests (inject test summary). Consumed inside _mrwp.verify_mrwp via mock_input.
-MOCKABLE = {
-    "mrwp_id": {"kind": "input", "desc": "Inject the ECS MRWP build id (skip orchestrator lookup)."},
-    "stages": {"kind": "input", "desc": "Inject the ECS run's stage list [{name,state,result}]."},
-    "tests": {"kind": "input", "desc": "Inject the ECS test summary {total,passed,failed,categories}."},
-    "suites": {"kind": "input", "desc": "Inject the ECS failing suites [{name,failed,total,category,tests}]."},
-    "rc": {"kind": "input", "desc": "Inject the authoritative RC iteration number (else from the tag)."},
-}
-
-
 def build(context: StepContext):
     return verify_mrwp(context, "ECS")
 

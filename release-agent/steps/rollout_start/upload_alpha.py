@@ -16,7 +16,6 @@ AUTOMATION_LABEL = "upload-alpha"
 PREVIOUS_STEP_ID = "signoff_start"
 PREVIOUS_LABEL = "Release Sign Off"
 
-MOCKABLE = release_stage.MOCKABLE
 stage_started = release_stage.stage_started
 stage_failed = release_stage.stage_failed
 resolve_target, build = release_stage.make_chained_stage_step(

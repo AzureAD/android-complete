@@ -48,7 +48,7 @@ def engine(tmp_path, phase, step, *, services=None, writers=None):
                                                "steps": definitions}]}), encoding="utf-8")
     state = ReleaseState(release_id="2026-08", ccd="2026-08-13", timezone="UTC",
                          owner_email="owner@example.com")
-    orch = Orchestrator(str(path), state, mocks={}, clock=Clock(NOW),
+    orch = Orchestrator(str(path), state, step_defaults={}, clock=Clock(NOW),
                         services=services, effect_services=writers, now=NOW)
     return orch
 

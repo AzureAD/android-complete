@@ -101,7 +101,7 @@ def _setup(tmp_path, monkeypatch, external=True, fail_after=False, predecessor=F
 
     def make_orch(st):
         orch = Orchestrator(
-            str(config), st, mocks={}, services=SimpleNamespace(),
+            str(config), st, step_defaults={}, services=SimpleNamespace(),
             effect_services=lambda *_: EffectServices(submit_pipeline_approval=submit),
             now=datetime(2026, 9, 12, 12, tzinfo=timezone.utc),
             handler_resolver=lambda _phase, step: modules.get(step))
@@ -231,9 +231,7 @@ def test_stale_hash_and_wrong_execution_cannot_mutate_or_submit(tmp_path, monkey
     assert orch.state.get_step("phase", "approve").execution
 
 
-def test_owned_gate_blocks_reopen_direct_completion_and_adoption(tmp_path, monkeypatch):
-    from orchestrator.revision import adoption_preview
-
+def test_owned_gate_blocks_reopen_and_direct_completion(tmp_path, monkeypatch):
     command, args, orch, calls, _, _ = _setup(tmp_path, monkeypatch)
     assert orch.approve_gate().kind == "idle"
     args.reserve = True
@@ -242,7 +240,6 @@ def test_owned_gate_blocks_reopen_direct_completion_and_adoption(tmp_path, monke
     assert not orch.reopen("phase", "approve", "try again").changed
     assert orch.complete_step("phase", "approve").kind == "idle"
     assert orch.skip_step("phase", "approve", "try again").kind == "idle"
-    assert any("owned execution" in item for item in adoption_preview(orch)["blockers"])
     assert orch.state.steps == before and not calls
 
 
@@ -262,7 +259,7 @@ def test_suspended_start_and_gate_input_mocks_cannot_authorize_work(tmp_path, mo
     orch.halt("incident")
     assert command(args) == 1 and not calls
     orch.resume()
-    orch.mocks = {"phase.approve": {"submit": "skip"}}
+    orch.step_defaults = {"phase.approve": {"submit": "skip"}}
     assert command(args) == 1 and not calls
     assert path.read_bytes() == before
 
@@ -336,7 +333,7 @@ def test_production_checkpoint_requires_current_release_lock(tmp_path, monkeypat
 
     def loaded():
         return Orchestrator(
-            args.config, C.load_state(args.runs_root, args.release), mocks={},
+            args.config, C.load_state(args.runs_root, args.release), step_defaults={},
             services=original._services, effect_services=original._effect_services,
             handler_resolver=original._handler_resolver, now=original.now_local)
 

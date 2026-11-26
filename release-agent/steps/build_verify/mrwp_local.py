@@ -22,15 +22,6 @@ REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "read_only"
 RECHECK_WHEN_BLOCKED = True
 
-MOCKABLE = {
-    "mrwp_id": {"kind": "input", "desc": "Inject the Local MRWP build id (skip orchestrator lookup)."},
-    "stages": {"kind": "input", "desc": "Inject the Local run's stage list [{name,state,result}]."},
-    "tests": {"kind": "input", "desc": "Inject the Local test summary {total,passed,failed,categories}."},
-    "suites": {"kind": "input", "desc": "Inject the Local failing suites [{name,failed,total,category,tests}]."},
-    "rc": {"kind": "input", "desc": "Inject the authoritative RC iteration number (else from the tag)."},
-}
-
-
 def build(context: StepContext):
     return verify_mrwp(context, "Local")
 

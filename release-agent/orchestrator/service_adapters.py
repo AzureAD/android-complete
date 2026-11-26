@@ -41,7 +41,6 @@ def production_services(*, status_email=None, status_recipients=None):
     from tools import pipelines as P, prs as PR, oneauth as OA, checks as C
     from tools import testplans as T, broker_plans as B, distribution as D
     from tools import bugbash as BB, maven as M, invite as I, localization as LOC
-    from .automations import load_defs
 
     def unavailable(*args, **kwargs):
         raise ValueError("Status email read model was not supplied for this invocation")
@@ -76,7 +75,7 @@ def production_services(*, status_email=None, status_recipients=None):
         ),
         IdentityReads(C.current_az_user, D.resolve_roster, BB.resolve_mention_people),
         AssetReads(_template, _changelog, _json, _text, D.load_config,
-                   D.oncall_team, load_defs, status_recipients or unavailable,
+                   D.oncall_team, status_recipients or unavailable,
                    status_email or unavailable, M.is_published, I.load_template),
     )
 

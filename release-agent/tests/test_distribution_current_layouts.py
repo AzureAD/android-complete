@@ -37,8 +37,8 @@ def inspect(monkeypatch, state):
 
 def cli(monkeypatch, state, tmp_path, capsys, *flags):
     inputs = distribution_inputs(monkeypatch, state)
-    monkeypatch.setattr(command.mocks_mod, "load_mocks",
-                        lambda: {"bug_bash.distribute_tests": inputs})
+    monkeypatch.setattr(command.env_mod, "load_step_defaults",
+                        lambda *_a, **_kw: {"bug_bash.distribute_tests": inputs})
     args = build_parser().parse_args([
         "--config", str(tmp_path / "config" / "phases.yaml"),
         "--runs-root", str(tmp_path / "runs"),

@@ -200,7 +200,7 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
     from datetime import datetime, timezone
     import json
     from unittest.mock import Mock
-    from orchestrator import cli, delivery, mocks, schedule, service_adapters
+    from orchestrator import cli, delivery, environment as mocks, schedule, service_adapters
     from steps.preflight import cron
     from tools import checks, pipelines as P
 
@@ -210,7 +210,7 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
     monkeypatch.setattr(schedule, "now_local", lambda _tz=None: now)
     monkeypatch.setattr(cron, "_trusted_utc_now", lambda: now)
     monkeypatch.setattr(delivery, "now_iso", lambda: now.isoformat())
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {
         "preflight.notice": {"send_to": ["owner@example.test"]},
         "preflight.flight_reminder": {"send_to": "19:phase-fixture@thread.v2"},
     })
@@ -326,7 +326,7 @@ def test_complete_preflight_real_handlers_and_persisted_cli(
     controls["alerts"] = []
     report = json.loads(call("next", "--retry", "--json"))
     completed = C.load_state(root, rid)
-    phase = next(p for p in Orchestrator(CONFIG, completed, mocks={}).config["phases"]
+    phase = next(p for p in Orchestrator(CONFIG, completed, step_defaults={}).config["phases"]
                  if p["id"] == "preflight")
     assert all(completed.is_done("preflight", item["id"]) for item in phase["steps"])
     assert report["current_phase"] == "ccd" and report["status"] == "scheduled"
@@ -688,9 +688,9 @@ def lockdown_cli(tmp_path, monkeypatch, capsys):
     from copy import deepcopy
     from datetime import datetime
     from types import SimpleNamespace
-    from orchestrator import cli, mocks, schedule
+    from orchestrator import cli, environment as mocks, schedule
 
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     now = datetime.fromisoformat("2026-10-16T14:00:00-07:00")
     monkeypatch.setattr(schedule, "now_local", lambda _tz=None: now)
     st = ReleaseState(
@@ -926,14 +926,14 @@ def flight_reminder_cli(tmp_path, monkeypatch, capsys):
     from datetime import datetime, timezone
     import json
     from types import SimpleNamespace
-    from orchestrator import cli, delivery, mocks, schedule
+    from orchestrator import cli, delivery, environment as mocks, schedule
 
     now = datetime.fromisoformat("2026-10-16T14:00:00-07:00")
     chat = "19:flight-reminder-fixture@thread.v2"
     monkeypatch.setattr(schedule, "now_local", lambda _tz=None: now)
     monkeypatch.setattr(delivery, "now_iso", lambda: now.astimezone(timezone.utc).isoformat())
-    monkeypatch.setattr(mocks, "load_mocks",
-                        lambda: {"preflight.flight_reminder": {"send_to": chat}})
+    monkeypatch.setattr(mocks, "load_step_defaults",
+                        lambda *_a, **_kw: {"preflight.flight_reminder": {"send_to": chat}})
     st = ReleaseState(
         release_id="2026-10", target_month="2026-11", ccd="2026-10-21",
         ccd_source="confirmed", timezone="America/Los_Angeles",
@@ -1113,7 +1113,7 @@ def test_cg_agent_passes_when_no_high():
 def test_oneauth_access_granted():
     """Injected access='granted' → the step passes and links the repo + access package."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from orchestrator.state import ReleaseState
     st = ReleaseState(release_id="2026-08")
@@ -1127,7 +1127,7 @@ def test_oneauth_access_granted():
 def test_oneauth_effect_freezes_alias_and_repository():
     from orchestrator.state import ReleaseState, StepState
     from steps.preflight import oneauth_access as step
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tools import checks
 
     state = ReleaseState(release_id="2026-08")
@@ -1180,7 +1180,7 @@ def test_oneauth_effect_freezes_alias_and_repository():
 def test_oneauth_access_denied_blocks():
     """Injected access='denied' → BLOCKED, pointing at the access package + a rerun instruction."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from orchestrator.state import ReleaseState
     st = ReleaseState(release_id="2026-08")
@@ -1196,7 +1196,7 @@ def test_oneauth_access_denied_blocks():
 def test_oneauth_access_blocks_without_alias():
     """No resolvable alias → BLOCKED (can't form the user/<alias>/… probe branch)."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from orchestrator.state import ReleaseState
     from tools import checks
@@ -1228,7 +1228,7 @@ def test_cg_blocked_step_reruns_and_clears_when_fixed():
     step = next(s for s in orch.status_report()["active_phase"]["steps"] if s["id"] == "cg")
     assert step["status"] == "blocked" and step["needs_owner"]
     # FIX: alerts now clean → RERUN (next) re-checks and passes
-    orch.mocks["preflight.cg"] = {"outcome": "done", "note": "CG: 0 active alerts."}
+    orch.step_defaults["preflight.cg"] = {"outcome": "done", "note": "CG: 0 active alerts."}
     orch.run_until_gate(pending_only=False)
     assert st.is_done("preflight", "cg")
     assert "preflight.cg" not in orch.status_report()["pending_human"]
@@ -1250,10 +1250,10 @@ def test_cg_blocked_step_skip_override():
 
 
 def test_cli_skip_surfaces_the_next_parallel_human_hold(tmp_path, capsys, monkeypatch):
-    from orchestrator import cli, mocks
+    from orchestrator import cli, environment as mocks
     from orchestrator.state import StepState
 
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {})
     rid = "2026-08"
     st, orch = _orch()
     st.release_id = rid
@@ -1274,7 +1274,7 @@ def test_cli_skip_surfaces_the_next_parallel_human_hold(tmp_path, capsys, monkey
     capsys.readouterr()
     saved = C.load_state(str(tmp_path), rid)
     assert rc == 0
-    report = Orchestrator(CONFIG, saved, mocks={}).status_report()
+    report = Orchestrator(CONFIG, saved, step_defaults={}).status_report()
     assert report["status"] == "awaiting_action"
     assert report["current_step"] == "vitals"
     assert report["pending_human"] == ["preflight.vitals"]
@@ -1438,7 +1438,7 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
         real_load = _CC.load_orch
         def fake_load(runs_root, release, config, as_of=None):
             s, o = real_load(runs_root, release, config, as_of)
-            o.mocks = orch_mocks
+            o.step_defaults = orch_mocks
             return s, o
         _CC.load_orch = fake_load
         try:

@@ -1,6 +1,6 @@
 # Release Orchestrator — workflow topology (phases, availability rules, and step dependency graph).
 # Step metadata (name, kind, requires_approval, required_tools, effect_mode, write_command,
-# AVAILABLE, KNOWLEDGE, MOCKABLE) lives inside each co-located module `steps/<phase>/<step>.py`.
+# AVAILABLE, KNOWLEDGE) lives inside each co-located module `steps/<phase>/<step>.py`.
 # Pure YAML-only human/gate/placeholder steps (without a Python module) declare `name` and `kind` inline.
 
 phases:
@@ -85,17 +85,16 @@ phases:
       - { id: verify_alpha_uploaded, depends_on: [upload_alpha] }
       - { id: upload_whats_new, depends_on: [verify_alpha_uploaded] }
       - { id: beta_play_store, depends_on: [upload_whats_new] }
-
   - id: monitor
     name: "Monitoring & Ring Advancement"
     depends_on: [rollout_start]
     steps:
-      - { id: health_report, name: "Crash-% health report (halt/hotfix/proceed)", kind: auto, implementation: dummy, depends_on: [rollout_start.beta_play_store] }
-      - { id: adoption, name: "Adoption % vs ring threshold", kind: auto, implementation: dummy, depends_on: [rollout_start.beta_play_store] }
-      - { id: guards, name: "Check advancement guard rules", kind: auto, implementation: dummy, depends_on: [health_report, adoption] }
+      - { id: health_report, name: "Crash-% health report (halt/hotfix/proceed)", kind: human_action, depends_on: [rollout_start.beta_play_store] }
+      - { id: adoption, name: "Adoption % vs ring threshold", kind: human_action, depends_on: [rollout_start.beta_play_store] }
+      - { id: guards, name: "Check advancement guard rules", kind: human_action, depends_on: [health_report, adoption] }
       - { id: advance, name: "Ring advance / halt decision", kind: approval_gate, depends_on: [guards] }
-      - { id: progress_email, name: "Send progression email on advance", kind: auto, implementation: dummy, depends_on: [advance] }
-      - { id: dashboard, name: "Update ADX dashboard params", kind: auto, implementation: dummy, depends_on: [advance] }
+      - { id: progress_email, name: "Send progression email on advance", kind: human_action, depends_on: [advance] }
+      - { id: dashboard, name: "Update ADX dashboard params", kind: human_action, depends_on: [advance] }
       - { id: crash_annot, name: "Flag new vs existing crashes", kind: human_action, depends_on: [health_report] }
       - { id: hotfix_eval, name: "Surface hotfix-trigger criteria", kind: human_action, depends_on: [health_report] }
 
@@ -105,27 +104,27 @@ phases:
     steps:
       - { id: china, name: "China publish flow", kind: human_action, depends_on: [monitor.advance] }
       - { id: samsung, name: "Samsung portal upload", kind: human_action, depends_on: [monitor.advance] }
-      - { id: ngms, name: "Verify nGMS upload", kind: auto, implementation: dummy, depends_on: [monitor.advance] }
-      - { id: teams_dev, name: "Teams Devices announcement", kind: auto, implementation: dummy, depends_on: [monitor.advance] }
-      - { id: approvals, name: "Track partner approvals + final notice", kind: auto, implementation: dummy, depends_on: [china, samsung, ngms] }
-      - { id: review_times, name: "Maintain review-times table", kind: auto, implementation: dummy, depends_on: [approvals] }
+      - { id: ngms, name: "Verify nGMS upload", kind: human_action, depends_on: [monitor.advance] }
+      - { id: teams_dev, name: "Teams Devices announcement", kind: human_action, depends_on: [monitor.advance] }
+      - { id: approvals, name: "Track partner approvals + final notice", kind: human_action, depends_on: [china, samsung, ngms] }
+      - { id: review_times, name: "Maintain review-times table", kind: human_action, depends_on: [approvals] }
 
   - id: hotfix
     name: "Hotfix (conditional)"
     conditional: true
     depends_on: []
     steps:
-      - { id: cherry, name: "Cherry-pick PRs", kind: auto, implementation: dummy, depends_on: [] }
-      - { id: rebuild, name: "Rebuild + retain hotfix build", kind: auto, implementation: dummy, depends_on: [cherry] }
+      - { id: cherry, name: "Cherry-pick PRs", kind: human_action, depends_on: [] }
+      - { id: rebuild, name: "Rebuild + retain hotfix build", kind: human_action, depends_on: [cherry] }
       - { id: smoke, name: "P0 smoke subset", kind: approval_gate, depends_on: [rebuild] }
-      - { id: expedite, name: "Expedited rollout", kind: auto, implementation: dummy, depends_on: [smoke] }
-      - { id: alpha_orgs, name: "Track alpha-mitigation orgs to remove", kind: auto, implementation: dummy, depends_on: [expedite] }
+      - { id: expedite, name: "Expedited rollout", kind: human_action, depends_on: [smoke] }
+      - { id: alpha_orgs, name: "Track alpha-mitigation orgs to remove", kind: human_action, depends_on: [expedite] }
 
   - id: close
     name: "Release Close"
     depends_on: [monitor, partner]
     steps:
-      - { id: closeout, name: "Close-out checklist (approvals/comms/bugs)", kind: auto, implementation: dummy, depends_on: [partner.approvals, monitor.advance] }
+      - { id: closeout, name: "Close-out checklist (approvals/comms/bugs)", kind: human_action, depends_on: [partner.approvals, monitor.advance] }
       - { id: done, name: "Release complete", kind: approval_gate, depends_on: [closeout] }
 
 

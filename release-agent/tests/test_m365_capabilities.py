@@ -87,7 +87,7 @@ def test_capability_plan_is_read_only_and_uses_correct_tools(tmp_path, capsys):
 
 def test_readiness_rejects_bare_capability_pass_and_preserves_state():
     st = state()
-    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    orch = fresh_orchestrator(CONFIG, st, step_defaults={})
     before = deepcopy(st.readiness_items)
     assert "error" in orch.gate.record_check("m365_access", "pass", "tools look present")
     assert st.readiness_items == before
@@ -98,7 +98,7 @@ def test_readiness_rejects_bare_capability_pass_and_preserves_state():
 
 def test_fresh_capabilities_store_read_proof_without_blanket_write_attestation():
     st = state()
-    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    orch = fresh_orchestrator(CONFIG, st, step_defaults={})
     proof = evidence(st)
     result = orch.gate.record_check("m365_access", "pass", "actual read probes", evidence=proof)
     assert "error" not in result
@@ -158,7 +158,7 @@ def test_capabilities_reject_missing_tools_partial_wrong_targets_and_unreadable_
 
 def test_owner_ccd_and_target_changes_invalidate_capability_reads(monkeypatch):
     st = state()
-    orch = fresh_orchestrator(CONFIG, st, mocks={})
+    orch = fresh_orchestrator(CONFIG, st, step_defaults={})
     assert "error" not in orch.gate.record_check("m365_access", "pass", evidence=evidence(st))
     for field, value in (("owner_email", "other@example.test"), ("ccd", "2026-10-22")):
         old = getattr(st, field)

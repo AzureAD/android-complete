@@ -687,9 +687,9 @@ def evaluate_and_deliver_partner_status(
               working hours `07:00-20:00`, or `>= 8` business hours in-phase with zero prior send);
           (c) Meaningful milestone transition (newly `blocked`, recovered from `blocked`, or
               completed a phase milestone) with `>= 4h` cooldown since the previous send.
-      - Honors `mocks.local.yaml` `status_email: { send_to: ... }` / `{ outcome: done }`.
+      - Honors `config/environment.yaml` profile recipients and `step_defaults.status_email`.
     """
-    from orchestrator import cli_common as C, delivery as D, mocks as mocks_mod, notifications as notif
+    from orchestrator import cli_common as C, delivery as D, environment as env, notifications as notif
     from tools import bugbash as BB
 
     state = orch.state
@@ -706,9 +706,12 @@ def evaluate_and_deliver_partner_status(
     ):
         return {"sent": False, "due": False, "reason": "outside_active_sdk_window"}
 
-    mock_spec = (mocks_mod.load_mocks() or {}).get("status_email") or {}
-    if str(mock_spec.get("outcome", "")).strip().lower() in {"done", "pass", "ok", "complete"}:
-        return {"sent": False, "due": False, "reason": "mocked_done"}
+    active_overrides = getattr(orch, "step_defaults", None) or env.load_step_defaults(config_path)
+    status_override = active_overrides.get("status_email") if isinstance(active_overrides, dict) else None
+    if isinstance(status_override, dict) and str(status_override.get("outcome", "")).strip().lower() in {
+        "done", "pass", "ok", "complete"
+    }:
+        return {"sent": False, "due": False, "reason": "configured_done"}
 
     stalled_phase = (
         frontier_id
@@ -758,20 +761,26 @@ def evaluate_and_deliver_partner_status(
             if runs_root:
                 C.save_state(state, runs_root, state.release_id)
 
+    explicit_send_to = status_override.get("send_to") if isinstance(status_override, dict) else None
     try:
-        recipients = notif.partner_recipients(config_path)
+        if explicit_send_to:
+            recipients, subject_prefix, _ = env.resolve_email_targets(
+                "partner_status",
+                owner_email=state.owner_email,
+                override=explicit_send_to,
+                config_path=config_path,
+            )
+        elif env.active_profile_name(config_path) != "prod":
+            recipients, subject_prefix, _ = env.resolve_email_targets(
+                "partner_status",
+                owner_email=state.owner_email,
+                config_path=config_path,
+            )
+        else:
+            recipients = notif.partner_recipients(config_path)
+            subject_prefix = env.email_subject_prefix(config_path)
     except ValueError:
         return {"sent": False, "due": False, "reason": "no_partner_recipients_configured"}
-
-    redirect_to = mock_spec.get("send_to")
-    subject_prefix = ""
-    if redirect_to:
-        recipients = (
-            [str(x).strip() for x in redirect_to if str(x).strip()]
-            if isinstance(redirect_to, list)
-            else [x.strip() for x in str(redirect_to).split(",") if x.strip()]
-        )
-        subject_prefix = "[TEST → me] "
 
     composed = compose(
         state,

@@ -5,7 +5,6 @@ import json
 
 from orchestrator import cli_common as C, write_review as W
 from orchestrator.git_write_plans import oneauth_plan, execute_oneauth, oneauth_progress
-from steps.lib import mockctx
 from steps.finalize import oneauth_common_pr as S
 from tools import oneauth as OA
 
@@ -13,19 +12,17 @@ from tools import oneauth as OA
 def cmd_create_oneauth_common_pr(args):
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     progress = None
-    mocks = W.step_mocks(orch, "finalize", S.ID)
+    step_inputs = W.step_defaults(orch, "finalize", S.ID)
 
     def planner():
-        with mockctx.active(mocks):
-            return oneauth_plan(orch.context("finalize", S.ID), args, progress=progress)
+        return oneauth_plan(orch.context("finalize", S.ID, inputs=step_inputs), args, progress=progress)
 
     authorization = None
     try:
-        with mockctx.active(mocks):
-            progress = (W.VerifiedProgress(orch, "finalize", S.ID, None, None)
-                        if getattr(args, "manual_completion", None) is not None else
-                        oneauth_progress(orch, orch.context("finalize", S.ID), args))
-            recovered = W.record_recovery(args, progress)
+        progress = (W.VerifiedProgress(orch, "finalize", S.ID, None, None)
+                    if getattr(args, "manual_completion", None) is not None else
+                    oneauth_progress(orch, orch.context("finalize", S.ID, inputs=step_inputs), args))
+        recovered = W.record_recovery(args, progress)
         if recovered is not None:
             print(json.dumps(recovered, indent=2))
             return 0

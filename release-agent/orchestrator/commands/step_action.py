@@ -23,7 +23,7 @@ from dataclasses import MISSING, asdict
 import json as _json
 
 from orchestrator import cli_common as C, delivery as D
-from orchestrator import mocks as mocks_mod
+from orchestrator import environment as env_mod
 from orchestrator import knowledge as kb
 from orchestrator.handlers import HandlerCatalog
 from orchestrator.outcomes import Blocked, Done, InProgress, as_dict
@@ -41,41 +41,6 @@ AUTO_APPROVED_WRITE_COMMANDS = {
     "start-upload-whats-new",
     "start-upload-alpha",
 }
-
-
-def _apply_overrides(out: dict, mockable: dict, spec: dict) -> None:
-    """Apply local-test payload overrides a step DECLARES via its MOCKABLE spec.
-
-    Each MOCKABLE entry maps a mock-file key → a payload rewrite:
-      sets         payload field to overwrite
-      as: "list"   coerce a scalar to [scalar]
-      aliases      value shortcuts (e.g. {"me": SELF_CHAT_ID})
-      tag_subject  prefix payload.subject with "[TEST → me]"
-    Keys in `spec` that aren't declared (and aren't the engine-level reserved
-    keys) are surfaced as `unknown_overrides` so typos are visible."""
-    pl = out.get("payload") or {}
-    reserved = {"outcome", "note", "reason"}          # handled by the engine, not here
-    applied = {}
-    for key, rule in (mockable or {}).items():
-        if rule.get("kind") != "payload":            # input → build(); post → check-localization
-            continue
-        if key not in spec:
-            continue
-        val = spec[key]
-        if "aliases" in rule and not isinstance(val, list) and val in rule["aliases"]:
-            val = rule["aliases"][val]
-        if rule.get("as") == "list" and not isinstance(val, list):
-            val = [val]
-        pl[rule["sets"]] = val
-        if rule.get("tag_subject") and pl.get("subject") and not pl["subject"].startswith("[TEST"):
-            pl["subject"] = f"[TEST → me] {pl['subject']}"
-        applied[key] = val
-    if applied:
-        out["test_redirect"] = applied
-        out["note"] = f"[test-redirect] {out.get('note', '')}".rstrip()
-    unknown = [k for k in spec if k not in (mockable or {}) and k not in reserved]
-    if unknown:
-        out["unknown_overrides"] = unknown
 
 
 def _parse_params(pairs) -> dict:
@@ -126,7 +91,8 @@ def prepare_step(args, st, orch):
     refreshing = intent == TransitionIntent.REFRESH
     pairs = getattr(args, "param", None)
     params = handler.parse_parameters(values=_parse_params(pairs), cli=True) if pairs and not force_reopen else None
-    spec = mocks_mod.step_mock_spec(mocks_mod.load_mocks(), args.phase, args.step)
+    active_defaults = orch.step_defaults if getattr(orch, "step_defaults", None) else env_mod.load_step_defaults(orch.config_path)
+    spec = env_mod.step_config(active_defaults, args.phase, args.step)
     outcome = orch.step_action_guard(args.phase, args.step)
     built = outcome is None
     if outcome is None:
@@ -157,11 +123,6 @@ def prepare_step(args, st, orch):
     if out["kind"] == "done" and handler.notification:
         out["no_delivery_required"] = True
 
-    # Local-test payload overrides: a mocks.local.yaml entry may set knobs the step
-    # DECLARES via its MOCKABLE spec (e.g. `send_to` on notice) — keeps the send
-    # real but redirects it. See `mock-spec` for what each step exposes.
-    if out.get("kind") == "needs_skill" and spec:
-        _apply_overrides(out, handler.mockable_spec(), spec)
     if out.get("kind") == "needs_skill":
         out["reservable"] = orch.supports_step_reservation(outcome)
         if (out.get("outbound") and handler.notification
@@ -369,8 +330,7 @@ def cmd_task(args):
     action = orch.run_task(args.phase, args.step, retry=args.retry, parameters=parameters)
     C.save_state(state, args.runs_root, args.release)
     C.log_actions(C.elog(args.runs_root, args.release), [action], state=state)
-    status = ("done" if action.kind == "ran" else "needs_input"
-              if definition.implementation.value == "dummy" else "waiting"
+    status = ("done" if action.kind == "ran" else "waiting"
               if action.kind in ("waiting", "scheduled", "in_flight") else "failed")
     print(_json.dumps({
         "status": status, "summary": action.message,
@@ -380,96 +340,6 @@ def cmd_task(args):
         **C.guided_followup(orch),
     }))
     return 1 if status == "failed" else 0
-
-
-def _classify(step: dict) -> str:
-    return {
-        "approval_gate": "gate",
-        "external": "scout",
-        "attestation": "attest",
-        "human_action": "reminder",
-        "auto": "agent",
-    }[step["kind"]]
-
-
-def _catalog(config_path: str) -> dict:
-    """Every step across every phase, with its mock-ability. Engine-level
-    (outcome: done|blocked) applies to any non-gate step; payload overrides only
-    exist where a migrated step declares MOCKABLE."""
-    import yaml
-    with open(config_path, "r", encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh)
-    catalog = HandlerCatalog.compile(WorkflowDefinition.compile(cfg), steps.get_step)
-    out = {}
-    for key, handler in catalog.handler_by_key.items():
-        step = handler.definition
-        kind = _classify(step.raw)
-        out[key] = {
-            "phase": step.phase_id, "name": step.name, "kind": kind,
-            "implementation": step.implementation.value,
-            "outcome_mockable": kind != "gate", "overrides": handler.mockable_spec(),
-        }
-    return out
-
-
-def _readiness_auto_items(config_path: str):
-    """Readiness AUTO items (build_access, mcp_servers, oncall_now, …) — mockable
-    via `readiness.<id>: {outcome: pass|fail}` to clear/fail the entry gate offline."""
-    import os
-    import yaml
-    rp = os.path.join(os.path.dirname(config_path), "readiness.yaml")
-    if not os.path.exists(rp):
-        return []
-    with open(rp, "r", encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh) or {}
-    out = []
-    for it in cfg.get("items", []):
-        if it.get("verify") == "auto":
-            out.append({"id": it["id"], "source": it.get("source", "python")})
-    return out
-
-
-def cmd_mock_spec(args):
-    """List what each step (across ALL phases) exposes to mocks.local.yaml."""
-    config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
-    catalog = _catalog(config_path)
-    readiness = _readiness_auto_items(config_path)
-    if getattr(args, "json", False):
-        print(_json.dumps({"steps": catalog, "readiness": readiness}))
-        return 0
-
-    print("mocks.local.yaml — what you can put under each \"<phase>.<step>\":\n")
-    print("  Engine-level (works for EVERY non-gate step, any phase):")
-    print("    outcome: done            # mark complete, skip its real work")
-    print("    outcome: blocked         # hold for the owner  (+ reason: \"...\")\n")
-    print("  Per-step properties (declared by the step; input = feeds real logic):")
-    any_ov = False
-    for key, e in catalog.items():
-        for name, rule in (e.get("overrides") or {}).items():
-            any_ov = True
-            kind = rule.get("kind", "payload")
-            print(f"    {key}: {{ {name}: <value> }}   [{kind}] — {rule.get('desc', '')}")
-    if not any_ov:
-        print("    (none declared yet)")
-
-    if readiness:
-        print("\n  Readiness entry-gate AUTO checks (real ADO/config/MCP — mock to clear offline):")
-        for it in readiness:
-            print(f"    readiness.{it['id']}: {{ outcome: pass|fail }}   [{it['source']}]")
-
-    print("\n  Every step — exactly what you can mock (🚦 gate = NOT mockable):")
-    cur = None
-    for key, e in catalog.items():
-        if e["phase"] != cur:
-            cur = e["phase"]
-            print(f"    [{cur}]")
-        if e["kind"] == "gate":
-            knobs = "🚦 not mockable (gate needs a real human decision)"
-        else:
-            parts = ["outcome: done|blocked"] + list((e.get("overrides") or {}).keys())
-            knobs = "  ·  ".join(parts)
-        print(f"      {key:30} [{e['kind']:6}] → {knobs}")
-    return 0
 
 
 def cmd_step_info(args):
@@ -520,11 +390,10 @@ def _handler_info(config_path, phase, step):
     }
 
 def cmd_task_history(args):
-    state = C.load_state(args.runs_root, args.release)
+    state, orch = C.load_orch(args.runs_root, args.release, args.config)
     key = state.key(args.phase, args.step)
     attempt = state.task_attempts.get(key)
-    if not attempt and not any(
-            key in phase["step_keys"] for phase in (state.workflow_revision or {}).get("phases", [])):
+    if not attempt and key not in orch.workflow.step_by_key:
         raise ValueError(f"No such task in this release: {key}")
     record = state.get_step(args.phase, args.step)
     if args.details:
@@ -615,12 +484,6 @@ def register(sub):
     sp.add_argument("--confirmed-by")
     sp.add_argument("--prior-writer-stopped", action="store_true")
     sp.set_defaults(func=cmd_step_action)
-
-    ms = sub.add_parser(
-        "mock-spec",
-        help="List what every step (all phases) exposes to mocks.local.yaml")
-    ms.add_argument("--json", action="store_true", help="Emit the catalog as JSON")
-    ms.set_defaults(func=cmd_mock_spec)
 
     si = sub.add_parser(
         "step-info",

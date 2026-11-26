@@ -7,8 +7,8 @@ CCD delay or a post-CCD cherry-pick (both need Moumita's approval).
 
 Posting to Teams needs the WorkIQ MCP the engine can't reach, so this is a `scout`
 step: `build()` resolves the message + target and returns a
-NeedsSkill(workiq_send_chat_message). Redirect for tests with the `send_to` mock
-knob (keeps the post real, points it at your own chat). See EXTERNAL-REFERENCES.md
+NeedsSkill(workiq_send_chat_message). Target chat resolves from `config/environment.yaml`
+(`self` in `test`, Android Core Team in `prod`). See EXTERNAL-REFERENCES.md
 for the fixed chat id.
 """
 from __future__ import annotations
@@ -39,15 +39,6 @@ CONFIG = {
     "approver_email": "moghosh@microsoft.com",
 }
 
-# Knobs this step exposes to mocks.local.yaml (see `mock-spec`). Keeps the Teams
-# post REAL but redirects it — the applier rewrites payload.chatId.
-MOCKABLE = {
-    "send_to": {
-        "kind": "payload", "sets": "chatId", "aliases": {"me": SELF_CHAT_ID, "self": SELF_CHAT_ID},
-        "desc": "Post to Teams for real, but to this chat ('me' = your own chat).",
-    },
-}
-
 
 def _html(ctx: dict, cfg: dict) -> str:
     """Teams-friendly HTML: the CCD PR-merge deadline and escalation path."""
@@ -73,7 +64,6 @@ def _html(ctx: dict, cfg: dict) -> str:
 </ol>
 <p>Thanks,<br>{T.esc(ctx['owner'])}</p>"""
 
-
 def build(context: StepContext):
     """Resolve the reminder into a NeedsSkill(workiq_send_chat_message), or Blocked
     if the release has no CCD."""
@@ -85,15 +75,18 @@ def build(context: StepContext):
     cfg = CONFIG
     ctx = release_ctx(context)
     html = _html(ctx, cfg)
-    chat_id, target_note, prefix = resolve_chat_target(
-        context, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"))
+    chat_id, target_note, banner = resolve_chat_target(
+        context, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"),
+        team_key="code_reviews",
+    )
+    note_prefix = "[test-redirect] " if banner else ""
 
     return NeedsSkill(
         tool="workiq_send_chat_message",
-        payload={"chatId": chat_id, "content": html, "contentType": "html"},
+        payload={"chatId": chat_id, "content": banner + html, "contentType": "html"},
         record_as=ID,
         summary=f"Post the CCD PR-merge reminder to {target_note}",
-        note=f"posted to {target_note}",
+        note=f"{note_prefix}posted to {target_note}",
         outbound=True,
     )
 
@@ -111,8 +104,8 @@ KNOWLEDGE = {
     ),
     'where': ["Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / EXTERNAL-REFERENCES.md)."],
     'how': (
-        'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`). '
-        "To test, redirect with the send_to mock knob ('me' = your own chat).\n"
+        'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`), '
+        'targeting `teams.android_core` from `config/environment.yaml`.\n'
     ),
     'faqs': [
         {

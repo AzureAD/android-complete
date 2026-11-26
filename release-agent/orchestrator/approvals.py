@@ -45,11 +45,11 @@ def request_from_dict(value) -> ApprovalRequest:
     return ApprovalRequest(**value)
 
 
-def request_hash(state, key, request, workflow_revision):
+def request_hash(state, key, request):
     body = {
         "release": state.release_id, "step": key,
         "generation": (state.steps.get(key) or {}).get("invalidated_at") or "initial",
-        "workflow_revision": workflow_revision, "request": asdict(request),
+        "request": asdict(request),
     }
     return "sha256:" + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"),
                                                 ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
@@ -65,22 +65,21 @@ def _timestamp(value):
 
 
 def validate_approval(value, *, state=None, key=None, status=None, started_at=None):
-    from .revision import is_hash, revision_id
+    from .write_review import is_hash
 
-    if not isinstance(value, dict) or set(value) != {
-        "request", "request_hash", "workflow_revision", "approved_by",
-        "submission_started_at", "receipt",
-    }:
+    allowed = {"request", "request_hash", "approved_by", "submission_started_at", "receipt"}
+    if (not isinstance(value, dict)
+            or not allowed.issubset(value)
+            or set(value) - allowed - {"workflow_revision"}):
         raise ValueError("Invalid approval authorization fields")
     request = request_from_dict(value["request"])
-    if not is_hash(value["request_hash"]) or not is_hash(value["workflow_revision"]):
-        raise ValueError("Approval authorization requires request and workflow hashes")
+    if not is_hash(value["request_hash"]):
+        raise ValueError("Approval authorization requires request hash")
     if not isinstance(value["approved_by"], str) or not value["approved_by"].strip():
         raise ValueError("Approval authorization requires approved_by")
-    if state is not None:
-        if (value["workflow_revision"] != revision_id(state.workflow_revision)
-                or value["request_hash"] != request_hash(state, key, request, value["workflow_revision"])):
-            raise ValueError("Approval request/workflow/generation binding changed")
+    if state is not None and "workflow_revision" not in value:
+        if value["request_hash"] != request_hash(state, key, request):
+            raise ValueError("Approval request/generation binding changed")
     attempted = value["submission_started_at"]
     attempt_time = _timestamp(attempted) if attempted is not None else None
     if started_at is not None and attempt_time is not None and attempt_time < _timestamp(started_at):
@@ -129,44 +128,38 @@ def checkpoint_transition(orch, operation):
 
 
 def preview(orch, phase, step, *, comment=""):
-    from . import revision
     from .handler_contracts import HookRole
     from .outcomes import Blocked
 
-    revision.assert_current(orch)
     kernel = orch._transition_kernel()
     if rejected := kernel.validate_approval_start(phase, step):
         raise ValueError(rejected.message)
-    if orch.mocks.get(f"{phase}.{step}"):
-        raise ValueError("Gate approval mocks are preview-only; use injected provider fakes for offline execution")
+    if orch.step_defaults.get(f"{phase}.{step}"):
+        raise ValueError("Gate approval step_defaults are preview-only; use injected provider fakes for offline execution")
     handler = orch.handler(phase, step)
     generation = kernel._generation(orch.state.get_step(phase, step))
     request = handler.prepare_approval(orch.context(
         phase, step, parameters={"comment": comment}, role=HookRole.APPROVAL_PREPARE))
-    revision.assert_current(orch)
     if (rejected := kernel.validate_approval_start(phase, step)):
         raise ValueError(rejected.message)
     if kernel._generation(orch.state.get_step(phase, step)) != generation:
         raise ValueError("Gate changed while preparing the approval; review again")
     if isinstance(request, Blocked):
         raise ValueError(request.reason)
-    binding = revision.revision_id(orch.state.workflow_revision)
     return {
         "phase": phase, "step": step, "request": asdict(request),
-        "review_hash": request_hash(orch.state, f"{phase}.{step}", request, binding),
+        "review_hash": request_hash(orch.state, f"{phase}.{step}", request),
         "permission_to_execute": False,
     }
 
 
 def execute(orch, phase, step, *, comment="", review_hash=None, approved_by=None,
             executor=None, execution_id=None, reserve_only=False):
-    from . import revision
     from .handler_contracts import HookRole
 
-    revision.assert_current(orch)
     approved_by = approved_by.strip() if isinstance(approved_by, str) else approved_by
-    if orch.mocks.get(f"{phase}.{step}"):
-        raise ValueError("Gate approval mocks cannot authorize provider receipts; use injected provider fakes")
+    if orch.step_defaults.get(f"{phase}.{step}"):
+        raise ValueError("Gate approval step_defaults cannot authorize provider receipts; use injected provider fakes")
     kernel = orch._transition_kernel()
     handler = orch.handler(phase, step)
     record = orch.state.get_step(phase, step)

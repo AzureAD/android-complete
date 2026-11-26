@@ -56,7 +56,7 @@ def context():
         return StateProjection(
             state, workflow, settings.now.date(), settings.now,
             readiness_signed=settings.signed, readiness_blocked=settings.blocked,
-            fire_at=lambda _step: settings.fire, is_mocked=lambda _step: settings.mocked,
+            fire_at=lambda _step: settings.fire, is_overridden=lambda _step: settings.mocked,
         )
 
     kernel = TransitionKernel(state, workflow, projection, lambda: settings.now.isoformat())
@@ -82,7 +82,7 @@ def _suspend(state, settings, reason):
     (I.RECORD, "p", "gate"), (I.RECORD, "p", "auto"),
     (I.RECORD, "p", "human"), (I.RECORD, "p", "write"),
     (I.PREPARE, "p", "auto"), (I.POLL, "p", "external"),
-    (I.REFRESH, "p", "external"), (I.MOCK, "p", "human"),
+    (I.REFRESH, "p", "external"), (I.CONFIG_OVERRIDE, "p", "human"),
     (I.COMPLETE, "p", "human"),
 ])
 def test_invalid_invocation_routes_are_mutation_free(context, intent, phase, step):
@@ -141,10 +141,10 @@ def test_preparation_is_not_human_completion_even_with_forged_attribution(contex
 def test_only_explicit_non_gate_mock_route_completes_human_work(context):
     state, settings, kernel, _ = context
     settings.mocked = True
-    permit = kernel.authorize_outcome(I.MOCK, "p", "human")
+    permit = kernel.authorize_outcome(I.CONFIG_OVERRIDE, "p", "human")
     assert kernel.apply_outcome(permit, Done("mock", by="mock")).changed
     before = deepcopy(state)
-    assert isinstance(kernel.authorize_outcome(I.MOCK, "p", "gate"), TransitionResult)
+    assert isinstance(kernel.authorize_outcome(I.CONFIG_OVERRIDE, "p", "gate"), TransitionResult)
     assert state == before
 
 

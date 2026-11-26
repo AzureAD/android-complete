@@ -26,7 +26,7 @@ import os as _os
 import re
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 
 ID = "telemetry_verify"
 KIND = "scout"
@@ -34,7 +34,6 @@ NAME = 'Verify bug-bash telemetry in Kusto'
 REQUIRED_TOOLS = ('kusto',)
 REQUIRES_APPROVAL = False
 REPEATABLE = True
-
 
 def should_recheck_blocked(record) -> bool:
     """Re-query Kusto on scheduled drain ticks only when blocked due to 0 ingested rows."""
@@ -48,7 +47,6 @@ class BuildParameters:
         if self.version is not None and not re.fullmatch(r"\d+\.\d+\.\d+", self.version):
             raise ValueError("Version must be the numeric three-part APK version")
 
-
 PARAMETERS = {"build": BuildParameters}
 
 # The telemetry table + version column are this step's QUERY CONTRACT (coupled 1:1 to the
@@ -57,13 +55,6 @@ PARAMETERS = {"build": BuildParameters}
 # single source of truth for the cluster coordinates.
 TABLE = "loadaccountsoperations"
 VERSION_COLUMN = "AppInfo_Version"
-
-MOCKABLE = {
-    "version": {"kind": "input",
-                "desc": "Use this bug-bash APK version instead of discovering it from the "
-                        "verified Authenticator ECS RC build (a REAL Kusto query on your version)."},
-}
-
 
 def _adx_target(context):
     """(cluster_uri, database) for the ADX release cluster — read from the `adx_access` readiness
@@ -93,16 +84,14 @@ def _adx_target(context):
 
     return _walk(data) or (None, None)
 
-
 def _query(version: str) -> str:
     return (f"{TABLE}\n"
             f'| where {VERSION_COLUMN} == "{version}"\n'
             f"| count")
 
-
 def _version(context):
     """Use the current verified ECS RC APK, stripping its build-number RC suffix. A `version`
-    mock overrides discovery. Returns (version, detail) — version is None on failure."""
+    override skips discovery. Returns (version, detail) — version is None on failure."""
     ov = getattr(context.parameters, "version", None)
     if ov is None:
         ov = context.input("version", MISSING)
@@ -127,7 +116,6 @@ def _version(context):
         return (bare_apk.group(1), "")
     return (None, f"Authenticator ECS build {build.get('run_id')} has a missing or invalid "
                   f"APK build number ({number!r}) — re-run auth_ecs to capture it")
-
 
 def build(context: StepContext):
     version, detail = _version(context)
@@ -196,8 +184,8 @@ KNOWLEDGE = {'summary': "Confirm the bug-bash APK version's telemetry is reachin
         '`record-telemetry --release <id> --rows <N> --version <ver>`: rows > 0 records pass; '
         'rows == 0 records `attention` — the owner posts a heads-up in Android Core Team '
         'before declaring the bug bash complete, then re-runs the check. This owner task is '
-        'not permission for an ad-hoc automatic send. For a dry test, set the `version` mock '
-        'to query a version you know has telemetry.\n',
+        'not permission for an ad-hoc automatic send. For rehearsals, configure `version` in '
+        '`step_defaults` (`config/environment.yaml`) or pass `--param version=<v>`.\n',
  'faqs': [{'q': 'Why is a Phase-3 checklist step (3.3 S9) run in Phase 2?',
            'a': 'Because the check only needs the built APK version to exist, and running it '
                 "right after auth_ecs gives an early smoke-signal that the build's telemetry "

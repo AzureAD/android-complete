@@ -25,7 +25,7 @@ Assignment errors are nonblocking and
 recorded separately, never treated as successful owner changes. Then the
 downstream `ui_failures` human reminder is forward-populated with the full per-test list.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   fail          : force a Blocked with this detail.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ import json
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.evidence import StepData, UIFailureReminder
 from steps.build_verify._common import latest_rc
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import testplans as T
 from tools import pipelines as P
 from tools import distribution as D
@@ -56,7 +56,6 @@ NAME = 'Fill current-RC automation results and failure triage'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "idempotent"
 EFFECT_RECOVERY = "match_current"
-
 
 def prepare_effect(context):
     fail = context.input("fail", MISSING)
@@ -166,12 +165,10 @@ def prepare_effect(context):
         },
     }
 
-
 def _validate_auth_points(context, target):
     ok, _, detail = context.services.testplans.read_auth_ui_points(target)
     if not ok:
         raise ValueError("Authenticator automated point coverage unavailable: " + detail)
-
 
 def _freeze_broker_projection(projection):
     frozen = deepcopy(projection)
@@ -187,7 +184,6 @@ def _freeze_broker_projection(projection):
     ]
     return frozen
 
-
 def _thaw_broker_projection(frozen):
     projection = deepcopy(frozen)
     verdicts = {}
@@ -198,7 +194,6 @@ def _thaw_broker_projection(frozen):
     projection["verdicts"] = verdicts
     return projection
 
-
 def _freeze_auth_projection(projection):
     frozen = deepcopy(projection)
     frozen["cases"] = [
@@ -206,7 +201,6 @@ def _freeze_auth_projection(projection):
         for case_id, case in projection["cases"].items()
     ]
     return frozen
-
 
 def _thaw_auth_projection(frozen):
     projection = deepcopy(frozen)
@@ -216,28 +210,20 @@ def _thaw_auth_projection(frozen):
     }
     return projection
 
-
 def execute(context: StepContext):
     return _run_effect(context, thaw(context.effect.execution["effect_input"]))
 
 ORG = T.ORG
 PROJECT = T.PROJECT
 
-MOCKABLE = {
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
-}
-
-
 def _broker_plan_id(context):
     """The release's cloned Broker plan id (from clone_plans_broker), or None."""
     return (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
-
 
 def _auth_suite_id(context):
     """The automated child for category layouts, otherwise the historical dynamic target."""
     data = context.evidence.step("bug_bash", "clone_plans_auth").data or {}
     return data.get("automated_suite_id") if "layout" in data else data.get("suite_id")
-
 
 def _prior_applied_points(data, binding):
     """Reuse only acknowledged points from this release and these exact destinations."""
@@ -265,7 +251,6 @@ def _prior_applied_points(data, binding):
         receipts[product] = list(points.values())
     return receipts
 
-
 def _retain_applied_points(summary, prior_points, product, target):
     """A failed retry cannot erase acknowledged writes from its earlier attempt."""
     if not isinstance(summary.get("applied_points"), list):
@@ -276,7 +261,6 @@ def _retain_applied_points(summary, prior_points, product, target):
     retained = {int(point["point_id"]): deepcopy(point) for point in prior_points or []}
     retained.update({int(point["point_id"]): deepcopy(point) for point in summary["applied_points"]})
     return {**summary, "applied_points": list(retained.values())}
-
 
 def _fill_auth(context, notes, projection, binding, owner, coordinates, prior_points=None):
     """Write only validated mapped cases; retain report-only failures and assignment errors."""
@@ -343,7 +327,6 @@ def _fill_auth(context, notes, projection, binding, owner, coordinates, prior_po
     return True, (f"Auth: {summ.get('set_passed', 0)} Passed, {summ.get('set_failed', 0)} Failed "
                   f"filled in suite {suite_id}{owner_note}. {P.AUTH_MAPPING_NOTE}")
 
-
 def _assign_failure_points(context, summary, owner, coordinates):
     """Set Current Tester only on this release's acknowledged failed test points."""
     failed = [p for p in summary["applied_points"] if p["outcome"] == "Failed"]
@@ -370,7 +353,6 @@ def _assign_failure_points(context, summary, owner, coordinates):
                            **({"suite_id": sid} if summary.get("mapping_version") in (3, 4) else {})})
     return len({cid for _, cid in groups} - {e["case_id"] for e in errors}), errors
 
-
 def _reassign_broker_failures(context, summary, notes, owner, coordinates):
     """Record release-point Tester triage results, separate from outcome-fill success."""
     ids = sorted({p["case_id"] for p in summary["applied_points"] if p["outcome"] == "Failed"})
@@ -385,7 +367,6 @@ def _reassign_broker_failures(context, summary, notes, owner, coordinates):
                      "see broker.assignment_errors and retry.")
     return assigned
 
-
 def _replace_failure_reminder(context, note, links, broker_count, failed_ids):
     """Replace only this producer's note prefix/links/data, never human status or notes.
     No-op when the optional `ui_failures` reminder step is omitted from `phases.yaml`."""
@@ -397,7 +378,6 @@ def _replace_failure_reminder(context, note, links, broker_count, failed_ids):
     except ValueError as exc:
         if "Unauthorized cross-step producer evidence" not in str(exc):
             raise
-
 
 def _surface_ui_failures(context, rc, failures, coordinates):
     """Forward-populate the downstream `ui_failures` HUMAN-review reminder with the combined
@@ -505,13 +485,11 @@ def _surface_ui_failures(context, rc, failures, coordinates):
     note = "\n".join(lines)
     _replace_failure_reminder(context, note, links, broker_count, failed_ids)
 
-
 def build(context: StepContext):
     """Invalidate durably before work; publish only after both required fills succeeded."""
     if context.effect is None:
         raise ValueError("UI publication requires an authorized effect context")
     return execute(context)
-
 
 def _run_effect(context, prepared):
     """Apply only the validated, frozen desired-state snapshot for this execution."""
@@ -572,7 +550,6 @@ def _run_effect(context, prepared):
         context.effect.commit.commit(StepData(data))
         outcome = Blocked(f"ui_test_status: {exc}. Results may be partially applied; retry this step.")
     return outcome
-
 
 def _apply_prepared(context, prepared):
     binding = prepared["binding"]

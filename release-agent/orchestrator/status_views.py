@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Optional
 from orchestrator import evidence_store, schedule
 from orchestrator.release_contract import HoldKind, LifecycleStatus
-from orchestrator.revision import revision_checked
 
 
 class StatusViewMixin:
@@ -20,8 +19,6 @@ class StatusViewMixin:
             if not selection.phase(step.phase_id).included:
                 continue
             record = self.state.get_step(step.phase_id, step.id)
-            if step.implementation.value == "dummy":
-                counts["manual_only"] += 1
             if record.status == "skipped":
                 counts["waived"] += 1
             elif record.status == "done" and selection.step(step.phase_id, step.id).complete:
@@ -285,7 +282,6 @@ class StatusViewMixin:
             "opens_in_days": (opens - self.as_of).days if opens else None,
         }
 
-    @revision_checked
     def status_report(self) -> dict:
         """Structured status — presentation layer (render.py) turns this into a view.
         Deterministic; no formatting baked in. Assembled from focused builders:
@@ -321,8 +317,6 @@ class StatusViewMixin:
             from orchestrator.dispatch import decorate_handoff_contract
             return decorate_handoff_contract(report)
         selection = self.scheduling()
-        from orchestrator.revision import mismatch_reason, revision_id
-        revision_problem = mismatch_reason(self)
         (phases, total, done, current_phase_name,
          current_phase_obj, current_step_name) = self._phase_map(selection)
         current_steps = self._current_steps(current_phase_obj, selection)
@@ -351,10 +345,6 @@ class StatusViewMixin:
         scheduled = self._scheduled_view(selection)
 
         chk = self.gate.checklist()
-        from orchestrator.readiness import dispatch_plan
-        readiness_dispatch = (dispatch_plan(chk, self.state.release_id, suspension=revision_problem)
-                              if revision_problem else chk["dispatch"])
-        chk = {**chk, "dispatch": readiness_dispatch}
         active_phase = self._active_phase_report(selection)
         # Scout steps ready for the SKILL to execute (perform the MCP send/scrape, then
         # record-step). They are NOT user holds — the skill drains these itself; only if
@@ -378,8 +368,6 @@ class StatusViewMixin:
                 for key, attempt in self.state.task_attempts.items()
             },
             "status": projected_status,
-            "workflow_revision": revision_id(self.state.workflow_revision),
-            "workflow_revision_problem": revision_problem or None,
             "owner_email": self.state.owner_email,
             "owner_name": self.state.owner_name,
             "ccd": self.state.ccd,
@@ -391,13 +379,13 @@ class StatusViewMixin:
             "skip_release": bool(self.state.cancellation),
             "readiness_signed": chk["signed"],
             "readiness": chk,
-            "readiness_dispatch": readiness_dispatch,
+            "readiness_dispatch": chk["dispatch"],
             "work_dispatch": work_dispatch,
             "readiness_pending": [i["id"] for i in chk["items"]
                                   if not i["satisfied"]],
-            "blocked": chk["blocked"] or bool(revision_problem),
+            "blocked": chk["blocked"],
             "blocked_items": list(chk["blocked_items"]),
-            "blocked_message": revision_problem or chk.get("blocked_message", ""),
+            "blocked_message": chk.get("blocked_message", ""),
             "halted": bool(self.state.halt),
             "halt_reason": (self.state.halt or {}).get("reason"),
             "done": done, "total": total,

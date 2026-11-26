@@ -463,34 +463,3 @@ def rc_email(context):
     return (R.rc_email_subject(model, gate, auth),
             R.rc_email_html(model, ctx, gate, auth, next_action),
             R.rc_email_plain(model, ctx, gate, auth, next_action), model)
-
-
-def automation_prompt(release: str, spec: dict) -> str:
-    """Bespoke instruction for the interval RC poller (owned here, like localization's).
-    Only the poller shape is used — rc_report has no time-of-day automation."""
-    if not spec.get("interval"):
-        return ""       # rc_report is driven by next/tick, not a one-shot automation
-    return (
-        f"Release {release} — RC verification poller (Phase 2, every 30 min).\n"
-        f"Only act if Build & RC Verification is holding on an IN-FLIGHT re-triggered RC "
-        f"(the human ran `rc-retriggered`). Poll it once:\n"
-        f"1. run `poll-rc --release {release}`.\n"
-        f"2. act on the printed decision:\n"
-        f"   • waiting  → still running; send nothing.\n"
-        f"   • ready    → run step-action for each decision.steps entry in decision.phase, "
-        f"prepare notifications with source step, claim and acknowledge each confirmed send. "
-        f"Non-notification telemetry retains its domain follow-up. Re-poll afterward; "
-        f"never blind-record a report pass.\n"
-        f"   • nudge    → running past 6h; use source pending for its per-channel "
-        f"notifications and the shared claim/result protocol. Never send raw decision.nudge.\n"
-        f"   • resolved → inspect decision.status: 'passed' means the RC passed the gates; "
-        f"'overridden' means Phase 2 completed by an authorized manual override, NOT a "
-        f"quality-gate pass. Report the matching outcome and decision.note; never describe "
-        f"an override as PASSED. The common cleanup planner removes this poller.\n"
-        f"   • blocked  → a Phase-2 prerequisite or quality gate needs attention. "
-        f"Surface the block to the owner (the 3-exit choice: re-trigger / cherry-pick / "
-        f"override). Follow the existing cleanup planner's decision; a later "
-        f"re-trigger can provision a fresh poller.\n"
-        f"   • idle     → nothing in-flight; stay silent.\n"
-        f"Silently journal: `journal --release {release} --source scout --kind automation "
-        f"--text \"rc-poller: <decision>\"`. Stay silent when there is nothing to send.")

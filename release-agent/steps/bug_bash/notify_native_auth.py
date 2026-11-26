@@ -35,6 +35,7 @@ from tools import testplans as T
 from orchestrator import delivery
 from steps.build_verify._common import valid_id
 from steps.bug_bash.send_invite import sent_notification, source_matches, gate_preconditions
+from orchestrator.step_context import MISSING
 
 ID = "notify_native_auth"
 KIND = "scout"
@@ -43,12 +44,10 @@ REQUIRED_TOOLS = ('microsoft_teams', 'workiq')
 REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     engineer: str | None = None
     engineer_source: str | None = None
-
 
 PARAMETERS = {"build": BuildParameters}
 
@@ -67,22 +66,28 @@ NATIVE_AUTH_RE = {
     "February 2027": "silviu.petrescu", "March 2027": "mmizrak", "April 2027": "silviu.petrescu",
 }
 
-
 def notified_engineer(context):
     """Return a verified recipient only from this step's acknowledged exact delivery."""
     try:
         step, item, attempt = sent_notification(context, ID, "microsoft_teams-SendMessageToUser")
         engineer = step.data.get("engineer")
         source = step.data.get("engineer_source")
+        redirected_to = step.data.get("redirected_to")
+        expected_target_upn = redirected_to or engineer
         payload = item.get("payload") or {}
         completion = item["completion"].get("data") or {}
         broker_plan = context.evidence.step("bug_bash", "clone_plans_broker").data.get("plan_id")
-        expected = _message_html(schedule.target_month_label(context.release),
-                                 context.release.owner_name, T.plan_web_url(broker_plan))
+        base_html = _message_html(schedule.target_month_label(context.release),
+                                  context.release.owner_name, T.plan_web_url(broker_plan))
+        expected = (
+            f"<p><b>[TEST \u2192 me (intended: {escape(str(engineer))})]</b></p>" + base_html
+            if redirected_to
+            else base_html
+        )
         if (not _verified_recipient(engineer, source)
                 or item.get("channel") != "teams"
-                or item.get("target") != {"userIdOrUpn": engineer}
-                or payload != {"userIdOrUpn": engineer, "content": expected, "contentType": "html"}
+                or item.get("target") != {"userIdOrUpn": expected_target_upn}
+                or payload != {"userIdOrUpn": expected_target_upn, "content": expected, "contentType": "html"}
                 or completion.get("engineer") != engineer
                 or completion.get("engineer_source") != source):
             return None
@@ -91,13 +96,11 @@ def notified_engineer(context):
     except (ValueError, TypeError, KeyError, AttributeError, IndexError):
         return None
 
-
 def _verified_recipient(engineer, source):
     return (isinstance(engineer, str)
             and re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", engineer)
             is not None
             and isinstance(source, str) and bool(source.strip()))
-
 
 def _message_html(month_year, owner_name, plan_url):
     who = escape(owner_name or "the release owner")
@@ -112,7 +115,6 @@ def _message_html(month_year, owner_name, plan_url):
         f'<p>When you\u2019re done, please <b>send {who} a quick confirmation message</b> so '
         f'we can close out the bash. Thanks!</p>'
         f'</div>')
-
 
 def build(context: StepContext[BuildParameters]):
     engineer = context.parameters.engineer
@@ -141,18 +143,38 @@ def build(context: StepContext[BuildParameters]):
     if engineer is not None or engineer_source is not None:
         if not _verified_recipient(engineer, engineer_source):
             return Blocked("Provide the verified Native Auth RE UPN and engineer_source evidence; never guess.")
+        from orchestrator import environment as env
+
         sources = source_matches(context, "clone_plans_broker")
+        send_to_raw = context.input("send_to", MISSING)
+        try:
+            target_upn, is_redirected = env.resolve_native_auth_dm(
+                engineer,
+                owner_email=context.release.owner_email,
+                override=(None if send_to_raw is MISSING else send_to_raw),
+            )
+        except ValueError as exc:
+            return Blocked(f"notify_native_auth: {exc}")
+        out_html = html
+        comp_data: dict = {
+            "engineer": engineer,
+            "engineer_source": engineer_source,
+            "gate_preconditions": gate_preconditions(context, sources),
+        }
+        note_prefix = ""
+        if is_redirected:
+            out_html = f"<p><b>[TEST \u2192 me (intended: {escape(engineer)})]</b></p>" + html
+            comp_data["redirected_to"] = target_upn
+            note_prefix = f"[test-redirect -> {target_upn}] "
         return NeedsSkill(
             tool="microsoft_teams-SendMessageToUser",
-            payload={"userIdOrUpn": engineer, "content": html, "contentType": "html"},
-            record_as=ID, summary=f"Notify verified Native Auth RE {engineer}; obtain explicit "
-                                  "recipient approval before claiming this exact payload.",
+            payload={"userIdOrUpn": target_upn, "content": out_html, "contentType": "html"},
+            record_as=ID,
+            summary=f"{note_prefix}Notify verified Native Auth RE {engineer}; obtain explicit "
+                    "recipient approval before claiming this exact payload.",
             outbound=True,
-            notification={"state_matches": sources,
-                          "completion": {"data": {"engineer": engineer,
-                                                  "engineer_source": engineer_source,
-                                                  "gate_preconditions": gate_preconditions(
-                                                      context, sources)}}})
+            notification={"state_matches": sources, "completion": {"data": comp_data}},
+        )
 
     hint_txt = (f"The unverified inline hint is '{re_hint}' for {month_year} "
                 f"(confirm against the doc)." if re_hint

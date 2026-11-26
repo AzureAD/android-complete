@@ -62,7 +62,7 @@ def _plan_stage_start(
         if getattr(step, "REQUIRES_OWNER_APPROVAL", False)
         else None
     )
-    ok, info, detail = step.resolve_target(orch.context(PHASE, step.ID, inputs=W.step_mocks(orch, PHASE, step.ID)))
+    ok, info, detail = step.resolve_target(orch.context(PHASE, step.ID, inputs=W.step_defaults(orch, PHASE, step.ID)))
     if not ok:
         raise ValueError(f"Could not inspect pipeline 397224: {detail}")
     if not info:

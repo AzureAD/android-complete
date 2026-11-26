@@ -12,7 +12,7 @@ throwaway 'user/<alias>/scout-oneauth-access-check' branch off master and immedi
 Deterministic (same access => same verdict) and self-cleaning, so it's an `agent` step the
 engine runs in-process.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   alias  : override the alias used for the probe branch (skip the az lookup).
   access : inject 'granted' | 'denied' to skip the live branch probe.
   fail   : force a Blocked with this detail.
@@ -22,7 +22,7 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import checks
 import re
 
@@ -35,7 +35,6 @@ NAME = 'Verify OneAuth write access (create a probe branch)'
 REQUIRED_TOOLS = ('az',)
 EFFECT_MODE = "idempotent"
 EFFECT_RECOVERY = "frozen"
-
 
 def prepare_effect(context):
     execution = context.evidence.step("preflight", ID).execution or {}
@@ -57,7 +56,6 @@ def prepare_effect(context):
         "repo": checks.ONEAUTH_REPO,
     }
 
-
 def execute(context: StepContext):
     frozen = context.effect.execution["effect_input"]
     return _check_access(context,
@@ -73,17 +71,9 @@ CONFIG = {
     "branch_policy": "user/<alias>/branch-name",
 }
 
-MOCKABLE = {
-    "alias": {"kind": "input", "desc": "Override the alias used for the probe branch (skip az)."},
-    "access": {"kind": "input", "desc": "Inject 'granted' | 'denied' (skip the live branch probe)."},
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
-}
-
-
 def _links():
     return [{"name": "OneAuth repo", "url": CONFIG["repo_url"]},
             {"name": "Request OneAuth R/W (access package)", "url": CONFIG["access_package"]}]
-
 
 def _alias(context):
     a = context.input("alias", MISSING)
@@ -92,12 +82,10 @@ def _alias(context):
     user = context.services.identities.current_az_user()
     return ((user or "").split("@")[0]) or None
 
-
 def build(context: StepContext):
     if context.effect is None:
         raise ValueError("Access probing requires an authorized effect context")
     return execute(context)
-
 
 def _check_access(context,
     alias,

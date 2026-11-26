@@ -30,7 +30,7 @@ def release(root, *, ready=True):
     if ready:
         _active_phase(state, "preflight")
     else:
-        fresh_orchestrator(CONFIG, state, mocks={})
+        fresh_orchestrator(CONFIG, state, step_defaults={})
     C.save_state(state, str(root), RID)
     return state
 
@@ -133,9 +133,9 @@ def test_automations_are_optional_and_never_block_workflow_progression(tmp_path,
         assert registry.get(key=entry["key"]) == entry
 
 
-@pytest.mark.parametrize("surface", ["init", "checklist", "status", "next", "tick", "obligations"])
+@pytest.mark.parametrize("surface", ["init", "checklist", "status", "next", "obligations"])
 def test_every_surface_operates_cleanly_with_zero_automations(tmp_path, monkeypatch, capsys, surface):
-    from orchestrator import mocks
+    from orchestrator import environment as mocks
     from tools import checks
 
     monkeypatch.setattr(checks, "read_pipeline_variable", lambda *args: (True, None, "offline"))
@@ -161,7 +161,7 @@ def test_every_surface_operates_cleanly_with_zero_automations(tmp_path, monkeypa
         else:
             with patch.object(
                 mocks,
-                "load_mocks",
+                "load_step_defaults",
                 return_value={
                     f"preflight.{sid}": {"outcome": "done", "note": "synthetic handler"}
                     for sid in ("breaking", "cg", "oneauth_access", "cron")
@@ -203,12 +203,12 @@ def test_status_is_strictly_local_and_never_touches_automation_registry(tmp_path
 
 def test_scheduled_and_interactive_share_same_state_machine(tmp_path, capsys):
     """`--scheduled` runs against the unified state machine without pausing on an execution_mode split."""
-    from orchestrator import mocks
+    from orchestrator import environment as mocks
 
     state = release(tmp_path)
     with patch.object(
         mocks,
-        "load_mocks",
+        "load_step_defaults",
         return_value={
             f"preflight.{sid}": {"outcome": "done", "note": "synthetic handler"}
             for sid in ("breaking", "cg", "oneauth_access", "cron")
@@ -264,7 +264,7 @@ def test_driver_adoption_and_create_acknowledgement_are_not_duplicate_creates(tm
 def test_global_and_terminal_release_states_never_queue_phase_work(tmp_path, capsys, terminal):
     state = release(tmp_path)
     if terminal == "complete":
-        orch = fresh_orchestrator(CONFIG, state, mocks={})
+        orch = fresh_orchestrator(CONFIG, state, step_defaults={})
         for phase in orch.config["phases"]:
             for step in phase["steps"]:
                 state.set_step(phase["id"], step["id"], StepState(status="done"))
@@ -342,7 +342,7 @@ def test_concurrent_morning_drain_and_interactive_session_never_collide_or_doubl
     """Critical hybrid constraint: simultaneous 7:00 AM `--scheduled` drain and interactive
     session share `.state.lock` + durable pre-IO claims and NEVER double-send or clobber state."""
     from datetime import datetime, timezone
-    from orchestrator import mocks, schedule
+    from orchestrator import environment as mocks, schedule
 
     # Set live clock inside the Phase 0 window (`2026-12-03T07:00:00Z`, after `CCD-7 = 2026-12-02`)
     # so `next --deliver` executes with the trusted clock (no `--as-of`).
@@ -365,8 +365,8 @@ def test_concurrent_morning_drain_and_interactive_session_never_collide_or_doubl
     monkeypatch.setattr(deliver_cmd, "call_mcp_tool", slow_mcp_caller)
     monkeypatch.setattr(
         mocks,
-        "load_mocks",
-        lambda: {
+        "load_step_defaults",
+        lambda *_a, **_kw: {
             "preflight.notice": {"send_to": ["owner@example.test"]},
             "preflight.flight_reminder": {"send_to": "me"},
             **{
@@ -433,7 +433,7 @@ def test_ambiguous_post_dispatch_timeout_fences_against_duplicate_replay(tmp_pat
     """If `tools/call` times out after dispatch during the 7:00 AM drain, the notification is
     recorded `uncertain` so a subsequent interactive session never double-sends."""
     from datetime import datetime, timezone
-    from orchestrator import mocks, schedule
+    from orchestrator import environment as mocks, schedule
 
     monkeypatch.setattr(
         schedule,
@@ -443,8 +443,8 @@ def test_ambiguous_post_dispatch_timeout_fences_against_duplicate_replay(tmp_pat
     release(tmp_path, ready=True)
     monkeypatch.setattr(
         mocks,
-        "load_mocks",
-        lambda: {"preflight.notice": {"send_to": ["owner@example.test"]}},
+        "load_step_defaults",
+        lambda *_a, **_kw: {"preflight.notice": {"send_to": ["owner@example.test"]}},
     )
 
     attempts = {"count": 0}

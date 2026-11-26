@@ -12,7 +12,7 @@ from orchestrator.state import ReleaseState
 from tests._automation import spec, observed
 
 
-def prepare(reg, slug="worker", *, release="2026-09", kind="step-driving", cleanup="steps_done"):
+def prepare(reg, slug="worker", *, release="2026-09", kind="release-level", cleanup="release_done"):
     provider = spec(f"{release} · Scope — {slug}")
     entry = reg.prepare(
         provider["name"], release=release, slug=slug,
@@ -65,8 +65,8 @@ def test_identical_prepare_preserves_entire_entry_and_changed_intent_rejects(tmp
     assert before == (tmp_path / "2026-09" / "_automations.json").read_bytes()
     with pytest.raises(ValueError, match="Cannot change"):
         reg.prepare(provider["name"], release="2026-09", slug="worker",
-                    steps=["ccd.localization"], schedule=provider["schedule"],
-                    cleanup_when="steps_done", spec={**provider, "prompt": "Changed"})
+                    steps=[], schedule=provider["schedule"],
+                    cleanup_when="release_done", spec={**provider, "prompt": "Changed"})
     assert reg.get(key=entry["key"]) == entry
 
 
@@ -348,7 +348,7 @@ def test_parallel_registry_updates_and_disabled_unsafe_entrypoints(tmp_path):
 def test_cli_full_spec_required_and_exact_invocation_returned(tmp_path, capsys):
     from tests._context import fresh_orchestrator
     state = ReleaseState(release_id="2026-09")
-    fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     C.save_state(state, str(tmp_path), state.release_id)
     provider = spec()
     base = ["--runs-root", str(tmp_path), "automation"]
@@ -379,7 +379,7 @@ def test_unknown_and_incomplete_specs_fail_before_writing(tmp_path):
 def test_cli_abandon_requires_actual_terminal_state(tmp_path, capsys):
     from tests._context import fresh_orchestrator
     state = ReleaseState(release_id="2026-09")
-    fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     C.save_state(state, str(tmp_path), state.release_id)
     reg = AutomationRegistry(str(tmp_path))
     entry, _ = prepare(reg)
@@ -400,7 +400,7 @@ def test_cli_abandon_requires_actual_terminal_state(tmp_path, capsys):
 def test_cli_spec_file_is_read_only_and_not_copied(tmp_path, capsys, encoding):
     from tests._context import fresh_orchestrator
     state = ReleaseState(release_id="2026-09")
-    fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     C.save_state(state, str(tmp_path), state.release_id)
     reviewed = tmp_path / "owner-reviewed.json"
     reviewed.write_text(json.dumps(spec()), encoding=encoding)

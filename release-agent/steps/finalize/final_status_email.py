@@ -4,15 +4,15 @@ Scout-assisted: `build()` composes the closing email (the Phase-4-complete snaps
 NeedsSkill(workiq_send_email); Python's Agency MCP delivery (`deliver-step` / `next --deliver`)
 sends it silently and records completion.
 
-Mock knobs (mocks.local.yaml / tests):
-  send_to : redirect recipients to these address(es) (owner → you) for a test send.
+Step defaults (`step_defaults` / offline scenarios):
+  send_to : explicit recipient override (normally controlled by `emails.partner_status` in `config/environment.yaml`).
 """
 from __future__ import annotations
 
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 
 STATUS_EMAIL = True
 ID = "final_status_email"
@@ -21,18 +21,6 @@ NAME = 'Send the closing partner status email'
 REQUIRED_TOOLS = ('workiq',)
 REQUIRES_APPROVAL = False
 NOTIFICATION = True
-
-MOCKABLE = {
-    "send_to": {
-        "kind": "input",
-        "desc": "Redirect the closing status email to these address(es) (DL → you).",
-    },
-    "changelogs": {
-        "kind": "input",
-        "desc": "Inject dict {common:[...], msal:[...], broker:[...]} to skip live changelog reads.",
-    },
-}
-
 
 def _sdk_changelogs(context) -> dict[str, list[dict]]:
     injected = context.input("changelogs", MISSING)
@@ -62,22 +50,27 @@ def _sdk_changelogs(context) -> dict[str, list[dict]]:
         return out
     return out
 
-
 def build(context: StepContext):
-    to = context.input("send_to", MISSING)
-    if to is not MISSING and to:
-        recipients = (
-            [str(x).strip() for x in to if str(x).strip()]
-            if isinstance(to, list)
-            else [x.strip() for x in str(to).split(",") if x.strip()]
-        )
-        prefix = "[TEST → me] "
+    from orchestrator import environment as env
+    from steps.lib.context import resolve_recipients
+
+    override = context.input("send_to", MISSING)
+    if override is not MISSING and override:
+        try:
+            recipients, _rnote, prefix = resolve_recipients(context, None, group_key="partner_status")
+        except ValueError as exc:
+            return Blocked(f"final_status_email: {exc}")
+    elif env.active_profile_name() != "prod":
+        try:
+            recipients, _rnote, prefix = resolve_recipients(context, None, group_key="partner_status")
+        except ValueError as exc:
+            return Blocked(f"final_status_email: {exc}")
     else:
-        recipients = context.services.assets.status_recipients()
-        prefix = ""
+        live_dl = context.services.assets.status_recipients()
+        recipients, _rnote, prefix = resolve_recipients(context, live_dl, group_key="partner_status")
     if not recipients:
         return Blocked("final_status_email: no status-email recipients configured "
-                       "(config/notifications.yaml status_email.recipients).")
+                       "(config/environment.yaml profiles.<active>.emails.partner_status).")
 
     changelogs = _sdk_changelogs(context)
     res = context.services.assets.status_email(
@@ -108,15 +101,14 @@ KNOWLEDGE = {'summary': 'Send the closing partner status email when Phase 4 comp
  'what': 'Terminal Phase-4 step that sends the Phase-4-complete partner status email '
          'summarizing finalized versions, Maven publishing, and rollout readiness.\n',
  'who': 'Scout composes it and delivers it automatically in Python via Agency MCP to the release '
-        "DLs (notifications.yaml beside the invocation's phases.yaml, status_email.recipients). An "
-        'isolated test configuration is respected; the canonical production recipients are not '
-        'a fallback. The `send_to` mock remains an explicit recipient override.\n',
- 'where': ['recipients: config/notifications.yaml status_email.recipients (authsdkrelease@, '
-           'androididentity@)',
+        "DLs (`emails.partner_status` in `config/environment.yaml`). Under `active_profile: test`, "
+        'emails route exclusively to `@owner` with `[TEST]` subject prefix; `send_to` remains an '
+        'explicit per-step recipient override.\n',
+ 'where': ['recipients: config/environment.yaml emails.partner_status (@owner in test; '
+           'authsdkrelease@, androididentity@ in prod)',
            'template: orchestrator/status_email.py'],
  'how': 'Delivered automatically via `deliver-step --release <id> --phase finalize --step '
         'final_status_email --json` (or `next --deliver`), which claims the exact snapshot, '
-        'sends via Agency MCP, and acknowledges confirmed delivery. To test, configure isolated '
-        'recipients or set the `send_to` mock to your own address.\n',
- 'faqs': [{'q': 'How can I redirect this email during testing?',
-           'a': 'Set `finalize.final_status_email.send_to` in `mocks.local.yaml` to your own email address.'}]}
+        'sends via Agency MCP, and acknowledges confirmed delivery.\n',
+ 'faqs': [{'q': 'How are recipients controlled between rehearsal and launch?',
+           'a': 'Keep `active_profile: test` in `config/environment.yaml` (routes to `@owner`), then switch to `prod` at launch.'}]}

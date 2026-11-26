@@ -20,9 +20,9 @@ def _launcher_payload(report: dict | None) -> dict:
                     "action": "start_release",
                 },
                 {
-                    "title": "Check setup & permissions",
-                    "description": "Verify CLI tools, MCP connectors, and M365 access without starting a release.",
-                    "action": "check_setup",
+                    "title": "Inspect target profile (test | prod)",
+                    "description": "View or switch config/environment.yaml communication & artifact targets.",
+                    "action": "environment",
                 },
                 {
                     "title": "List releases",

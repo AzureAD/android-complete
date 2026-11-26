@@ -47,92 +47,6 @@ def test_teams_notify_is_scout_optout_item():
 
 
 
-# ---- push notifications: DAILY PHASE DIGEST model ----
-# Setup (readiness + CCD) is interactive → no push. First push is a phase opening
-# (Phase 0 at CCD-7); then a daily status digest while the phase has outstanding work.
-
-def test_notify_silent_before_phase_opens():
-    from orchestrator import render
-    st, orch = _ccd_orch("2026-06-20")   # opens 2026-07-01, ~11 days out
-    assert render.notification(orch.status_report()) == ""
-
-
-
-
-def test_notify_silent_two_days_before_open():
-    """No pre-open heads-up anymore — the first push is when the phase opens."""
-    from orchestrator import render
-    st, orch = _ccd_orch("2026-06-29")   # opens in 2 days
-    assert render.notification(orch.status_report()) == ""
-
-
-
-
-def test_notify_phase0_digest_when_open():
-    """Phase 0 open but Scout's own steps not yet run → SILENT (premature — the digest
-    reports the settled 'needs YOU' picture, so it holds until Scout drains its steps).
-    Once notice/reminders/lockdown are done, the daily phase digest fires."""
-    from orchestrator import render
-    st, orch = _ccd_orch("2026-07-01")   # Phase 0 opens today, signed by _ccd_orch
-    # premature: Scout still owes notice/flight_reminder/lockdown → no push yet
-    assert render.notification(orch.status_report()) == ""
-    _drain_phase0_scout_only(orch)       # Scout runs its 3 steps; human holds remain
-    msg = render.notification(orch.status_report())
-    assert "Phase 0" in msg and "Pre-flight" in msg
-    assert render.notification_subject(orch.status_report()) == "Release 2026-07 — Phase 0 status"
-
-
-
-
-def test_digest_silent_while_scout_pending():
-    """CORE OF THIS FIX: the daily digest reports the SETTLED 'needs YOU' picture, so
-    while the open phase still has un-run Scout steps (scout_pending) every renderer
-    stays silent — no premature email that lists Scout's own undone work. Draining the
-    scout steps flips all three renderers on together."""
-    from orchestrator import render
-    st, orch = _ccd_orch("2026-07-01")          # signed, Phase 0 open
-    r = orch.status_report()
-    assert r["scout_pending"] == ["notice", "flight_reminder", "lockdown"]
-    assert render._digest_model(r) is None       # premature → silent
-    assert (render.notification(r) == "" and render.notification_markdown(r) == ""
-            and render.notification_html(r) == "")
-    _drain_phase0_scout_only(orch)               # Scout finishes its own steps
-    r2 = orch.status_report()
-    assert r2["scout_pending"] == []
-    assert render._digest_model(r2) is not None   # now the settled digest is due
-    assert render.notification(r2) and render.notification_html(r2)
-
-
-
-
-def test_notify_json_carries_owner_and_subject():
-    from orchestrator import render
-    import json as _json
-    st, orch = _orch()                   # signed, phase due
-    orch.state.owner_email = "owner@example.com"
-    _pass_m365_check(orch)
-    orch.run_until_gate()
-    r = orch.status_report()
-    payload = {"message": render.notification(r), "subject": render.notification_subject(r),
-               "owner_email": r["owner_email"], "release": r["release_id"]}
-    assert payload["owner_email"] == "owner@example.com"
-    assert payload["message"] and "Phase" in payload["subject"]
-    assert _json.loads(_json.dumps(payload))["owner_email"] == "owner@example.com"
-
-
-
-
-def test_notify_silent_when_halted_or_complete():
-    from orchestrator import render
-    st, orch = _orch()
-    r = orch.status_report(); r["halted"] = True
-    assert render.notification(r) == ""
-    r2 = orch.status_report(); r2["status"] = "complete"
-    assert render.notification(r2) == ""
-
-
-
-
 def test_registry_relocates_release_automations_into_release_folder():
     """Release-scoped automations live in <runs_root>/<release>/_automations.json (owned
     by the release); shared ones stay machine-wide."""
@@ -141,8 +55,8 @@ def test_registry_relocates_release_automations_into_release_folder():
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp, release="2026-08")
         _register_automation(
-            reg, "a2", "Phase-3 watcher", release="2026-08",
-            steps=["bug_bash.bugbash_complete"], cleanup_when="steps_done")
+            reg, "a2", "Release drainer", release="2026-08",
+            steps=[], cleanup_when="release_done")
         _register_automation(
             reg, "sh", "Release push reminders", shared=True, purpose="push",
             cleanup_when="manual")
@@ -190,7 +104,7 @@ def test_on_demand_obligation_remains_optional_and_non_blocking():
     st = ReleaseState(
         release_id="2026-09", ccd="2026-09-09",
         timezone="America/Los_Angeles")
-    Orchestrator(CONFIG, st, mocks={})
+    Orchestrator(CONFIG, st, step_defaults={})
 
     missing = A.provisioning_obligations(st, [], CONFIG)
     assert missing["required"] == []
@@ -255,13 +169,13 @@ def test_cli_plan_returns_single_release_drainer(capsys):
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
         state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles")
-        Orchestrator(CONFIG, state, mocks={})
+        Orchestrator(CONFIG, state, step_defaults={})
         C.save_state(state, d, rid)
         base = ["--runs-root", d, "automation", "plan", "--release", rid, "--json"]
         assert cli.main(base) == 0
         startup = json.loads(capsys.readouterr().out)["automations"]
         assert [a["slug"] for a in startup] == ["release-drainer"]
-        assert not startup[0]["on_demand"]
+        assert startup[0]["optional"] is True
 
         obligations = [
             "--runs-root", d, "automation", "obligations",
@@ -275,36 +189,17 @@ def test_cli_plan_returns_single_release_drainer(capsys):
 def test_cleanup_plan_applies_declared_lifecycle_rules():
     from orchestrator import automations as A
     from orchestrator.state import StepState
-    import yaml
     st = ReleaseState(release_id="2026-09")
-    Orchestrator(CONFIG, st, mocks={})
-    for sid in ("final_reminder", "pr_reminder", "localization"):
-        st.set_step("ccd", sid, StepState(status="done"))
-    st.set_step("build_verify", "rc_report_notify", StepState(status="done"))
-    st.set_step("bug_bash", "bugbash_updates",
-                StepState(status="done", data={"poll_complete": True}))
+    Orchestrator(CONFIG, st, step_defaults={})
     entries = [
-        {"id": "morning", "name": "Morning", "kind": "step-driving",
-         "steps": ["ccd.final_reminder", "ccd.pr_reminder"], "cleanup_when": "steps_done"},
-        {"id": "rc", "name": "RC poller", "kind": "step-driving",
-         "steps": ["build_verify.rc_report_notify"],
-         "cleanup_when": "steps_settled"},
-        {"id": "bug", "name": "Bug poller", "kind": "step-driving",
-         "steps": ["bug_bash.bugbash_updates"],
-         "cleanup_when": ["step_flag:bug_bash.bugbash_updates:poll_complete",
-                          "phase_done:bug_bash"]},
-        {"id": "loc", "name": "Localization poller", "kind": "step-driving",
-         "steps": ["ccd.localization"], "cleanup_when": "steps_settled"},
-        {"id": "push", "name": "Push", "kind": "release-level",
-         "steps": [], "cleanup_when": "release_done"},
+        {"id": "drainer", "name": "Release drainer", "kind": "release-level",
+         "steps": [], "cleanup_when": "release_done", "scope": "release", "release": st.release_id},
         {"id": "manual", "name": "Manual", "kind": "release-level",
-         "steps": [], "cleanup_when": "manual"},
+         "steps": [], "cleanup_when": "manual", "scope": "release", "release": st.release_id},
     ]
-    entries = [{**e, "scope": "release", "release": st.release_id} for e in entries]
     first = A.cleanup_plan(st, entries, CONFIG)
-    assert [r["id"] for r in first["removals"]] == ["bug", "loc", "morning", "rc"]
-    assert first["problems"] == []
-    completion = Orchestrator(CONFIG, st, mocks={})
+    assert first["removals"] == [] and first["problems"] == []
+    completion = Orchestrator(CONFIG, st, step_defaults={})
     for phase in completion.config["phases"]:
         if phase.get("conditional"):
             continue
@@ -317,18 +212,7 @@ def test_cleanup_plan_applies_declared_lifecycle_rules():
                     {"step": f"{phase['id']}.{step['id']}", "decision": "approved"}
                 )
     second = A.cleanup_plan(st, entries, CONFIG)
-    assert [r["id"] for r in second["removals"]][-1] == "push"
-    assert "manual" not in [r["id"] for r in second["removals"]]
-
-    # Owner sign-off also ends the Bug Bash poller when tests did not reach 100%.
-    update_step = st.get_step("bug_bash", "bugbash_updates")
-    update_step.data.pop("poll_complete")
-    st.set_step("bug_bash", "bugbash_updates", update_step)
-    phase = yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    for step in next(p for p in phase["phases"] if p["id"] == "bug_bash")["steps"]:
-        st.set_step("bug_bash", step["id"], StepState(status="done"))
-    signed_off = A.cleanup_plan(st, entries, CONFIG)
-    assert "bug" in [r["id"] for r in signed_off["removals"]]
+    assert [r["id"] for r in second["removals"]] == ["drainer"]
 
 
 def test_registry_requires_cleanup_rule():
@@ -356,22 +240,20 @@ def test_cleanup_command_returns_registered_ids_without_mutating_registry(capsys
     import tempfile as _tf
     from orchestrator import cli
     from orchestrator.registry import AutomationRegistry
-    from orchestrator.state import StepState
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
-        st = ReleaseState(release_id=rid)
-        Orchestrator(CONFIG, st, mocks={})
-        st.set_step("ccd", "final_reminder", StepState(status="done"))
+        st = ReleaseState(release_id=rid, cancellation={"reason": "cancelled", "at": "2026-09-09T00:00:00Z"})
+        Orchestrator(CONFIG, st, step_defaults={})
         C.save_state(st, d, rid)
         reg = AutomationRegistry(d, rid)
         _register_automation(
-            reg, "morning", "Morning", release=rid,
-            steps=["ccd.final_reminder"], cleanup_when="steps_done")
+            reg, "drainer", "Release drainer", release=rid,
+            steps=[], cleanup_when="release_done")
         assert cli.main(["--runs-root", d, "automation", "cleanup",
                          "--release", rid, "--json"]) == 0
         result = json.loads(capsys.readouterr().out)
-        assert [r["id"] for r in result["removals"]] == ["morning"]
-        assert reg.list(release=rid)[0]["id"] == "morning"  # cleanup is a non-mutating plan
+        assert [r["id"] for r in result["removals"]] == ["drainer"]
+        assert reg.list(release=rid)[0]["id"] == "drainer"  # cleanup is a non-mutating plan
 
 
 def test_cleanup_does_not_trust_unapproved_gate_completion():
@@ -380,7 +262,7 @@ def test_cleanup_does_not_trust_unapproved_gate_completion():
 
     rid = "2026-09"
     st = ReleaseState(release_id=rid)
-    orch = Orchestrator(CONFIG, st, mocks={})
+    orch = Orchestrator(CONFIG, st, step_defaults={})
     for phase in orch.config["phases"]:
         if phase.get("conditional"):
             continue
@@ -450,237 +332,6 @@ def test_automation_sync_repins_on_ccd_change():
         st.timezone = "America/New_York"; C.save_state(st, d, rid)
         u1 = {u["slug"]: u for u in sync()["updates"]}
         assert u1["release-drainer"]["changed"]
-
-
-
-
-def test_tick_advances_and_reports(tmp=None):
-    """A headless `tick` advances AGENT steps but can't run Scout steps, so while the
-    open phase still has scout_pending the digest STAYS SILENT (no premature email).
-    Once Scout's steps are drained (the skill's job — simulated here), the next tick
-    returns a digest listing completed steps + what needs the user."""
-    import tempfile as _tf
-    from orchestrator.commands import notify as ncmd
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-07"
-        # signed release, CCD reached so Phase 0 is open
-        _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com")
-        orch = Orchestrator(CONFIG, st)
-        _pass_scout_checks(orch)
-        orch.gate.sign()
-        C.save_state(st, d, rid)
-
-        class A:
-            runs_root = d
-            release = rid
-            config = CONFIG
-            as_of = "2026-07-08"
-            force = False
-            json = True
-        # Scout steps still pending → tick advances agent steps but the digest is SILENT
-        premature = ncmd._notify_payload(A, rid, advance=True)
-        assert premature["message"] == ""
-        # skill runs the Phase-0 scout steps; now the digest is genuinely due
-        st_now = C.load_state(d, rid)
-        orch2 = Orchestrator(CONFIG, st_now)
-        _drain_phase0_scout_only(orch2)
-        C.save_state(st_now, d, rid)
-        payload = ncmd._notify_payload(A, rid, advance=True)
-        # advanced: state file now shows Phase-0 progress + holding at a gate
-        st2 = C.load_state(d, rid)
-        report = Orchestrator(CONFIG, st2).status_report()
-        assert report["status"] in ("holding_gate", "awaiting_action")
-        assert report["done"] > 0
-        # digest reflects the state machine
-        assert payload["message"] and "Phase 0" in payload["message"]
-        assert "Completed" in payload["message"]
-        assert payload["owner_email"] == "o@x.com"
-
-
-
-
-def test_tick_dedup_same_day():
-    """A second tick on the same day sends nothing (once-per-day digest)."""
-    import tempfile as _tf
-    from orchestrator.commands import notify as ncmd
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-07"
-        _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com")
-        orch = Orchestrator(CONFIG, st)
-        _pass_scout_checks(orch)
-        orch.gate.sign()
-        _drain_phase0_scout_only(orch)        # skill ran Scout's steps → digest now due
-        C.save_state(st, d, rid)
-
-        class A:
-            runs_root = d
-            release = rid
-            config = CONFIG
-            as_of = "2026-07-08"
-            force = False
-            json = True
-        first = ncmd._notify_payload(A, rid, advance=True)
-        assert ncmd._notify_payload(A, rid, advance=False)["message"] == first["message"]
-        _ack_notifications(d, rid, "2026-07-08T12:00:00", first["notifications"])
-        second = ncmd._notify_payload(A, rid, advance=True)
-        assert first["message"] and second["message"] == ""
-
-
-
-
-def test_tick_payload_carries_teams_block_when_enabled():
-    """When a digest is due and Teams is enabled, the tick payload includes a Teams
-    delivery descriptor. The repo config targets the Scout bot, so it's a scout_bot
-    delivery carrying the plain-text digest. Deduped second tick carries none."""
-    import tempfile as _tf
-    from orchestrator.commands import notify as ncmd
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-07"
-        _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, ccd="2026-07-08",
-                          ccd_source="default", owner_email="o@x.com")
-        orch = Orchestrator(CONFIG, st)
-        _pass_scout_checks(orch)
-        orch.gate.sign()
-        _drain_phase0_scout_only(orch)        # skill ran Scout's steps → digest now due
-        C.save_state(st, d, rid)
-
-        class A:
-            runs_root = d; release = rid; config = CONFIG
-            as_of = "2026-07-08"; force = False; json = True
-        p = ncmd._notify_payload(A, rid, advance=True)
-        assert p["channels"]["teams"] is True
-        assert p["message"] and p["teams"] is not None
-        assert p["teams"]["via"] == "scout_bot"
-        # scout bot gets the MARKDOWN digest (blank-line paragraphs survive collapse)
-        from orchestrator import render
-        st_now = C.load_state(d, rid)
-        expected_md = render.notification_markdown(Orchestrator(CONFIG, st_now).status_report())
-        assert p["teams"]["text"] == expected_md
-        assert "\n\n" in p["teams"]["text"] and "**Release" in p["teams"]["text"]
-        _ack_notifications(d, rid, "2026-07-08T12:00:00", p["notifications"])
-        # deduped second tick → message empty AND no teams delivery
-        p2 = ncmd._notify_payload(A, rid, advance=True)
-        assert p2["message"] == "" and p2["teams"] is None
-
-
-def test_preflight_escalation_checkpoint_timing_and_dedup():
-    from datetime import date, datetime
-    from orchestrator import notifications as N, render
-    report = {
-        "ccd": "2026-09-09",
-        "active_phase": {
-            "id": "preflight",
-            "outstanding": [{"id": "cg"}],
-            "steps": [
-                {"id": "cg", "name": "Report critical CG alerts",
-                 "status": "blocked", "note": "High alert remains"},
-                {"id": "vitals", "name": "Review Play vitals",
-                 "status": "confirm", "note": None},
-            ],
-        },
-    }
-    assert N.previous_business_day(date(2026, 9, 8)) == date(2026, 9, 4)  # Labor Day weekend
-    assert N.preflight_escalation(report, datetime(2026, 9, 8, 8, 59), {}) is None
-    pre = N.preflight_escalation(report, datetime(2026, 9, 8, 9, 0), {})
-    assert pre["checkpoint"] == "pre_ccd" and pre["blocked"][0]["id"] == "cg"
-    assert pre["confirmations"][0]["id"] == "vitals"
-    assert N.preflight_escalation(report, datetime(2026, 9, 8, 12),
-                                  {pre["key"]: {"emitted_at": "x"}}) is None
-    # CCD checkpoint is independent; it also catches a machine that missed CCD-1.
-    ccd = N.preflight_escalation(report, datetime(2026, 9, 9, 9), {})
-    assert ccd["checkpoint"] == "ccd"
-    assert N.preflight_escalation(report, datetime(2026, 9, 9, 9),
-                                  {pre["key"]: {}, ccd["key"]: {}}) is None
-    done = {**report, "active_phase": {"id": "ccd", "outstanding": [], "steps": []}}
-    assert N.preflight_escalation(done, datetime(2026, 9, 9, 9), {}) is None
-    holiday_report = {**report, "ccd": "2026-09-08",
-                      "owner_name": "Owner", "owner_email": "owner@microsoft.com",
-                      "target_month_label": "October 2026"}
-    holiday_model = N.preflight_escalation(holiday_report, datetime(2026, 9, 4, 9), {})
-    holiday_text = render.preflight_core_alert(holiday_report, holiday_model)
-    assert "in 4 calendar days" in holiday_text and "tomorrow" not in holiday_text
-
-
-def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeypatch):
-    import argparse
-    import tempfile as _tf
-    import yaml
-    from orchestrator.commands import notify as ncmd
-    from tests._context import fresh_orchestrator as Orchestrator
-    from orchestrator.state import StepState
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-09"
-        st = ReleaseState(release_id=rid, ccd="2026-09-09", target_month="2026-09",
-                          owner_email="owner@microsoft.com",
-                          owner_name="Release Owner")
-        _ready_state(st)
-        cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
-        preflight = next(p for p in cfg["phases"] if p["id"] == "preflight")
-        for step in preflight["steps"]:
-            st.set_step("preflight", step["id"], StepState(status="done"))
-        st.steps.pop("preflight.notice")
-        # A pending Scout step suppresses the normal owner digest; blocked CG still needs
-        # the independent Core Team deadline warning.
-        st.set_step("preflight", "cg", StepState(
-            status="blocked", note="High Bouncy Castle alert still unresolved",
-            links=[{"name": "CG alert", "url": "https://example.com/cg"}]))
-        C.save_state(st, d, rid)
-        from orchestrator.engine import Orchestrator as EngineOrchestrator
-        monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
-
-        class A:
-            runs_root = d; release = rid; config = CONFIG
-            as_of = "2026-09-08"; force = False; json = True
-
-        # Read-only notify cannot consume or emit automation checkpoints.
-        observation = ncmd._notify_payload(A, rid, advance=False)
-        assert observation["core_alert"] is not None and not observation["permission_to_send"]
-        assert C.load_state(d, rid).escalation_checkpoints == {}
-
-        first = ncmd._notify_payload(A, rid, advance=True)
-        assert first["message"] == "" and first["teams"] is None
-        alert = first["core_alert"]
-        assert alert["chatName"] == "Android Core Team"
-        assert alert["mentions"][0]["mentioned"]["user"]["id"] == "owner@microsoft.com"
-        assert "September 2026 release at risk" in alert["content"]
-        assert "Failed / blocked checks" in alert["content"]
-        assert 'href="https://example.com/cg"' in alert["content"]
-        assert "manager approval" in alert["content"]
-        assert "does not pause the ADO release schedule" in alert["content"]
-        assert alert["checkpoint"] not in C.load_state(d, rid).escalation_checkpoints
-        # Until successful delivery is acknowledged, retry remains available.
-        second = ncmd._notify_payload(A, rid, advance=True)
-        assert second["core_alert"]["checkpoint"] == alert["checkpoint"]
-        checkpoint = alert["checkpoint"]
-        _ack_notifications(d, rid, "2026-09-08T12:00:00", first["notifications"])
-        assert checkpoint in C.load_state(d, rid).escalation_checkpoints
-        A.force = True
-        assert ncmd._notify_payload(A, rid, advance=True)["core_alert"] is None
-
-        # Still blocked on CCD morning => one separate checkpoint.
-        A.as_of = "2026-09-09"; A.force = False
-        ccd = ncmd._notify_payload(A, rid, advance=True)["core_alert"]
-        assert ccd and ccd["checkpoint"].endswith(":ccd")
-        assert "code complete today" in ccd["content"]
-
-
-def test_non_json_tick_reports_digest_and_core_alert_independently(monkeypatch, capsys):
-    from orchestrator.commands import notify as ncmd
-    payload = {"message": "owner digest", "core_alert": {"checkpoint": "preflight:x:pre_ccd"}}
-    monkeypatch.setattr(ncmd.C, "resolve_release_id", lambda *_: "x")
-    monkeypatch.setattr(ncmd, "_notify_payload", lambda *_args, **_kwargs: payload)
-    class A:
-        runs_root = "unused"; release = "x"; config = CONFIG; json = False
-    assert ncmd.cmd_tick(A) == 0
-    out = capsys.readouterr().out
-    assert "owner digest" in out and "Core Team deadline alert due" in out
-
-
 
 
 def test_ui_projection_per_config():
@@ -767,7 +418,7 @@ def test_record_nativeauth_notify_stores_or_holds():
         assert BC.cmd_record_nativeauth_notify(ns) == 1
         st = _C.load_state(d, rid)
         _active_phase(st, "bug_bash")
-        for s in Orchestrator(CONFIG, st, mocks={}).config["phases"][3]["steps"]:
+        for s in Orchestrator(CONFIG, st, step_defaults={}).config["phases"][3]["steps"]:
             if s["id"] == "notify_native_auth":
                 break
             from orchestrator.state import StepState

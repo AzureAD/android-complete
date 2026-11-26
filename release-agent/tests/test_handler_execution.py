@@ -31,14 +31,14 @@ def _config(kind="auto"):
     }
 
 
-def _orch(tmp_path, resolver, config=None, mocks=None):
+def _orch(tmp_path, resolver, config=None, step_defaults=None):
     path = tmp_path / "phases.yaml"
     path.write_text(yaml.safe_dump(config or _config()), encoding="utf-8")
     return Orchestrator(
         str(path),
         ReleaseState(release_id="r", ccd="2026-09-12", timezone="UTC"),
         now=datetime(2026, 9, 12, 12, tzinfo=timezone.utc),
-        mocks=mocks or {},
+        step_defaults=step_defaults or {},
         handler_resolver=resolver,
     )
 
@@ -116,7 +116,7 @@ def test_outcome_mock_does_not_hide_missing_real_handler(tmp_path):
     with pytest.raises(WorkflowConfigError, match="requires a handler module"):
         _orch(
             tmp_path, lambda *_args: None,
-            mocks={"phase.check": {"outcome": "done"}},
+            step_defaults={"phase.check": {"outcome": "done"}},
         )
 
 
@@ -165,26 +165,20 @@ def test_external_step_action_uses_bound_builder_and_metadata(tmp_path, monkeypa
     assert calls == [("r", "review")]
 
 
-def test_frozen_mock_aliases_become_detached_json_payloads(tmp_path, monkeypatch):
-    from orchestrator import mocks
-    from orchestrator.commands.step_action import _catalog
+def test_step_defaults_inputs_become_detached_json_payloads(tmp_path, monkeypatch):
+    from orchestrator import environment
 
     module = SimpleNamespace(
         ID="check", KIND="scout",
-        build=lambda _state: NeedsSkill(
-            tool="external_tool", payload={"to": []}, record_as="check",
+        build=lambda ctx: NeedsSkill(
+            tool="external_tool", payload={"to": list(ctx.input("send_to", []))}, record_as="check",
         ),
-        MOCKABLE={
-            "send_to": {
-                "kind": "payload", "sets": "to", "as": "list",
-                "aliases": {"team": ["one@example.invalid", "two@example.invalid"]},
-            },
-        },
     )
     resolver = lambda _phase, step: module if step == "check" else None
     orch = _orch(tmp_path, resolver, config=_config("external"))
     monkeypatch.setattr(
-        mocks, "load_mocks", lambda: {"phase.check": {"send_to": "team"}},
+        environment, "load_step_defaults",
+        lambda *_a, **_kw: {"phase.check": {"send_to": ["one@example.invalid", "two@example.invalid"]}},
     )
     monkeypatch.setattr(engine_module.steps, "get_step", resolver)
 
@@ -194,13 +188,7 @@ def test_frozen_mock_aliases_become_detached_json_payloads(tmp_path, monkeypatch
     )
     assert result["payload"]["to"] == ["one@example.invalid", "two@example.invalid"]
     json.dumps(result)
-    spec = _catalog(str(tmp_path / "phases.yaml"))
-    json.dumps(spec)
-    assert spec["phase.check"]["implementation"] == "handler"
     result["payload"]["to"].append("different@example.invalid")
-    assert orch.handler("phase", "check").mockable["send_to"]["aliases"]["team"] == (
-        "one@example.invalid", "two@example.invalid"
-    )
 
 
 @pytest.mark.parametrize("kind", ["auto", "external"])

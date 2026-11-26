@@ -137,7 +137,7 @@ def test_real_engine_accepts_reviewed_fresh_monthly_layout(provider, tmp_path):
     checkpoints = []
     st._checkpoint = lambda: checkpoints.append(deepcopy(st.steps))
     name = "TEST ONLY - Fresh Monthly real engine"
-    orch = fresh_orchestrator(str(config), st, mocks={
+    orch = fresh_orchestrator(str(config), st, step_defaults={
         "bug_bash.clone_plans_auth": {"name": name, "layout": M.LAYOUT}})
     orch.run_until_gate()
     step = st.get_step("bug_bash", C.ID)
@@ -158,7 +158,7 @@ def test_real_engine_accepts_reviewed_fresh_monthly_layout(provider, tmp_path):
 
 @pytest.mark.parametrize("value", ["unknown-layout", None, {}, []])
 def test_invalid_engine_layout_input_never_writes(provider, value):
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
 
     with mockctx.active({"layout": value}):
         result = invoke(C.build, monthly_state())
@@ -167,7 +167,7 @@ def test_invalid_engine_layout_input_never_writes(provider, value):
 
 
 def test_engine_layout_input_cannot_migrate_frozen_v1_or_override_explicit_parameter(provider):
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tests._context import context
     from orchestrator.state import StepState
 
@@ -595,7 +595,7 @@ def test_monthly_owner_assignment_errors_visible_nonblocking(provider, monkeypat
 
 def test_v2_invitation_and_rollout_links_require_complete_fill(provider, monkeypatch):
     from steps.bug_bash import send_invite as I
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     st, _, record = ready_fill(provider, monkeypatch)
     assert invoke(I.build, st).kind == "blocked"
     assert invoke(U.build, st).kind == "done"

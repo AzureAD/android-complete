@@ -7,9 +7,6 @@ from orchestrator import cli_common as C, delivery as D
 
 
 def finish(orch, notification_id):
-    from orchestrator.revision import mismatch_reason
-    if mismatch_reason(orch):
-        return False
     record = orch.state.notification_deliveries[notification_id]
     D.validate_record(orch, record)
     if D.is_progress_receipt(record):
@@ -82,18 +79,11 @@ def finish(orch, notification_id):
 
 def prepare(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    from orchestrator.revision import assert_current, mismatch_reason
-    if args.source != "pending":
-        assert_current(orch)
-    if not mismatch_reason(orch) and D.prune_progress(orch):
+    if D.prune_progress(orch):
         C.save_state(st, args.runs_root, args.release)
     if args.source == "step":
         from orchestrator.commands.step_action import prepare_step
         out = prepare_step(args, st, orch)
-        items = out.get("notifications", [])
-    elif args.source == "digest":
-        from orchestrator.commands.notify import _notify_payload
-        out = _notify_payload(args, args.release, advance=False)
         items = out.get("notifications", [])
     else:
         out, items = {}, []
@@ -161,7 +151,7 @@ def register(sub):
         p.add_argument("--id", required=op != "prepare")
         if op == "prepare":
             p.add_argument("--as-of", default=None, help="Preview clock only; cannot authorize a send")
-            p.add_argument("--source", choices=("pending", "digest", "step"),
+            p.add_argument("--source", choices=("pending", "step"),
                            default="pending")
             p.add_argument("--phase", default="preflight")
             p.add_argument("--step")

@@ -21,7 +21,7 @@ def _bb_build(sid, mocks, release="2026-08", ccd="2026-08-13"):
     if sid != "clone_plans_auth" or not ccd:
         return _fresh_bb_build(sid, mocks, release=release, ccd=ccd)
     import steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     state = ReleaseState(release_id=release, ccd=ccd)
     state.set_step("bug_bash", sid, StepState(execution={
@@ -85,7 +85,7 @@ def test_clone_plans_broker_blocks_on_api_failure():
 def test_ui_test_status_fills_from_snapshot(monkeypatch):
     """With a cloned plan + reconciled snapshot, fill and persist the summary."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from orchestrator import effects
     from tools import testplans as T
@@ -120,7 +120,7 @@ def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
     """The expanded step also fills the Authenticator suite and reassigns every FAILED
     automated auth case to the release owner for triage."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
     from tools import testplans as T
@@ -168,7 +168,7 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     """ui_test_status forward-populates the `ui_failures` human-review reminder with BOTH the
     Broker MRWP UI failures AND the Authenticator ECS failed cases (+ run links)."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
     from tools import testplans as T
@@ -244,7 +244,7 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
 def test_ui_test_status_blocks_before_writes_when_no_auth_suite():
     """Missing target suite is not confused with Monthly's intentional lack of mapping."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from tools import testplans as T
     st = _ui_state(plan_id="900")
@@ -264,7 +264,7 @@ def test_ui_test_status_blocks_before_writes_when_no_auth_suite():
 
 def test_ui_test_status_blocks_without_broker_plan():
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = _uts_state(plan_id=None)
     with mockctx.active({}):
@@ -277,7 +277,7 @@ def test_ui_test_status_blocks_without_broker_plan():
 def test_ui_test_status_uses_current_recorded_evidence(monkeypatch):
     """Historical failure details cannot cause reassignment after current recovery."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     from tools import pipelines as P, testplans as T
     st = _ui_state(plan_id="900")
@@ -340,7 +340,7 @@ def test_clone_plans_auth_reconciles_creation_without_duplicate():
     from orchestrator.outcomes import as_dict
     from orchestrator.state import ReleaseState, StepState
     from steps.bug_bash import clone_plans_auth as step
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
 
     state = ReleaseState(release_id="2026-08", ccd="2026-08-13")
     state.set_step("bug_bash", step.ID, StepState(execution={"effect_input": _legacy_auth_input(state)}))
@@ -557,7 +557,7 @@ def test_distribute_excludes_automated_auth_cases():
 def test_distribute_tests_blocks_without_broker_clone():
     """No cloned Broker plan → the step blocks (can't locate the manual tests)."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", owner_email="o@x")
     with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}], "oce": "oce@x"}):
@@ -597,7 +597,7 @@ def test_send_invite_composes_create_event():
     """send_invite returns a NeedsSkill(workiq_create_event) with the meeting, real
     recipients, and a body carrying every release link + the injected flags."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = _invite_state()
     with mockctx.active({"now": "2026-08-21T18:00:00",
@@ -626,7 +626,7 @@ def test_send_invite_uses_los_angeles_timezone_and_blocks_missing_zone(monkeypat
     from datetime import datetime
     from orchestrator import schedule
     from steps.bug_bash import send_invite
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     st = _invite_state()
     st.timezone = "Asia/Tokyo"
     monkeypatch.setattr(schedule, "now_local", lambda zone:
@@ -643,7 +643,7 @@ def test_send_invite_uses_los_angeles_timezone_and_blocks_missing_zone(monkeypat
 
 def test_send_invite_overnight_clock_and_timezone_are_explicit():
     from steps.bug_bash import send_invite
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     st = _invite_state()
     for now, day, offset in (
         ("2026-09-11T00:49:35+00:00", "2026-09-11", "-07:00"),
@@ -667,11 +667,11 @@ def test_send_invite_overnight_clock_and_timezone_are_explicit():
 def test_send_invite_expiry_refresh_and_ever_claimed_safety(tmp_path, monkeypatch, capsys):
     import json
     from datetime import datetime
-    from orchestrator import cli, delivery as D, mocks, schedule
+    from orchestrator import cli, delivery as D, environment as mocks, schedule
     from orchestrator.state import StepState
     current = datetime.fromisoformat("2026-08-24T10:00:00-07:00")
     monkeypatch.setattr(schedule, "now_local", lambda zone: current.astimezone(zone))
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {"bug_bash.send_invite": {"flags": "{}"}})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *_a, **_kw: {"bug_bash.send_invite": {"flags": "{}"}})
     st = _active_phase(_invite_state(), "bug_bash")
     for sid in ("ui_test_status", "distribute_tests"):
         st.set_step("bug_bash", sid, StepState(status="done"))
@@ -778,13 +778,13 @@ def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
         rid = "2026-08"
         _stub_build_defs("pass")
         st = _active_phase(ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed"), "bug_bash")
-        phase = next(p for p in Orchestrator(CONFIG, st, mocks={}).config["phases"] if p["id"] == "bug_bash")
+        phase = next(p for p in Orchestrator(CONFIG, st, step_defaults={}).config["phases"] if p["id"] == "bug_bash")
         for s in phase["steps"]:
             if s["id"] == "activate_chat":
                 break
             st.set_step("bug_bash", s["id"], StepState(status="done"))
         seed_invite(st)
-        ready = Orchestrator(CONFIG, st, mocks={})
+        ready = Orchestrator(CONFIG, st, step_defaults={})
         _pass_m365_check(ready)
         _C.save_state(st, d, rid)
         cid = "19:meeting_ABC123@thread.v2"
@@ -951,7 +951,7 @@ def test_bugbash_updates_composes_needs_skill():
     """With the chat activated + progress injected, the first update is a NeedsSkill send to
     the stored chat carrying content + canonical Graph mentions, recorded as bugbash_updates."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = _bb_updates_state()
     _active_phase(st, "bug_bash")
@@ -981,7 +981,7 @@ def test_bugbash_updates_stays_in_flight_across_multiple_posts_until_marked_comp
     `cached_people`, respects the 3h cooldown (unless `force=True`), never triggers a 4h
     stall alert in `release-drainer`, and unlocks `bugbash_complete` when marked complete."""
     from datetime import datetime, timedelta, timezone
-    from orchestrator import cli_common as _C, drain as _D, mocks as _mocks_mod
+    from orchestrator import cli_common as _C, drain as _D, environment as _mocks_mod
     from orchestrator.commands.deliver_cmd import deliver_one_step, drain_auto_notifications
     from orchestrator.dispatch import decorate_handoff_contract
 
@@ -1002,7 +1002,7 @@ def test_bugbash_updates_stays_in_flight_across_multiple_posts_until_marked_comp
     fake_mcp = lambda srv, tool, args: sent_msgs.append((srv, tool, args)) or {"id": f"msg-{len(sent_msgs)}"}
 
     # 1) Post #1 (with `people` resolved once -> cached in `step.data["cached_people"]`): step transitions `pending -> in_flight`!
-    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+    monkeypatch.setattr(_mocks_mod, "load_step_defaults", lambda *a, **k: {
         "bug_bash.bugbash_updates": {
             "progress": prog_step1,
             "people": {"a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}},
@@ -1022,7 +1022,7 @@ def test_bugbash_updates_stays_in_flight_across_multiple_posts_until_marked_comp
     rec1.data["last_posted_at"] = datetime.fromisoformat("2026-08-18T09:05:00-07:00").astimezone(timezone.utc).isoformat()
     st1.set_step("bug_bash", "bugbash_updates", rec1)
     _C.save_state(st1, str(tmp_path), rid)
-    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+    monkeypatch.setattr(_mocks_mod, "load_step_defaults", lambda *a, **k: {
         "bug_bash.bugbash_updates": {
             "progress": prog_step1,
             "now": "2026-08-18T10:15:00-07:00",
@@ -1034,7 +1034,7 @@ def test_bugbash_updates_stays_in_flight_across_multiple_posts_until_marked_comp
 
     # 3) After 3h+ cooldown (1:00 PM working hours, NO `people` mock!): reuses `cached_people` and posts Update #2 while staying `in_flight`!
     prog_step2 = {**prog_step1, "done": 2, "remaining": 2}
-    monkeypatch.setattr(_mocks_mod, "load_mocks", lambda *a, **k: {
+    monkeypatch.setattr(_mocks_mod, "load_step_defaults", lambda *a, **k: {
         "bug_bash.bugbash_updates": {
             "progress": prog_step2,
             "now": "2026-08-18T13:10:00-07:00",
@@ -1080,7 +1080,7 @@ def test_bugbash_updates_done_when_all_complete():
     """If every test is already complete when the step is reached, it just completes (no
     poller needed) rather than posting an empty update."""
     import steps as _steps
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from orchestrator.outcomes import as_dict
     st = _bb_updates_state()
     prog = {"total": 2, "done": 2, "remaining": 0, "unassigned": 0, "owners": {
@@ -1088,70 +1088,6 @@ def test_bugbash_updates_done_when_all_complete():
     with mockctx.active({"progress": prog}):
         out = as_dict(_invoke(_steps.get_step("bug_bash", "bugbash_updates").build, st))
     assert out["kind"] == "done" and "complete" in out["note"].lower()
-
-
-
-
-def test_post_bugbash_update_decisions(monkeypatch):
-    """post-bugbash-update: off_hours (weekend) sends nothing; a working-hour tick with
-    progress posts content+mentions; all-complete yields a `complete` wrap-up decision."""
-    import tempfile, argparse, json as _json, io
-    from contextlib import redirect_stdout
-    from orchestrator import cli_common as _C
-    from orchestrator.commands import bugbash_update as BU
-    from steps.lib import mockctx
-
-    def run(now, mocks, force=False):
-        from orchestrator import mocks as mock_config
-        monkeypatch.setattr(mock_config, "load_mocks", lambda: {"bug_bash.bugbash_updates": mocks})
-        buf = io.StringIO()
-        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
-                                now=now, force=force)
-        with mockctx.active(mocks), redirect_stdout(buf):
-            rc = BU.cmd_post_bugbash_update(ns)
-        return rc, _json.loads(buf.getvalue().strip())
-
-    with tempfile.TemporaryDirectory() as d:
-        rid = "2026-08"
-        _stub_build_defs("pass")
-        st = _bb_updates_state()
-        _active_phase(st, "bug_bash")
-        step = st.get_step("bug_bash", "bugbash_updates")
-        step.status = "done"
-        st.set_step("bug_bash", "bugbash_updates", step)
-        _C.save_state(st, d, rid)
-
-        # weekend → off_hours, nothing gathered
-        _, dec = run("2026-08-22T10:00:00", {})
-        assert dec["decision"] == "off_hours"
-
-        remaining = {"total": 2, "done": 1, "remaining": 1, "unassigned": 0, "owners": {
-            "a@x": {"name": "Alice", "total": 2, "done": 1, "remaining": 1, "tests": [
-                {"id": "1", "name": "T1", "url": "u1", "state": "notrun", "products": ["Broker"]},
-                {"id": "2", "name": "T2", "url": "u2", "state": "passed", "products": ["Authenticator"]}]}}}
-        _, dec = run("2026-08-21T10:00:00", {"progress": remaining, "people": {
-            "a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}}})   # Fri 10am
-        assert dec["decision"] == "post" and dec["remaining"] == 1
-        assert dec["chatId"] == "19:meeting_X@thread.v2" and dec["mentions"]
-
-        allc = {"total": 2, "done": 2, "remaining": 0, "unassigned": 0, "owners": {
-            "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": [
-                {"id": "1", "name": "T1", "url": "u1", "state": "passed", "products": ["Broker"]},
-                {"id": "2", "name": "T2", "url": "u2", "state": "passed", "products": ["Authenticator"]}]}}}
-        _, dec = run("2026-08-21T10:00:00", {"progress": allc, "people": {"a@x": {"name": "Alice"}}})
-        assert dec["decision"] == "complete" and dec["total"] == 2
-        assert dec["content"].count("<li>") == 2 and "<at" not in dec["content"]
-        assert not _C.load_state(d, rid).get_step("bug_bash", "bugbash_updates").data.get("poll_complete")
-        _ack_notifications(d, rid, "2026-08-21T10:00:00-07:00", dec["notifications"])
-        assert _C.load_state(d, rid).get_step(
-            "bug_bash", "bugbash_updates").data["poll_complete"] is True
-
-        # no chat activated → no_chat
-        st2 = _bb_updates_state(chat_id=None)
-        _active_phase(st2, "bug_bash")
-        _C.save_state(st2, d, rid)
-        _, dec = run("2026-08-21T10:00:00", {"progress": remaining})
-        assert dec["decision"] == "no_chat"
 
 
 

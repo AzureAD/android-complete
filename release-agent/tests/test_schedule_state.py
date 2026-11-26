@@ -99,23 +99,6 @@ def test_automations_cover_every_scheduled_step():
 
 
 
-def test_sim_as_of_before_window_reports_scheduled():
-    """If as_of is before an EARLIER phase's anchor, the fast-forward can't complete it
-    (the engine holds 'scheduled') and the sim surfaces that as a problem instead of
-    silently pretending. Target ccd at CCD-30: preflight (opens CCD-7) isn't due yet."""
-    import tempfile
-    from orchestrator import sim as SIM
-    scenario = {"name": "t_sched", "release_id": "2026-08", "ccd": "2026-08-26",
-                "as_of": "CCD-30", "data": "mock",
-                "target": {"phase": "ccd", "at": "open"}}
-    with tempfile.TemporaryDirectory() as tmp:
-        res = SIM.run_scenario(scenario, runs_root=tmp)
-    assert res.stop_kind == "scheduled" and not res.reached
-    assert any("scheduled" in p for p in res.problems)
-
-
-
-
 def test_schedule_today_uses_owner_timezone():
     """schedule.today() is the date in the owner's zone (PT), not the host's."""
     from datetime import datetime

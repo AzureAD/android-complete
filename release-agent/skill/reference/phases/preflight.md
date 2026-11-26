@@ -19,7 +19,7 @@ CG/access check or send unrelated notices because the owner asked for status.
 ## Notices and feature reminders (Direct Python Delivery — Zero Prompts)
 
 1. Run `python -m orchestrator.cli next --release <id> --deliver --json` (or `deliver-step --release <id> --phase preflight --step notice --json` and `deliver-step --release <id> --phase preflight --step flight_reminder --json`).
-2. **When `requires_approval: false` (default):** Python sends both notifications silently via Agency MCP (`mail` / `teams`), applies `mocks.local.yaml` redirects (`[TEST → me]`), and records exact delivery receipts + step completion in one atomic CLI call. **NEVER call `workiq_send_email`, `workiq_send_chat_message`, or `m_ask_user`, and NEVER wrap `next` in a PowerShell `for`/`while` loop!** (Only preview + ask via `m_ask_user` if `requires_approval: true` in `config/phases.yaml`.)
+2. **When `requires_approval: false` (default):** Python sends both notifications silently via Agency MCP (`mail` / `teams`), resolves targets from `config/environment.yaml` (`test` -> `@owner` / `self`; `prod` -> live DLs / chats), and records exact delivery receipts + step completion in one atomic CLI call. **NEVER call `workiq_send_email`, `workiq_send_chat_message`, or `m_ask_user`, and NEVER wrap `next` in a PowerShell `for`/`while` loop!** (Only preview + ask via `m_ask_user` if `requires_approval: true` in `config/phases.yaml`.)
 
 ## Lockdown (`preflight.lockdown`)
 

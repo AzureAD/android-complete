@@ -17,8 +17,7 @@ import json as _json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
-from orchestrator import cli_common as C, delivery as D, revision, write_review as W
-from orchestrator import mocks as mocks_mod
+from orchestrator import cli_common as C, delivery as D, write_review as W
 from orchestrator.outcomes import Blocked, Done, InProgress
 from orchestrator.schedule import utc_now_iso as _now_iso
 from orchestrator.transitions import TransitionIntent
@@ -43,12 +42,11 @@ def plan_localization(args, orch):
 
 
 def _receipt_owner(orch, execution_id):
-    revision.assert_current(orch)
     step = orch.state.get_step("ccd", L.ID)
     execution = step.execution or {}
     if (not execution_id or execution.get("id") != execution_id
             or step.status not in ("in_flight", "blocked")
-            or not revision.is_hash((execution.get("write_review") or {}).get("hash"))):
+            or not W.is_hash((execution.get("write_review") or {}).get("hash"))):
         raise ValueError("Localization receipt requires the exact already-started reviewed execution")
     return step
 
@@ -278,14 +276,19 @@ def cmd_check_localization(args):
     if getattr(args, "pr_status", None) is not None:
         step.data["pr_status"] = str(args.pr_status).strip().lower()
 
-    # mocks.local.yaml send_to → redirect localization follow-up posts to your own chat.
+    # Route localization follow-up chat posts via config/environment.yaml (or step override).
     if d in ("announce_pr", "announce_none", "warn_unmerged") and decision.get("chat"):
-        spec = mocks_mod.load_mocks().get("ccd.localization") or {}
-        if "send_to" in spec:
-            val = spec["send_to"]
-            val = {"me": SELF_CHAT_ID, "self": SELF_CHAT_ID}.get(val, val)
-            decision["chat"]["chatId"] = val
-            decision["test_redirect"] = {"send_to": val}
+        from orchestrator import environment as env
+        active_defs = getattr(orch, "step_defaults", None) or env.load_step_defaults(getattr(args, "config", None))
+        spec = env.step_config(active_defs, "ccd", "localization")
+        resolved_cid, _lbl, is_self = env.resolve_teams_chat(
+            "code_reviews",
+            override=spec.get("send_to"),
+            config_path=getattr(args, "config", None),
+        )
+        if is_self or resolved_cid != decision["chat"].get("chatId"):
+            decision["chat"]["chatId"] = resolved_cid
+            decision["test_redirect"] = {"send_to": resolved_cid}
 
     if d == "failed":
         step.data["last_checked"] = now.isoformat()

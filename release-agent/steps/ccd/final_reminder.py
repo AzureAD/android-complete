@@ -7,8 +7,8 @@ uses (which sends the CCD-7 `initial` variant a week earlier).
 
 Sending email needs the WorkIQ MCP the engine can't reach, so this is a `scout`
 step: `build()` resolves the email deterministically and returns a
-NeedsSkill(workiq_send_email) for the skill to send. Redirect for tests with the
-`send_to` mock knob (keeps the send real, points it at you).
+NeedsSkill(workiq_send_email) for the skill to send. Target recipients come from
+`config/environment.yaml` (`@owner` in `test`, full DLs in `prod`).
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -27,11 +27,9 @@ REQUIRED_TOOLS = ('workiq',)
 REQUIRES_APPROVAL = False
 NOTIFICATION = True
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     variant: str | None = None
-
 
 PARAMETERS = {"build": BuildParameters}
 
@@ -40,18 +38,6 @@ CONFIG = {
     "variant": "update",                     # CCD-day reminder ("Today")
 }
 
-MOCKABLE = {
-    "send_to": {
-        "kind": "payload", "sets": "to", "as": "list", "tag_subject": True,
-        "desc": "Send the email for real, but only to these address(es) (DL → you).",
-    },
-    "variant": {
-        "kind": "input",
-        "desc": "Force the notice variant: update (CCD-day) | initial (CCD-7).",
-    },
-}
-
-
 def _resolve_dl(context) -> list[str]:
     try:
         return context.services.assets.status_recipients()
@@ -59,7 +45,6 @@ def _resolve_dl(context) -> list[str]:
         if "was not supplied" not in str(exc):
             raise
         return notif.partner_recipients()
-
 
 def build(context: StepContext[BuildParameters]):
     """Resolve the CCD-day reminder into a NeedsSkill(workiq_send_email) using the unified card."""
@@ -89,7 +74,7 @@ def build(context: StepContext[BuildParameters]):
         body = body.replace("**Today**", f"**{ctx['ccd_long']}**")
 
     live_dl = _resolve_dl(context)
-    recipients, rnote, prefix = resolve_recipients(context, live_dl)
+    recipients, rnote, prefix = resolve_recipients(context, live_dl, group_key="partner_status")
     stage_mode = "ccd" if is_update else "preflight"
     composed = SE.compose(
         context.release,
@@ -99,7 +84,8 @@ def build(context: StepContext[BuildParameters]):
         ccd_today=today,
         ccd_long=ctx["ccd_long"],
     )
-    subject_out = f"{prefix}{subject}"
+    subject_out = f"{prefix}{subject}" if prefix and not subject.startswith("[TEST") else subject
+    note_prefix = "[test-redirect] " if prefix else ""
 
     return NeedsSkill(
         tool="workiq_send_email",
@@ -112,7 +98,7 @@ def build(context: StepContext[BuildParameters]):
         },
         record_as=ID,
         summary=f"Email the CCD-day code-complete reminder to {len(recipients)} recipient(s) ({rnote})",
-        note=f"sent to {', '.join(recipients) if recipients else '(no recipients)'}",
+        note=f"{note_prefix}sent to {', '.join(recipients) if recipients else '(no recipients)'}",
         outbound=True,
     )
 
@@ -125,8 +111,8 @@ KNOWLEDGE = {'summary': 'Email the Android DL that code complete is TODAY (Code 
  'who': 'Scout sends it automatically (via the optional 7:00 AM morning drain or the next '
         'interactive session once CCD arrives). The release owner owns the content/recipients.\n',
  'how': 'Delivered automatically in Python via Agency MCP (`deliver-step` / `next --deliver`) '
-        'using the exact same template and durable claim/result protocol as Phase 0 `notice`. '
-        'To test, redirect with the send_to mock knob (keeps the send real, points it at you).\n',
+        'using the exact same template and durable claim/result protocol as Phase 0 `notice`, '
+        'targeting `emails.partner_status` from `config/environment.yaml`.\n',
  'faqs': [{'q': 'How is this different from the Phase 0 notice?',
            'a': "Same template and delivery path, different variant/timing: Phase 0 'notice' "
                 "sends the 'initial' variant at CCD-7; this sends the 'update' variant ('Today') on CCD."}]}

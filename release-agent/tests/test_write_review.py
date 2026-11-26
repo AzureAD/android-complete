@@ -7,7 +7,8 @@ import json
 import pytest
 import yaml
 
-from orchestrator import cli_common as C, revision, write_review as W
+from orchestrator import cli_common as C, write_review as W
+from orchestrator import write_review as revision
 from orchestrator.commands import notice
 from orchestrator.engine import Orchestrator
 from orchestrator.outcomes import Blocked, Done
@@ -24,8 +25,7 @@ def reviewed(tmp_path):
         }],
     }]}), encoding="utf-8")
     state = ReleaseState(release_id="review-test", timezone="UTC")
-    orch = Orchestrator(str(config), state, mocks={})
-    revision.bind_initial(orch)
+    orch = Orchestrator(str(config), state, step_defaults={})
     path = C.state_path(str(tmp_path), state.release_id)
     state.save(path)
     args = Namespace(
@@ -59,7 +59,6 @@ def test_plan_is_deeply_immutable_and_hashes_all_semantics(reviewed):
     assert base["version"] == 1
     for field, replacement in (
             ("release", "another"), ("step", "other.step"), ("generation", "next"),
-            ("workflow_revision", "sha256:" + "a" * 64),
             ("command", "other-command"), ("parameters", {"mode": "create"}),
             ("preconditions", {"version": "2.0.0"}), ("operations", [])):
         changed = {**base, field: replacement}
@@ -192,7 +191,6 @@ def test_partial_uncertain_write_keeps_owner_until_explicit_resolution(reviewed)
     assert closed.data["last_write_review"] == {
         "execution_id": live.execution_id, "hash": args.review_hash, "approved_by": "reviewer",
         "approved_at": failed.execution["started_at"],
-        "workflow_revision": revision.revision_id(orch.state.workflow_revision),
     }
     with pytest.raises(ValueError):
         live.validate()

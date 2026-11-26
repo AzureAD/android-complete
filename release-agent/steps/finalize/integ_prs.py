@@ -20,9 +20,9 @@ review. The actual writes (create PBI, edit RI, open PRs, add labels) happen in 
 checkpoints the current plan hash and each attempted/verified operation. The same
 command reconciles saved receipts and reviews only remaining work; unknown outcomes hold.
 
-Mock knobs (mocks.local.yaml / tests):
-  versions : dict repo->version, e.g. {msal: "8.4.2"} — override state.versions for testing.
-  branches : dict repo->{wr,r,ri,target} — override computed branch names (test on fakes).
+Step defaults (`step_defaults` / offline scenarios):
+  versions : dict repo->version, e.g. {msal: "8.4.2"} — override state.versions.
+  branches : dict repo->{wr,r,ri,target} — override computed branch names.
   repos    : list of repo keys to include (default all) — e.g. ["msal"].
   pbi      : PBI work-item id to reference (skip creating one); "skip" = omit AB# line.
 """
@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import InProgress, NeedsSkill, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import pipelines as PL
 from tools.coordinates import coords
 
@@ -81,24 +81,15 @@ CONFIG = {
 
 REPO_ORDER = ["common", "msal", "broker", "authenticator"]
 
-MOCKABLE = {
-    "versions": {"kind": "input", "desc": "dict repo->version (override state.versions for testing)."},
-    "branches": {"kind": "input", "desc": "dict repo->{wr,r,ri,target} to override branch names."},
-    "repos": {"kind": "input", "desc": "list of repo keys to include (default all)."},
-    "pbi": {"kind": "input", "desc": "PBI id to reference (skip create); 'skip' = no AB# line."},
-}
-
-
 # --------------------------------------------------------------------------- helpers
 def _selected_repos(context):
     sel = context.input("repos", MISSING)
     keys = list(sel) if sel is not MISSING and sel else REPO_ORDER
     return [k for k in REPO_ORDER if k in keys]
 
-
 def _versions(context):
     """repo_key -> version. SOURCE OF TRUTH is state.versions (populated at Phase 2 by
-    build_verify.orchestrator_health). The `versions` mock overrides for testing;
+    build_verify.orchestrator_health). A `versions` input overrides discovery;
     discover_versions is only a last-resort fallback if state has none yet (it shouldn't,
     since integ_prs runs in Phase 4, well after Phase 2)."""
     v = context.input("versions", MISSING)
@@ -113,9 +104,8 @@ def _versions(context):
         return {}
     return {k: val for k, val in (versions or {}).items() if val} if ok else {}
 
-
 def _branches(context, repo_key, cfg, version):
-    """Resolve the {wr, r, ri, target} branch names for a repo, honoring the `branches` mock
+    """Resolve the {wr, r, ri, target} branch names for a repo, honoring a `branches` input
     override. For authenticator, state stores its release BRANCH (release/YYYY/MM/DD) rather
     than a semver, so strip the 'release/' prefix to get the branch token."""
     ov = (context.input("branches", MISSING) or {})
@@ -131,7 +121,6 @@ def _branches(context, repo_key, cfg, version):
         "target": ov.get("target", cfg["target"]),
     }
 
-
 def _pbi_ref(context):
     """(mode, value) — how the PBI is referenced. ('existing', id) reuses an id;
     ('skip', None) omits the AB# line; ('create', None) means the command must create one."""
@@ -142,11 +131,9 @@ def _pbi_ref(context):
         return ("skip", None)
     return ("existing", str(p))
 
-
 def _title(kind, version):
     return (f"Release integration/{version}" if kind == "integration"
             else f"Working/release/{version}")
-
 
 def pr_body(repo_key, kind, br, pbi_id):
     """PR description skeleton (owner fills details later). Includes the shared PBI ref."""
@@ -165,7 +152,6 @@ def pr_body(repo_key, kind, br, pbi_id):
             f"{ab}\n### What this PR does\n{what}\n\n"
             f"### Scout automation (release-agent · integ_prs)\n{checks}\n\n"
             f"<!-- Scout-generated. Edit freely. -->\n")
-
 
 # --------------------------------------------------------------------------- planning
 def _plan_repo(context, repo_key, version):
@@ -208,7 +194,6 @@ def _plan_repo(context, repo_key, version):
         out["prs"].append(pr)
     return out
 
-
 def _ri_analysis(context, dir_name, ri, target):
     """Read-only 'what would the RI edit do' summary."""
     a = {}
@@ -227,7 +212,6 @@ def _ri_analysis(context, dir_name, ri, target):
         a["human_conflicts"] = None
     return a
 
-
 def plan(context):
     """Full read-only preview across all selected repos."""
     pbi_mode, pbi_id = _pbi_ref(context)
@@ -238,7 +222,7 @@ def plan(context):
         v = versions.get(key)
         if not v:
             repos.append({"key": key, "tool": CONFIG[key]["tool"], "version": None,
-                          "notes": ["no version resolved (provide via `versions` mock or "
+                          "notes": ["no version resolved (provide via `versions` step_defaults or "
                                     "orchestrator vars)"], "prs": []})
             missing.append(f"{key}: version")
             continue
@@ -252,12 +236,11 @@ def plan(context):
     return {"pbi_mode": pbi_mode, "pbi_id": pbi_id, "versions": versions,
             "repos": repos, "missing": missing, "ready": not missing}
 
-
 def build(context: StepContext):
     if not _versions(context):
         return Blocked(
-            "integ_prs: no release versions resolved. Provide them via the `versions` mock "
-            "(e.g. {msal: '8.4.2'}) for testing, or wait for orchestrator version discovery.")
+            "integ_prs: no release versions resolved. Provide them via `step_defaults` `versions` "
+            "(e.g. {msal: '8.4.2'}) for rehearsals, or wait for orchestrator version discovery.")
 
     p = plan(context)
     if not p["ready"]:
@@ -289,7 +272,6 @@ def build(context: StepContext):
         note=f"{n_new} PRs to open, {n_reuse} already open",
         outbound=True,
     )
-
 
 def render_preview(p) -> str:
     """Human-readable dry-run preview of the whole plan."""
@@ -352,8 +334,8 @@ KNOWLEDGE = {'summary': 'Auto-open the 8 release integration/freeze PRs across t
         'When it looks right, run `create-integration-prs --release <id> --execute` to create '
         'the PBI, edit the RI branches, and open the PRs. Idempotent: an existing open PR '
         'head->base is reused (labels ensured), never duplicated. Labels: skip-coverage-check '
-        'on all github/GHE PRs; common also gets Skip-Consumers-Check. Test safely with the '
-        "step's `versions`/`branches`/`repos`/`pbi` mocks.\n",
+        'on all github/GHE PRs; common also gets Skip-Consumers-Check. Rehearse safely with '
+        "`step_defaults` (`versions`/`branches`/`repos`/`pbi`).\n",
  'consequences': '--execute is a WRITE: it creates a real PBI, PUSHES commits to the '
                  'release-integration branches (fast-forward only, never force), and opens '
                  'real PRs on github.com, GitHub Enterprise, and Azure DevOps. RI editing runs '

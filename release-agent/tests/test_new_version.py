@@ -53,8 +53,7 @@ def test_cancel_write_reservation_is_not_a_new_version_command():
 def test_inspect_state_reads_unsupported_metadata_without_migrating(tmp_path, capsys, monkeypatch):
     path = tmp_path / "old" / "release-state.json"
     path.parent.mkdir()
-    path.write_text(json.dumps({"schema_version": 3, "release_id": "old",
-                               "workflow_revision": {"execution_contract": 2},
+    path.write_text(json.dumps({"schema_version": 2, "release_id": "old",
                                "steps": {}}), encoding="utf-8")
     original = path.read_bytes()
     monkeypatch.setattr(ReleaseState, "load", lambda *a: pytest.fail("Inspection must not load executable state"))
@@ -66,15 +65,14 @@ def test_inspect_state_reads_unsupported_metadata_without_migrating(tmp_path, ca
     assert not (path.parent / "events.jsonl").exists()
 
 
-def test_manual_only_task_is_not_automatic_success_and_can_record_actual_owner_work(tmp_path, capsys):
+def test_human_action_task_is_not_automatic_success_and_can_record_actual_owner_work(tmp_path, capsys):
     import yaml
     config = tmp_path / "phases.yaml"
     config.write_text(yaml.safe_dump({"phases": [{
         "id": "manual", "name": "Manual", "steps": [{
-            "id": "work", "name": "Externally performed work", "kind": "auto",
-            "implementation": "dummy"}]}]}), encoding="utf-8")
+            "id": "work", "name": "Externally performed work", "kind": "human_action"}]}]}), encoding="utf-8")
     state = ReleaseState(release_id="manual-run", owner_email="owner@example.test")
-    fresh_orchestrator(str(config), state, mocks={})
+    fresh_orchestrator(str(config), state, step_defaults={})
     state.save(str(tmp_path / state.release_id / "release-state.json"))
     prefix = ["--config", str(config), "--runs-root", str(tmp_path)]
     assert main([*prefix, "task", "--release", state.release_id,
@@ -94,7 +92,7 @@ def test_manual_only_task_is_not_automatic_success_and_can_record_actual_owner_w
 def test_owner_handoff_revalidates_readiness_without_erasing_completed_work(tmp_path, capsys):
     from orchestrator.state import StepState
     state = ReleaseState(release_id="handoff", owner_email="old@example.test")
-    fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     state.readiness_items = {
         "oncall_now": {"status": "pass"}, "yubikey": {"status": "attested"}}
     state.set_step("preflight", "cg", StepState(status="done", note="Verified source", by="agent"))

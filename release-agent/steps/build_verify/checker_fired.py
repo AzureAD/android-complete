@@ -13,7 +13,7 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from steps.build_verify import _common as K
 from tools.pipelines import CHECKER_DEF, TRIGGER_JOB, TRIGGER_JOB_ID
 
@@ -34,14 +34,6 @@ CONFIG = {
     "trigger_job": TRIGGER_JOB,
     "max_scan": 25,                              # cap timeline reads (daily cron)
 }
-
-MOCKABLE = {
-    # Inject the resolved trigger outcome to skip the live scan:
-    #   {run:{id,queueTime}, result:"succeeded"|"skipped"|...}  or null for "none fired".
-    "triggering": {"kind": "input",
-                   "desc": "Inject {run:{id,queueTime}, result:<trigger-job result>} or null for 'none fired'."},
-}
-
 
 def build(context: StepContext):
     cfg = CONFIG
@@ -104,7 +96,6 @@ def build(context: StepContext):
         f"No Code Complete Checker run in {month} has a succeeded '{job}' job — the "
         f"release doesn't appear to have been triggered yet{ref}. If Code Complete Day "
         f"hasn't arrived this is expected; otherwise investigate the checker.")
-
 
 def _verdict(context, run, result, job):
     if not isinstance(run, dict) or not K.valid_id(run.get("id")):

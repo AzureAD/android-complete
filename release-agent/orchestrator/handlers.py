@@ -19,7 +19,6 @@ from orchestrator.outcomes import NeedsHuman
 from orchestrator.parameters import NoParameters, ParameterError, ParameterSchema
 from orchestrator.workflow import (
     StepDefinition,
-    StepImplementation,
     StepKind,
     WorkflowConfigError,
     WorkflowDefinition,
@@ -39,7 +38,6 @@ class StepHandler:
     prepare_approval: ApprovalPrepareHook | None
     reconcile_approval: ApprovalHook | None
     notification: bool
-    mockable: Mapping
     fire_at_local: str | None
     parameters: Mapping[HookRole, ParameterSchema]
     evidence: EvidenceAuthority
@@ -58,18 +56,6 @@ class StepHandler:
             raise ParameterError(f"Step {self.definition.key}: unsupported hook role {role!r}") from exc
         return schema.parse(values, cli=cli, base=base)
 
-    def mockable_spec(self) -> dict:
-        """Return a detached, JSON-ready view for payload overrides and display."""
-        return {key: _mutable_metadata(value) for key, value in self.mockable.items()}
-
-
-def _mutable_metadata(value):
-    if isinstance(value, Mapping):
-        return {key: _mutable_metadata(item) for key, item in value.items()}
-    if isinstance(value, (tuple, frozenset)):
-        return [_mutable_metadata(item) for item in value]
-    return deepcopy(value)
-
 
 @dataclass(frozen=True)
 class HandlerCatalog:
@@ -83,10 +69,13 @@ class HandlerCatalog:
         handlers = {}
         for step in workflow.step_by_key.values():
             h = _compile_handler(step, resolver(step.phase_id, step.id))
-            # Drop optional `UIFailureContribution` scopes whose target step was removed from `phases.yaml`.
+            # Drop optional `UIFailureContribution` scopes only when the owning phase exists
+            # in `workflow.phase_by_id` and its optional reminder step was omitted from `phases.yaml`.
             filtered_scopes = tuple(
                 sc for sc in h.evidence.scopes
-                if not isinstance(sc, UIFailureContribution) or sc.target in workflow.step_by_key
+                if not isinstance(sc, UIFailureContribution)
+                or sc.target in workflow.step_by_key
+                or sc.target.split(".", 1)[0] not in workflow.phase_by_id
             )
             if len(filtered_scopes) != len(h.evidence.scopes):
                 h = _dc_replace(h, evidence=EvidenceAuthority(filtered_scopes))
@@ -103,18 +92,6 @@ class HandlerCatalog:
 
 
 def _compile_handler(step: StepDefinition, module: object | None) -> StepHandler:
-    if step.implementation == StepImplementation.DUMMY:
-        if module is not None:
-            raise WorkflowConfigError(
-                f"Step {step.key} declares dummy implementation but has a handler module."
-            )
-        from phases.stub_runner import build as build_dummy
-
-        def build(context):
-            return build_dummy(step.raw)
-
-        return _builtin_handler(step, build)
-
     if module is None:
         if step.kind == StepKind.HUMAN_ACTION or (
             step.kind == StepKind.APPROVAL_GATE and not step.approval_command
@@ -170,9 +147,6 @@ def _compile_handler(step: StepDefinition, module: object | None) -> StepHandler
     status_email = getattr(module, "STATUS_EMAIL", False)
     if not isinstance(status_email, bool):
         raise WorkflowConfigError(f"Step {step.key} STATUS_EMAIL must be a boolean.")
-    mockable = getattr(module, "MOCKABLE", {})
-    if not isinstance(mockable, Mapping):
-        raise WorkflowConfigError(f"Step {step.key} MOCKABLE must be a mapping.")
     config = getattr(module, "CONFIG", {})
     if not isinstance(config, Mapping):
         raise WorkflowConfigError(f"Step {step.key} CONFIG must be a mapping.")
@@ -192,7 +166,6 @@ def _compile_handler(step: StepDefinition, module: object | None) -> StepHandler
         prepare_approval=prepare_approval,
         reconcile_approval=reconcile_approval,
         notification=notification,
-        mockable=_freeze(mockable),
         fire_at_local=fire_at_local,
         parameters=schemas,
         evidence=evidence,
@@ -212,7 +185,6 @@ def _builtin_handler(step: StepDefinition, build: BuildHook) -> StepHandler:
         prepare_approval=None,
         reconcile_approval=None,
         notification=False,
-        mockable=MappingProxyType({}),
         fire_at_local=None,
         parameters=MappingProxyType({HookRole.BUILD: schema}),
         evidence=EvidenceAuthority(),

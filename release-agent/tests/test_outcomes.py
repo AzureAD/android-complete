@@ -10,10 +10,10 @@ import orchestrator.engine as engine_module
 from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.outcomes import Blocked, Done, InProgress, NeedsHuman, NeedsSkill
 from orchestrator.state import ReleaseState
-from steps.lib import mockctx
+from tests import _fixtures as mockctx
 
 
-def _orchestrator(tmp_path, monkeypatch, build, execution="sequential", mocks=None):
+def _orchestrator(tmp_path, monkeypatch, build, execution="sequential", step_defaults=None):
     config = {
         "phases": [{
             "id": "phase",
@@ -32,7 +32,9 @@ def _orchestrator(tmp_path, monkeypatch, build, execution="sequential", mocks=No
         }],
     }
     if build is None:
-        config["phases"][0]["steps"][0]["implementation"] = "dummy"
+        config["phases"][0]["steps"][0] = {
+            "id": "check", "name": "Check", "kind": "human_action",
+        }
     path = tmp_path / "phases.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     handler = (
@@ -44,7 +46,7 @@ def _orchestrator(tmp_path, monkeypatch, build, execution="sequential", mocks=No
         lambda phase, step: handler if (phase, step) == ("phase", "check") else None,
     )
     return Orchestrator(
-        str(path), ReleaseState(release_id="r"), mocks=mocks or {},
+        str(path), ReleaseState(release_id="r"), step_defaults=step_defaults or {},
         now=datetime(2026, 9, 12, 12, tzinfo=timezone.utc),
     )
 
@@ -117,14 +119,14 @@ def test_outcome_mocks_skip_handler_and_keep_mock_attribution(
 
     orch = _orchestrator(
         tmp_path, monkeypatch, build,
-        mocks={"phase.check": {"outcome": status, "note": "injected result"}},
+        step_defaults={"phase.check": {"outcome": status, "note": "injected result"}},
     )
     orch.step_once()
     record = orch.state.get_step("phase", "check")
 
     assert record.status == status
     assert record.note == "injected result"
-    assert record.by == "mock"
+    assert record.by == "config"
 
 
 def test_input_mock_reaches_direct_build(tmp_path, monkeypatch):
@@ -133,7 +135,7 @@ def test_input_mock_reaches_direct_build(tmp_path, monkeypatch):
 
     orch = _orchestrator(
         tmp_path, monkeypatch, build,
-        mocks={"phase.check": {"message": "injected input"}},
+        step_defaults={"phase.check": {"message": "injected input"}},
     )
     orch.step_once()
 
@@ -141,14 +143,13 @@ def test_input_mock_reaches_direct_build(tmp_path, monkeypatch):
     assert mockctx.mock_input("message", None) is None
 
 
-def test_dummy_shell_requires_actual_manual_completion_and_never_approves_gate(tmp_path, monkeypatch):
+def test_human_action_requires_actual_manual_completion_and_never_approves_gate(tmp_path, monkeypatch):
     orch = _orchestrator(tmp_path, monkeypatch, None)
     actions = orch.run_until_gate()
     record = orch.state.get_step("phase", "check")
 
     assert [action.kind for action in actions] == ["reminder"]
-    assert record.status == "blocked"
-    assert "Manual-only" in record.note
+    assert record.status == "pending"
     assert record.links == []
     assert record.data == {}
     assert record.execution is None

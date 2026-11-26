@@ -15,15 +15,12 @@ STAGE_ID = P.AUTH_SIGNOFF_STAGE_ID
 STAGE_NAME = P.AUTH_SIGNOFF_STAGE_NAME
 AUTOMATION_LABEL = "release-signoff"
 
-MOCKABLE = release_stage.MOCKABLE
 stage_started = release_stage.stage_started
 stage_failed = release_stage.stage_failed
-
 
 def resolve_target(context: StepContext):
     return release_stage.resolve_pinned_target(
         context, stage_name=STAGE_NAME, stage_id=STAGE_ID, for_step_id=ID)
-
 
 def build(context: StepContext):
     return release_stage.build_pinned_stage_action(

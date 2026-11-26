@@ -119,7 +119,7 @@ def test_phase_root_depends_on_and_step_available_gate_execution(tmp_path):
     orch0 = Orchestrator(
         str(path),
         st,
-        mocks={},
+        step_defaults={},
         now=datetime(2026, 9, 9, 12, 0, tzinfo=LA),
         handler_resolver=lambda p, s: mod_roll if (p, s) == ("p1", "roll") else None,
     )
@@ -137,7 +137,7 @@ def test_phase_root_depends_on_and_step_available_gate_execution(tmp_path):
     orch_9am = Orchestrator(
         str(path),
         st,
-        mocks={},
+        step_defaults={},
         now=datetime(2026, 9, 9, 9, 0, tzinfo=LA),
         handler_resolver=lambda p, s: mod_roll if (p, s) == ("p1", "roll") else None,
     )
@@ -150,7 +150,7 @@ def test_phase_root_depends_on_and_step_available_gate_execution(tmp_path):
     orch_11am = Orchestrator(
         str(path),
         st,
-        mocks={},
+        step_defaults={},
         now=datetime(2026, 9, 9, 11, 0, tzinfo=LA),
         handler_resolver=lambda p, s: mod_roll if (p, s) == ("p1", "roll") else None,
     )
@@ -259,7 +259,7 @@ def test_drain_journal_records_progress_waiting_counts_and_missed_slots(tmp_path
         str(cfg_path),
         st,
         readiness_path=str(tmp_path / "readiness.yaml"),
-        mocks={},
+        step_defaults={},
         handler_resolver=lambda _p, sid: mods.get(sid),
     )
     orch.gate.sign()
@@ -620,7 +620,7 @@ def test_lockdown_overlap_renders_untruncated_details_and_ccoa_specific_owner_pr
     capsys.readouterr()
 
     loaded = C.load_state(str(tmp_path), rid)
-    orch = Orchestrator(CONFIG, loaded, mocks={}, as_of=date(2026, 11, 18))
+    orch = Orchestrator(CONFIG, loaded, step_defaults={}, as_of=date(2026, 11, 18))
     rep = decorate_handoff_contract(orch.status_report())
     md = render.status_view(rep)
 
@@ -677,7 +677,7 @@ def test_phase2_fixes_ccd_filtering_inprogress_orchestrator_telemetry_and_html_r
     """
     from orchestrator.commands.step_action import prepare_step
     from steps.build_verify import _common as K, orchestrator_health as OH, rc_report_notify as RN, telemetry_verify as TV
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tests._context import context as _ctx, invoke as _inv, pipeline as _pipe
     from tests._mrwp_evidence import PROD, snapshot
     from tools.pipelines import orchestrator as PO
@@ -745,7 +745,7 @@ def test_phase2_fixes_ccd_filtering_inprogress_orchestrator_telemetry_and_html_r
         note="telemetry flowing for 6.2611.1234 — 42 row(s)",
         data={"version": "6.2611.1234", "rows": 42},
     ))
-    orch = Orchestrator(CONFIG, st2, mocks={}, as_of=date(2026, 11, 20))
+    orch = Orchestrator(CONFIG, st2, step_defaults={}, as_of=date(2026, 11, 20))
     prep = prepare_step(SimpleNamespace(phase="build_verify", step="rc_report_notify", release="2026-11"), st2, orch)
     assert "Telemetry (Kusto): 42 row(s) for APK 6.2611.1234" in prep["mcp_arguments"]["message"]
     assert "_also_email" not in prep["mcp_arguments"]

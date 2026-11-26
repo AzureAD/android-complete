@@ -11,7 +11,7 @@ from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, Blocked
 from tools.coordinates import coords
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 
 ID = "cg"
 KIND = "agent"
@@ -36,17 +36,6 @@ CONFIG = {
     "alerts_url": (f"{_AUTH_REPO['org']}/{_AUTH_REPO['project']}"
                    f"/_componentGovernance/{_AUTH_REPO['name']}"),
 }
-
-# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
-MOCKABLE = {
-    "alerts": {
-        "kind": "input",
-        "desc": ("Inject a CG alerts list (each {severity, alertState, title, …}); "
-                 "the REAL report/block logic runs on it — no az call. Great for "
-                 "rehearsing the High/Critical block path."),
-    },
-}
-
 
 def _cg_summary(alerts: list, high_sev: list):
     """Return (active, high) lists from raw alerts. `high` = active alerts whose
@@ -83,7 +72,6 @@ def _cg_summary(alerts: list, high_sev: list):
             [s.lower() for s in high_sev]]
     return active, high
 
-
 def _cg_report(active: list, high: list) -> str:
     from collections import Counter
     by_sev = Counter((a.get("severity") or "unknown").strip().lower() for a in active)
@@ -104,7 +92,6 @@ def _cg_report(active: list, high: list) -> str:
         lines.append("No High/Critical active alerts.")
     return "\n".join(lines)
 
-
 def _alert_link(a: dict):
     """Best-effort per-alert portal URL from the raw CG alert, if present."""
     url = a.get("url") or (((a.get("_links") or {}).get("web") or {}).get("href"))
@@ -112,7 +99,6 @@ def _alert_link(a: dict):
         return None
     title = a.get("title") or a.get("summary") or "alert"
     return {"name": str(title)[:60], "url": url}
-
 
 def _cg_links(cfg: dict, high: list) -> list:
     """Durable refs for the CG step: the repo's alerts page (from config) + any
@@ -127,11 +113,9 @@ def _cg_links(cfg: dict, high: list) -> list:
             links.append(lk)
     return links
 
-
 def build(context: StepContext):
     cfg = CONFIG
-    # Injected `alerts` (mocks.local.yaml) → run the REAL report/block logic on your
-    # data, skipping the live az call.
+    # Configured `alerts` input (`step_defaults` / scenarios) -> run the real report/block logic on it.
     injected = context.input("alerts", MISSING)
     if injected is not MISSING:
         alerts = injected

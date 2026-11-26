@@ -12,9 +12,8 @@ When (agreed rule, see tools.invite.schedule_bugbash):
   * reached before 3pm on a weekday    -> later the SAME day, no earlier than 09:00
   Weekends roll forward to Monday. ~2h duration (extend if failures need investigation).
 
-Recipients (real): the config `recipients` — the Azure Identity Android SDK / Android
-Identity DL + the Dublin CIAM alias. Redirect for testing with the `send_to` mock knob
-(keeps the send real, points it at you, tags the subject).
+Recipients come from `emails.bug_bash_invite` in `config/environment.yaml` (`@owner` in
+`test` profile, Azure Identity Android SDK / Android Identity DLs + Dublin CIAM alias in `prod`).
 
 Links come from prior steps + Phase 2 (no re-discovery):
   * Broker test plan  <- clone_plans_broker.data.plan_id   (blocks if not cloned)
@@ -23,7 +22,7 @@ Links come from prior steps + Phase 2 (no re-discovery):
   * Auth ECS build    <- latest rc.auth.build.run_id         (blocks if missing/stale)
   * Local flags       <- ADO variable group 40 'local-flights' (live; TBD on failure)
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   now      : override the clock (ISO) so the schedule rule is deterministic in tests.
   flags    : inject the local-flights string (skip the live var-group fetch).
   send_to  : redirect the invite to these attendee(s) for testing (payload override).
@@ -41,7 +40,7 @@ from orchestrator import schedule
 from orchestrator.delivery import fingerprint
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib.context import resolve_recipients
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from steps.build_verify._common import valid_id
 from tools import invite as I
 from tools import testplans as T
@@ -59,18 +58,9 @@ NOTIFICATION = True
 # the Dublin CIAM alias). Redirect for a test with the `send_to` knob.
 RECIPIENTS = ["androididentity@microsoft.com", "idnadevexciamdublin@microsoft.com"]
 
-MOCKABLE = {
-    "now": {"kind": "input", "desc": "Override the clock (ISO 8601) for the schedule rule."},
-    "flags": {"kind": "input", "desc": "Inject the local-flights string (skip the var-group fetch)."},
-    "send_to": {"kind": "payload", "sets": "attendees", "as": "list", "tag_subject": True,
-                "desc": "Send the invite for real, but only to these attendee(s) (DL -> you)."},
-}
-
-
 def _latest_rc(context):
     rcs = context.evidence.pipeline_runs.get("rcs")
     return rcs[-1] if isinstance(rcs, list) and rcs and isinstance(rcs[-1], dict) else {}
-
 
 def source_matches(context, *steps, pipelines=False):
     fields = {"clone_plans_broker": ("plan_id",), "clone_plans_auth": (
@@ -105,14 +95,12 @@ def source_matches(context, *steps, pipelines=False):
             sources.append((["pipeline_runs", "rcs", -1, *path], value))
     return [{"path": path, "hash": fingerprint(value)} for path, value in sources]
 
-
 def gate_preconditions(context, sources):
     return thaw(sources) + [
         {"path": ["release_id"], "value": context.release.release_id},
         {"path": ["ccd"], "value": context.release.ccd},
         {"path": ["owner_email"], "value": context.release.owner_email},
     ]
-
 
 def _check_source_matches(context, scope):
     values = {"steps": {k: thaw(asdict(v)) for k, v in context.evidence.steps.items()},
@@ -132,7 +120,6 @@ def _check_source_matches(context, scope):
             raise ValueError("Invitation source checkpoint missing; owner recovery required.") from None
         if fingerprint(value) != match.get("hash"):
             raise ValueError("Invitation source checkpoint changed; owner recovery required.")
-
 
 def sent_notification(context, step_id, tool):
     """Read a step's exact terminal delivery, without granting new send authority."""
@@ -168,7 +155,6 @@ def sent_notification(context, step_id, tool):
     except (TypeError, KeyError, AttributeError, IndexError):
         raise ValueError("Malformed notification evidence; owner recovery required.") from None
 
-
 def delivered_invite(context):
     """Identity from this step's acknowledged calendar receipt, never a topic search."""
     selected = context.evidence.step("bug_bash", ID)
@@ -192,9 +178,13 @@ def delivered_invite(context):
         payload = item.get("payload") or {}
         recipients = payload.get("attendees")
         expected_subject = f"{schedule.target_month_label(context.release)} Release Bug Bash"
+        subj_val = str(payload.get("subject") or "")
+        valid_subj = subj_val == expected_subject or (
+            subj_val.startswith("[TEST") and subj_val.endswith(expected_subject)
+        )
         if (not isinstance(event_id, str) or not event_id.strip()
                 or item.get("channel") != "calendar"
-                or payload.get("subject") not in (expected_subject, "[TEST \u2192 me] " + expected_subject)
+                or not valid_subj
                 or not isinstance(recipients, list) or not recipients
                 or any(not isinstance(v, str) or v != v.strip() or "@" not in v for v in recipients)
                 or item.get("target") != {"attendees": recipients}
@@ -227,7 +217,6 @@ def delivered_invite(context):
                if k in payload},
             **({"join_url": join} if join is not None else {}),
             "start": payload["start"], "end": payload["end"], "timeZone": payload["timeZone"]}
-
 
 def build(context: StepContext):
     if not context.release.ccd:
@@ -295,7 +284,7 @@ def build(context: StepContext):
         return Blocked("send_invite: current RC ECS/Local run IDs are missing/invalid; "
                        "refresh the pipeline evidence before preparing the invitation.")
 
-    # local flags (live var group 40, mockable)
+    # local flags (live var group 40, or configured `flags` input)
     flags = context.input("flags", MISSING)
     if flags is MISSING:
         ok, flags, _d = context.services.pipelines.local_flights()
@@ -318,7 +307,10 @@ def build(context: StepContext):
     for link in monthly_links:
         body += f'<p><a href="{escape(link["url"], quote=True)}">{escape(link["name"])}</a> — release-owned failure investigations; canonical E2E cases unchanged.</p>'
 
-    recipients, rnote, prefix = resolve_recipients(context, RECIPIENTS)
+    try:
+        recipients, rnote, prefix = resolve_recipients(context, None, group_key="bug_bash_invite")
+    except ValueError as exc:
+        return Blocked(f"send_invite: {exc}")
     subject = f"{prefix}{month_year} Release Bug Bash"
 
     sources = source_matches(context, "clone_plans_broker", "clone_plans_auth", pipelines=True)

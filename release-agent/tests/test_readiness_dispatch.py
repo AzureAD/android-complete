@@ -255,15 +255,3 @@ def test_dispatch_uses_configured_coordinates_not_author_defaults():
     assert tasks["oncall_now"]["probe"]["arguments"] == {"teamIds": [123456]}
     assert "2099-12" in tasks["ccd_confirmed"]["probe"]["command"]
     assert tasks["m365_access"]["probe"]["command"] == "verify --release 2099-12 --pending-only"
-
-
-def test_workflow_review_hold_never_authorizes_readiness_dispatch(tmp_path, monkeypatch, capsys):
-    from orchestrator import revision
-    start(capsys, tmp_path, monkeypatch)
-    monkeypatch.setattr(revision, "mismatch_reason", lambda *args: "workflow owner review required")
-    code, out = call(capsys, tmp_path, "checklist", "--release", RID,
-                     "--attest-prompt", "--handoff", "--json")
-    payload = json.loads(out)
-    assert code == 0 and payload["may_return_to_user"] and not payload["continue_automatically"]
-    assert payload["next_action"] == "resolve_release_hold" and "answers" not in payload
-    assert "workflow owner review required" in payload["instruction"]

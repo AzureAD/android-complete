@@ -86,18 +86,24 @@ def _split_release(release_id: str):
 
 
 def broker_plan_name(release_id: str) -> str:
-    """The Broker clone's destination plan name, e.g. 'Android Monthly Release - Aug 2026'."""
+    """The Broker clone's destination plan name, e.g. 'Android Monthly Release - Aug 2026'
+    (prefixed by `artifacts.broker_plan_prefix` from `config/environment.yaml` in test profile)."""
+    from orchestrator import environment as env
+
     y, m = _split_release(release_id)
-    return f"Android Monthly Release - {_MONTHS[m - 1]} {y}"
+    prefix = env.artifact_prefix("broker_plan_prefix")
+    return f"{prefix}Android Monthly Release - {_MONTHS[m - 1]} {y}"
 
 
 def auth_suite_name(ccd: str) -> str:
     """The Authenticator query-suite name from the release's Code Complete Date, e.g.
-    CCD '2026-08-13' -> 'Android release/08/13/2026' — matches the prod convention
-    (suite 3728419 'Android release/08/13/2026') and the IDWiki doc's
-    'Android release/MM/DD/YYYY'. `ccd` is 'YYYY-MM-DD'."""
+    CCD '2026-08-13' -> 'Android release/08/13/2026' (prefixed by `artifacts.auth_suite_prefix`
+    from `config/environment.yaml` in test profile)."""
+    from orchestrator import environment as env
+
     y, m, d = str(ccd).split("-")[:3]
-    return f"Android release/{int(m):02d}/{int(d):02d}/{int(y)}"
+    prefix = env.artifact_prefix("auth_suite_prefix")
+    return f"{prefix}Android release/{int(m):02d}/{int(d):02d}/{int(y)}"
 
 
 def auth_bugbash_query() -> str:

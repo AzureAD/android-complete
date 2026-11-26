@@ -21,7 +21,6 @@ REQUIRES_OWNER_APPROVAL = True
 PREVIOUS_STEP_ID = "upload_whats_new"
 PREVIOUS_LABEL = "Upload What's New"
 
-MOCKABLE = release_stage.MOCKABLE
 stage_started = release_stage.stage_started
 stage_failed = release_stage.stage_failed
 
@@ -29,14 +28,11 @@ stage_failed = release_stage.stage_failed
 # approved the Friday exception. There is intentionally no separate manager login
 # or durable two-party receipt.
 
-
 @dataclass(frozen=True)
 class BuildParameters:
     manager_approved_by: str | None = None
 
-
 PARAMETERS = {"build": BuildParameters}
-
 
 def resolve_target(context: StepContext):
     return release_stage.resolve_pinned_target(
@@ -48,7 +44,6 @@ def resolve_target(context: StepContext):
         require_pin_in_resolve=True,
         for_step_id=ID,
     )
-
 
 def manager_approval(
     context: StepContext,
@@ -66,7 +61,6 @@ def manager_approval(
     if approver:
         raise ValueError("Manager override evidence is accepted only for a Friday start.")
     return None
-
 
 def build(context: StepContext[BuildParameters]):
     try:

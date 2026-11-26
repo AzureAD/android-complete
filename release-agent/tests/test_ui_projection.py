@@ -9,7 +9,7 @@ from orchestrator import cli_common as C
 from orchestrator.state import ReleaseState, StepState
 from steps.bug_bash import ui_test_status as U
 from steps.build_verify import rc_report as R
-from steps.lib import mockctx
+from tests import _fixtures as mockctx
 from tests._mrwp_evidence import current_rc, PROD, RC
 from tests._ui_results import checkpoint_memory, auth_fill
 from tools import distribution as D, pipelines as P, testplans as T

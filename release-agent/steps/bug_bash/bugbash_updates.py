@@ -1,16 +1,10 @@
-"""Step: `bugbash_updates` — post the FIRST bug-bash progress update and start the recurring
-poller (Phase 3, bug_bash).
+"""Step: `bugbash_updates` — post periodic bug-bash progress updates until tests complete
+(Phase 3, bug_bash).
 
-Fire-and-continue (like the localization noon trigger): reaching this step posts the first
-progress update to the Bug Bash meeting chat and provisions the `bugbash-update-poller`
-automation; the step itself completes so the phase can proceed. The poller then posts an
-update every 3 hours (config/automations.yaml) during working hours (09:00–18:00 America/Los_Angeles, weekdays,
-skipping US holidays) via `post-bugbash-update`, and tears itself down when either every
-test is complete OR the owner attests `bugbash_complete`.
-The first post is prepared when this step is reached, not after an interval or at the
-meeting start. It is sent through the normal approved delivery flow; only confirmed
-delivery/completion provisions the poller. The working-window gate applies to its ticks,
-not this first post. If all work is already complete, no first post/poller is needed.
+While manual/triage tests remain incomplete, `bugbash_updates` posts a progress update to
+the Bug Bash meeting chat and remains `in_flight` on a 3h working-hours cooldown
+(09:00–18:00 America/Los_Angeles, weekdays excluding US holidays). Once all tests finish,
+it posts the closing summary and transitions to `done`.
 
 Each update is grouped by the release test-point Tester (set by distribute_tests):
 owners with remaining tests (not-run, failed, or blocked — failed/blocked surfaced, not
@@ -50,7 +44,7 @@ any notification. members_file must contain its fresh owner-bound M365 observati
 If assigned UPNs differ from member emails, fetch the exact directory users through
 the discovered MCP or verified native WorkIQ CLI; bind GUIDs to actual members.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   progress : inject the gathered progress dict (skip the live ADO reads); include every
              owner's tests with state and products (["Broker"], ["Authenticator"], or
              both for a shared case), including all completed rows.
@@ -69,7 +63,7 @@ from zoneinfo import ZoneInfo
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked, Done, InProgress
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import bugbash as BB
 from tools.distribution import ConnectorObservationRequired
 from tools import testplans as T
@@ -91,24 +85,14 @@ NOTIFICATION = True
 
 BROKER_SUITE_NAME = "Manual Tests (Android Broker)"
 
-MOCKABLE = {
-    "progress": {"kind": "input", "desc": "Full progress including completed test rows with products/state (skip ADO reads)."},
-    "people": {"kind": "input", "desc": "Verified Teams people {upn:{id: AAD GUID,name}} for offline mention tests."},
-    "send_to": {"kind": "payload", "sets": "chatId",
-                "desc": "Post to this chat id instead of the resolved meeting chat (test)."},
-}
-
-
 def _broker_plan(context):
     return (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
-
 
 def _auth_suite(context):
     return (context.evidence.step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
 
-
 def gather(context):
-    """(ok, progress, detail) — live progress, or the injected `progress` mock."""
+    """(ok, progress, detail) — live progress, or the configured `progress` input."""
     inj = context.input("progress", MISSING)
     if inj is not MISSING:
         return (True, inj, "")
@@ -131,7 +115,6 @@ def gather(context):
                               auth_automated_ids=result["auth"]["automated_case_ids"],
                               broker_ui_result=result["broker"], auth_ui_result=result["auth"],
                               **({"monthly_result": result["monthly"]} if "monthly" in result else {}))
-
 
 def plan_links(context):
     """Header destinations from the current release targets and recorded RC run IDs."""
@@ -159,21 +142,7 @@ def plan_links(context):
         {"name": "Get test accounts", "url": coords.link("test_accounts")},
     ] + monthly_links
 
-
 DEFAULT_POLL_HOURS = 3
-
-
-def poll_interval_hours(context, config_path):
-    """Use the provisioning interval for notification checkpoints/expiry (default 3h)."""
-    specs = [spec for spec in context.services.assets.automation_definitions(config_path) if spec.get("slug") == "bug-bash-update-poller"]
-    if not specs:
-        return DEFAULT_POLL_HOURS
-    interval = specs[0].get("every") if len(specs) == 1 else None
-    match = re.fullmatch(r"([1-9][0-9]*) hours?", interval) if isinstance(interval, str) else None
-    hours = int(match[1]) if match else 0
-    if not hours or hours > 24 or 24 % hours:
-        raise ValueError("bug-bash-update-poller every must be a whole-hour interval dividing 24 in automations.yaml")
-    return hours
 
 
 def _cached_people_if_complete(context, chat_id: str, progress: dict) -> dict | None:
@@ -190,13 +159,39 @@ def _cached_people_if_complete(context, chat_id: str, progress: dict) -> dict | 
             return None
     return people
 
-
 def prepare_update(context, progress, members_file=None):
     """One resolved transport payload shared by initial and periodic progress posts."""
+    from orchestrator import environment as env
+
     chat_id = stored_chat_id(context)
     if not chat_id:
         return False, None, "Missing/stale meeting binding"
+    send_to_raw = context.input("send_to", MISSING)
+    target_chat, redirected_self = env.resolve_bugbash_chat(
+        chat_id,
+        override=(None if send_to_raw is MISSING else send_to_raw),
+    )
     people = context.input("people", MISSING) if members_file is None else MISSING
+    if people is MISSING and redirected_self and members_file is None:
+        # Active profile ('test' -> 'self') routes updates to personal self-chat ('48:notes'):
+        # render full owner names without @-mentions so self-chat delivery works without pinging testers.
+        try:
+            content, _ = BB.render_update(
+                progress,
+                schedule.target_month_label(context.release) or "Bug Bash",
+                plan_links(context),
+                {},
+                mention_pending=False,
+            )
+        except ValueError as exc:
+            return False, None, str(exc)
+        return True, {
+            "chatId": target_chat,
+            "content": "<p><b>[TEST · intended: Bug Bash meeting chat]</b></p>" + content,
+            "contentType": "html",
+            "mentions": [],
+            "_resolved_people": {},
+        }, ""
     if people is MISSING and members_file is None:
         reused = _cached_people_if_complete(context, chat_id, progress)
         if reused is not None:
@@ -219,13 +214,12 @@ def prepare_update(context, progress, members_file=None):
     except ValueError as exc:
         return False, None, str(exc)
     return True, {
-        "chatId": chat_id,
+        "chatId": target_chat,
         "content": content,
         "contentType": "html",
-        "mentions": mentions,
+        "mentions": [] if redirected_self else mentions,
         "_resolved_people": thaw(people) if isinstance(people, dict) else {},
     }, ""
-
 
 @dataclass(frozen=True)
 class BuildParameters:
@@ -242,9 +236,7 @@ class BuildParameters:
             else:
                 raise ValueError("force must be true or false")
 
-
 PARAMETERS = {"build": BuildParameters}
-
 
 def _cooldown_remaining_minutes(last_posted_iso: str | None, now_utc: datetime, interval_hours: int = DEFAULT_POLL_HOURS) -> int:
     last_dt = schedule.parse_iso_utc(last_posted_iso)
@@ -254,7 +246,6 @@ def _cooldown_remaining_minutes(last_posted_iso: str | None, now_utc: datetime, 
     target_min = max(30, interval_hours * 60 - 5)
     elapsed_min = int((now_utc - last_dt.astimezone(timezone.utc)).total_seconds() // 60)
     return max(0, target_min - elapsed_min)
-
 
 def build(context: StepContext[BuildParameters]):
     members_file = context.parameters.members_file
@@ -401,38 +392,10 @@ def build(context: StepContext[BuildParameters]):
         },
     )
 
-
-def automation_prompt(release: str, spec: dict) -> str:
-    """Bespoke instruction using the provisioning spec's configured interval."""
-    if not spec.get("interval"):
-        return ""
-    return (
-        f"Release {release} — bug-bash update poller (every {spec['interval']}, working hours).\n"
-        f"Run `post-bugbash-update --release {release}` and act on the printed decision:\n"
-        f"  • off_hours / weekend / holiday → send nothing (outside 09:00–18:00 LA on a "
-        f"working day).\n"
-        f"  • post / complete → use source pending for the staged notifications and the "
-        f"shared claim/result protocol. Never send raw decision.content. Only confirmed "
-        f"delivery of the final summary records poll_complete; known failed sends remain "
-        f"retryable. Initial trigger-step completion does not end this phase-owned poller.\n"
-        f"  • no_chat / error / stopped → nothing to send; always perform cleanup.\n"
-        f"If member evidence is needed, execute the printed connector_reads request through "
-        f"microsoft_teams-ListChatMembers (or workiq_get_chat with chatId). Save the actual "
-        f"complete response in a version:1 observation envelope with the exact tool/arguments, "
-        f"account equal to the release owner, and an offset observed_at timestamp; rerun "
-        f"with --members-file <path> within 15 minutes. Bare member JSON is not fresh evidence. "
-        f"If an assigned UPN differs from the member email (or email is missing), execute the exact "
-        f"directory requests through the verified structured fetch route and append their fresh "
-        f"envelopes as directory_observations. Discover the current user's MCP/native CLI; "
-        f"do not use Ask or assume a removed custom remote registration removed all fetch support. "
-        f"Never invent member identities or omit mentions to bypass a resolution failure.\n"
-        f"Silently journal: `journal --release {release} --source scout --kind automation "
-        f"--text \"bugbash-poller: <decision>\"`.")
-
-KNOWLEDGE = {'summary': 'Post the first bug-bash progress update to the meeting chat and start the 3h '
-            'update poller.',
- 'what': 'Reaching this step posts an initial progress update to the Bug Bash meeting chat and '
-         'provisions the on-demand `bug-bash-update-poller` automation. Each update is grouped '
+KNOWLEDGE = {'summary': 'Post periodic bug-bash progress updates to the meeting chat until all tests finish.',
+ 'what': 'Posts progress updates to the Bug Bash meeting chat while tests remain active '
+         '(staying `in_flight` on a 3h working-hours cadence and completing automatically '
+         'when all tests finish). Each update is grouped '
          "by each test's release-point Tester (read live from BOTH the Broker 'Manual Tests "
          "(Android Broker)' subtree, Broker UI failure-triage points, and the Authenticator "
          'bug-bash suite). The code-generated header includes Broker test plan, Authenticator '
@@ -484,42 +447,17 @@ KNOWLEDGE = {'summary': 'Post the first bug-bash progress update to the meeting 
          'from an address or use a membership-record ID. Missing input prints exact read '
          'requests and never authorizes delivery. First-post notification prepare uses --param '
          'members_file=<path>, and the periodic command uses --members-file <path>. The chat '
-         'identity is validated; never synthesize user IDs or use an unrelated chat. It is '
-         'fire-and-continue — the step completes after the first post so the phase proceeds; '
-         'the poller runs in the background.\n',
- 'who': 'Scout resolves it during `next` (a scout step). It gathers progress, then uses '
-        'notification prepare/claim/result for the first update. The claimed payload already '
-        'contains the resolved mentions; never rebuild it. Provision the poller only after '
-        'delivery and completion are acknowledged.\n',
- 'how': 'After the first post, provision the on-demand poller from its single source: '
-        '`automation plan --release <id> --on-demand bug-bash-update-poller --json`. Create '
-        'exactly that returned automation, then register every `registration` field including '
-        '`cleanup_when`. Each tick runs `post-bugbash-update --release <id>` and acts on the '
-        'decision (off_hours → nothing; post/complete → use the shared notification '
-        'claim/result protocol for the staged snapshot). Run cleanup in a finally block even '
-        'on silence/errors; delete first, deregister after success. Only acknowledged final '
-        "delivery sets poll_complete. Blocks if the meeting chat isn't activated (run "
-        'activate_chat). Ordinary periodic updates keep only the latest unclaimed preview; '
-        'expired unsent snapshots are removed. After confirmed delivery and settled completion '
-        'they become small unsendable receipts, retained until 24 hours beyond expiry. Source '
-        'pending omits those receipts; an explicit notification --id can inspect one while '
-        'retained. Real-clock retention never deletes claimed/uncertain or sent-unfinalized '
-        'work, the first/final posts, invitation receipts or referenced records. No old send '
-        'is replayed because its expired record is absent.\n',
+         'identity is validated; never synthesize user IDs or use an unrelated chat.\n',
+ 'who': 'Driven automatically by `next --deliver` and `release-drainer` (`drain --deliver`). '
+        'Caches resolved Entra mention identities across subsequent updates.\n',
+ 'how': 'Reads live test-point progress from Broker and Authenticator suites, checks the '
+        '3h working-hours cooldown (`09:00–18:00 America/Los_Angeles` on business days), '
+        'and delivers the update via `deliver-step` / `notification` claim/result. '
+        'Stays `in_flight` while tests remain and completes automatically (`done`) once all '
+        "tests finish. Blocks if the meeting chat isn't activated (`activate_chat`).\n",
  'faqs': [{'q': 'When do the updates run?',
-           'a': 'Every 3 hours, configured by bug-bash-update-poller.every in '
-                'config/automations.yaml. Ticks post only during 09:00–18:00 '
-                'America/Los_Angeles on weekdays excluding US federal holidays. Outside that '
-                'window they send nothing; posting resumes at the next scheduled tick inside '
-                'the working window, not necessarily exactly at 09:00.'},
-          {'q': 'When is the first progress message sent?',
-           'a': 'When the engine reaches bug_bash.bugbash_updates with its prerequisites '
-                'ready, it prepares the first post for the normal approval/delivery flow. It '
-                'does not wait for a polling interval and is not scheduled relative to the '
-                'meeting start. After confirmed first delivery/completion, Scout creates the '
-                'recurring poller. Only recurring ticks use the working-hours gate. If all '
-                'work is already complete, the initial step sends nothing and starts no '
-                'poller.'},
+           'a': 'On `release-drainer` passes (with a 3-hour cooldown) during 09:00–18:00 '
+                'America/Los_Angeles on weekdays excluding US federal holidays.'},
           {'q': 'Why does a periodic update still retain a small delivery receipt?',
            'a': 'It prevents a retry or restarted worker from repeating a confirmed send '
                 'without retaining the full report. Acknowledged message IDs (or provider '

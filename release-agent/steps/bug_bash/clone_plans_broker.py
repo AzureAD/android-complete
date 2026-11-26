@@ -16,7 +16,7 @@ Identity lives in the release resource registry, separately from step completion
 Re-entry validates/reuses the bound plan; lost metadata triggers discovery, not a
 blind create. Ambiguous/partial/uncertain work blocks for owner recovery.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   plan_id     : pretend the build already ran (this plan id) — verifies + reports done.
   clone_id    : the id the create should "return" (skip the live plan build).
   fail        : a detail string → force a Blocked (simulate an API/auth failure).
@@ -30,7 +30,7 @@ import json
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.evidence import StepData
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import testplans as T
 from tools import broker_plans as B, broker_scenarios as S
 
@@ -53,9 +53,7 @@ class PlanParameters:
         if self.name is not None and (not self.name.strip() or self.name != self.name.strip()):
             raise ValueError("Plan name must be nonblank text without surrounding whitespace")
 
-
 PARAMETERS = {"prepare_effect": PlanParameters}
-
 
 def prepare_effect(context):
     execution = context.evidence.step("bug_bash", ID).execution or {}
@@ -104,32 +102,20 @@ def prepare_effect(context):
         "source": source,
     }
 
-
 def execute(context: StepContext):
     return _build(context, thaw(context.effect.execution["effect_input"]))
-
 
 def reconcile(context: StepContext):
     """Recover the durable plan intent; ensure_plan never repeats an unresolved create."""
     return execute(context)
 
-MOCKABLE = {
-    "name": {"kind": "input", "desc": "Override the destination plan name (e.g. a 'TEST ...' name for a safe live run)."},
-    "plan_id": {"kind": "input", "desc": "Pretend the build already produced this plan id (idempotency test)."},
-    "clone_id": {"kind": "input", "desc": "Id the create should return (skip the live plan build)."},
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail (simulate an API failure)."},
-}
-
-
 def _links(plan_id):
     return [{"name": f"Broker test plan {plan_id}", "url": T.plan_web_url(plan_id)}]
-
 
 def record_plan(context, plan_id, name):
     evidence = context.recovery()
     return plan_binding(evidence.step("bug_bash", ID).data,
                         evidence.resources.get(B.RESOURCE) or {}, plan_id, name)
-
 
 def plan_binding(existing, resource, plan_id, name):
     data = thaw(existing or {})
@@ -150,12 +136,10 @@ def plan_binding(existing, resource, plan_id, name):
                                    if k not in ("broker", "native", "ui", "triage")}
     return StepData(data)
 
-
 def build(context: StepContext):
     if context.effect is None:
         raise ValueError("Broker creation requires an authorized effect context")
     return execute(context)
-
 
 def _build(context, effect_input=None):
     fail = context.input("fail", MISSING)
@@ -171,7 +155,7 @@ def _build(context, effect_input=None):
         dest = T.broker_plan_name(context.release.release_id)
     step = context.evidence.step("bug_bash", ID)
 
-    # Explicit offline mocks do not acquire resources or call external APIs.
+    # Explicit offline `step_defaults` do not acquire resources or call external APIs.
     injected = context.input("plan_id", MISSING)
     if injected is not MISSING:
         return Done(f"Broker test plan already built for {context.release.release_id}: "

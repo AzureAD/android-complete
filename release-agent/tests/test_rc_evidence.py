@@ -8,8 +8,8 @@ from datetime import date
 import pytest
 
 from tests._harness import CONFIG, _seed_rc_pipeline, _ready_for_rc_report, _bv_state, _bv_build
-from orchestrator import cli, cli_common as C, mocks
-from orchestrator.commands import rc_report as RR, rc_poll as RP
+from orchestrator import cli, cli_common as C, environment as mocks
+from orchestrator.commands import rc_report as RR
 from tests._context import fresh_orchestrator as Orchestrator, adopt_test_revision
 from orchestrator.state import ReleaseState, StepState
 from orchestrator.workflow import WorkflowConfigError
@@ -51,7 +51,7 @@ def args_for(tmp_path, st):
 def test_rc_report_notify_lineage_tracks_source_evidence(ready, path, value):
     from steps.build_verify import rc_report_notify as N
 
-    orch = Orchestrator(CONFIG, ready, mocks={}, as_of=date(2026, 9, 10))
+    orch = Orchestrator(CONFIG, ready, step_defaults={}, as_of=date(2026, 9, 10))
     before = N.build(orch.context("build_verify", "rc_report_notify")).notification["checkpoint"]
     container = vars(ready)
     for key in path[:-1]:
@@ -231,7 +231,7 @@ def test_gate_uses_unrounded_counts(ready):
 
 
 def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr(mocks, "load_mocks", lambda *a, **k: {})
+    monkeypatch.setattr(mocks, "load_step_defaults", lambda *a, **k: {})
     ready.steps.pop("build_verify.auth_ecs")
     C.save_state(ready, str(tmp_path), ready.release_id)
     base = ["--config", CONFIG, "--runs-root", str(tmp_path)]
@@ -246,7 +246,7 @@ def test_skipping_prerequisite_does_not_fabricate_evidence(ready, tmp_path):
     from steps.build_verify import rc_report_notify
     ready.set_step("build_verify", "auth_ecs", StepState(status="skipped", by="human"))
     ready.pipeline_runs["rcs"][-1].pop("auth")
-    orch = Orchestrator(CONFIG, ready, mocks={})
+    orch = Orchestrator(CONFIG, ready, step_defaults={})
     assert orch.step_action_guard("build_verify", "rc_report_notify") is None
     assert _invoke(rc_report_notify.build, ready).kind == "blocked"
 
@@ -279,7 +279,7 @@ def test_mrwp_failure_fetch_error_persists_and_prevents_complete_report(
         ready, tmp_path, monkeypatch):
     from tools import pipelines as P
     from steps.build_verify import _mrwp
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (False, None, "result page offline"))
     def no_refetch(*a, **k):
         raise AssertionError("Must reuse single summary acquisition")
@@ -323,7 +323,7 @@ def test_mrwp_failure_fetch_error_persists_and_prevents_complete_report(
 def test_mrwp_summary_page_error_is_explicit(ready, monkeypatch):
     from tools import pipelines as P
     from steps.build_verify import _mrwp
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (False, None, "run page offline"))
     with mockctx.active({"mrwp_id": "1678863", "rc": 1,
                          "stages": [{"name": "UI", "state": "completed", "result": "failed"}]}):
@@ -362,44 +362,8 @@ def test_diagnostic_failure_is_explicit_without_replacing_verified_evidence(
     assert rc_report.report_readiness(rc_report.rc_report_model(_context(saved)))["ready"]
 
 
-@pytest.mark.parametrize("sid,status,expected", [
-    ("auth_ecs", "blocked", "blocked"), ("auth_ecs", "in_flight", "waiting"),
-    ("telemetry_verify", "blocked", "blocked"), ("telemetry_verify", "pending", "waiting"),
-    ("mrwp_local", "pending", "waiting"),
-])
-def test_poll_does_not_resolve_premature_done_report(
-        ready, tmp_path, monkeypatch, capsys, sid, status, expected):
-    ready.set_step("build_verify", "rc_report_gate", StepState(status="done", by="human"))
-    ready.gate_decisions.append({"step": "build_verify.rc_report_gate", "decision": "approved",
-                                 "at": "now", "by": "owner", "comment": None})
-    ready.set_step("build_verify", sid, StepState(status=status, note="not finished"))
-    from orchestrator.engine import Orchestrator as EngineOrchestrator
-    monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
-    assert RP.cmd_poll_rc(args_for(tmp_path, ready)) == 0
-    decision = json.loads(capsys.readouterr().out)
-    assert decision["decision"] == expected
-    if expected == "ready":
-        assert decision["steps"] == ["telemetry_verify"]
-
-
-def test_resolved_poll_reports_passed_after_rc_gate_approval(
-        ready, tmp_path, monkeypatch, capsys):
-    ready.set_step("build_verify", "rc_report_gate", StepState(status="done", by="human", note="Owner decision"))
-    ready.set_step("build_verify", "rc_report_notify", StepState(status="done"))
-    ready.gate_decisions.append({"step": "build_verify.rc_report_gate", "decision": "approved",
-                                 "at": "now", "by": "owner", "comment": None})
-    from orchestrator.engine import Orchestrator as EngineOrchestrator
-    monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
-    assert RP.cmd_poll_rc(args_for(tmp_path, ready)) == 0
-    decision = json.loads(capsys.readouterr().out)
-    assert decision["decision"] == "resolved" and decision["status"] == "passed"
-    prompt = rc_report.automation_prompt(ready.release_id, {"interval": True})
-    assert "inspect decision.status" in prompt
-    assert "never describe an override as PASSED" in prompt
-
-
 def test_capture_dependencies_hold_both_independent_children(ready):
-    orch = Orchestrator(CONFIG, ready, mocks={})
+    orch = Orchestrator(CONFIG, ready, step_defaults={})
     # Reopening `mrwp_ecs` invalidates `auth_ecs` -> `telemetry_verify` -> `rc_report_notify`.
     assert orch.reopen("build_verify", "mrwp_ecs", "Recapture current ECS RC").changed
     assert orch.scout_pending_steps() == []
@@ -422,7 +386,7 @@ def test_capture_dependencies_hold_both_independent_children(ready):
 def test_phase_zero_parallel_uses_only_explicit_dependencies(ready):
     ready.steps = {}
     orch = Orchestrator(CONFIG, ready, as_of=date(2026, 9, 10),
-                        mocks={"preflight.flight_reminder": {"outcome": "done"}})
+                        step_defaults={"preflight.flight_reminder": {"outcome": "done"}})
     phase = orch.config["phases"][0]
     assert phase["execution"] == "parallel"
     assert "flight_reminder" not in orch.scout_pending_steps()
@@ -442,7 +406,7 @@ def test_phase_zero_parallel_uses_only_explicit_dependencies(ready):
 
 def test_sequential_engine_respects_explicit_dependencies_and_mocks(ready):
     ready.steps.pop("build_verify.telemetry_verify")
-    orch = Orchestrator(CONFIG, ready, mocks={"build_verify.telemetry_verify": {"outcome": "done"}})
+    orch = Orchestrator(CONFIG, ready, step_defaults={"build_verify.telemetry_verify": {"outcome": "done"}})
     phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
     phase["execution"] = "sequential"
     telemetry = next(s for s in phase["steps"] if s["id"] == "telemetry_verify")
@@ -451,7 +415,7 @@ def test_sequential_engine_respects_explicit_dependencies_and_mocks(ready):
     with pytest.raises(WorkflowConfigError, match="cannot depend on later step"):
         orch.step_once()
     assert not ready.is_done("build_verify", "telemetry_verify")
-    telemetry.pop("depends_on")
+    telemetry.pop("depends_on", None)
     seeded = dict(ready.steps)
     adopt_test_revision(orch)
     ready.steps = seeded

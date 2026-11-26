@@ -120,7 +120,7 @@ readiness.m365_access:
     '
   how: 'Run m365-capabilities --release <id>. Execute the exact supported native WorkIQ and Agency Teams
     reads. Inspect actual tools first; load agency-workiq-workiq instructions if useful. If MCP fetch
-    is absent, use infra/onboarding --json discovery of the selected profile''s existing WorkIQ launcher
+    is absent, use infra --json discovery of the selected profile''s existing WorkIQ launcher
     and fetch --help. Execute exact planned Graph-relative URLs with workiq-read --scout-root <selected-existing-profile>
     [--workiq-path <existing-workiq-launcher>] --account <verified-owner> --entity-url ''<exact URL>''.
     Preserve the Scout wrapper argv, never shell-interpolate a URL or bypass its runner. Help is syntax

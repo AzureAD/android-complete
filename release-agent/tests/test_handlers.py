@@ -15,7 +15,6 @@ from orchestrator.approvals import ApprovalRequest
 from orchestrator.handler_contracts import HookRole
 from orchestrator.services import EffectServices
 from orchestrator.workflow import (
-    StepImplementation,
     WorkflowConfigError,
     WorkflowDefinition,
 )
@@ -133,7 +132,7 @@ def test_read_only_task_refresh_preserves_unchanged_consumers_and_invalidates_on
             ID=step, KIND="human", build=lambda context: NeedsHuman("Confirm"))
 
     state = ReleaseState(release_id="r")
-    orch = fresh_orchestrator(str(path), state, mocks={}, handler_resolver=resolver)
+    orch = fresh_orchestrator(str(path), state, step_defaults={}, handler_resolver=resolver)
     assert orch.run_task("phase", "work").kind == "ran"
     for step in ("consumer", "independent"):
         state.set_step("phase", step, StepState(status="done", by="human"))
@@ -178,7 +177,7 @@ def test_explicit_rerun_ignores_unrelated_phase_and_time_frontier(tmp_path, kind
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     state = ReleaseState(release_id="r", ccd="2026-09-11", timezone="UTC", owner_email="owner@example.test")
     orch = fresh_orchestrator(
-        str(path), state, mocks={}, now=datetime(2026, 9, 11, tzinfo=timezone.utc),
+        str(path), state, step_defaults={}, now=datetime(2026, 9, 11, tzinfo=timezone.utc),
         handler_resolver=lambda phase, step: source if step == "work" else None)
     assert orch.rerun_task("phase", "work", reason="Run this one task now",
                            confirmed_by=state.owner_email).changed
@@ -204,7 +203,7 @@ def test_explicit_rerun_does_not_bypass_a_real_approval_prerequisite(tmp_path):
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     source = _effect_module(mode="idempotent", execute=lambda context: pytest.fail("No approval"))
     state = ReleaseState(release_id="r", owner_email="owner@example.test")
-    orch = fresh_orchestrator(str(path), state, mocks={},
+    orch = fresh_orchestrator(str(path), state, step_defaults={},
                               handler_resolver=lambda phase, step: source if step == "work" else None)
     assert orch.rerun_task("phase", "work", reason="Run now", confirmed_by=state.owner_email).changed
     action = orch.run_task("phase", "work")
@@ -226,40 +225,6 @@ def test_missing_external_attestation_or_external_gate_handler_rejected(kind):
         _catalog(**step)
 
 
-def test_dummy_is_explicit_manual_only_without_automatic_success():
-    handler = _catalog(implementation="dummy").get("phase", "work")
-    outcome = handler.build(_context(handler))
-    assert handler.definition.implementation == StepImplementation.DUMMY
-    assert handler.definition.effect_mode == EffectMode.READ_ONLY
-    assert isinstance(outcome, Blocked)
-    assert "Manual-only" in outcome.reason and "Test operation" in outcome.reason
-    assert "record-fact" in outcome.reason
-    assert handler.effect is None and handler.submit_approval is None
-
-
-@pytest.mark.parametrize("kind", ["approval_gate", "external", "attestation", "human_action"])
-def test_dummy_cannot_replace_human_or_external_steps(kind):
-    with pytest.raises(WorkflowConfigError, match=r"phase\.work.*dummy.*read_only auto"):
-        _workflow(kind=kind, implementation="dummy")
-
-
-@pytest.mark.parametrize("mode", ["idempotent", "transactional"])
-def test_dummy_cannot_declare_external_effects(mode):
-    with pytest.raises(WorkflowConfigError, match=r"phase\.work.*dummy.*read_only auto"):
-        _workflow(implementation="dummy", effect_mode=mode, effect_recovery="frozen")
-
-
-@pytest.mark.parametrize("value", ["stub", "", None, True, 1])
-def test_invalid_implementation_is_rejected(value):
-    with pytest.raises(WorkflowConfigError, match=r"phase\.work.*implementation"):
-        _workflow(implementation=value)
-
-
-def test_dummy_with_module_is_contradictory():
-    with pytest.raises(WorkflowConfigError, match=r"phase\.work.*dummy.*handler module"):
-        _catalog(_module(), implementation="dummy")
-
-
 @pytest.mark.parametrize("kind", ["human_action", "approval_gate"])
 def test_builtin_human_and_local_gate_only_prompt(kind):
     handler = _catalog(kind=kind).get("phase", "work")
@@ -268,7 +233,6 @@ def test_builtin_human_and_local_gate_only_prompt(kind):
     assert outcome.prompt == "Test operation"
     assert not outcome.attest
     assert handler.effect is None and handler.submit_approval is None
-    assert handler.definition.implementation == StepImplementation.HANDLER
 
 
 @pytest.mark.parametrize(
@@ -401,23 +365,14 @@ def test_bound_build_and_nested_metadata_are_captured_once():
             return Done("original bound method")
 
     source = Source()
-    nested = {"kind": "payload", "sets": "to", "values": [{"emails": ["one"]}]}
-    source.MOCKABLE = MappingProxyType({"send_to": nested})
     source.CONFIG = {"fire_at_local": "09:30"}
     handler = _catalog(source, effect_mode="read_only").get("phase", "work")
     source.build = lambda state: Done("replacement")
     source.NOTIFICATION = False
     source.CONFIG["fire_at_local"] = "22:00"
-    nested["kind"] = "input"
-    nested["values"][0]["emails"].append("two")
-    source.MOCKABLE = {}
     assert handler.build(_context(handler)).note == "original bound method"
     assert handler.notification is True
     assert handler.fire_at_local == "09:30"
-    assert handler.mockable["send_to"]["kind"] == "payload"
-    assert handler.mockable["send_to"]["values"][0]["emails"] == ("one",)
-    with pytest.raises(TypeError):
-        handler.mockable["send_to"]["kind"] = "input"
     with pytest.raises(FrozenInstanceError):
         handler.build = source.build
     assert not hasattr(handler, "module")
@@ -466,13 +421,13 @@ def test_external_gate_requires_each_recovery_hook(hook):
 
 
 def test_workflow_metadata_is_detached_and_recursively_frozen():
-    config = _config(implementation="dummy", required_tools=["az"])
+    config = _config(kind="human_action", required_tools=["az"])
     workflow = WorkflowDefinition.compile(config)
     catalog = HandlerCatalog.compile(workflow, lambda phase, step: None)
     config["phases"][0]["steps"][0]["name"] = "Replacement"
     config["phases"][0]["steps"][0]["required_tools"].append("gh")
     handler = catalog.get("phase", "work")
-    assert "Test operation" in handler.build(_context(handler)).reason
+    assert "Test operation" in handler.build(_context(handler)).prompt
     assert handler.definition.raw["required_tools"] == ("az",)
     assert workflow.phases[0].raw["steps"][0]["name"] == "Test operation"
     with pytest.raises(TypeError):

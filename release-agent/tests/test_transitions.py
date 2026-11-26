@@ -533,7 +533,7 @@ def test_cancelled_release_is_not_eligible_and_cleans_up_workers():
     assert not eligibility.allowed and "cancelled" in eligibility.reason
 
     cleanup_state = ReleaseState(release_id="r")
-    fresh_orchestrator(C.DEFAULT_CONFIG, cleanup_state, mocks={})
+    fresh_orchestrator(C.DEFAULT_CONFIG, cleanup_state, step_defaults={})
     cleanup_state.cancellation = dict(state.cancellation)
     entry = {
         "id": "worker",

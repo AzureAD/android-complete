@@ -74,5 +74,5 @@ __pycache__/
 *.pyc
 
 
-# Personal step-mock overrides for release-agent (local testing only)
-release-agent/mocks.local.yaml
+# Personal local environment overrides for release-agent (local testing only)
+release-agent/config/environment.local.yaml

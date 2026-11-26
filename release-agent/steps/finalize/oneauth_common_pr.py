@@ -19,7 +19,7 @@ write attempt.
 Version source: `state.versions.common` (final non-RC Common) + `state.versions.msal` (for the
 changelog line), both populated at Phase 2.
 
-Mock knobs (mocks.local.yaml / tests):
+Step defaults (`step_defaults` / offline scenarios):
   common : inject the Common version (skip state.versions).
   msal   : inject the MSAL version (skip state.versions).
   fail   : force a Blocked with this detail.
@@ -29,7 +29,7 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from steps.lib.mockctx import MISSING
+from orchestrator.step_context import MISSING
 from tools import oneauth as OA
 
 ID = "oneauth_common_pr"
@@ -39,13 +39,6 @@ REQUIRED_TOOLS = ('az',)
 REQUIRES_APPROVAL = False
 WRITE_COMMAND = "create-oneauth-common-pr"
 
-MOCKABLE = {
-    "common": {"kind": "input", "desc": "Inject the Common version (skip state.versions)."},
-    "msal": {"kind": "input", "desc": "Inject the MSAL version (skip state.versions)."},
-    "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
-}
-
-
 def _versions(context):
     v = getattr(context.release, "versions", None) or {}
     common = context.input("common", MISSING)
@@ -53,7 +46,6 @@ def _versions(context):
     common = common if common is not MISSING else v.get("common")
     msal = msal if msal is not MISSING else v.get("msal")
     return common, msal
-
 
 def build(context: StepContext):
     fail = context.input("fail", MISSING)
@@ -64,7 +56,7 @@ def build(context: StepContext):
     if not common or not msal:
         return Blocked(
             "oneauth_common_pr: need both the Common and MSAL versions on state.versions "
-            "(populated at Phase 2). Provide the `common`/`msal` mocks for testing.")
+            "(populated at Phase 2). Provide `common`/`msal` in `step_defaults` for rehearsals.")
 
     # ---- READ-ONLY plan ----
     plan = {"common": common, "msal": msal, "ingest": OA.INGEST_BRANCH, "target": OA.TARGET_BRANCH,

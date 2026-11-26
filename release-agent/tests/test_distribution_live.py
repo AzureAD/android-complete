@@ -37,8 +37,8 @@ def roster_bundle(roster, *, group_mail=None, owner="owner@example.com"):
 
 
 def roster_plan(monkeypatch, state, inputs, path):
-    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
-    monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
+    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
+    monkeypatch.setattr(command.env_mod, "load_step_defaults", lambda *_a, **_kw: {"bug_bash.distribute_tests": inputs})
     args = SimpleNamespace(no_oof=True, oof=None, oce="oce@example.com", roster_file=str(path))
     return orch, command.plan_distribution(args, orch)
 
@@ -67,7 +67,7 @@ def test_missing_roster_requests_exact_read_via_discovered_route(monkeypatch):
 def test_missing_roster_step_and_preview_request_reads_without_ado_writes(
         monkeypatch, state, inputs, capsys):
     inputs.pop("roster")
-    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     context = orch.context("bug_bash", S.ID, parameters={"oof": [], "oce": "oce@example.com"},
                            inputs=inputs)
     outcome = S.build(context)
@@ -203,7 +203,7 @@ def test_partial_failure_is_read_back_and_old_approval_cannot_overwrite_it(state
     _, pending = inspect(state, inputs)
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", pending["review_hash"])[0] == 1
     assert state.get_step("bug_bash", "distribute_tests").execution == owner
-    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, step_defaults={})
     assert not orch.reopen("bug_bash", "distribute_tests",
                            "Owned partial work uses checked continuation, not a reset.").changed
     correct_ado(inputs, report)

@@ -11,10 +11,11 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from orchestrator import cli_common as C, git_write_plans as P, revision, write_review as W
+from orchestrator import cli_common as C, git_write_plans as P, write_review as W
+from orchestrator import write_review as revision
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState
-from steps.lib.mockctx import MISSING
+from tests._fixtures import MISSING
 from tools import git_review as G, oneauth as OA, pipelines as PL, prs as PR
 from _write_progress import memory_progress
 
@@ -483,8 +484,7 @@ def bound_orchestrator(s, tmp_path):
          "write_command": "create-oneauth-common-pr"}]}]}), encoding="utf-8")
     state = ReleaseState(release_id="r", ccd="2026-07-08", timezone="UTC",
                          versions=dict(s.context.release.versions))
-    orch = Orchestrator(str(config), state, mocks={}, as_of=date(2026, 7, 8))
-    revision.bind_initial(orch)
+    orch = Orchestrator(str(config), state, step_defaults={}, as_of=date(2026, 7, 8))
     path = tmp_path / "r" / "release-state.json"
     state.save(str(path))
     s.args.config = str(config)
@@ -493,7 +493,7 @@ def bound_orchestrator(s, tmp_path):
 
 def locked_orchestrator(s):
     state = C.load_state(s.args.runs_root, s.args.release)
-    return Orchestrator(s.args.config, state, mocks={}, as_of=date(2026, 7, 8))
+    return Orchestrator(s.args.config, state, step_defaults={}, as_of=date(2026, 7, 8))
 
 
 def test_prepared_operations_match_durable_review_before_any_write(oneauth, tmp_path):

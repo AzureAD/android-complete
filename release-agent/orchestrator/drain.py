@@ -1235,7 +1235,7 @@ def _drain_python_loop(
     """Advance all eligible Python readiness checks, Python `auto` steps, `in_flight` reconciliations,
     and `requires_approval: false` notifications until quiescent."""
     st, orch = C.load_orch(runs_root, release, config_path, now or as_of)
-    if st.halt or st.cancellation or orch._projection().revision_problem:
+    if st.halt or st.cancellation:
         return st, orch
 
     if not orch.gate.signed:

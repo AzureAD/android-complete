@@ -7,7 +7,6 @@ from orchestrator.step_context import StepContext
 from steps.finalize._orchestrator_gate import (
     ApprovalParameters,
     GATE_CONFIG,
-    GATE_MOCKABLE,
     GATE_PARAMETERS,
     approval_matches_stage,
     gate_links,
@@ -28,21 +27,16 @@ STAGE_ID = ORCH_NOTES_STAGE_ID
 STAGE = "Publish GitHub Release Notes"
 CONFIG = dict(GATE_CONFIG)
 CONSEQUENCES = "publishes the GitHub release notes for MSAL and Common"
-MOCKABLE = dict(GATE_MOCKABLE)
 PARAMETERS = dict(GATE_PARAMETERS)
-
 
 def _pending(context):
     return pending_approval(context, CONFIG)
 
-
 def _stage_state(context):
     return stage_state(context, STAGE_ID, CONFIG)
 
-
 def _links(info=None):
     return gate_links(info, CONFIG)
-
 
 def build(context: StepContext):
     # Already published? (the notes stage completed) → nothing to approve.
@@ -78,7 +72,6 @@ def build(context: StepContext):
         f"stage before submitting, so approving early is safe — it just won't submit yet).",
         attest=False)
 
-
 def prepare_approval(context: StepContext[ApprovalParameters]):
     """Freeze the exact notes-stage approval and comment without submitting."""
     return prepare_expected_approval(
@@ -91,11 +84,9 @@ def prepare_approval(context: StepContext[ApprovalParameters]):
         default_comment="Approved via Scout (release-agent publish_notes_gate).",
     )
 
-
 def submit_approval(context: StepContext) -> tuple[bool, str]:
     """Invoke only core's fenced writer for the already-frozen request."""
     return context.approval.submit()
-
 
 def reconcile_approval(context: StepContext) -> tuple[bool, str]:
     """Read the frozen approval; retain the hold without matching approved evidence."""

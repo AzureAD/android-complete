@@ -150,6 +150,16 @@ class EvidenceCommitter:
 Parameters = TypeVar("Parameters")
 
 
+class _MissingSentinel:
+    """Sentinel distinguishing 'no config/input value provided' from an explicit `None`."""
+
+    def __repr__(self) -> str:
+        return "MISSING"
+
+
+MISSING = _MissingSentinel()
+
+
 @dataclass(frozen=True)
 class StepContext(Generic[Parameters]):
     release: ReleaseView

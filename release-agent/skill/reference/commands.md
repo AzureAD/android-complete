@@ -10,6 +10,7 @@ The agent handles those details from actual engine/tool responses.
 |---|---|
 | Discover paths/releases | `paths --json`; `list --json` |
 | Contextual command guide & `/release-agent` launcher | `commands [--release <id>] [--json]` |
+| Inspect / switch target profile (`test` \| `prod`) | `environment [--json]`; `set-profile --profile test\|prod` |
 | Initialize release | `init --release <id> --json` |
 | Inspect local state | `status --release <id> [--details] [--json]` |
 | Execute one operation | `task --release <id> --phase <p> --step <s> [--param name=value]` |
@@ -25,11 +26,9 @@ The agent handles those details from actual engine/tool responses.
 | Inspect unsupported version metadata | `inspect-state --release <id>` |
 | Required readiness | `checklist --release <id> --attest-prompt --json` |
 | Record named readiness confirmations | `sign --release <id> --item <id> --note "<owner confirmation>"` |
-| Optional setup diagnostics | `onboarding --json` |
 | Unified drainer pass (+ `drain-runs.jsonl` & CTA) | `drain --release <id> [--trigger scheduled\|interactive] [--deliver] --json` |
 | Inspect structured drain journal & missed slots | `drain-log --release <id> [--limit N] --json` |
 | Acknowledge hold (reset idle-stall timer) | `ack-hold --release <id> [--note "<owner note>"] --json` |
-| Legacy digest heartbeat | `tick --release <id> [--deliver] --json` |
 | Record one-time accelerator setup | `automation record-setup --release <id> --slug <slug> [--id <id> \| --skipped "<reason>"] --json` |
 | Plan / inspect optional accelerators | `automation plan --release <id> --json`; `automation obligations --release <id> --json` |
 
@@ -60,7 +59,7 @@ The fresh attempt retains original results, frozen inputs/receipts and resource
 bindings in task-history; original external resources are not renamed/deleted.
 Broker `--param "name=New plan"` selects a new plan identity, not an individual
 suite rename. Authenticator creation separately accepts a parent-suite name/layout.
-Test-only mocks never become public inputs.
+Internal `step_defaults` never become public inputs.
 
 The configured release owner must confirm the reason/note (`--confirmed-by`
 defaults to that owner). An owned/uncertain prior runner additionally requires
@@ -124,7 +123,7 @@ partial-write recovery. Never force-clear an active effect or approval.
 
 ## Notifications (Direct Python Delivery)
 
-1. **When `requires_approval: false`:** Run `deliver-step --release <id> --phase <p> --step <s> --json` (or `next --release <id> --deliver --json` to drain all automated checks and `requires_approval: false` notifications in one call). Python delivers directly via Agency MCP (`mail` / `teams` / `calendar`), honors `mocks.local.yaml` redirects, and records exact delivery receipts + step completion without calling interactive `workiq_send_*` tools or `m_ask_user`!
+1. **When `requires_approval: false`:** Run `deliver-step --release <id> --phase <p> --step <s> --json` (or `next --release <id> --deliver --json` to drain all automated checks and `requires_approval: false` notifications in one call). Python delivers directly via Agency MCP (`mail` / `teams` / `calendar`), resolves destinations from `config/environment.yaml` (`active_profile: test | prod`), and records exact delivery receipts + step completion without calling interactive `workiq_send_*` tools or `m_ask_user`!
 2. **When `requires_approval: true`:** Run `step-action --release <id> --phase <p> --step <s>`, preview `mcp_arguments` alongside the fresh `status --details` table, obtain owner confirmation via `m_ask_user`, and execute `deliver-step --release <id> --phase <p> --step <s> --approved --json`.
 
 ## Human gates and external approval

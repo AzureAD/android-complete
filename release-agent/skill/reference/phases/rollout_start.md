@@ -21,9 +21,6 @@ parallel:
 - `wiki_payload` (`create-payload-wiki` in IdentityWiki)
 - `signoff_start` (`start-release-signoff` on pipeline 397224)
 
-*(Note: the former `rollout_start.notice` step was removed pending the release-comms
-rework; its HTML layout is preserved in `templates/rollout-start-notice.html`.)*
-
 ## `signoff_start`, `upload_alpha`, `verify_alpha_uploaded`, `upload_whats_new` — pipeline 397224 stages
 
 `rollout_start.signoff_start`, `rollout_start.upload_alpha`, and

@@ -31,7 +31,6 @@ EXTENDED_MODULES = frozenset({
     "test_progress_delivery_retention.py",
     "test_rc_evidence.py",
     "test_rc_report_delivery.py",
-    "test_sim.py",
     "test_status_email.py",
     "test_tools.py",
     "test_ui_projection.py",

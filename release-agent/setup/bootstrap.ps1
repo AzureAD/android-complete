@@ -39,8 +39,6 @@
   Refresh only the installed skill; reload Scout and start a new conversation.
   M365 CONNECTORS
     The terminal installs the skill and registers command-based MCP servers.
-    Finish guided onboarding in Scout with: /release-agent check setup
-    Scout handles connection guidance and read checks; users do not create JSON files.
     -M365ToolsFile is an advanced automation handoff, not a normal user step.
 #>
 [CmdletBinding()]

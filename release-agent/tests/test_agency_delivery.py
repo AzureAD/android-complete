@@ -5,7 +5,7 @@ import json
 
 import yaml
 
-from orchestrator import agency_mcp, cli, cli_common as C, mocks as mocks_mod
+from orchestrator import agency_mcp, cli, cli_common as C, environment as env_mod
 from orchestrator.commands.deliver_cmd import deliver_one_step, drain_auto_notifications
 from orchestrator.state import ReleaseState
 from tests._harness import CONFIG, _active_phase
@@ -137,14 +137,8 @@ def test_agency_mcp_maps_email_self_chat_group_chat_mentions_and_calendar():
 
 
 def test_deliver_one_step_and_drain_auto_notifications_complete_preflight_silently(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        mocks_mod,
-        "load_mocks",
-        lambda: {
-            "preflight.notice": {"send_to": "pedroro@microsoft.com"},
-            "preflight.flight_reminder": {"send_to": "me"},
-        },
-    )
+    monkeypatch.setenv("RELEASE_AGENT_PROFILE", "test")
+    monkeypatch.setattr(env_mod, "load_step_defaults", lambda *_a, **_kw: {})
     st = ReleaseState(
         release_id="2026-11",
         ccd="2026-11-20",
@@ -169,7 +163,7 @@ def test_deliver_one_step_and_drain_auto_notifications_complete_preflight_silent
         ("teams", "SendMessageToSelf"),
     ]
     assert sent[0][2]["to"] == ["pedroro@microsoft.com"]
-    assert sent[0][2]["subject"].startswith("[TEST \u2192 me]")
+    assert sent[0][2]["subject"].startswith("[TEST]")
 
     reloaded = C.load_state(str(tmp_path), "2026-11")
     assert reloaded.is_done("preflight", "notice")
@@ -178,7 +172,8 @@ def test_deliver_one_step_and_drain_auto_notifications_complete_preflight_silent
 
 
 def test_deliver_one_step_records_nonblocking_failure_and_enforces_requires_approval(tmp_path, monkeypatch):
-    monkeypatch.setattr(mocks_mod, "load_mocks", lambda: {"preflight.notice": {"send_to": "pedroro@microsoft.com"}})
+    monkeypatch.setenv("RELEASE_AGENT_PROFILE", "test")
+    monkeypatch.setattr(env_mod, "load_step_defaults", lambda *_a, **_kw: {})
     with open(CONFIG, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     for ph in cfg["phases"]:
@@ -226,16 +221,15 @@ def test_deliver_one_step_records_nonblocking_failure_and_enforces_requires_appr
 def test_cli_next_deliver_flag_drains_auto_and_notifications(tmp_path, monkeypatch, capsys):
     import orchestrator.commands.deliver_cmd as deliver_mod
 
+    monkeypatch.setenv("RELEASE_AGENT_PROFILE", "test")
     monkeypatch.setattr(
-        mocks_mod,
-        "load_mocks",
-        lambda: {
+        env_mod,
+        "load_step_defaults",
+        lambda *_a, **_kw: {
             "preflight.breaking": {"outcome": "pass", "note": "ok"},
             "preflight.cg": {"outcome": "pass", "note": "ok"},
             "preflight.oneauth_access": {"outcome": "pass", "note": "ok"},
             "preflight.cron": {"outcome": "pass", "note": "ok"},
-            "preflight.notice": {"send_to": "pedroro@microsoft.com"},
-            "preflight.flight_reminder": {"send_to": "me"},
         },
     )
     sent = []
@@ -270,3 +264,49 @@ def test_cli_next_deliver_flag_drains_auto_and_notifications(tmp_path, monkeypat
     assert len(payload["delivered_notifications"]) == 2
     assert payload["scout_pending"] == ["lockdown"]
     assert sent == [("mail", "SendEmailWithAttachments"), ("teams", "SendMessageToSelf")]
+
+
+def test_test_profile_wire_guard_redirects_all_channels(monkeypatch):
+    """Under `active_profile: test`, `send_notification` enforces `@owner` / `self` at the wire boundary."""
+    monkeypatch.setenv("RELEASE_AGENT_PROFILE", "test")
+    calls = []
+    caller = lambda s, t, a: (calls.append((s, t, a)) or {"id": "evt-1"})
+
+    agency_mcp.send_notification(
+        "workiq_send_email",
+        {"to": ["authsdkrelease@microsoft.com"], "cc": ["other@microsoft.com"], "subject": "Rel", "body": "<p>x</p>", "isHtml": True},
+        owner_email="pedroro@microsoft.com",
+        mcp_caller=caller,
+    )
+    assert calls[-1][0:2] == ("mail", "SendEmailWithAttachments")
+    assert calls[-1][2]["to"] == ["pedroro@microsoft.com"]
+    assert "cc" not in calls[-1][2]
+    assert calls[-1][2]["subject"].startswith("[TEST] ")
+
+    agency_mcp.send_notification(
+        "microsoft_teams-SendMessageToChannel",
+        {"teamId": "team-1", "channelId": "chan-general", "subject": "Announce", "content": "<p>done</p>", "contentType": "html"},
+        owner_email="pedroro@microsoft.com",
+        mcp_caller=caller,
+    )
+    assert calls[-1][0:2] == ("teams", "SendMessageToSelf")
+    assert "intended channel: chan-general" in calls[-1][2]["content"]
+
+    agency_mcp.send_notification(
+        "microsoft_teams-SendMessageToUser",
+        {"userIdOrUpn": "silviu.petrescu@microsoft.com", "content": "<p>ping</p>", "contentType": "html"},
+        owner_email="pedroro@microsoft.com",
+        mcp_caller=caller,
+    )
+    assert calls[-1][0:2] == ("teams", "SendMessageToSelf")
+    assert "intended user: silviu.petrescu@microsoft.com" in calls[-1][2]["content"]
+
+    agency_mcp.send_notification(
+        "workiq_create_event",
+        {"subject": "Bug Bash", "attendees": ["androididentity@microsoft.com"], "start": "2026-11-26T10:00:00", "end": "2026-11-26T11:00:00", "timeZone": "America/Los_Angeles"},
+        owner_email="pedroro@microsoft.com",
+        mcp_caller=caller,
+    )
+    assert calls[-1][0:2] == ("calendar", "CreateEvent")
+    assert calls[-1][2]["attendeeEmails"] == ["pedroro@microsoft.com"]
+    assert calls[-1][2]["subject"].startswith("[TEST] ")

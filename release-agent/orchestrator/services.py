@@ -85,7 +85,6 @@ class AssetReads:
     text_file: Callable[..., str]
     distribution_config: Callable[..., dict]
     oncall_team: Callable[..., tuple]
-    automation_definitions: Callable[..., list]
     status_recipients: Callable[[], list]
     status_email: Callable[..., dict]
     is_published: Callable[..., tuple]

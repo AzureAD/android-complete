@@ -4,12 +4,25 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+import hashlib
 import json
+import re
 from urllib.parse import parse_qsl, urlsplit
 
-from orchestrator import revision
 from orchestrator.step_context import freeze, thaw
 from orchestrator.transitions import TransitionResult
+
+_HASH_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+def is_hash(value) -> bool:
+    return isinstance(value, str) and bool(_HASH_RE.fullmatch(value))
+
+
+def digest(value) -> str:
+    return "sha256:" + hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
+    ).hexdigest()
 
 
 def _object(value):
@@ -69,27 +82,24 @@ def envelope(orch, phase: str, step: str, plan: WritePlan):
     if definition is None or definition.write_command != plan.command:
         raise ValueError("Write plan does not match the configured step capability")
     record = orch.state.get_step(phase, step)
-    identity = revision.revision_id(orch.state.workflow_revision)
-    if identity is None:
-        raise ValueError("Write review requires an explicitly bound workflow revision")
     result = {
         "version": 1, "release": orch.state.release_id,
         "step": definition.key,
         "generation": record.invalidated_at or record.completed_at or "initial",
-        "workflow_revision": identity, **plan.as_dict(),
+        **plan.as_dict(),
     }
     execution = record.execution or {}
     if execution.get("write_progress"):
         result["continuation"] = {
             "execution_id": execution["id"],
             "scope": execution["write_progress"]["scope"],
-            "operations": revision.digest(execution["write_progress"]["operations"]),
+            "operations": digest(execution["write_progress"]["operations"]),
         }
     return result
 
 
 def review_hash(orch, phase: str, step: str, plan: WritePlan):
-    return revision.digest(envelope(orch, phase, step, plan))
+    return digest(envelope(orch, phase, step, plan))
 
 
 def preview(orch, phase: str, step: str, plan: WritePlan):
@@ -197,7 +207,6 @@ def authorize(
     """
     from orchestrator import cli_common as C
 
-    revision.assert_current(orch)
     transaction = C._LOCKED_STATE.get()
     if transaction is None or transaction[0] != C.os.path.abspath(
             C.state_path(args.runs_root, args.release)):
@@ -219,7 +228,7 @@ def authorize(
         if not isinstance(auto_approved_by, str) or not auto_approved_by.strip():
             raise ValueError("This writer does not permit automatic approval")
         reviewer = auto_approved_by
-    elif not revision.is_hash(expected) or not isinstance(reviewer, str) or not reviewer.strip():
+    elif not is_hash(expected) or not isinstance(reviewer, str) or not reviewer.strip():
         raise ValueError("An exact --review-hash and nonempty --approved-by are required; no writes")
     reviewer = reviewer.strip()
     if progress is not None:
@@ -235,7 +244,6 @@ def authorize(
         if not (resume_approved and progress is not None and progress.existing
                 and any(review["hash"] == expected for review in previous)):
             raise ValueError("Write review hash is stale; review the fresh plan; no writes")
-    revision.assert_current(orch)
     before = deepcopy(asdict(orch.state))
     permit = None
     try:
@@ -272,7 +280,7 @@ def authorize(
 def _sealed(value):
     result = deepcopy(value)
     result.pop("digest", None)
-    return {**result, "digest": revision.digest(result)}
+    return {**result, "digest": digest(result)}
 
 
 def validate_progress(value):
@@ -281,7 +289,7 @@ def validate_progress(value):
     if (not isinstance(value, dict) or not required.issubset(value)
             or set(value) - required - {"context"}
             or "context" in value and not isinstance(value["context"], dict)
-            or not revision.is_hash(value.get("scope"))
+            or not is_hash(value.get("scope"))
             or not isinstance(value.get("policy"), dict)
             or set(value["policy"]) != {"automatic", "reviewer"}
             or type(value["policy"]["automatic"]) is not bool
@@ -295,19 +303,19 @@ def validate_progress(value):
         raise ValueError("Invalid verified write progress; held for inspection")
     for review in value["reviews"]:
         if (not isinstance(review, dict) or set(review) != {"hash", "approved_by"}
-                or not revision.is_hash(review["hash"])
+                or not is_hash(review["hash"])
                 or review["approved_by"] != value["policy"]["reviewer"]):
             raise ValueError("Invalid compound review history")
     keys = set()
     for op in value["operations"]:
         if (not isinstance(op, dict) or set(op) != {
                 "key", "descriptor", "receipt", "candidate", "resolutions"}
-                or not revision.is_hash(op["key"]) or op["key"] in keys
+                or not is_hash(op["key"]) or op["key"] in keys
                 or not isinstance(op["descriptor"], dict)
                 or set(op["descriptor"]) != {"kind", "target", "expected", "before"}
                 or not isinstance(op["descriptor"]["kind"], str)
                 or not isinstance(op["descriptor"]["target"], dict)
-                or not revision.is_hash(op["descriptor"]["expected"])
+                or not is_hash(op["descriptor"]["expected"])
                 or op["descriptor"]["before"] is not None and (
                     not isinstance(op["descriptor"]["before"], str) or not op["descriptor"]["before"])
                 or op["receipt"] is not None and not isinstance(op["receipt"], dict)
@@ -320,7 +328,7 @@ def validate_progress(value):
                     or resolution["mode"] not in ("manual", "not_applied")
                     or any(not isinstance(resolution[key], str) or not resolution[key].strip()
                            for key in ("confirmed_by", "reason"))
-                    or not revision.is_hash(resolution["previous"])
+                    or not is_hash(resolution["previous"])
                     or (resolution["receipt"] is None) != (resolution["mode"] == "not_applied")
                     or resolution["receipt"] is not None and not isinstance(resolution["receipt"], dict)):
                 raise ValueError("Invalid owner-confirmed operation resolution")
@@ -422,7 +430,7 @@ class VerifiedProgress:
         self.execution_id = execution.get("id")
         self.existing = bool(execution)
         self.value = deepcopy(execution.get("write_progress"))
-        self.scope = revision.digest(scope) if scope is not None else (self.value or {}).get("scope")
+        self.scope = digest(scope) if scope is not None else (self.value or {}).get("scope")
         self.authorization = None
         self.failed = False
         self.context = deepcopy(context)
@@ -476,7 +484,6 @@ class VerifiedProgress:
 
     def recovery_authority(self, args, actor, reason):
         from orchestrator import cli_common as C
-        revision.assert_current(self.orch)
         transaction = C._LOCKED_STATE.get()
         if (transaction is None or transaction[0] != C.os.path.abspath(
                 C.state_path(args.runs_root, args.release)) or args.release != self.orch.state.release_id):
@@ -522,7 +529,7 @@ class VerifiedProgress:
         chosen["resolutions"].append({
             "mode": "not_applied" if manual is None else "manual",
             "confirmed_by": owner, "reason": reason.strip(),
-            "previous": revision.digest(chosen), "receipt": receipt})
+            "previous": digest(chosen), "receipt": receipt})
         chosen["receipt"] = receipt
         self.value["finished"] = False
         self.value = _sealed(self.value)
@@ -567,7 +574,7 @@ class VerifiedProgress:
         if any(not _resolved(op) for op in self.value["operations"]):
             raise ValueError("Unknown earlier operation must be reconciled before any writes")
         if any(op["key"] == key for op in self.value["operations"]):
-            key = revision.digest({"operation": key, "attempt": len(self.value["operations"])})
+            key = digest({"operation": key, "attempt": len(self.value["operations"])})
         self.value["operations"].append({
             "key": key, "descriptor": descriptor, "receipt": None, "candidate": None, "resolutions": []})
         self._save()
@@ -594,9 +601,9 @@ class VerifiedProgress:
         self._save()
 
 
-def step_mocks(orch, phase: str, step: str) -> dict:
-    """Active mock entry for `<phase>.<step>`, or empty dict."""
-    return (getattr(orch, "mocks", {}) or {}).get(f"{phase}.{step}", {}) or {}
+def step_defaults(orch, phase: str, step: str) -> dict:
+    """Active `step_defaults` entry for `<phase>.<step>`, or empty dict."""
+    return (getattr(orch, "step_defaults", {}) or {}).get(f"{phase}.{step}", {}) or {}
 
 
 def record_step_write(

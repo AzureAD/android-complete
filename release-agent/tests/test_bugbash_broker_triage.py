@@ -135,7 +135,7 @@ def test_initial_and_periodic_producers_both_include_live_broker_triage(monkeypa
     from orchestrator import cli_common as C
     from orchestrator.commands import bugbash_update
     from steps.bug_bash import bugbash_updates as U
-    from steps.lib import mockctx
+    from tests import _fixtures as mockctx
     from tests.test_bugbash_mentions import state
 
     st = state()
@@ -153,11 +153,3 @@ def test_initial_and_periodic_producers_both_include_live_broker_triage(monkeypa
         assert initial.kind == "needs_skill"
         assert "1/2 tests done" in initial.payload["content"]
         assert "(Automation triage)" in initial.payload["content"] and "[Broker]" in initial.payload["content"]
-        C.save_state(st, str(tmp_path), st.release_id)
-        args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=C.DEFAULT_CONFIG,
-                         now="2026-09-11T11:00:00-07:00", force=True)
-        assert bugbash_update.cmd_post_bugbash_update(args) == 0
-    periodic = json.loads(capsys.readouterr().out)
-    assert periodic["decision"] == "post" and periodic["total"] == 2
-    assert periodic["content"] == initial.payload["content"]
-    assert periodic["mentions"] == initial.payload["mentions"]

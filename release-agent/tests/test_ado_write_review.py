@@ -8,7 +8,8 @@ import os
 
 import pytest
 
-from orchestrator import cli_common as C, revision, write_review as W
+from orchestrator import cli_common as C, write_review as W
+from orchestrator import write_review as revision
 from orchestrator.cli import build_parser
 from orchestrator.commands import distribute, localization, payload_wiki_cmd as wiki, signoff_cmd as signoff
 from orchestrator.engine import Orchestrator
@@ -23,8 +24,7 @@ def make_orch(phase, step, *, now=None):
     state = _active_step(
         ReleaseState(release_id="checked-ado", owner_email="owner@example.com", ccd="2026-09-09"),
         phase, step)
-    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={}, now=now)
-    assert state.workflow_revision is not None
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, step_defaults={}, now=now)
     return orch
 
 
@@ -69,7 +69,7 @@ def distribution_inputs(monkeypatch):
                                     "tester_id": "alice-id", "tester_upn": "alice@example.com"}
                                    for i in range(1, 4)]}],
     }
-    monkeypatch.setattr(distribute.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
+    monkeypatch.setattr(distribute.env_mod, "load_step_defaults", lambda *_a, **_kw: {"bug_bash.distribute_tests": inputs})
     monkeypatch.setattr(D, "resolve_tester_identity", lambda upn, **kw: upn)
     return inputs
 
@@ -217,8 +217,8 @@ def wiki_inputs(monkeypatch):
     monkeypatch.setattr(wiki.checks, "wiki_page_exists", lambda *a: existing["exists"])
     monkeypatch.setattr(wiki.checks, "get_wiki_page",
                         lambda *a, **kw: (True, existing["content"], existing["etag"], ""))
-    orig = W.step_mocks
-    monkeypatch.setattr(W, "step_mocks", lambda orch, phase, step: (
+    orig = W.step_defaults
+    monkeypatch.setattr(W, "step_defaults", lambda orch, phase, step: (
         dict(mock_data) if (phase, step) == ("rollout_start", "wiki_payload") else orig(orch, phase, step)))
     return existing
 
@@ -226,7 +226,7 @@ def wiki_inputs(monkeypatch):
 def test_wiki_plan_binds_content_target_and_etag(wiki_inputs, monkeypatch):
     orch = make_orch("rollout_start", "wiki_payload")
     # StepContext inputs come from the orchestrator, not an ambient write payload.
-    orch.mocks = {"rollout_start.wiki_payload": W.step_mocks(orch, "rollout_start", "wiki_payload")}
+    orch.step_defaults = {"rollout_start.wiki_payload": W.step_defaults(orch, "rollout_start", "wiki_payload")}
     plan = wiki.plan_payload_wiki(orch)
     operation = plan.operations[0]
     assert operation.preconditions == {"exists": True, "content": "owner's existing page", "etag": '"etag-7"'}
@@ -242,7 +242,7 @@ def test_wiki_plan_binds_content_target_and_etag(wiki_inputs, monkeypatch):
 @pytest.mark.parametrize("etag,exists", [("", True), ('""', True), ("*", True), ('"x"', None)])
 def test_wiki_unknown_existence_and_unconditional_update_reject(wiki_inputs, etag, exists):
     orch = make_orch("rollout_start", "wiki_payload")
-    orch.mocks = {"rollout_start.wiki_payload": W.step_mocks(orch, "rollout_start", "wiki_payload")}
+    orch.step_defaults = {"rollout_start.wiki_payload": W.step_defaults(orch, "rollout_start", "wiki_payload")}
     wiki_inputs.update(etag=etag, exists=exists)
     with pytest.raises(ValueError):
         wiki.plan_payload_wiki(orch)
@@ -636,7 +636,7 @@ def test_beta_stage_friday_plan_requires_manager_approval(monkeypatch):
     orch = Orchestrator(
         C.DEFAULT_CONFIG,
         state,
-        mocks={},
+        step_defaults={},
         now=datetime(2026, 9, 18, 17, 0, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
@@ -820,7 +820,7 @@ def test_distribution_resumes_13_of_45_changes_without_repeating_inputs_or_write
     path = tmp_path / "release-state.json"
     orch.state.save(str(path))
     loaded = ReleaseState.load(str(path))
-    resumed = Orchestrator(C.DEFAULT_CONFIG, loaded, mocks={}, now=orch.now_local)
+    resumed = Orchestrator(C.DEFAULT_CONFIG, loaded, step_defaults={}, now=orch.now_local)
     memory[0](resumed)
     if completion == "owner_attested":
         args = arguments("distribute-tests", "--manual-completion",
@@ -858,7 +858,8 @@ def launch_provider(monkeypatch):
     }
     refs = {"value": [{"name": "refs/heads/main", "objectId": "a" * 40}]}
     reads, writes = [], []
-    monkeypatch.setattr(localization.mocks_mod, "load_mocks", lambda: {})
+    from orchestrator import environment as env_mod
+    monkeypatch.setattr(env_mod, "load_step_defaults", lambda *_a, **_kw: {})
 
     def read(url, timeout):
         reads.append(url)

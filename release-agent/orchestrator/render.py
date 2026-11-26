@@ -438,9 +438,7 @@ def status_brief(r: dict) -> str:
             lines.append("Required: " + ", ".join(pending))
     elif next_step:
         lines.append(f"Next: {next_step}")
-    if r.get("workflow_revision_problem"):
-        lines.append(r["workflow_revision_problem"])
-    elif r.get("halt_reason"):
+    if r.get("halt_reason"):
         lines.append(f"Hold: {r['halt_reason']}")
     counts = r.get("completion_provenance") or {}
     if counts.get("waived") or counts.get("owner_attested") or counts.get("manual_only"):
@@ -457,7 +455,6 @@ def status_view(r: dict) -> str:
     `r` is Orchestrator.status_report()."""
     if (r.get("readiness") and not r["readiness_signed"]
             and not r.get("halted") and not r.get("skip_release")
-            and not r.get("workflow_revision_problem")
             and not any(issue.get("severity") == "error" for issue in r.get("invariant_violations", []))):
         return readiness_table(r["readiness"], r["release_id"])
     bars = 20
@@ -483,6 +480,15 @@ def status_view(r: dict) -> str:
     if r.get("owner_email"):
         who = (f"{r['owner_name']} " if r.get("owner_name") else "") + f"{r['owner_email']}"
         lines.append(f"**Owner:** {who}")
+    try:
+        from orchestrator import environment as _env
+        prof = _env.active_profile_name()
+        if prof != "prod":
+            lines.append(
+                f"**Profile:** 🧪 **{prof}** *(safe targets: emails → {r.get('owner_email') or 'owner'} · Teams → self-chat)*"
+            )
+    except Exception:  # noqa: BLE001
+        pass
     lines.append("")
 
     # 1) Next-action headline — the single most important thing.
@@ -499,10 +505,6 @@ def status_view(r: dict) -> str:
     elif r.get("halted"):
         rsn = f" — {r['halt_reason']}" if r.get("halt_reason") else ""
         lines.append(f"⛔ **HALTED**{rsn}. Nothing advances until you resume.")
-    elif r.get("workflow_revision_problem"):
-        lines.append("⛔ **Workflow update needs review.** Release progress is preserved below, "
-                     "but new work is blocked until workflow adoption is reviewed.")
-        lines.append(_cell(r["workflow_revision_problem"]))
     elif r["blocked"]:
         lines.append(f"⛔ **Blocked** — cannot start: {', '.join(r['blocked_items'])}. "
                      "Resolve it, or hand the release to someone who can.")
@@ -705,7 +707,7 @@ def _quick_commands_footer(r: dict) -> list[str]:
     )
     has_uncertain_exec = bool((r.get("action") or {}).get("execution"))
     if (invariant_errors or has_uncertain_exec or r.get("halted")
-            or r.get("status") == "cancelled" or r.get("workflow_revision_problem")):
+            or r.get("status") == "cancelled"):
         return [
             "",
             "---",
@@ -750,8 +752,8 @@ def commands_card(r: dict | None = None) -> str:
             "| Goal | What to type |",
             "|---|---|",
             '| **Start a release** | `"start a release"` (confirms clone folder + release date, then runs Readiness Gate) |',
-            '| **Open launcher menu** | `/release-agent` (interactive menu for status, start, setup, or help) |',
-            '| **Check setup** | `"check setup"` (verifies CLI tools, MCP connectors, and M365 access) |',
+            '| **Open launcher menu** | `/release-agent` (interactive menu for status, start, profile, or help) |',
+            '| **Target profile** | `"environment"` or `"set profile to test\\|prod"` (inspect or switch `config/environment.yaml`) |',
             '| **List releases** | `"list releases"` (shows existing or past release runs on this machine) |',
             '| **Where am I?** | `"status"` (renders the full phase & step checklist once a release starts) |',
             '| **Advance** | `"continue"` (runs all eligible automatic steps until a human checkpoint) |',
@@ -778,6 +780,7 @@ def commands_card(r: dict | None = None) -> str:
         f'| **Confirm or unblock** | `"{ex} is done"` · `"completed {ex} manually"` · `"skip {ex}"` |',
         f'| **Re-run (or new inputs)** | `"rerun {rerun_ex}"` · `"rerun Broker test plan with name=..."` · `"task history {rerun_ex}"` |',
         '| **Schedule / dates** | `"set CCD to YYYY-MM-DD"` (updates Code Complete Date and recalculates schedule) |',
+        '| **Environment / targets** | `"environment"` (inspect active `test`/`prod` profile & targets) |',
         f'| **Ask why / how** | `"explain {ex}"` (shows runbook knowledge, prerequisites, and parameters) |',
         "",
         "_Tip: When a phase pauses at a checkpoint card, picking an option (**Completed**, **Approve**, **Skip**, **Retry**) automatically resumes the next eligible steps — no need to type `\"continue\"` afterward._",
@@ -808,304 +811,3 @@ def _next_pending_step(r: dict):
         if s["state"] in ("pending", "gate", "auto"):
             return s["name"]
     return None
-
-
-def notification_subject(r: dict) -> str:
-    """Email subject for the daily phase digest (empty if nothing to send)."""
-    ap = r.get("active_phase")
-    if not ap:
-        return f"Release {r.get('release_id','?')} — update"
-    return f"Release {r.get('release_id','?')} — Phase {ap.get('num')} status"
-
-
-def preflight_core_alert(r: dict, model: dict) -> str:
-    """Teams HTML for a Phase-0 blocker near CCD."""
-    ship = r.get("target_month_label") or r.get("release_id", "release")
-    owner = _esc(r.get("owner_name") or (r.get("owner_email") or "").split("@")[0]
-                 or "Release owner")
-    owner_ref = f'<at id="0">{owner}</at>' if r.get("owner_email") else owner
-    today, ccd = model["today"], model["ccd"]
-    days = (schedule.parse_date(ccd) - schedule.parse_date(today)).days
-    ccd_date = schedule.parse_date(ccd)
-    ccd_long = f"{ccd_date.strftime('%A, %B')} {ccd_date.day}, {ccd_date.year}"
-    timing = (("code complete tomorrow" if days == 1
-               else f"code complete {ccd_long} (in {days} calendar days)")
-              if model["checkpoint"] == "pre_ccd"
-              else ("code complete today" if today == ccd else f"code complete passed on {ccd}"))
-
-    def rows(items):
-        rendered = []
-        for s in items:
-            links = " ".join(
-                f'<a href="{_esc(link["url"])}">{_esc(link.get("name") or "details")}</a>'
-                for link in (s.get("links") or []) if link.get("url"))
-            rendered.append(
-                f"<li><b>{_esc(s['name'])}</b>"
-                + (f" — {_esc(s.get('note'))}" if s.get("note") else "")
-                + (f" ({links})" if links else "") + "</li>")
-        return "".join(rendered)
-
-    sections = []
-    if model["blocked"]:
-        sections.append("<p><b>Failed / blocked checks:</b></p><ul>"
-                        + rows(model["blocked"]) + "</ul>")
-    if model["confirmations"]:
-        sections.append("<p><b>Owner decisions or confirmations still missing:</b></p><ul>"
-                        + rows(model["confirmations"]) + "</ul>")
-    if model["other"]:
-        sections.append("<p><b>Other unfinished Phase 0 work:</b></p><ul>"
-                        + rows(model["other"]) + "</ul>")
-    cg = any(s.get("id") == "cg" for s in model["blocked"])
-    cg_rule = (" For Component Governance: fix and re-run the check, or obtain the "
-               "release engineer's manager approval and record the audited skip reason."
-               if cg else "")
-    return (
-        f"<p><b>{_esc(ship)} release at risk — {_esc(timing)}.</b></p>"
-        f"<p>{owner_ref}, Phase 0 is incomplete, so Scout cannot advance to Code Complete Day."
-        f"{_esc(cg_rule)}</p>"
-        + "".join(sections)
-        + "<p><b>Decision needed:</b> resolve and re-check the outstanding work, use an "
-          "authorized audited override where policy permits, or escalate a CCD-delay decision.</p>"
-          "<p><i>This Scout hold does not pause the ADO release schedule; a CCD delay is a "
-          "separate authorized change.</i></p>"
-    )
-
-
-def _digest_model(r: dict):
-    """The digest's content model, or None to STAY SILENT — the single source of
-    truth shared by the plain-text and markdown renderers (the HTML email uses a
-    fuller step table but reuses this as its silence gate).
-
-    Silence rules (established with the user):
-      * Setup (readiness + CCD) is interactive in Scout — NO push. An unsigned
-        release, a blocked entry gate, or a halted/complete release stay silent.
-      * The FIRST push is a phase opening (Phase 0 at CCD-7). Nothing before it.
-      * While a phase is open (due) with outstanding steps, report status daily.
-    """
-    if (r.get("halted") or r.get("blocked")
-            or r.get("status") in ("complete", "cancelled")
-            or not r.get("readiness_signed")):
-        return None                            # setup / paused — no push
-    ap = r.get("active_phase")
-    if not ap or not ap.get("due"):
-        return None                            # nothing open yet (scheduled) — no push
-    # Scout still owes automatic steps on the open phase. The digest reports the settled
-    # "here's what needs YOU" picture, so stay silent until Scout drains its own work.
-    if r.get("scout_pending"):
-        return None
-
-    hold = None
-    if r.get("gate"):
-        gate = r["gate"]
-        hold = (gate.get("kind", "gate"), gate["step_name"], gate.get("reason"))
-    elif r.get("action") and not r["action"].get("execution"):
-        hold = ("action", r["action"]["step_name"], None)
-    human_all = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
-    completed_all = ap.get("completed") or []
-    # Phase-2 RC one-liner — only while a phase that opts in (show_pipeline_runs) is
-    # active, best-effort (reads state.pipeline_runs; never a live call). Empty until the
-    # chain resolves.
-    rc_line = _pipelines_line(r) if ap.get("show_pipeline_runs") else ""
-    return {
-        "rid": r.get("release_id", "?"),
-        "ap": ap,
-        "started": bool(ap.get("started")),
-        "completed": completed_all[:8],
-        "completed_total": len(completed_all),
-        "hold": hold,                          # (kind, step_name) or None
-        "executions": [s for s in ap.get("steps", []) if s.get("execution")],
-        "human": human_all[:6],
-        "human_total": len(human_all),
-        "pipelines": rc_line,                  # RC id one-liner (build_verify only)
-    }
-
-
-def _progress_line(m: dict, bold: bool = False) -> str:
-    """The opened/progress line, shared by both text renderers."""
-    ap = m["ap"]
-    if not m["started"]:
-        opened = f" (opened {ap['opens']})" if ap.get("opens") else ""
-        total = f"**{ap['total']}**" if bold else str(ap["total"])
-        return f"Phase {ap['num']} has opened{opened} — {total} steps to work through, none done yet."
-    prog = f"**{ap['done']} of {ap['total']}**" if bold else f"{ap['done']} of {ap['total']}"
-    return f"Progress: {prog} steps done."
-
-
-def notification(r: dict) -> str:
-    """The DAILY PHASE DIGEST emailed to the release owner, or "" to stay silent.
-    `r` is Orchestrator.status_report(). Plain-text form (email fallback / logs);
-    the markdown and HTML forms render the same model differently. The once-per-day
-    cadence is enforced by the CLI's per-channel notification ledger."""
-    m = _digest_model(r)
-    if m is None:
-        return ""
-    ap = m["ap"]
-    lines = [f"Release {m['rid']} — Phase {ap['num']}: {ap['name']}", _progress_line(m)]
-    if m.get("pipelines"):
-        lines.append(f"RC pipelines: {m['pipelines']}")
-    if m["completed"]:
-        lines.append(f"Completed ({m['completed_total']}):")
-        lines += [f"  ✓ {name}" for name in m["completed"]]
-    if m["hold"]:
-        kind, name, reason = m["hold"]
-        if kind == "denied":
-            lines.append(f"Gate denied: {name} — {reason}. Reopen it with a reason to reconsider.")
-        elif kind == "gate":
-            lines.append(f"Waiting on your decision: {name} (approve or deny).")
-        else:
-            lines.append(f"Action needed now: {name} (do it, then mark done).")
-    for s in m["executions"]:
-        lines.append(f"{s['name']}: {_execution_guidance(s['execution'])}")
-    if m["human"]:
-        lines.append(f"Still needs you ({m['human_total']}):")
-        lines += [f"  • {o['name']} — {'your approval' if o['gate'] else 'your action'}"
-                  for o in m["human"]]
-    lines.append("Open Scout to continue the release.")
-    return "\n".join(lines)
-
-
-def notification_markdown(r: dict) -> str:
-    """Teams-bot-friendly MARKDOWN digest — same content as notification() but with
-    blank-line paragraph breaks, `-` bullets and `**bold**`. The Scout bot renders
-    markdown and COLLAPSES single newlines, so the plain-text form would arrive as
-    one run-on paragraph. Empty under the same silence rules."""
-    m = _digest_model(r)
-    if m is None:
-        return ""
-    ap = m["ap"]
-    blocks = [f"**Release {m['rid']} — Phase {ap['num']}: {ap['name']}**", _progress_line(m, bold=True)]
-    if m.get("pipelines"):
-        blocks.append(f"**RC pipelines:** {m['pipelines']}")
-    if m["completed"]:
-        blocks.append("\n".join([f"**Completed ({m['completed_total']}):**"]
-                                + [f"- ✓ {n}" for n in m["completed"]]))
-    if m["hold"]:
-        kind, name, reason = m["hold"]
-        if kind == "denied":
-            blocks.append(
-                f"**Gate denied:** {name} — {reason}. Reopen it with a reason to reconsider."
-            )
-        elif kind == "gate":
-            blocks.append(f"**Waiting on your decision:** {name} (approve or deny).")
-        else:
-            blocks.append(f"**Action needed now:** {name} (do it, then mark done).")
-    for s in m["executions"]:
-        blocks.append(f"**{s['name']}:** {_execution_guidance(s['execution'])}")
-    if m["human"]:
-        rows = [f"**Still needs you ({m['human_total']}):**"]
-        rows += [f"- {o['name']} — {'your approval' if o['gate'] else 'your action'}"
-                 for o in m["human"]]
-        blocks.append("\n".join(rows))
-    blocks.append("_Open Scout to continue the release._")
-    return "\n\n".join(blocks)      # blank line between blocks survives markdown collapse
-
-
-# ---- HTML digest (nice email UX) -------------------------------------------
-# Email-safe: inline styles + table layout (Outlook-friendly), no external CSS.
-
-def _esc(s: str) -> str:
-    return (str(s or "").replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;").replace('"', "&quot;"))
-
-
-# Per-status pill styling (label, text color, background).
-_PILL = {
-    "done":      ("✓ Done",              "#1a7f37", "#e6f4ea"),
-    "now":       ("⚠ Needs you now",      "#b42318", "#fef3f2"),
-    "blocked":   ("⛔ Blocked — fix & rerun", "#b42318", "#fef3f2"),
-    "approval":  ("Your approval",        "#b54708", "#fffaeb"),
-    "confirm":   ("Your confirmation",    "#b54708", "#fffaeb"),
-    "action":    ("Your action",          "#b54708", "#fffaeb"),
-    "scout":     ("Scout runs this",       "#475467", "#f2f4f7"),
-    "auto":      ("Automatic — pending",  "#475467", "#f2f4f7"),
-    "in_flight": ("⏳ In progress — polling", "#475467", "#f2f4f7"),
-    "running": ("Execution reserved", "#475467", "#f2f4f7"),
-    "execution_review": ("Review interrupted execution", "#b42318", "#fef3f2"),
-}
-
-
-def _pill(status: str) -> str:
-    label, fg, bg = _PILL.get(status, _PILL["auto"])
-    return (f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;'
-            f'font-size:12px;font-weight:600;color:{fg};background:{bg};'
-            f'white-space:nowrap;">{label}</span>')
-
-
-def notification_html(r: dict) -> str:
-    """HTML version of the daily phase digest. Returns "" under the exact same
-    silence rules as the other renderers (shares `_digest_model`). Presents EVERY
-    step in the active phase with a status pill, and flags what needs the owner now."""
-    if _digest_model(r) is None:                  # same silence rules / dedup gate
-        return ""
-    rid = _esc(r.get("release_id", "?"))
-    ap = r.get("active_phase") or {}
-    phase_title = _esc(f"Phase {ap.get('num')}: {ap.get('name','')}")
-    done, total = ap.get("done", 0), ap.get("total", 0)
-    pct = round(100 * done / total) if total else 0
-    steps = ap.get("steps", [])
-
-    # The single item that needs the owner right now (the live hold), if any.
-    hold = r.get("gate") or r.get("action")
-    hold_name = _esc(hold["step_name"]) if hold else ""
-    hold_kind = "approve or deny" if r.get("gate") else "do it, then mark it done"
-    if hold and hold.get("kind") == "denied":
-        hold_kind = _esc(
-            f"denied — {hold.get('reason') or 'reopen with a reason to reconsider'}"
-        )
-    if hold and hold.get("execution"):
-        hold_kind = _esc(_execution_guidance(hold["execution"]))
-
-    # Rows: every step, with the active hold promoted to the "now" pill.
-    rows = []
-    for s in steps:
-        st = "now" if s.get("now") else s.get("status", "auto")
-        name = _esc(s.get("name", ""))
-        if s.get("execution"):
-            st = "running" if s.get("status") == "running" else "execution_review"
-            name += f'<br><small>{_esc(_execution_guidance(s["execution"]))}</small>'
-        star = (' <span style="color:#b42318;font-weight:700;">&#9873;</span>'
-                if s.get("needs_owner") else "")
-        rows.append(
-            f'<tr><td style="padding:9px 12px;border-bottom:1px solid #eaecf0;'
-            f'font-size:14px;color:#101828;">{name}{star}</td>'
-            f'<td style="padding:9px 12px;border-bottom:1px solid #eaecf0;'
-            f'text-align:right;">{_pill(st)}</td></tr>'
-        )
-    rows_html = "\n".join(rows)
-
-    attention = ""
-    if hold:
-        attention = (
-            f'<tr><td style="padding:0 24px 8px;">'
-            f'<div style="background:#fef3f2;border:1px solid #fecdca;border-radius:8px;'
-            f'padding:12px 14px;color:#b42318;font-size:14px;">'
-            f'<strong>&#9873; Needs your attention:</strong> {hold_name} '
-            f'&mdash; {hold_kind}.</div></td></tr>'
-        )
-
-    return f"""\
-<div style="margin:0;padding:24px 0;background:#f5f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(16,24,40,0.08);">
-  <tr><td style="background:#1f2a44;padding:20px 24px;">
-    <div style="color:#ffffff;font-size:18px;font-weight:700;">Release {rid}</div>
-    <div style="color:#c3cad9;font-size:14px;margin-top:2px;">{phase_title}</div>
-  </td></tr>
-  <tr><td style="padding:18px 24px 6px;">
-    <div style="font-size:14px;color:#475467;">Progress: <strong style="color:#101828;">{done} of {total}</strong> steps done ({pct}%)</div>
-    <div style="margin-top:8px;height:8px;background:#eaecf0;border-radius:6px;overflow:hidden;">
-      <div style="width:{pct}%;height:8px;background:#1a7f37;"></div>
-    </div>
-  </td></tr>
-  {attention}
-  <tr><td style="padding:8px 24px 4px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-      <tr><th style="text-align:left;padding:6px 12px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#667085;border-bottom:2px solid #eaecf0;">Task</th>
-          <th style="text-align:right;padding:6px 12px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#667085;border-bottom:2px solid #eaecf0;">Status</th></tr>
-      {rows_html}
-    </table>
-  </td></tr>
-  <tr><td style="padding:16px 24px 24px;">
-    <div style="font-size:13px;color:#667085;">Items marked <span style="color:#b42318;font-weight:700;">&#9873;</span> need you. Open Scout to continue the release.</div>
-  </td></tr>
-</table>
-</div>"""
