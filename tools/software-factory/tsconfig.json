@@ -13,5 +13,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["core/**/*.ts", "chat/**/*.ts", "server/**/*.ts", "workflows/**/*.ts", "runtime/**/*.ts", "providers/**/*.ts", "tests/**/*.ts", "mcp.ts", "runtime-check.ts"]
+  "include": ["core/**/*.ts", "chat/**/*.ts", "server/**/*.ts", "workflows/**/*.ts", "runtime/**/*.ts", "providers/**/*.ts", "tests/**/*.ts", "cli.ts", "mcp.ts", "runtime-check.ts"]
 }
