@@ -687,3 +687,85 @@ test("AB#3822864: GET /api/events streams connected, live state-changed pushes, 
         f.cleanup();
     }
 });
+
+test("diffDesignSnapshots compares and exposes canonical change-record behavioral fields", async () => {
+    const evalsMod = await import("../evals/design.mjs");
+    const workflowMod = await import("../../../.github/extensions/DevDesignDoc/workflow.mjs");
+    const clean = evalsMod.fixture("clean-control");
+    const baseDesign = structuredClone(clean.design);
+    const baseChange = baseDesign.changes[0]!;
+    assert.deepEqual(workflowMod.validateDesign(baseDesign, clean.stage0, clean.evidence), []);
+
+    // Identical canonical designs remain unchanged
+    const sameDiff = diffDesignSnapshots(baseDesign, structuredClone(baseDesign));
+    assert.equal(sameDiff.changed, false);
+    assert.equal(sameDiff.changes[0]?.status, "unchanged");
+    assert.deepEqual(sameDiff.changes[0]?.changedFields, []);
+    assert.deepEqual(sameDiff.changes[0]?.fieldDiffs, []);
+    assert.equal(sameDiff.changes[0]?.before?.requestedDelta, baseChange.requestedDelta);
+
+    // Changing only requestedDelta on a valid canonical design must be detected and exposed
+    const deltaDesign = structuredClone(baseDesign);
+    const deltaTarget = deltaDesign.changes[0]!;
+    deltaTarget.requestedDelta = "Add flag-gated shadow v2 cache experiment with strict telemetry counters while preserving response.result and v1 rollback.";
+    assert.deepEqual(workflowMod.validateDesign(deltaDesign, clean.stage0, clean.evidence), []);
+
+    const deltaDiff = diffDesignSnapshots(baseDesign, deltaDesign);
+    assert.equal(deltaDiff.changed, true);
+    assert.equal(deltaDiff.summaryCounts.changesModified, 1);
+    const deltaChange = deltaDiff.changes[0]!;
+    assert.equal(deltaChange.status, "modified");
+    assert.deepEqual(deltaChange.changedFields, ["requestedDelta"]);
+    assert.equal(deltaChange.beforeSummary, baseChange.requestedDelta);
+    assert.equal(deltaChange.afterSummary, deltaTarget.requestedDelta);
+    assert.ok(deltaChange.summaryTokens?.some((t) => t.kind === "add" && t.text.includes("telemetry")));
+    assert.equal(deltaChange.before?.requestedDelta, baseChange.requestedDelta);
+    assert.equal(deltaChange.after?.requestedDelta, deltaTarget.requestedDelta);
+    const reqDeltaField = deltaChange.fieldDiffs.find((f) => f.field === "requestedDelta");
+    assert.ok(reqDeltaField);
+    assert.equal(reqDeltaField.before, baseChange.requestedDelta);
+    assert.equal(reqDeltaField.after, deltaTarget.requestedDelta);
+    assert.ok(reqDeltaField.tokens?.some((t) => t.kind === "add"));
+
+    // Changing baselineBehavior, classification, implementation, necessity, flags, and counterevidence must all be detected and exposed
+    const mandateDesign = structuredClone(baseDesign);
+    const mandateTarget = mandateDesign.changes[0]!;
+    mandateTarget.classification = "preserve-existing";
+    mandateTarget.implementation = "regression-only";
+    mandateTarget.runtimeBehaviorChange = false;
+    mandateTarget.flagIds = [];
+    mandateTarget.noFlagReason = "No runtime code path changes; regression tests only.";
+    mandateDesign.featureFlags = [];
+    mandateTarget.baselineBehavior = "Existing v1 cache and response.result contract already satisfy both R1 and R2.";
+    mandateTarget.necessity = "Regression-only verification is sufficient.";
+    mandateTarget.counterevidence = {
+        ...mandateTarget.counterevidence,
+        result: "already-handled",
+        conclusion: "Verified existing v1 path already meets contract without shadow v2.",
+    };
+    assert.deepEqual(workflowMod.validateDesign(mandateDesign, clean.stage0, clean.evidence), []);
+
+    const mandateDiff = diffDesignSnapshots(baseDesign, mandateDesign);
+    assert.equal(mandateDiff.changed, true);
+    const mandateChange = mandateDiff.changes[0]!;
+    assert.equal(mandateChange.status, "modified");
+    for (const expectedField of [
+        "classification",
+        "implementation",
+        "runtimeBehaviorChange",
+        "flagIds",
+        "noFlagReason",
+        "baselineBehavior",
+        "necessity",
+        "counterevidence",
+    ]) {
+        assert.ok(mandateChange.changedFields.includes(expectedField), `expected changedFields to include ${expectedField}`);
+        assert.ok(mandateChange.fieldDiffs.some((fd) => fd.field === expectedField), `expected fieldDiffs to include ${expectedField}`);
+    }
+    assert.equal(mandateChange.before?.classification, "new-feature");
+    assert.equal(mandateChange.after?.classification, "preserve-existing");
+    assert.equal(mandateChange.before?.implementation, "required");
+    assert.equal(mandateChange.after?.implementation, "regression-only");
+    assert.equal(mandateChange.before?.counterevidence?.result, "confirmed-gap");
+    assert.equal(mandateChange.after?.counterevidence?.result, "already-handled");
+});

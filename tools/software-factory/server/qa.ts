@@ -44,6 +44,7 @@ const QA_SYSTEM_INSTRUCTIONS = [
     "3. When to use workspace read tools: use read-only file/search tools (`view`, `read`, `glob`, `grep`, `rg`) ONLY when you need to inspect actual product source code, unit tests, build scripts, `design-docs`, or `1ES-Pipelines` beyond what is already quoted in the Feature Context Pack.",
     "4. How multi-round reviews & resolutions work: in Design, Plan, and Code review histories, Round N records the Independent Reviewer's objections (`findings` with `evidence` + `requiredChange`, failed `criteria`, `validationErrors`, `blockingUnknowns`), and Round N+1 records how the Author/Planner/Coder resolved them (visible via Round N+1's `changeChecks` rationales, updated `CHG-*` / traceability / section / PBI / builder summaries, and zero remaining findings).",
     "5. Concise, evidence-first & actionable: lead with the direct answer, cite exact finding IDs (`F-1`, `CHG-6`, `[R1]`) and `path:line` source references, explain trade-offs clearly, and when asked how to change something, provide concrete wording ready for revision feedback or PR review comments.",
+    "6. Respect artifact currency: any section labeled `Historical / Superseded Artifacts (NOT Current)` contains invalidated history only — never treat it as the active design/plan or recommend obsolete work without stating that it must be regenerated against the current scope.",
 ].join("\n");
 
 export interface QaResponderTurnInput {
@@ -126,16 +127,45 @@ function truncateText(value: string, maxChars: number): string {
     return `${trimmed.slice(0, maxChars)}\n…[truncated — inspect source directly if needed]`;
 }
 
-function selectArtifact(artifacts: ArtifactRecord[], kind: string, preferredId?: string): ArtifactRecord | undefined {
-    if (preferredId) {
-        const exact = artifacts.find((entry) => entry.id === preferredId && entry.kind === kind);
-        if (exact) return exact;
+function selectCurrentArtifact(
+    artifacts: ArtifactRecord[],
+    kind: string,
+    currentIds: Record<string, unknown> | null,
+    constraints: { requirementsRevision: string; parentId?: string | null },
+): ArtifactRecord | undefined {
+    if (currentIds && Object.prototype.hasOwnProperty.call(currentIds, kind)) {
+        const pointer = currentIds[kind];
+        if (typeof pointer !== "string" || !pointer) return undefined;
+        return artifacts.find((entry) => entry.id === pointer && entry.kind === kind);
     }
     for (let index = artifacts.length - 1; index >= 0; index -= 1) {
         const candidate = artifacts[index];
-        if (candidate?.kind === kind) return candidate;
+        if (!candidate || candidate.kind !== kind) continue;
+        if (candidate.requirementsRevision !== constraints.requirementsRevision) continue;
+        if (constraints.parentId !== undefined && candidate.parentId !== constraints.parentId) continue;
+        return candidate;
     }
     return undefined;
+}
+
+function summarizeHistoricalArtifact(artifact: ArtifactRecord): string {
+    const content = asRecord(artifact.content) ?? {};
+    const innerDesign = asRecord(content.design) ?? content;
+    if (artifact.kind === "design") {
+        const summary = typeof innerDesign.summary === "string" && innerDesign.summary.trim()
+            ? truncateText(innerDesign.summary, 400)
+            : (typeof content.summary === "string" && content.summary.trim() ? truncateText(content.summary, 400) : "");
+        const rec = typeof content.recommendation === "string" ? `, recommendation=\`${content.recommendation}\`` : "";
+        return `- **Superseded Design** (\`${artifact.id}\`, requirementsRevision=\`${artifact.requirementsRevision}\`, generation=${artifact.generation}, created=\`${artifact.createdAt}\`${rec})${summary ? ` — ${summary}` : ""}`;
+    }
+    if (artifact.kind === "plan") {
+        const items = asArray(content.items);
+        const summary = typeof content.summary === "string" && content.summary.trim()
+            ? truncateText(content.summary, 400)
+            : "";
+        return `- **Superseded Plan** (\`${artifact.id}\`, requirementsRevision=\`${artifact.requirementsRevision}\`, parentId=\`${artifact.parentId ?? "none"}\`, generation=${artifact.generation}, created=\`${artifact.createdAt}\`, ${items.length} PBI(s))${summary ? ` — ${summary}` : ""}`;
+    }
+    return `- **Superseded ${artifact.kind}** (\`${artifact.id}\`, requirementsRevision=\`${artifact.requirementsRevision}\`, created=\`${artifact.createdAt}\`)`;
 }
 
 function discoverReadableRepos(workspace: string): { names: string[]; extraRoots: string[] } {
@@ -173,15 +203,27 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
     const { names: readableRepos } = discoverReadableRepos(workspace);
     const artifacts = feature.factory.artifacts || [];
     const currentIds = asRecord((feature as unknown as Record<string, unknown>).currentArtifacts);
-    const designArtifact = selectArtifact(artifacts, "design", typeof currentIds?.design === "string" ? currentIds.design : undefined);
-    const planArtifact = selectArtifact(artifacts, "plan", typeof currentIds?.plan === "string" ? currentIds.plan : undefined);
-    const implementationArtifact = selectArtifact(
-        artifacts,
-        "implementation",
-        typeof currentIds?.implementation === "string" ? currentIds.implementation : undefined,
-    );
-    const monitorArtifact = selectArtifact(artifacts, "monitor", typeof currentIds?.monitor === "string" ? currentIds.monitor : undefined);
-    const attemptArtifacts = artifacts.filter((entry) => entry.kind === "implementation_attempt");
+    const currentRevId = feature.current.id;
+    const designArtifact = selectCurrentArtifact(artifacts, "design", currentIds, { requirementsRevision: currentRevId });
+    const planArtifact = selectCurrentArtifact(artifacts, "plan", currentIds, {
+        requirementsRevision: currentRevId,
+        parentId: designArtifact?.id ?? null,
+    });
+    const implementationArtifact = currentIds && Object.prototype.hasOwnProperty.call(currentIds, "implementation")
+        ? selectCurrentArtifact(artifacts, "implementation", currentIds, { requirementsRevision: currentRevId })
+        : (planArtifact
+            ? selectCurrentArtifact(artifacts, "implementation", null, {
+                requirementsRevision: currentRevId,
+                parentId: planArtifact.id,
+            })
+            : undefined);
+    const monitorArtifact = selectCurrentArtifact(artifacts, "monitor", currentIds, {
+        requirementsRevision: currentRevId,
+        parentId: planArtifact?.id ?? null,
+    });
+    const attemptArtifacts = planArtifact
+        ? artifacts.filter((entry) => entry.kind === "implementation_attempt" && entry.requirementsRevision === currentRevId && entry.parentId === planArtifact.id)
+        : [];
 
     const lines: string[] = [];
     lines.push(`# Software Factory Feature Context Pack`);
@@ -467,11 +509,17 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
         }
     }
 
-    // Stage 4–6: Backlog Work Items, Coding Implementation & PRs
+    // Stage 4–6: Backlog Work Items, Coding Implementation & PRs (scoped to current plan)
     const operations = feature.factory.operations || [];
-    const workItemOps = operations.filter((op) => op.kind === "work_item" && op.status === "completed");
-    const dispatchOps = operations.filter((op) => op.kind === "dispatch" && op.status === "completed");
-    const prBindings = asArray((feature.factory as unknown as Record<string, unknown>).prBindings);
+    const workItemOps = planArtifact
+        ? operations.filter((op) => op.kind === "work_item" && op.status === "completed" && op.planId === planArtifact.id)
+        : [];
+    const dispatchOps = planArtifact
+        ? operations.filter((op) => op.kind === "dispatch" && op.status === "completed" && op.planId === planArtifact.id)
+        : [];
+    const prBindings = planArtifact
+        ? asArray((feature.factory as unknown as Record<string, unknown>).prBindings).filter((entry) => asRecord(entry)?.planId === planArtifact.id)
+        : [];
     const implByItem = new Map<string, Record<string, unknown>>();
     const mergeImplRecord = (key: string, incoming: Record<string, unknown>) => {
         const prev = implByItem.get(key);
@@ -691,6 +739,24 @@ export function buildFeatureContextPack(feature: FactoryFeature, workspace: stri
                 }
             }
         }
+    }
+
+    const historicalArtifacts: ArtifactRecord[] = [];
+    if (!designArtifact) {
+        const latestHistoricalDesign = artifacts.findLast((entry) => entry.kind === "design");
+        if (latestHistoricalDesign) historicalArtifacts.push(latestHistoricalDesign);
+    }
+    if (!planArtifact) {
+        const latestHistoricalPlan = artifacts.findLast((entry) => entry.kind === "plan");
+        if (latestHistoricalPlan) historicalArtifacts.push(latestHistoricalPlan);
+    }
+    if (historicalArtifacts.length) {
+        lines.push(
+            "",
+            "## Historical / Superseded Artifacts (NOT Current)",
+            `> **Note:** The artifact(s) below are invalidated/superseded for current requirements revision \`${feature.current.id}\` (#${feature.current.number}) due to a requirements revision, feedback regeneration, configuration change, or superseded parent. Do **not** treat them as active scope or recommend obsolete work without regenerating against the current scope.`,
+            ...historicalArtifacts.map(summarizeHistoricalArtifact),
+        );
     }
 
     const packText = lines.join("\n");

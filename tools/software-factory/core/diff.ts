@@ -77,6 +77,37 @@ export interface DesignSectionDiff {
     diff: TextDiffResult;
 }
 
+export interface DesignChangeFieldDiff {
+    field: string;
+    before: string;
+    after: string;
+    tokens?: WordDiffToken[];
+}
+
+export interface DesignChangeCounterevidenceSnapshot {
+    result: string;
+    searchSummary: string;
+    conclusion: string;
+    referenceIds: string[];
+}
+
+export interface DesignChangeRecordSnapshot {
+    classification: string;
+    implementation: string;
+    runtimeBehaviorChange: boolean | null;
+    flagIds: string[];
+    noFlagReason: string;
+    baselineBehavior: string;
+    requestedDelta: string;
+    necessity: string;
+    verification: string;
+    requirementIds: string[];
+    sectionIds: string[];
+    traceIds: string[];
+    evidenceIds: string[];
+    counterevidence: DesignChangeCounterevidenceSnapshot | null;
+}
+
 export interface DesignChangeUnitDiff {
     id: string;
     status: "added" | "removed" | "modified" | "unchanged";
@@ -86,6 +117,9 @@ export interface DesignChangeUnitDiff {
     afterSummary: string;
     summaryTokens?: WordDiffToken[];
     changedFields: string[];
+    before?: DesignChangeRecordSnapshot;
+    after?: DesignChangeRecordSnapshot;
+    fieldDiffs: DesignChangeFieldDiff[];
 }
 
 export interface DesignTraceabilityDiff {
@@ -629,6 +663,118 @@ export function diffRequirementsRevisions(before: Revision, after: Revision): Re
     };
 }
 
+function canonicalJson(value: unknown): string {
+    if (value === null || value === undefined) return "null";
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+    if (typeof value === "object") {
+        const entries = Object.entries(value as Record<string, unknown>)
+            .filter(([, v]) => v !== undefined)
+            .sort(([a], [b]) => a.localeCompare(b));
+        return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+    }
+    return JSON.stringify(value);
+}
+
+function extractStringList(value: unknown): string[] {
+    return asArray(value).map(String);
+}
+
+function extractCounterevidence(value: unknown): DesignChangeCounterevidenceSnapshot | null {
+    if (!isRecord(value)) return null;
+    return {
+        result: typeof value.result === "string" ? value.result : "",
+        searchSummary: typeof value.searchSummary === "string" ? value.searchSummary : "",
+        conclusion: typeof value.conclusion === "string" ? value.conclusion : "",
+        referenceIds: extractStringList(value.referenceIds),
+    };
+}
+
+function formatCounterevidence(value: DesignChangeCounterevidenceSnapshot | null, raw?: unknown): string {
+    if (!value) return raw !== undefined && raw !== null ? canonicalJson(raw) : "";
+    const parts: string[] = [];
+    if (value.result) parts.push(`[${value.result}]`);
+    if (value.conclusion) parts.push(value.conclusion);
+    if (value.searchSummary) parts.push(`Search: ${value.searchSummary}`);
+    if (value.referenceIds.length) parts.push(`Refs: ${value.referenceIds.join(", ")}`);
+    return parts.join(" · ");
+}
+
+function formatVerification(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (value === null || value === undefined) return "";
+    return canonicalJson(value);
+}
+
+function extractDesignChangeSnapshot(record: Record<string, Json>): DesignChangeRecordSnapshot {
+    return {
+        classification: typeof record.classification === "string" ? record.classification : "",
+        implementation: typeof record.implementation === "string" ? record.implementation : "",
+        runtimeBehaviorChange: typeof record.runtimeBehaviorChange === "boolean" ? record.runtimeBehaviorChange : null,
+        flagIds: extractStringList(record.flagIds),
+        noFlagReason: typeof record.noFlagReason === "string" ? record.noFlagReason : "",
+        baselineBehavior: typeof record.baselineBehavior === "string" ? record.baselineBehavior : "",
+        requestedDelta: typeof record.requestedDelta === "string" ? record.requestedDelta : "",
+        necessity: typeof record.necessity === "string" ? record.necessity : "",
+        verification: formatVerification(record.verification),
+        requirementIds: extractStringList(record.requirementIds),
+        sectionIds: extractStringList(record.sectionIds),
+        traceIds: extractStringList(record.traceIds),
+        evidenceIds: extractStringList(record.evidenceIds),
+        counterevidence: extractCounterevidence(record.counterevidence),
+    };
+}
+
+function extractRawSummary(record: Record<string, Json> | undefined): string {
+    if (!record) return "";
+    if (typeof record.summary === "string") return record.summary;
+    if (typeof record.description === "string") return record.description;
+    return "";
+}
+
+function extractDisplaySummary(record: Record<string, Json> | undefined): string {
+    if (!record) return "";
+    if (typeof record.summary === "string" && record.summary) return record.summary;
+    if (typeof record.description === "string" && record.description) return record.description;
+    if (typeof record.requestedDelta === "string" && record.requestedDelta) return record.requestedDelta;
+    if (typeof record.baselineBehavior === "string" && record.baselineBehavior) return record.baselineBehavior;
+    return "";
+}
+
+function buildFieldDiff(field: string, before: string, after: string): DesignChangeFieldDiff {
+    return {
+        field,
+        before,
+        after,
+        ...(before !== after ? { tokens: diffWords(before, after) } : {}),
+    };
+}
+
+function snapshotFieldEntries(record: Record<string, Json>, snapshot: DesignChangeRecordSnapshot): Array<[string, string]> {
+    const entries: Array<[string, string]> = [];
+    const pushIfNonEmpty = (field: string, value: string) => {
+        if (value) entries.push([field, value]);
+    };
+    pushIfNonEmpty("repository", typeof record.repository === "string" ? record.repository : "");
+    pushIfNonEmpty("path", typeof record.path === "string" ? record.path : "");
+    pushIfNonEmpty("kind", typeof record.kind === "string" ? record.kind : "");
+    pushIfNonEmpty("summary", extractRawSummary(record));
+    pushIfNonEmpty("classification", snapshot.classification);
+    pushIfNonEmpty("implementation", snapshot.implementation);
+    if (snapshot.runtimeBehaviorChange !== null) entries.push(["runtimeBehaviorChange", String(snapshot.runtimeBehaviorChange)]);
+    pushIfNonEmpty("flagIds", snapshot.flagIds.join(", "));
+    pushIfNonEmpty("noFlagReason", snapshot.noFlagReason);
+    pushIfNonEmpty("baselineBehavior", snapshot.baselineBehavior);
+    pushIfNonEmpty("requestedDelta", snapshot.requestedDelta);
+    pushIfNonEmpty("necessity", snapshot.necessity);
+    pushIfNonEmpty("verification", snapshot.verification);
+    pushIfNonEmpty("requirementIds", snapshot.requirementIds.join(", "));
+    pushIfNonEmpty("sectionIds", snapshot.sectionIds.join(", "));
+    pushIfNonEmpty("traceIds", snapshot.traceIds.join(", "));
+    pushIfNonEmpty("evidenceIds", snapshot.evidenceIds.join(", "));
+    pushIfNonEmpty("counterevidence", formatCounterevidence(snapshot.counterevidence, record.counterevidence));
+    return entries;
+}
+
 function extractSectionsMap(designObj: Record<string, Json>): Map<string, { title: string; content: string }> {
     const map = new Map<string, { title: string; content: string }>();
     const raw = designObj.sections;
@@ -698,11 +844,13 @@ export function diffDesignSnapshots(
     const changes: DesignChangeUnitDiff[] = allChangeIds.map((id) => {
         const b = beforeChanges.get(id);
         const a = afterChanges.get(id);
-        const bSummary = typeof b?.summary === "string" ? b.summary : (typeof b?.description === "string" ? b.description : "");
-        const aSummary = typeof a?.summary === "string" ? a.summary : (typeof a?.description === "string" ? a.description : "");
+        const bSummary = extractDisplaySummary(b);
+        const aSummary = extractDisplaySummary(a);
         const repository = String(a?.repository ?? b?.repository ?? "");
         const filePath = String(a?.path ?? b?.path ?? "");
-        if (!b) {
+        if (!b && a) {
+            const afterSnap = extractDesignChangeSnapshot(a);
+            const fieldDiffs = snapshotFieldEntries(a, afterSnap).map(([field, value]) => buildFieldDiff(field, "", value));
             return {
                 id,
                 status: "added",
@@ -711,9 +859,13 @@ export function diffDesignSnapshots(
                 beforeSummary: "",
                 afterSummary: aSummary,
                 changedFields: ["added"],
+                after: afterSnap,
+                fieldDiffs,
             };
         }
-        if (!a) {
+        if (!a && b) {
+            const beforeSnap = extractDesignChangeSnapshot(b);
+            const fieldDiffs = snapshotFieldEntries(b, beforeSnap).map(([field, value]) => buildFieldDiff(field, value, ""));
             return {
                 id,
                 status: "removed",
@@ -722,15 +874,92 @@ export function diffDesignSnapshots(
                 beforeSummary: bSummary,
                 afterSummary: "",
                 changedFields: ["removed"],
+                before: beforeSnap,
+                fieldDiffs,
             };
         }
+        const beforeRecord = b!;
+        const afterRecord = a!;
+        const beforeSnap = extractDesignChangeSnapshot(beforeRecord);
+        const afterSnap = extractDesignChangeSnapshot(afterRecord);
         const changedFields: string[] = [];
-        if (String(b.repository ?? "") !== String(a.repository ?? "")) changedFields.push("repository");
-        if (String(b.path ?? "") !== String(a.path ?? "")) changedFields.push("path");
-        if (String(b.kind ?? "") !== String(a.kind ?? "")) changedFields.push("kind");
-        if (bSummary !== aSummary) changedFields.push("summary");
-        if (JSON.stringify(b.requirementIds ?? []) !== JSON.stringify(a.requirementIds ?? [])) changedFields.push("requirementIds");
-        if (JSON.stringify(b.verification ?? null) !== JSON.stringify(a.verification ?? null)) changedFields.push("verification");
+        const fieldDiffs: DesignChangeFieldDiff[] = [];
+        const compareField = (field: string, different: boolean, beforeVal: string, afterVal: string) => {
+            if (!different) return;
+            changedFields.push(field);
+            fieldDiffs.push(buildFieldDiff(field, beforeVal, afterVal));
+        };
+
+        const bRepo = String(beforeRecord.repository ?? "");
+        const aRepo = String(afterRecord.repository ?? "");
+        compareField("repository", bRepo !== aRepo, bRepo, aRepo);
+
+        const bPath = String(beforeRecord.path ?? "");
+        const aPath = String(afterRecord.path ?? "");
+        compareField("path", bPath !== aPath, bPath, aPath);
+
+        const bKind = String(beforeRecord.kind ?? "");
+        const aKind = String(afterRecord.kind ?? "");
+        compareField("kind", bKind !== aKind, bKind, aKind);
+
+        const bRawSummary = extractRawSummary(beforeRecord);
+        const aRawSummary = extractRawSummary(afterRecord);
+        compareField("summary", bRawSummary !== aRawSummary, bRawSummary, aRawSummary);
+
+        compareField("classification", beforeSnap.classification !== afterSnap.classification, beforeSnap.classification, afterSnap.classification);
+        compareField("implementation", beforeSnap.implementation !== afterSnap.implementation, beforeSnap.implementation, afterSnap.implementation);
+        compareField(
+            "runtimeBehaviorChange",
+            beforeSnap.runtimeBehaviorChange !== afterSnap.runtimeBehaviorChange,
+            beforeSnap.runtimeBehaviorChange === null ? "" : String(beforeSnap.runtimeBehaviorChange),
+            afterSnap.runtimeBehaviorChange === null ? "" : String(afterSnap.runtimeBehaviorChange),
+        );
+        compareField(
+            "flagIds",
+            canonicalJson(beforeSnap.flagIds) !== canonicalJson(afterSnap.flagIds),
+            beforeSnap.flagIds.join(", "),
+            afterSnap.flagIds.join(", "),
+        );
+        compareField("noFlagReason", beforeSnap.noFlagReason !== afterSnap.noFlagReason, beforeSnap.noFlagReason, afterSnap.noFlagReason);
+        compareField("baselineBehavior", beforeSnap.baselineBehavior !== afterSnap.baselineBehavior, beforeSnap.baselineBehavior, afterSnap.baselineBehavior);
+        compareField("requestedDelta", beforeSnap.requestedDelta !== afterSnap.requestedDelta, beforeSnap.requestedDelta, afterSnap.requestedDelta);
+        compareField("necessity", beforeSnap.necessity !== afterSnap.necessity, beforeSnap.necessity, afterSnap.necessity);
+        compareField(
+            "verification",
+            canonicalJson(beforeRecord.verification ?? null) !== canonicalJson(afterRecord.verification ?? null),
+            beforeSnap.verification,
+            afterSnap.verification,
+        );
+        compareField(
+            "requirementIds",
+            canonicalJson(beforeSnap.requirementIds) !== canonicalJson(afterSnap.requirementIds),
+            beforeSnap.requirementIds.join(", "),
+            afterSnap.requirementIds.join(", "),
+        );
+        compareField(
+            "sectionIds",
+            canonicalJson(beforeSnap.sectionIds) !== canonicalJson(afterSnap.sectionIds),
+            beforeSnap.sectionIds.join(", "),
+            afterSnap.sectionIds.join(", "),
+        );
+        compareField(
+            "traceIds",
+            canonicalJson(beforeSnap.traceIds) !== canonicalJson(afterSnap.traceIds),
+            beforeSnap.traceIds.join(", "),
+            afterSnap.traceIds.join(", "),
+        );
+        compareField(
+            "evidenceIds",
+            canonicalJson(beforeSnap.evidenceIds) !== canonicalJson(afterSnap.evidenceIds),
+            beforeSnap.evidenceIds.join(", "),
+            afterSnap.evidenceIds.join(", "),
+        );
+        compareField(
+            "counterevidence",
+            canonicalJson(beforeRecord.counterevidence ?? null) !== canonicalJson(afterRecord.counterevidence ?? null),
+            formatCounterevidence(beforeSnap.counterevidence, beforeRecord.counterevidence),
+            formatCounterevidence(afterSnap.counterevidence, afterRecord.counterevidence),
+        );
 
         return {
             id,
@@ -741,6 +970,9 @@ export function diffDesignSnapshots(
             afterSummary: aSummary,
             ...(bSummary !== aSummary ? { summaryTokens: diffWords(bSummary, aSummary) } : {}),
             changedFields,
+            before: beforeSnap,
+            after: afterSnap,
+            fieldDiffs,
         };
     });
 

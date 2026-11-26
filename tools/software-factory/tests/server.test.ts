@@ -401,115 +401,101 @@ test("Studio AI Q&A context pack serializes multi-stage reviewer findings, autho
         const feature = f.app.registry.list()[0]!;
         const rev = feature.current.id;
 
-        f.app.lifecycle.store.change(feature.id, (state) => {
-            state.artifacts.push({
-                id: "design-art-1",
-                kind: "design",
-                requirementsRevision: rev,
-                parentId: null,
-                generation: 1,
-                configurationId: null,
-                analysisHash: "analysis-1",
-                executionId: "exec-design-1",
-                hash: "hash-design-1",
-                createdAt: "2026-04-20T01:00:00.000Z",
-                content: {
-                    recommendation: "GO",
-                    design: {
-                        summary: "Hardened LastRequestTelemetry cap and pipe delimiter sanitization.",
-                        sections: {
-                            architectureOverview: "Enforce FIFO cap in LastRequestTelemetry and strip pipes in HeaderSerialization.",
-                            interfacesAndContracts: "LastRequestTelemetry.appendFailedRequest(FailedRequest)",
-                            stateFailuresRecoveryReversibility: "Evict oldest entry at index 0 when failedRequests reaches 50.",
-                        },
-                        openDecisions: [],
-                        assumptions: ["Backward-compatible header wire format"],
-                        changes: [{
-                            id: "CHG-1",
-                            classification: "behavioral-hardening",
-                            implementation: "common",
-                            requirementIds: ["R1"],
-                            baselineBehavior: "failedRequests grows until serialization byte budget is checked.",
-                            requestedDelta: "Enforce 50-entry FIFO cap on failed requests and sanitize pipe characters.",
-                        }],
-                        traceability: [{
-                            requirementId: "R1",
-                            sectionIds: ["architectureOverview", "interfacesAndContracts"],
-                            evidenceIds: ["REF-1"],
-                            verification: "LastRequestTelemetryTest#testCapEnforcement",
-                        }],
-                    },
-                    evidence: {
-                        references: [{
-                            id: "REF-1",
-                            repository: "common",
-                            path: "common4j/src/main/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetry.java",
-                            locator: "lines 84-112",
-                            note: "Current appendFailedRequest list growth path",
-                        }],
-                        facts: [{
-                            id: "FACT-1",
-                            statement: "failedRequests grows unbounded across consecutive offline token failures.",
-                            referenceIds: ["REF-1"],
-                        }],
-                    },
-                    reviews: [
-                        {
-                            status: "changes-requested",
-                            validationErrors: [],
-                            review: {
-                                criteria: [
-                                    { id: "consistency", pass: false },
-                                    { id: "completeness", pass: true },
-                                ],
-                                blockingUnknowns: [],
-                                findings: [
-                                    {
-                                        id: "F-1",
-                                        severity: "major",
-                                        rubricId: "consistency",
-                                        location: "design.sections.stateFailuresRecoveryReversibility",
-                                        evidence: "Section 3 specifies retaining newest 50 failures, while Section 5 states dropping incoming entries.",
-                                        requiredChange: "Unify both sections on FIFO eviction (remove oldest index 0 when size >= 50).",
-                                    },
-                                ],
-                                references: [
-                                    {
-                                        id: "REF-REV-1",
-                                        repository: "common",
-                                        path: "common4j/src/main/com/microsoft/identity/common/java/eststelemetry/SchemaConstants.java",
-                                        locator: "line 42",
-                                    },
-                                ],
-                                changeChecks: [],
-                            },
-                        },
-                        {
-                            status: "approved",
-                            validationErrors: [],
-                            review: {
-                                criteria: [
-                                    { id: "consistency", pass: true },
-                                    { id: "completeness", pass: true },
-                                ],
-                                blockingUnknowns: [],
-                                findings: [],
-                                references: [],
-                                changeChecks: [
-                                    {
-                                        changeId: "CHG-1",
-                                        baselineVerified: true,
-                                        necessityConfirmed: true,
-                                        counterevidenceVerified: true,
-                                        referenceIds: ["REF-1"],
-                                        rationale: "Author updated Section 3, Section 5, and CHG-1 to consistently specify FIFO eviction of oldest entry at index 0.",
-                                    },
-                                ],
-                            },
-                        },
-                    ],
+        const designArtifact = f.app.lifecycle.store.artifact(feature.id, "design", rev, {
+            recommendation: "GO",
+            design: {
+                summary: "Hardened LastRequestTelemetry cap and pipe delimiter sanitization.",
+                sections: {
+                    architectureOverview: "Enforce FIFO cap in LastRequestTelemetry and strip pipes in HeaderSerialization.",
+                    interfacesAndContracts: "LastRequestTelemetry.appendFailedRequest(FailedRequest)",
+                    stateFailuresRecoveryReversibility: "Evict oldest entry at index 0 when failedRequests reaches 50.",
                 },
-            });
+                openDecisions: [],
+                assumptions: ["Backward-compatible header wire format"],
+                changes: [{
+                    id: "CHG-1",
+                    classification: "behavioral-hardening",
+                    implementation: "common",
+                    requirementIds: ["R1"],
+                    baselineBehavior: "failedRequests grows until serialization byte budget is checked.",
+                    requestedDelta: "Enforce 50-entry FIFO cap on failed requests and sanitize pipe characters.",
+                }],
+                traceability: [{
+                    requirementId: "R1",
+                    sectionIds: ["architectureOverview", "interfacesAndContracts"],
+                    evidenceIds: ["REF-1"],
+                    verification: "LastRequestTelemetryTest#testCapEnforcement",
+                }],
+            },
+            evidence: {
+                references: [{
+                    id: "REF-1",
+                    repository: "common",
+                    path: "common4j/src/main/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetry.java",
+                    locator: "lines 84-112",
+                    note: "Current appendFailedRequest list growth path",
+                }],
+                facts: [{
+                    id: "FACT-1",
+                    statement: "failedRequests grows unbounded across consecutive offline token failures.",
+                    referenceIds: ["REF-1"],
+                }],
+            },
+            reviews: [
+                {
+                    status: "changes-requested",
+                    validationErrors: [],
+                    review: {
+                        criteria: [
+                            { id: "consistency", pass: false },
+                            { id: "completeness", pass: true },
+                        ],
+                        blockingUnknowns: [],
+                        findings: [
+                            {
+                                id: "F-1",
+                                severity: "major",
+                                rubricId: "consistency",
+                                location: "design.sections.stateFailuresRecoveryReversibility",
+                                evidence: "Section 3 specifies retaining newest 50 failures, while Section 5 states dropping incoming entries.",
+                                requiredChange: "Unify both sections on FIFO eviction (remove oldest index 0 when size >= 50).",
+                            },
+                        ],
+                        references: [
+                            {
+                                id: "REF-REV-1",
+                                repository: "common",
+                                path: "common4j/src/main/com/microsoft/identity/common/java/eststelemetry/SchemaConstants.java",
+                                locator: "line 42",
+                            },
+                        ],
+                        changeChecks: [],
+                    },
+                },
+                {
+                    status: "approved",
+                    validationErrors: [],
+                    review: {
+                        criteria: [
+                            { id: "consistency", pass: true },
+                            { id: "completeness", pass: true },
+                        ],
+                        blockingUnknowns: [],
+                        findings: [],
+                        references: [],
+                        changeChecks: [
+                            {
+                                changeId: "CHG-1",
+                                baselineVerified: true,
+                                necessityConfirmed: true,
+                                counterevidenceVerified: true,
+                                referenceIds: ["REF-1"],
+                                rationale: "Author updated Section 3, Section 5, and CHG-1 to consistently specify FIFO eviction of oldest entry at index 0.",
+                            },
+                        ],
+                    },
+                },
+            ],
         });
 
         const initialView = f.app.lifecycle.store.view(feature.id);
@@ -548,177 +534,125 @@ test("Studio AI Q&A context pack serializes multi-stage reviewer findings, autho
         assert.ok(seenTurns[0]?.prompt.includes("**CHG-1** [`VERIFIED`] (`REF-1`): Author updated Section 3, Section 5, and CHG-1"));
 
         // Advance feature state with Plan, Implementation Attempt + Implementation (testing mergeImplRecord), and Monitor artifacts
-        f.app.lifecycle.store.change(feature.id, (state) => {
-            state.artifacts.push(
+        const planArtifact = f.app.lifecycle.store.artifact(feature.id, "plan", rev, {
+            summary: "Single-repo PBI in common.",
+            items: [{
+                id: "PBI-1",
+                title: "Enforce LastRequestTelemetry cap and pipe sanitization",
+                repository: "common",
+                requirementIds: ["R1"],
+                dependsOn: [],
+                files: ["common4j/src/main/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetry.java"],
+                tests: ["common4j/src/test/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetryTest.java"],
+                acceptanceCriteria: ["Failed requests list never exceeds 50 entries"],
+                description: "Implement FIFO cap and delimiter sanitization.",
+            }],
+            reviewHistory: [{
+                attempt: 1,
+                candidate: { summary: "Initial single-PBI plan", items: [{ id: "PBI-1" }] },
+                review: { pass: true, findings: [] },
+            }],
+        }, designArtifact.id);
+        f.app.lifecycle.store.artifact(feature.id, "implementation_attempt", rev, {
+            itemId: "PBI-1",
+            mode: "local",
+            recommendation: "REVIEWED",
+            files: ["common4j/src/main/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetry.java"],
+            testsAddedOrUpdated: ["common4j/src/test/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetryTest.java"],
+            reviewHistory: [
                 {
-                    id: "plan-art-1",
-                    kind: "plan",
-                    requirementsRevision: rev,
-                    parentId: "design-art-1",
-                    generation: 1,
-                    configurationId: null,
-                    analysisHash: "analysis-1",
-                    executionId: "exec-plan-1",
-                    hash: "hash-plan-1",
-                    createdAt: "2026-04-20T01:10:00.000Z",
-                    content: {
-                        summary: "Single-repo PBI in common.",
-                        items: [{
-                            id: "PBI-1",
-                            title: "Enforce LastRequestTelemetry cap and pipe sanitization",
-                            repository: "common",
-                            requirementIds: ["R1"],
-                            dependsOn: [],
-                            files: ["common4j/src/main/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetry.java"],
-                            tests: ["common4j/src/test/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetryTest.java"],
-                            acceptanceCriteria: ["Failed requests list never exceeds 50 entries"],
-                            description: "Implement FIFO cap and delimiter sanitization.",
-                        }],
-                        reviewHistory: [{
-                            attempt: 1,
-                            candidate: { summary: "Initial single-PBI plan", items: [{ id: "PBI-1" }] },
-                            review: { pass: true, findings: [] },
+                    round: 1,
+                    builderSummary: "First builder pass",
+                    review: {
+                        pass: false,
+                        summary: "Missing null guard on pipe sanitizer.",
+                        criteria: [{ criterion: "R1", status: "partial", evidence: "Null input throws NPE" }],
+                        findings: [{
+                            id: "CF-1",
+                            severity: "major",
+                            category: "correctness",
+                            file: "LastRequestTelemetry.java",
+                            location: "sanitizeHeaderValue:48",
+                            evidence: "value.replace('|', '_') called before null check",
+                            requiredChange: "Return empty string when value is null.",
                         }],
                     },
                 },
                 {
-                    id: "impl-attempt-1",
-                    kind: "implementation_attempt",
-                    requirementsRevision: rev,
-                    parentId: "plan-art-1",
-                    generation: 1,
-                    configurationId: null,
-                    analysisHash: "analysis-1",
-                    executionId: "exec-impl-1",
-                    hash: "hash-impl-attempt-1",
-                    createdAt: "2026-04-20T01:20:00.000Z",
-                    content: {
-                        itemId: "PBI-1",
-                        mode: "local",
-                        recommendation: "REVIEWED",
-                        files: ["common4j/src/main/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetry.java"],
-                        testsAddedOrUpdated: ["common4j/src/test/com/microsoft/identity/common/java/eststelemetry/LastRequestTelemetryTest.java"],
-                        reviewHistory: [
-                            {
-                                round: 1,
-                                builderSummary: "First builder pass",
-                                review: {
-                                    pass: false,
-                                    summary: "Missing null guard on pipe sanitizer.",
-                                    criteria: [{ criterion: "R1", status: "partial", evidence: "Null input throws NPE" }],
-                                    findings: [{
-                                        id: "CF-1",
-                                        severity: "major",
-                                        category: "correctness",
-                                        file: "LastRequestTelemetry.java",
-                                        location: "sanitizeHeaderValue:48",
-                                        evidence: "value.replace('|', '_') called before null check",
-                                        requiredChange: "Return empty string when value is null.",
-                                    }],
-                                },
-                            },
-                            {
-                                round: 2,
-                                builderSummary: "Added null guard and testNullValueSanitization",
-                                review: {
-                                    pass: true,
-                                    summary: "Null guard verified.",
-                                    criteria: [{ criterion: "R1", status: "addressed", evidence: "Covered by unit test" }],
-                                    findings: [],
-                                },
-                            },
-                        ],
+                    round: 2,
+                    builderSummary: "Added null guard and testNullValueSanitization",
+                    review: {
+                        pass: true,
+                        summary: "Null guard verified.",
+                        criteria: [{ criterion: "R1", status: "addressed", evidence: "Covered by unit test" }],
+                        findings: [],
                     },
                 },
-                {
-                    id: "impl-final-1",
-                    kind: "implementation",
-                    requirementsRevision: rev,
-                    parentId: "plan-art-1",
-                    generation: 2,
-                    configurationId: null,
-                    analysisHash: "analysis-1",
-                    executionId: "exec-impl-2",
-                    hash: "hash-impl-final-1",
-                    createdAt: "2026-04-20T01:30:00.000Z",
-                    content: {
-                        items: [{
-                            itemId: "PBI-1",
-                            status: "published",
-                            observerStatus: "awaiting-human-review",
-                            receipt: {
-                                url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3354",
-                                number: 3354,
-                                branch: "factory/ab-3822503-pbi-1",
-                                headSha: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
-                            },
-                            observer: {
-                                status: "awaiting-human-review",
-                                summary: "All 37 CI checks green and 0 unresolved review threads.",
-                                evidence: ["Common4j Build & Test: SUCCESS", "Copilot Code Review: 0 open issues"],
-                            },
-                            repairs: [{
-                                status: "completed",
-                                repair: {
-                                    expectedHead: "1111111122222222",
-                                    builder: { summary: "Fixed trailing whitespace in test fixture." },
-                                    review: { verdict: "pass", summary: "Clean tactical repair.", findings: [] },
-                                },
-                                receipt: {
-                                    headSha: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
-                                },
-                            }],
-                        }],
-                    },
+            ],
+        }, planArtifact.id);
+        f.app.lifecycle.store.artifact(feature.id, "implementation", rev, {
+            items: [{
+                itemId: "PBI-1",
+                status: "published",
+                observerStatus: "awaiting-human-review",
+                receipt: {
+                    url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3354",
+                    number: 3354,
+                    branch: "factory/ab-3822503-pbi-1",
+                    headSha: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
                 },
-                {
-                    id: "monitor-art-1",
-                    kind: "monitor",
-                    requirementsRevision: rev,
-                    parentId: "plan-art-1",
-                    generation: 1,
-                    configurationId: null,
-                    analysisHash: "analysis-1",
-                    executionId: "exec-mon-1",
-                    hash: "hash-mon-1",
-                    createdAt: "2026-04-20T01:40:00.000Z",
-                    content: {
-                        observedAt: "2026-04-20T01:40:00.000Z",
-                        delivered: false,
-                        items: [],
-                        prs: [{
-                            key: "PBI-1",
-                            repository: "common",
-                            number: 3354,
-                            url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3354",
-                            status: "open",
-                            head: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
-                            checks: "passing",
-                            title: "Enforce LastRequestTelemetry cap",
-                            baseBranch: "dev",
-                            workItemIds: [3822503],
-                        }],
-                        validation: [{
-                            itemId: "PBI-1",
-                            criterion: "[R1] Cap failed requests at 50",
-                            status: "addressed",
-                            evidence: "Verified in LastRequestTelemetry.java and passing PR #3354 CI.",
-                        }],
-                        reviews: [{
-                            itemId: "PBI-1",
-                            head: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
-                            round: 1,
-                            maxRounds: 1,
-                            pass: true,
-                            status: "approved",
-                            findings: [],
-                            suggestedFeedback: null,
-                        }],
-                        errors: [],
-                    },
+                observer: {
+                    status: "awaiting-human-review",
+                    summary: "All 37 CI checks green and 0 unresolved review threads.",
+                    evidence: ["Common4j Build & Test: SUCCESS", "Copilot Code Review: 0 open issues"],
                 },
-            );
-        });
+                repairs: [{
+                    status: "completed",
+                    repair: {
+                        expectedHead: "1111111122222222",
+                        builder: { summary: "Fixed trailing whitespace in test fixture." },
+                        review: { verdict: "pass", summary: "Clean tactical repair.", findings: [] },
+                    },
+                    receipt: {
+                        headSha: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
+                    },
+                }],
+            }],
+        }, planArtifact.id);
+        f.app.lifecycle.store.artifact(feature.id, "monitor", rev, {
+            observedAt: "2026-04-20T01:40:00.000Z",
+            delivered: false,
+            items: [],
+            prs: [{
+                key: "PBI-1",
+                repository: "common",
+                number: 3354,
+                url: "https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3354",
+                status: "open",
+                head: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
+                checks: "passing",
+                title: "Enforce LastRequestTelemetry cap",
+                baseBranch: "dev",
+                workItemIds: [3822503],
+            }],
+            validation: [{
+                itemId: "PBI-1",
+                criterion: "[R1] Cap failed requests at 50",
+                status: "addressed",
+                evidence: "Verified in LastRequestTelemetry.java and passing PR #3354 CI.",
+            }],
+            reviews: [{
+                itemId: "PBI-1",
+                head: "4edafa0f7f2d57ebe9b6111ab6ce9ee3ae82e3ba",
+                round: 1,
+                maxRounds: 1,
+                pass: true,
+                status: "approved",
+                findings: [],
+                suggestedFeedback: null,
+            }],
+            errors: [],
+        }, planArtifact.id);
 
         // Turn 2 on the same session must detect staleContext and inject [Updated Feature Context Snapshot] with merged Stage 3/5/6 details
         const ask2Res = await fetch(`${f.server.url}/api/features/${feature.id}/qa`, {
@@ -751,5 +685,109 @@ test("Studio AI Q&A context pack serializes multi-stage reviewer findings, autho
         assert.ok(seenTurns[1]?.prompt.includes("**PBI-1** (round 1, `approved`, 0 finding(s))"));
     } finally {
         await f.cleanup();
+    }
+});
+
+test("buildFeatureContextPack respects null currentArtifacts pointers after requirements revision, feedback regeneration, and parent replacement", () => {
+    const f = fixture();
+    try {
+        const created = f.app.execute({ kind: "create_feature", requestId: "qa-invalidated-artifacts", input: requirements() }, actor);
+        const rev1 = created.current.id;
+        const designV1 = f.app.lifecycle.store.artifact(created.id, "design", rev1, {
+            recommendation: "GO",
+            design: { summary: "Superseded v1 design for old scope." },
+            reviews: [{ status: "approved", review: { findings: [] } }],
+        });
+        const planV1 = f.app.lifecycle.store.artifact(created.id, "plan", rev1, {
+            summary: "Superseded v1 plan.",
+            items: [{ id: "PBI-OLD", title: "Old PBI", repository: "common", requirementIds: ["R1"] }],
+        }, designV1.id);
+        f.app.lifecycle.store.artifact(created.id, "implementation", rev1, {
+            items: [{ itemId: "PBI-OLD", status: "published", receipt: { url: "https://example.test/pr/1" } }],
+        }, planV1.id);
+        f.app.lifecycle.store.artifact(created.id, "monitor", rev1, {
+            observedAt: "2026-04-20T01:40:00.000Z",
+            delivered: false,
+            items: [],
+            prs: [{ key: "PBI-OLD", number: 1, status: "open", checks: "passing", url: "https://example.test/pr/1" }],
+            validation: [],
+            reviews: [],
+            errors: [],
+        }, planV1.id);
+
+        // Before revision: all current artifacts are active
+        const activeView = f.app.lifecycle.store.view(created.id);
+        assert.equal(activeView.currentArtifacts.design, designV1.id);
+        assert.equal(activeView.currentArtifacts.plan, planV1.id);
+        const activePack = buildFeatureContextPack(activeView, f.directory);
+        assert.equal(activePack.summary.hasDesign, true);
+        assert.equal(activePack.summary.designReviewRounds, 1);
+        assert.equal(activePack.summary.plannedPbiCount, 1);
+        assert.equal(activePack.summary.implementedPbiCount, 1);
+        assert.equal(activePack.summary.prCount, 1);
+        assert.ok(activePack.packText.includes("## 2. Technical Design"));
+        assert.ok(!activePack.packText.includes("## Historical / Superseded Artifacts (NOT Current)"));
+
+        // 1. Real requirements revision invalidates latest design/plan/monitor pointers
+        const revised = f.app.execute({
+            kind: "revise_requirements",
+            featureId: created.id,
+            expectedRevision: rev1,
+            input: { ...requirements(), title: "Revised scope v2" },
+        }, actor);
+        assert.equal(f.app.lifecycle.store.latest(created.id, "design"), null);
+        const revisedView = f.app.lifecycle.store.view(created.id);
+        assert.equal(revisedView.currentArtifacts.design, null);
+        assert.equal(revisedView.currentArtifacts.plan, null);
+        assert.equal(revisedView.currentArtifacts.monitor, null);
+
+        const revisedPack = buildFeatureContextPack(revisedView, f.directory);
+        assert.equal(revisedPack.summary.hasDesign, false);
+        assert.equal(revisedPack.summary.designReviewRounds, 0);
+        assert.equal(revisedPack.summary.plannedPbiCount, 0);
+        assert.equal(revisedPack.summary.implementedPbiCount, 0);
+        assert.equal(revisedPack.summary.prCount, 0);
+        assert.ok(!revisedPack.packText.includes("## 2. Technical Design"));
+        assert.ok(!revisedPack.packText.includes("## 3. Implementation Plan & PBIs"));
+        assert.ok(!revisedPack.packText.includes("## 4. Backlog, Coding Implementation & Pull Requests"));
+        assert.ok(revisedPack.packText.includes("## Historical / Superseded Artifacts (NOT Current)"));
+        assert.ok(revisedPack.packText.includes(`**Superseded Design** (\`${designV1.id}\``));
+        assert.ok(revisedPack.packText.includes(`**Superseded Plan** (\`${planV1.id}\``));
+
+        // 2. New design on rev2 leaves old plan invalidated by parentage
+        const designV2 = f.app.lifecycle.store.artifact(created.id, "design", revised.current.id, {
+            recommendation: "GO",
+            design: { summary: "Current v2 design." },
+            reviews: [],
+        });
+        const v2DesignView = f.app.lifecycle.store.view(created.id);
+        assert.equal(v2DesignView.currentArtifacts.design, designV2.id);
+        assert.equal(v2DesignView.currentArtifacts.plan, null);
+        const v2DesignPack = buildFeatureContextPack(v2DesignView, f.directory);
+        assert.equal(v2DesignPack.summary.hasDesign, true);
+        assert.equal(v2DesignPack.summary.plannedPbiCount, 0);
+        assert.ok(v2DesignPack.packText.includes(`## 2. Technical Design (Artifact \`${designV2.id}\``));
+        assert.ok(!v2DesignPack.packText.includes("## 3. Implementation Plan & PBIs"));
+        assert.ok(v2DesignPack.packText.includes(`**Superseded Plan** (\`${planV1.id}\``));
+        assert.ok(!v2DesignPack.packText.includes(`**Superseded Design**`));
+
+        // 3. Feedback bumping generation on the SAME requirementsRevision invalidates currentArtifacts.design
+        f.app.lifecycle.store.change(created.id, (state) => {
+            state.feedback.push({
+                id: "fb-1",
+                stage: "design",
+                revision: revised.current.id,
+                text: "Rework storage strategy.",
+                createdAt: "2026-04-20T02:00:00.000Z",
+            });
+        });
+        const feedbackView = f.app.lifecycle.store.view(created.id);
+        assert.equal(feedbackView.currentArtifacts.design, null);
+        const feedbackPack = buildFeatureContextPack(feedbackView, f.directory);
+        assert.equal(feedbackPack.summary.hasDesign, false);
+        assert.ok(!feedbackPack.packText.includes("## 2. Technical Design"));
+        assert.ok(feedbackPack.packText.includes(`**Superseded Design** (\`${designV2.id}\``));
+    } finally {
+        f.cleanup();
     }
 });
