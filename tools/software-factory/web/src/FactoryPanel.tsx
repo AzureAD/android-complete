@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { object } from "../../core/contracts.ts";
 import type { Artifact, Configuration, ConfigRevision, FactoryFeature, Json, RepositoryTarget } from "../../core/lifecycle-contracts.ts";
 import type { FeatureQaContext } from "../../core/qa-contracts.ts";
 import { request } from "./api";
@@ -418,6 +419,8 @@ export function FactoryPanel({
         } satisfies Artifact;
     })();
     const planArtifact = allPlanArtifacts.find((a) => a.id === selectedPlanId) || currentPlanArtifact || allPlanArtifacts[0] || livePlanArtifact;
+    const designMatchesGate = Boolean(designArtifact && designArtifact.id === currentGate?.targetId);
+    const planMatchesGate = Boolean(planArtifact && planArtifact.id === currentGate?.targetId);
 
     const liveCodeArtifact: Artifact | undefined = (() => {
         const activeImplExec = [...feature.factory.executions].reverse().find(
@@ -913,13 +916,14 @@ export function FactoryPanel({
                             />
                             {currentGate?.stage === "design" && (
                                 <div className="gate-decision-bar">
+                                    {!designMatchesGate && <p className="message notice" role="status">Viewing a historical design. Select the current design revision to approve or reject it.</p>}
                                     {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
                                     {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
                                     <div className="factory-actions">
-                                        <button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
+                                        <button className="primary" disabled={busy || !gatesLoaded || !currentGate.ready || !designMatchesGate} onClick={() => void run({
                                             kind: "approve_stage", featureId: feature.id, stage: "design", expectedScopeHash: currentGate.scopeHash, approved: true,
                                         })}>Approve design</button>
-                                        <button className="secondary" disabled={busy} onClick={() => void run({
+                                        <button className="secondary" disabled={busy || !gatesLoaded || !designMatchesGate} onClick={() => void run({
                                             kind: "approve_stage", featureId: feature.id, stage: "design", expectedScopeHash: currentGate.scopeHash, approved: false,
                                         })}>Reject this scope</button>
                                     </div>
@@ -998,13 +1002,14 @@ export function FactoryPanel({
                             />
                             {currentGate?.stage === "plan" && (
                                 <div className="gate-decision-bar">
+                                    {!planMatchesGate && <p className="message notice" role="status">Viewing a historical plan. Select the current plan revision to approve or reject it.</p>}
                                     {currentGate.scope && <ScopeSummary scope={currentGate.scope} />}
                                     {!currentGate.ready && <p className="message error">{currentGate.blockers?.join(" ")}</p>}
                                     <div className="factory-actions">
-                                        <button className="primary" disabled={busy || !currentGate.ready} onClick={() => void run({
+                                        <button className="primary" disabled={busy || !gatesLoaded || !currentGate.ready || !planMatchesGate} onClick={() => void run({
                                             kind: "approve_stage", featureId: feature.id, stage: "plan", expectedScopeHash: currentGate.scopeHash, approved: true,
                                         })}>Approve plan</button>
-                                        <button className="secondary" disabled={busy} onClick={() => void run({
+                                        <button className="secondary" disabled={busy || !gatesLoaded || !planMatchesGate} onClick={() => void run({
                                             kind: "approve_stage", featureId: feature.id, stage: "plan", expectedScopeHash: currentGate.scopeHash, approved: false,
                                         })}>Reject this scope</button>
                                     </div>
@@ -1224,6 +1229,12 @@ export function FactoryPanel({
                                                 Confirm &amp; post comment
                                             </button>
                                         </div>
+                                        {result?.review !== undefined && (
+                                            <section className="scope-summary" aria-label="Live PR review">
+                                                <h4>Live PR review</h4>
+                                                <pre className="feedback-preview">{typeof result.review === "string" ? result.review : JSON.stringify(result.review, null, 2)}</pre>
+                                            </section>
+                                        )}
                                     </div>
 
                                     <div className="pr-ops-subcard">
@@ -1353,6 +1364,33 @@ const configurationTemplate: Configuration = {
     delivery: { mode: "local", maxReviewRounds: 3 },
 };
 
+function validateConfigurationDraft(value: unknown): asserts value is Configuration {
+    const config = object(value, "Configuration");
+    for (const key of ["repositories", "referenceRepositories"] as const) {
+        if (key === "referenceRepositories" && config[key] === undefined) continue;
+        const repositories = object(config[key], key);
+        for (const [alias, entry] of Object.entries(repositories)) {
+            const repo = object(entry, `${key}.${alias}`);
+            if (repo.provider !== "github" && repo.provider !== "ado") {
+                throw new Error(`${key}.${alias}.provider must be github or ado.`);
+            }
+            for (const field of ["hostname", "slug", "baseBranch", "account", "localPath"]) {
+                if (typeof repo[field] !== "string") throw new Error(`${key}.${alias}.${field} must be a string.`);
+            }
+        }
+    }
+    const boards = object(config.boards, "Boards");
+    for (const field of ["organization", "project", "workItemType", "areaPath", "iterationPath", "assignee"]) {
+        if (typeof boards[field] !== "string") throw new Error(`Boards ${field} must be a string.`);
+    }
+    if (boards.parentId !== null && typeof boards.parentId !== "number") throw new Error("Boards parentId must be a number or null.");
+    if (config.delivery !== undefined) {
+        const delivery = object(config.delivery, "Delivery settings");
+        if (delivery.mode !== "local" && delivery.mode !== "remote") throw new Error("Delivery mode must be local or remote.");
+        if (typeof delivery.maxReviewRounds !== "number") throw new Error("Delivery maxReviewRounds must be a number.");
+    }
+}
+
 export function FactorySettings({ execute }: { execute: Execute }) {
     const [configuration, setConfiguration] = useState(JSON.stringify(configurationTemplate, null, 2));
     const [newAlias, setNewAlias] = useState("");
@@ -1392,11 +1430,13 @@ export function FactorySettings({ execute }: { execute: Execute }) {
     }
 
     let parsedConfig: Configuration | null = null;
+    let configurationError = "";
     try {
-        const raw = JSON.parse(configuration) as Configuration;
-        if (raw && typeof raw === "object" && raw.repositories && raw.boards) parsedConfig = raw;
-    } catch {
-        parsedConfig = null;
+        const raw: unknown = JSON.parse(configuration);
+        validateConfigurationDraft(raw);
+        parsedConfig = raw;
+    } catch (failure) {
+        configurationError = failure instanceof Error ? failure.message : "Configuration is invalid.";
     }
 
     const updateConfigObject = (mutator: (draft: Configuration) => void) => {
@@ -1666,7 +1706,8 @@ export function FactorySettings({ execute }: { execute: Execute }) {
         )}
 
         <label htmlFor="configuration-json">Repository and ADO settings</label><textarea id="configuration-json" rows={8} value={configuration} onChange={(event) => setConfiguration(event.target.value)} spellCheck={false} />
-        <div className="factory-actions"><button className="primary" disabled={busy} onClick={() => {
+        {configurationError && <p className="message error" role="alert">{configurationError}</p>}
+        <div className="factory-actions"><button className="primary" disabled={busy || !parsedConfig} onClick={() => {
             try { void run({ kind: "configure", configuration: JSON.parse(configuration) }); }
             catch { setError("Configuration must be valid JSON."); }
         }}>Review &amp; save configuration</button><button className="secondary" disabled={busy} onClick={() => void run({ kind: "preflight" })}>Verify provider connections</button></div>

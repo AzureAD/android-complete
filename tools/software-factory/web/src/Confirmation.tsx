@@ -68,6 +68,9 @@ export function Confirmation({ request, finish, theme = "dark" }: { request: Con
                 {Array.isArray(brief.designTasks) && brief.designTasks.length > 0 && <><h3>Work for the design agents</h3><ul>{brief.designTasks.map((task, index) => <li key={index}>{String(task)}</li>)}</ul></>}
             </section></details>}
             <ScopeSummary scope={request.scope} />
+            {decision.review && <section className="scope-summary" aria-label="Exact approval review">
+                <h3>Exact approval review</h3><div className="feedback-preview">{decision.review}</div>
+            </section>}
             <div className="approval-ref-row">
                 <span className="eyebrow">SCOPE REFERENCE</span>
                 <code className="mono-chip">{request.consentKey.slice(0, 16)}…</code>

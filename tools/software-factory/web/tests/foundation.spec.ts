@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Feature } from "../../core/contracts.ts";
-import type { FactoryFeature } from "../../core/lifecycle-contracts.ts";
+import type { Configuration, FactoryFeature } from "../../core/lifecycle-contracts.ts";
 
 const cli = fileURLToPath(new URL("../../tests/browser-server.ts", import.meta.url));
 let child: ChildProcess;
@@ -302,6 +302,101 @@ test("a completed design is readable before approval and approval offers a separ
     expect(afterSources.currentArtifacts.design).toBeNull();
 });
 
+test("historical design and plan revisions cannot approve or reject the current artifact", async ({ page }) => {
+    const seed = (message: string) => new Promise<{ featureId: string; oldArtifactId: string; currentArtifactId: string }>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Artifact history fixture timed out.")), 10_000);
+        child.once("message", (response: { featureId: string; oldArtifactId: string; currentArtifactId: string; error?: string }) => {
+            clearTimeout(timer);
+            if (response.error) reject(new Error(response.error)); else resolve(response);
+        });
+        child.send(message);
+    });
+    const design = await seed("seed-review-designs");
+    await page.goto(url);
+    await page.getByRole("navigation", { name: "Features" }).getByRole("button", { name: /Historical artifact approvals/ }).click();
+    const designStudio = page.getByRole("region", { name: "Review design" });
+    await expect(designStudio.getByRole("button", { name: "Approve design", exact: true })).toBeEnabled();
+    await page.getByLabel("DESIGN REVISION", { exact: true }).selectOption(design.oldArtifactId);
+    await expect(designStudio).toContainText("Historical response design.");
+    await expect(designStudio.getByRole("status")).toContainText("Viewing a historical design.");
+    await expect(designStudio.getByRole("button", { name: "Approve design", exact: true })).toBeDisabled();
+    await expect(designStudio.getByRole("button", { name: "Reject this scope", exact: true })).toBeDisabled();
+    expect(cachedFeatures().features.find((entry) => entry.id === design.featureId)!.factory.decisions).toEqual([]);
+    await page.getByLabel("DESIGN REVISION", { exact: true }).selectOption(design.currentArtifactId);
+    await expect(designStudio).toContainText("Keep the existing response contract intact.");
+    await designStudio.getByRole("button", { name: "Approve design", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    const review = dialog.getByRole("region", { name: "Exact approval review" });
+    await expect(review).toContainText(`Design artifact: ${design.currentArtifactId}`);
+    await expect(review).toContainText("Keep the existing response contract intact.");
+    await expect(review).not.toContainText("Historical response design.");
+    await dialog.getByRole("button", { name: "Approve design", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Create implementation plan", exact: true })).toBeVisible();
+    expect(cachedFeatures().features.find((entry) => entry.id === design.featureId)!.factory.decisions.at(-1)?.targetId).toBe(design.currentArtifactId);
+
+    const plan = await seed("seed-review-plans");
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    const planStudio = page.getByRole("region", { name: "Review plan" });
+    await expect(planStudio.getByRole("button", { name: "Approve plan", exact: true })).toBeEnabled();
+    await page.getByLabel("PLAN REVISION", { exact: true }).selectOption(plan.oldArtifactId);
+    await expect(planStudio).toContainText("Historical implementation plan");
+    await expect(planStudio.getByRole("status")).toContainText("Viewing a historical plan.");
+    await expect(planStudio.getByRole("button", { name: "Approve plan", exact: true })).toBeDisabled();
+    await expect(planStudio.getByRole("button", { name: "Reject this scope", exact: true })).toBeDisabled();
+    await page.getByLabel("PLAN REVISION", { exact: true }).selectOption(plan.currentArtifactId);
+    await planStudio.getByRole("button", { name: "Approve plan", exact: true }).click();
+    await expect(review).toContainText(`Plan artifact: ${plan.currentArtifactId}`);
+    await expect(review).toContainText("Current implementation plan");
+    await expect(review).toContainText("Existing clients keep the response format.");
+    await expect(review).not.toContainText("Historical implementation plan");
+    await dialog.getByRole("button", { name: "Approve implementation plan", exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+    expect(cachedFeatures().features.find((entry) => entry.id === plan.featureId)!.factory.decisions.at(-1)?.targetId).toBe(plan.currentArtifactId);
+});
+
+test("invalid configuration drafts preserve the shell and report structural errors before saving", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(url);
+    await page.getByRole("button", { name: "Connections", exact: true }).click();
+    const settings = page.getByLabel("Repository and ADO settings", { exact: true });
+    const valid = await settings.inputValue();
+    const config = JSON.parse(valid) as Configuration;
+    const repository = Object.values(config.repositories)[0];
+    const cases = [
+        { value: { repositories: { common: null }, boards: {} }, error: "repositories.common must be an object." },
+        { value: { ...config, repositories: [] }, error: "repositories must be an object." },
+        { value: { ...config, repositories: { common: { ...repository, provider: 42 } } }, error: "repositories.common.provider must be github or ado." },
+        { value: { ...config, repositories: { common: { ...repository, hostname: {} } } }, error: "repositories.common.hostname must be a string." },
+        { value: { ...config, referenceRepositories: { caller: null } }, error: "referenceRepositories.caller must be an object." },
+        { value: { ...config, boards: [] }, error: "Boards must be an object." },
+        { value: { ...config, boards: { ...config.boards, project: {} } }, error: "Boards project must be a string." },
+        { value: { ...config, boards: { ...config.boards, parentId: {} } }, error: "Boards parentId must be a number or null." },
+        { value: { ...config, delivery: { mode: {}, maxReviewRounds: 3 } }, error: "Delivery mode must be local or remote." },
+        { value: { ...config, delivery: { mode: "local", maxReviewRounds: {} } }, error: "Delivery maxReviewRounds must be a number." },
+    ];
+    for (const { value, error } of cases) {
+        const draft = JSON.stringify(value);
+        await settings.fill(draft);
+        await expect(page.getByRole("alert")).toContainText(error);
+        await expect(settings).toHaveValue(draft);
+        await expect(page.locator(".visual-config-studio")).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Review & save configuration", exact: true })).toBeDisabled();
+    }
+    await settings.fill("{");
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(settings).toHaveValue("{");
+    await settings.fill(valid);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /Target Repositories/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Review & save configuration", exact: true })).toBeEnabled();
+    const hostname = page.locator(".repo-mapper-card").first().getByLabel("Hostname", { exact: true });
+    await hostname.fill("");
+    await expect(hostname).toBeVisible();
+    await hostname.fill("github.com");
+    expect(errors).toEqual([]);
+});
+
 test("chat research and question rationale are visible before any native workflow exists", async ({ page }) => {
     const application = new URL("../../core/application.ts", import.meta.url).href;
     const chatTools = new URL("../../chat/tools.ts", import.meta.url).href;
@@ -411,7 +506,9 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
         const app = new Application();
         const actor = { channel: "chat", sessionId: "studio-fixture", reference: "studio-seed" };
         try {
-            app.lifecycle.configure(teamConfig(), actor);
+            const configuration = teamConfig();
+            configuration.repositories.example = configuration.repositories.common;
+            app.lifecycle.configure(configuration, actor);
             const feature = app.execute({ kind: "create_feature", requestId: "studio-showcase", input: {
                 title: "Studio Control Plane Showcase",
                 description: "End-to-end showcase of Design, Plan DAG, Code Arena, and Subagent Flight Recorder.",
@@ -644,6 +741,29 @@ test("studio explorers surface Builder vs Reviewer rounds, Traceability, Plan DA
     await expect(deliveryStudio).toContainText("CI: PASSING ✓");
     await deliveryStudio.getByRole("button", { name: "Sign off gap…" }).click();
     await expect(deliveryStudio.getByLabel("Criterion Text")).toHaveValue("Existing callers receive identical envelope keys.");
+    await deliveryStudio.getByText("Post Staged PR Review Comment or Link an External PR", { exact: true }).click();
+    await deliveryStudio.getByLabel("PBI Key", { exact: true }).first().fill("PBI-1");
+    await page.route("**/api/commands", async (route) => {
+        if (route.request().postDataJSON().kind !== "review_pr") return route.continue();
+        await route.fulfill({ json: { review: {
+            pr: { number: 42, url: "https://github.com/example/repo/pull/42" },
+            feedback: {
+                inlineComments: [{ user: { login: "reviewer" }, path: "Response.kt", line: 42, body: "Live thread: preserve cancellation on retry." }],
+                reviews: [{ body: "Live review summary: compatibility needs verification." }],
+                conversation: [{ body: "Live conversation: include a regression test." }],
+            },
+        } } });
+    });
+    await deliveryStudio.getByRole("button", { name: "Load live PR threads", exact: true }).click();
+    const liveReview = deliveryStudio.getByRole("region", { name: "Live PR review", exact: true });
+    await expect(liveReview).toContainText("Live thread: preserve cancellation on retry.");
+    await expect(liveReview).toContainText("Response.kt");
+    await expect(liveReview).toContainText("Live review summary: compatibility needs verification.");
+    await expect(liveReview).toContainText("Live conversation: include a regression test.");
+    await expect(liveReview).toContainText("https://github.com/example/repo/pull/42");
+    await deliveryStudio.getByLabel("Comment body (editable before posting)").fill("Draft response remains editable after loading threads.");
+    await expect(liveReview).toBeVisible();
+    await page.unroute("**/api/commands");
 
     // 6. Verify Stage 1 Scope Studio, Semantic SVG Icons, Revision Diffs Hub & Subagent Transcripts
     await stageNav.getByRole("button", { name: /Define success/ }).click();
